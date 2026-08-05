@@ -487,19 +487,28 @@ export class KernelRouter {
     try {
       return await endpoint[method](erefs);
     } catch (error) {
-      // The teardown above has to be undone with it: committing it while the
-      // endpoint still holds the erefs would leave the two disagreeing, and the
-      // endpoint would go on to mint fresh krefs for objects the kernel thinks
-      // it has let go of. Aborting restores both the entries and the action.
+      if (!isVatId(endpointId)) {
+        // A remote is a separate kernel across a link that can drop messages,
+        // so its protocol already has to tolerate one going missing — it
+        // reconciles on the next incarnation change. Retrying instead would
+        // starve the kernel: GC actions are selected ahead of all other work,
+        // so a remote that keeps refusing (a full send queue, say) would be
+        // handed the same item every crank and nothing else would ever run.
+        this.#logger?.error(
+          `Delivery of ${type} to remote ${endpointId} failed; the kernel has released ${JSON.stringify(live)} regardless:`,
+          error,
+        );
+        return { didDelivery: endpointId };
+      }
+      // A vat is local and reliable, so a refusal means it is broken. Undo the
+      // teardown rather than commit it: leaving the two disagreeing would have
+      // the vat mint fresh krefs for objects the kernel thinks it let go of.
+      // Aborting restores the entries and the action; terminating the vat is
+      // what stops that restored action from being retried forever.
       this.#logger?.error(
-        `Delivery of ${type} to ${endpointId} failed; rolling back the kernel's release of ${JSON.stringify(live)}:`,
+        `Delivery of ${type} to ${endpointId} failed; rolling back the kernel's release of ${JSON.stringify(live)} and terminating it:`,
         error,
       );
-      if (!isVatId(endpointId)) {
-        // A remote gets reconciled by the incarnation-change path when it comes
-        // back; there is no worker to terminate.
-        return { abort: true };
-      }
       return {
         abort: true,
         terminate: {
