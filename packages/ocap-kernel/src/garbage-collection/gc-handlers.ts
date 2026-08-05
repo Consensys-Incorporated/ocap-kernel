@@ -84,5 +84,9 @@ export function performExportCleanup(
       }
     }
     kernelStore.forgetKref(endpointId, kref);
+    // The owner no longer names the object, so nothing can reach it through
+    // this endpoint again. Drop the owner mapping too, or the kernel's record
+    // of the object outlives the only c-list entry it was reachable through.
+    kernelStore.orphanKernelObject(kref);
   }
 }

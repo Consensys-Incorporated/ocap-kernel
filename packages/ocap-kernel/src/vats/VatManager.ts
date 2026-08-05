@@ -123,18 +123,32 @@ export class VatManager {
         cause: error,
       });
     }
-    this.#kernelStore.initEndpoint(vatId);
-    const rootRef = this.#kernelStore.exportFromEndpoint(
-      vatId,
-      ROOT_OBJECT_VREF,
-    );
-    // A root is addressable for as long as its vat lives, whether or not
-    // anyone currently imports it: the kernel's own API hands out root krefs
-    // and `getRootObject` resolves them through this c-list entry. Without a
-    // pin, GC would retire the entry the moment the last importer let go.
-    this.#kernelStore.pinObject(rootRef);
-    this.#kernelStore.setVatConfig(vatId, vatConfig);
-    return rootRef;
+    try {
+      this.#kernelStore.initEndpoint(vatId);
+      const rootRef = this.#kernelStore.exportFromEndpoint(
+        vatId,
+        ROOT_OBJECT_VREF,
+      );
+      // A root is addressable for as long as its vat lives, whether or not
+      // anyone currently imports it: the kernel's own API hands out root krefs
+      // and `getRootObject` resolves them through this c-list entry. Without a
+      // pin, GC would retire the entry the moment the last importer let go.
+      this.#kernelStore.pinObject(rootRef);
+      this.#kernelStore.setVatConfig(vatId, vatConfig);
+      return rootRef;
+    } catch (error) {
+      // The worker is already running, so leaving it would strand a vat the
+      // kernel has no record of. Tear it down before reporting the failure.
+      await this.stopVat(vatId, true).catch((stopError) => {
+        this.#logger.error(
+          `Failed to stop vat ${vatId} after incomplete launch:`,
+          stopError,
+        );
+      });
+      throw new Error(`Failed to launch vat ${vatId} (${vatName})`, {
+        cause: error,
+      });
+    }
   }
 
   /**

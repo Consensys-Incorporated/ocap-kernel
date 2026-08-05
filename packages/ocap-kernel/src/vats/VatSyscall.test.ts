@@ -30,6 +30,7 @@ describe('VatSyscall', () => {
       clearReachableFlag: vi.fn(),
       getReachableFlag: vi.fn(),
       forgetKref: vi.fn(),
+      orphanKernelObject: vi.fn(),
       getVatConfig: vi.fn(() => ({})),
       isVatActive: vi.fn(() => true),
       isInCrank: vi.fn(() => true),

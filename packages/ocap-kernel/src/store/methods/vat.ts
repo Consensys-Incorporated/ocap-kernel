@@ -291,9 +291,10 @@ export function getVatMethods(ctx: StoreContext) {
       work.imports += 1;
     }
 
-    // The caller rejected the orphan promises via getPromisesByDecider() before
-    // calling us, which is what released each promise's unsettled reference,
-    // but their kpids are still in the dead vat's c-list. Clean those up now.
+    // The caller looked the orphan promises up with getPromisesByDecider() and
+    // rejected them before calling us; that rejection is what released each
+    // promise's unsettled reference. Their kpids are still in the dead vat's
+    // c-list, so clean those up now.
     for (const key of getPrefixedKeys(promisePrefix)) {
       const krefStr = ctx.kv.get<KRef>(key) ?? Fail`getNextKey ensures get`;
       assert(key.startsWith(clistPrefix), key);
