@@ -1,6 +1,7 @@
 import { Fail } from '@endo/errors';
 
 import { getBaseMethods } from './base.ts';
+import { getCListMethods } from './clist.ts';
 import { getObjectMethods } from './object.ts';
 import { getPromiseMethods } from './promise.ts';
 import { getReachableMethods } from './reachable.ts';
@@ -33,6 +34,25 @@ export function getGCMethods(ctx: StoreContext) {
   const { getImporters, isVatTerminated } = getVatMethods(ctx);
   const { getReachableFlag, getReachableAndVatSlot } = getReachableMethods(ctx);
   const { clearEmptySubclusters } = getSubclusterMethods(ctx);
+  const { hasCListEntry } = getCListMethods(ctx);
+
+  /**
+   * Give up the kernel's record of who owns an object. The object survives only
+   * as long as something still names it; the collector disposes of it from
+   * there, retiring any stragglers that still recognize it.
+   *
+   * Called when an owner stops naming its own export — it retired or abandoned
+   * it, or a GC `retireExport` was delivered. Without this the owner mapping
+   * outlives the c-list entry it was reachable through, which both leaks the
+   * object record and leaves `collectGarbage` reading a c-list entry that is no
+   * longer there.
+   *
+   * @param kref - The object whose owner mapping is to be dropped.
+   */
+  function orphanKernelObject(kref: KRef): void {
+    ctx.kv.delete(getOwnerKey(kref));
+    ctx.maybeFreeKrefs.add(kref);
+  }
 
   /**
    * Get the set of GC actions to perform.
@@ -158,7 +178,14 @@ export function getGCMethods(ctx: StoreContext) {
           // might still alive, or might be terminated and in the
           // process of being deleted. These two clauses are
           // mutually exclusive.
-          if (ownerVatID && !terminated) {
+          if (ownerVatID && !terminated && !hasCListEntry(ownerVatID, kref)) {
+            // The owner still claims this object but no longer names it, having
+            // retired or abandoned the export itself. There is nobody to notify,
+            // and reading its reachable flag would throw, so treat it as
+            // orphaned and let the clause below dispose of it.
+            orphanKernelObject(kref);
+            ownerVatID = undefined;
+          } else if (ownerVatID && !terminated) {
             const vatConsidersReachable = getReachableFlag(ownerVatID, kref);
             if (vatConsidersReachable) {
               // the reachable count is zero, but the vat doesn't realize it
@@ -221,6 +248,7 @@ export function getGCMethods(ctx: StoreContext) {
     scheduleReap,
     nextReapAction,
     retireKernelObjects,
+    orphanKernelObject,
     collectGarbage,
   };
 }

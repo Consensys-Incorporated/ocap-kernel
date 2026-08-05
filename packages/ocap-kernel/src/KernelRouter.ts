@@ -405,10 +405,12 @@ export class KernelRouter {
         this.#kernelStore.translateCapDataKtoE(endpointId, tPromise.value),
       ]);
     }
-    // TODO(#1006 follow-up): SwingSet also tears down the c-list entry for each
-    // promise in the batch here, since the endpoint can never refer to a
-    // settled promise by that eref again. Left alone for now because the
-    // debug UI discovers exported ocap URLs by scanning these entries.
+    // TODO: SwingSet also tears down the c-list entry for each promise in the
+    // batch here, since the endpoint can never refer to a settled promise by
+    // that eref again. Left alone for now because the debug UI discovers
+    // exported ocap URLs by scanning these entries. The cost of keeping them is
+    // that a settled promise reached this way holds a count forever, so it is
+    // never collected and its resolution slots are never released.
     const endpoint = this.#getEndpoint(endpointId);
     return await endpoint.deliverNotify(resolutions);
   }
@@ -424,7 +426,19 @@ export class KernelRouter {
     this.#logger?.log(
       `@@@@ deliver ${endpointId} ${type} ${JSON.stringify(krefs)}`,
     );
-    const endpoint = this.#getEndpoint(endpointId);
+    let endpoint: EndpointHandle;
+    try {
+      endpoint = this.#getEndpoint(endpointId);
+    } catch (error) {
+      // The endpoint was selected for this action while its c-list still
+      // existed, but it has since gone away (terminated, and cleaned up in the
+      // same crank). Nothing left to tell; its c-list goes with it.
+      this.#logger?.error(
+        `Skipping ${type} for vanished endpoint ${endpointId}:`,
+        error,
+      );
+      return { didDelivery: endpointId };
+    }
     const erefs = this.#kernelStore.krefsToErefs(endpointId, krefs);
     // Telling an endpoint to let go is also the kernel letting go. Otherwise a
     // dropped export stays flagged reachable, so the same action gets derived
@@ -432,12 +446,19 @@ export class KernelRouter {
     krefs.forEach((kref, index) => {
       if (type === 'dropExports') {
         this.#kernelStore.clearReachableFlag(endpointId, kref);
-      } else {
-        this.#kernelStore.deleteCListEntry(
-          endpointId,
-          kref,
-          erefs[index] as ERef,
-        );
+        return;
+      }
+      // `erefs` is parallel to `krefs`: krefsToErefs throws rather than
+      // returning a short array, so every index is populated.
+      this.#kernelStore.deleteCListEntry(
+        endpointId,
+        kref,
+        erefs[index] as ERef,
+      );
+      if (type === 'retireExports') {
+        // Retiring an export is the owner giving up the last name for the
+        // object, so the kernel's record of who owns it goes too.
+        this.#kernelStore.orphanKernelObject(kref);
       }
     });
     const method =
@@ -445,8 +466,17 @@ export class KernelRouter {
         | 'deliverDropExports'
         | 'deliverRetireExports'
         | 'deliverRetireImports';
-    const crankResult = await endpoint[method](erefs);
-    return crankResult;
+    try {
+      return await endpoint[method](erefs);
+    } catch (error) {
+      // The kernel has already let go above, which is the part that matters for
+      // accounting. Don't let a failed notification take down the run loop.
+      this.#logger?.error(
+        `Delivery of ${type} to ${endpointId} failed:`,
+        error,
+      );
+      return { didDelivery: endpointId };
+    }
   }
 
   /**

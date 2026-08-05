@@ -12,19 +12,34 @@ import { parseReachableAndVatSlot } from '../utils/reachable.ts';
  * A kref whose stored reference counts disagree with the counts implied by the
  * references the kernel can actually be seen to hold.
  */
-export type RefCountViolation = {
-  kref: KRef;
-  /**
-   * The counts as stored, in the store's own encoding: `"reachable,recognizable"`
-   * for objects, a single number for promises, or `"(deleted)"` if the kref has
-   * no refcount entry at all.
-   */
-  stored: string;
-  /** The counts implied by `holders`, in the same encoding as `stored`. */
-  expected: string;
-  /** One entry per reference found, so a mismatch can be traced to its source. */
-  holders: string[];
-};
+export type RefCountViolation =
+  | {
+      /** The kref is still counted, just by the wrong amount. */
+      kind: 'mismatch';
+      kref: KRef;
+      /**
+       * The counts as stored, in the store's own encoding:
+       * `"reachable,recognizable"` for objects, a single number for promises.
+       */
+      stored: string;
+      /** The counts implied by `holders`, in the same encoding as `stored`. */
+      expected: string;
+      /** One entry per reference found, so a mismatch can be traced to its source. */
+      holders: string[];
+    }
+  | {
+      /**
+       * The kref has no refcount entry, so each entry in `holders` names
+       * something the kernel has already deleted. Rewriting a count cannot
+       * repair this.
+       */
+      kind: 'dangling';
+      kref: KRef;
+      /** The counts `holders` imply, which there is nothing left to credit. */
+      expected: string;
+      /** One entry per dangling reference found. */
+      holders: string[];
+    };
 
 /**
  * The running total of references found for one kref. For a promise, which has
@@ -303,8 +318,8 @@ export function getRefCountAuditMethods(ctx: StoreContext) {
         // pointing at it is a dangling reference.
         if (tally.holders.length > 0) {
           violations.push({
+            kind: 'dangling',
             kref,
-            stored: '(deleted)',
             expected: expectedText,
             holders: tally.holders,
           });
@@ -319,6 +334,7 @@ export function getRefCountAuditMethods(ctx: StoreContext) {
       const storedText = raw;
       if (storedText !== expectedText) {
         violations.push({
+          kind: 'mismatch',
           kref,
           stored: storedText,
           expected: expectedText,
@@ -352,7 +368,7 @@ export function getRefCountAuditMethods(ctx: StoreContext) {
     const corrected: RefCountViolation[] = [];
     const unfixable: RefCountViolation[] = [];
     for (const violation of auditRefCounts()) {
-      if (violation.stored === '(deleted)') {
+      if (violation.kind === 'dangling') {
         unfixable.push(violation);
         continue;
       }
@@ -369,11 +385,14 @@ export function getRefCountAuditMethods(ctx: StoreContext) {
    * Render violations as a human-readable report.
    *
    * @param violations - The violations to describe.
-   * @returns A multi-line description, one paragraph per violation.
+   * @returns A newline-separated report, one line per violation.
    */
   function formatRefCountViolations(violations: RefCountViolation[]): string {
     return violations
-      .map(({ kref, stored, expected, holders }) => {
+      .map((violation) => {
+        const { kref, expected, holders } = violation;
+        const stored =
+          violation.kind === 'dangling' ? '(deleted)' : violation.stored;
         const held = holders.length > 0 ? holders.join(', ') : 'nothing';
         return `${kref}: stored ${stored}, expected ${expected} (held by: ${held})`;
       })
@@ -385,14 +404,16 @@ export function getRefCountAuditMethods(ctx: StoreContext) {
    * via the `auditRefCounts` option, and run at the end of every crank.
    */
   function assertRefCountsIfAuditing(): void {
-    if (!ctx.auditRefCounts) {
+    if (!ctx.refCountAuditingEnabled) {
       return;
     }
     const violations = auditRefCounts();
     if (violations.length > 0) {
-      throw Error(
-        `reference count invariant violated:\n${formatRefCountViolations(violations)}`,
-      );
+      const report = formatRefCountViolations(violations);
+      // Logged as well as thrown: this fires from inside a crank, and whoever
+      // catches that has no way to render the report itself.
+      ctx.logger?.error(`reference count invariant violated:\n${report}`);
+      throw Error(`reference count invariant violated:\n${report}`);
     }
   }
 
@@ -402,7 +423,7 @@ export function getRefCountAuditMethods(ctx: StoreContext) {
    * @param enabled - Whether to audit after every crank.
    */
   function setRefCountAuditing(enabled: boolean): void {
-    ctx.auditRefCounts = enabled;
+    ctx.refCountAuditingEnabled = enabled;
   }
 
   return {

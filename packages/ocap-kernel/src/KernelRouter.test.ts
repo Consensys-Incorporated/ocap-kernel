@@ -66,6 +66,7 @@ describe('KernelRouter', () => {
       clearReachableFlag: vi.fn(),
       deleteCListEntry: vi.fn(),
       forgetKref: vi.fn(),
+      orphanKernelObject: vi.fn(),
       createCrankSavepoint: vi.fn(),
     } as unknown as KernelStore;
 
@@ -782,6 +783,60 @@ describe('KernelRouter', () => {
           ]);
         },
       );
+
+      it('orphans the object when delivering retireExports', async () => {
+        await kernelRouter.deliver({
+          type: 'retireExports',
+          endpointId: 'v1',
+          krefs: ['ko1', 'ko2'],
+        });
+
+        // The owner has given up the last name for the object, so the kernel's
+        // record of who owns it must go too or it outlives every reference.
+        expect(
+          (kernelStore.orphanKernelObject as unknown as MockInstance).mock
+            .calls,
+        ).toStrictEqual([['ko1'], ['ko2']]);
+      });
+
+      it('leaves ownership alone when delivering retireImports', async () => {
+        await kernelRouter.deliver({
+          type: 'retireImports',
+          endpointId: 'v1',
+          krefs: ['ko1'],
+        });
+
+        expect(kernelStore.orphanKernelObject).not.toHaveBeenCalled();
+      });
+
+      it('skips the action when the endpoint has vanished', async () => {
+        getEndpoint.mockImplementationOnce(() => {
+          throw Error('vat v1 not found');
+        });
+
+        const result = await kernelRouter.deliver({
+          type: 'retireImports',
+          endpointId: 'v1',
+          krefs: ['ko1'],
+        });
+
+        expect(result).toStrictEqual({ didDelivery: 'v1' });
+        expect(kernelStore.deleteCListEntry).not.toHaveBeenCalled();
+      });
+
+      it('survives a failed delivery', async () => {
+        (
+          endpointHandle.deliverRetireImports as unknown as MockInstance
+        ).mockRejectedValueOnce(Error('endpoint went away mid-delivery'));
+
+        const result = await kernelRouter.deliver({
+          type: 'retireImports',
+          endpointId: 'v1',
+          krefs: ['ko1'],
+        });
+
+        expect(result).toStrictEqual({ didDelivery: 'v1' });
+      });
     });
 
     describe('bringOutYourDead', () => {
