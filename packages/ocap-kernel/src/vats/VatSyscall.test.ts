@@ -30,6 +30,8 @@ describe('VatSyscall', () => {
       clearReachableFlag: vi.fn(),
       getReachableFlag: vi.fn(),
       forgetKref: vi.fn(),
+      // Only an owner may disown an object, so the cleanup syscalls check first
+      getOwner: vi.fn().mockReturnValue('v1'),
       orphanKernelObject: vi.fn(),
       getVatConfig: vi.fn(() => ({})),
       isVatActive: vi.fn(() => true),

@@ -3,7 +3,10 @@ import type { CapData } from '@endo/marshal';
 import { Logger } from '@metamask/logger';
 
 import { KernelQueue } from './KernelQueue.ts';
-import { makeKernelError } from './liveslots/kernel-marshal.ts';
+import {
+  makeFatalKernelError,
+  makeKernelError,
+} from './liveslots/kernel-marshal.ts';
 import type { KernelStore } from './store/index.ts';
 import { extractSingleRef } from './store/utils/extract-ref.ts';
 import { parseRef } from './store/utils/parse-ref.ts';
@@ -21,6 +24,7 @@ import type {
   RunQueueItemGCAction,
   CrankResult,
 } from './types.ts';
+import { isVatId } from './types.ts';
 import { assert, Fail } from './utils/assert.ts';
 
 type MessageRoute = {
@@ -426,29 +430,33 @@ export class KernelRouter {
     this.#logger?.log(
       `@@@@ deliver ${endpointId} ${type} ${JSON.stringify(krefs)}`,
     );
-    let endpoint: EndpointHandle;
-    try {
-      endpoint = this.#getEndpoint(endpointId);
-    } catch (error) {
-      // The endpoint was selected for this action while its c-list still
-      // existed, but it has since gone away (terminated, and cleaned up in the
-      // same crank). Nothing left to tell; its c-list goes with it.
+    // This action was selected while the endpoint's c-list held every one of
+    // these krefs, but `nextTerminatedVatCleanup` runs between selection and
+    // here and can take the entries — and the endpoint — with it. Whatever
+    // survives still has to be released on the kernel's side: the action has
+    // already been consumed from the durable set, so skipping the teardown
+    // would lose it and leave the entry behind for good.
+    const live = krefs.filter((kref) =>
+      this.#kernelStore.hasCListEntry(endpointId, kref),
+    );
+    if (live.length < krefs.length) {
       this.#logger?.error(
-        `Skipping ${type} for vanished endpoint ${endpointId}:`,
-        error,
+        `${type} for ${endpointId}: ${krefs.length - live.length} of ${krefs.length} kref(s) were cleaned up before delivery`,
       );
+    }
+    if (live.length === 0) {
       return { didDelivery: endpointId };
     }
-    const erefs = this.#kernelStore.krefsToErefs(endpointId, krefs);
+    const erefs = this.#kernelStore.krefsToErefs(endpointId, live);
     // Telling an endpoint to let go is also the kernel letting go. Otherwise a
     // dropped export stays flagged reachable, so the same action gets derived
     // again, and retired entries outlive the objects they name.
-    krefs.forEach((kref, index) => {
+    live.forEach((kref, index) => {
       if (type === 'dropExports') {
         this.#kernelStore.clearReachableFlag(endpointId, kref);
         return;
       }
-      // `erefs` is parallel to `krefs`: krefsToErefs throws rather than
+      // `erefs` is parallel to `live`: krefsToErefs throws rather than
       // returning a short array, so every index is populated.
       this.#kernelStore.deleteCListEntry(
         endpointId,
@@ -458,9 +466,19 @@ export class KernelRouter {
       if (type === 'retireExports') {
         // Retiring an export is the owner giving up the last name for the
         // object, so the kernel's record of who owns it goes too.
-        this.#kernelStore.orphanKernelObject(kref);
+        this.#kernelStore.orphanKernelObject(kref, endpointId);
       }
     });
+    let endpoint: EndpointHandle;
+    try {
+      endpoint = this.#getEndpoint(endpointId);
+    } catch (error) {
+      this.#logger?.error(
+        `Endpoint ${endpointId} vanished before ${type} of ${JSON.stringify(live)}; released the kernel's side anyway:`,
+        error,
+      );
+      return { didDelivery: endpointId };
+    }
     const method =
       `deliver${(type[0] as string).toUpperCase()}${type.slice(1)}` as
         | 'deliverDropExports'
@@ -469,13 +487,30 @@ export class KernelRouter {
     try {
       return await endpoint[method](erefs);
     } catch (error) {
-      // The kernel has already let go above, which is the part that matters for
-      // accounting. Don't let a failed notification take down the run loop.
+      // The teardown above has to be undone with it: committing it while the
+      // endpoint still holds the erefs would leave the two disagreeing, and the
+      // endpoint would go on to mint fresh krefs for objects the kernel thinks
+      // it has let go of. Aborting restores both the entries and the action.
       this.#logger?.error(
-        `Delivery of ${type} to ${endpointId} failed:`,
+        `Delivery of ${type} to ${endpointId} failed; rolling back the kernel's release of ${JSON.stringify(live)}:`,
         error,
       );
-      return { didDelivery: endpointId };
+      if (!isVatId(endpointId)) {
+        // A remote gets reconciled by the incarnation-change path when it comes
+        // back; there is no worker to terminate.
+        return { abort: true };
+      }
+      return {
+        abort: true,
+        terminate: {
+          vatId: endpointId,
+          reject: true,
+          info: makeFatalKernelError(
+            'INTERNAL_ERROR',
+            `failed to accept ${type}: ${error instanceof Error ? error.message : String(error)}`,
+          ),
+        },
+      };
     }
   }
 
