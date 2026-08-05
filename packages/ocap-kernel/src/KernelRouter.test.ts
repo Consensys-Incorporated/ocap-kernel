@@ -885,7 +885,7 @@ describe('KernelRouter', () => {
         expect(result?.terminate?.vatId).toBe('v1');
       });
 
-      it('rolls back without terminating when a remote fails', async () => {
+      it('does not retry a remote that refuses the delivery', async () => {
         (
           endpointHandle.deliverRetireImports as unknown as MockInstance
         ).mockRejectedValueOnce(Error('remote queue full'));
@@ -896,7 +896,10 @@ describe('KernelRouter', () => {
           krefs: ['ko1'],
         });
 
-        expect(result).toStrictEqual({ abort: true });
+        // Aborting would restore the action, and GC actions are selected ahead
+        // of all other work, so a remote that keeps refusing would be handed
+        // this same item every crank and nothing else would ever run
+        expect(result).toStrictEqual({ didDelivery: 'r1' });
       });
     });
 

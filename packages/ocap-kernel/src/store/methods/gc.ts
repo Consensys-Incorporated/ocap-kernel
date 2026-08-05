@@ -47,17 +47,21 @@ export function getGCMethods(ctx: StoreContext) {
    * object record and leaves `collectGarbage` reading a c-list entry that is no
    * longer there.
    *
-   * `expectedOwner` is required, and must match: disowning an object is only
-   * ever the owner's own doing. Taking it on trust would let one endpoint erase
-   * another's claim to an object it is still exporting.
+   * Disowning an object is only ever the owner's own doing, so `expectedOwner`
+   * is required: taking it on trust would let one endpoint erase another's claim
+   * to an object it is still exporting. An object that is already orphaned is
+   * left alone — the caller and the kernel agree it has no owner.
    *
    * @param kref - The object whose owner mapping is to be dropped.
    * @param expectedOwner - The endpoint the caller believes owns `kref`.
    */
   function orphanKernelObject(kref: KRef, expectedOwner: EndpointId): void {
     const owner = getOwner(kref);
+    if (owner === undefined) {
+      return;
+    }
     owner === expectedOwner ||
-      Fail`cannot orphan ${kref} for ${expectedOwner}: owned by ${owner ?? 'nobody'}`;
+      Fail`cannot orphan ${kref} for ${expectedOwner}: owned by ${owner}`;
     ctx.kv.delete(getOwnerKey(kref));
     ctx.maybeFreeKrefs.add(kref);
   }
