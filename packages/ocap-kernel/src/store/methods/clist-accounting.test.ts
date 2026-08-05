@@ -187,7 +187,7 @@ describe('c-list reference accounting', () => {
       // the export itself — leaving nothing naming the object from its side.
       kernelStore.clearReachableFlag('v1', kref);
       kernelStore.forgetKref('v1', kref);
-      kernelStore.orphanKernelObject(kref);
+      kernelStore.orphanKernelObject(kref, 'v1');
 
       kernelStore.forgetKref('v2', kref);
       kernelStore.collectGarbage();
@@ -200,7 +200,7 @@ describe('c-list reference accounting', () => {
       const kref = kernelStore.exportFromEndpoint('v1', 'o+1');
 
       kernelStore.forgetKref('v1', kref);
-      kernelStore.orphanKernelObject(kref);
+      kernelStore.orphanKernelObject(kref, 'v1');
       kernelStore.collectGarbage();
 
       expect(kernelStore.getOwner(kref)).toBeUndefined();
@@ -214,13 +214,27 @@ describe('c-list reference accounting', () => {
 
       kernelStore.clearReachableFlag('v1', kref);
       kernelStore.forgetKref('v1', kref);
-      kernelStore.orphanKernelObject(kref);
+      kernelStore.orphanKernelObject(kref, 'v1');
       kernelStore.collectGarbage();
 
       // v2 can still recognize it, so it has to be told the name is dead
       expect([...kernelStore.getGCActions()]).toStrictEqual([
         `v2 retireImport ${kref}`,
       ]);
+      // v2's entry outlives the object it names until that action is delivered.
+      // The audit has to tolerate that window, or the end-of-crank check throws
+      // on a state the collector itself just created.
+      expect(kernelStore.auditRefCounts()).toStrictEqual([]);
+    });
+
+    it('rejects an endpoint disowning an object it does not own', () => {
+      const kref = kernelStore.exportFromEndpoint('v1', 'o+1');
+      kernelStore.translateRefKtoE('v2', kref, true);
+
+      expect(() => kernelStore.orphanKernelObject(kref, 'v2')).toThrow(
+        'owned by "v1"',
+      );
+      expect(kernelStore.getOwner(kref)).toBe('v1');
     });
 
     it('survives an owner mapping left behind without a c-list entry', () => {

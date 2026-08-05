@@ -47,9 +47,17 @@ export function getGCMethods(ctx: StoreContext) {
    * object record and leaves `collectGarbage` reading a c-list entry that is no
    * longer there.
    *
+   * `expectedOwner` is required, and must match: disowning an object is only
+   * ever the owner's own doing. Taking it on trust would let one endpoint erase
+   * another's claim to an object it is still exporting.
+   *
    * @param kref - The object whose owner mapping is to be dropped.
+   * @param expectedOwner - The endpoint the caller believes owns `kref`.
    */
-  function orphanKernelObject(kref: KRef): void {
+  function orphanKernelObject(kref: KRef, expectedOwner: EndpointId): void {
+    const owner = getOwner(kref);
+    owner === expectedOwner ||
+      Fail`cannot orphan ${kref} for ${expectedOwner}: owned by ${owner ?? 'nobody'}`;
     ctx.kv.delete(getOwnerKey(kref));
     ctx.maybeFreeKrefs.add(kref);
   }
@@ -179,11 +187,15 @@ export function getGCMethods(ctx: StoreContext) {
           // process of being deleted. These two clauses are
           // mutually exclusive.
           if (ownerVatID && !terminated && !hasCListEntry(ownerVatID, kref)) {
-            // The owner still claims this object but no longer names it, having
-            // retired or abandoned the export itself. There is nobody to notify,
-            // and reading its reachable flag would throw, so treat it as
-            // orphaned and let the clause below dispose of it.
-            orphanKernelObject(kref);
+            // Should be unreachable: every path that tears down an owner's
+            // export entry orphans the object with it. Repair it so the
+            // collector can keep going, but say so — absorbing this in silence
+            // would hide whatever upstream broke the pairing.
+            ctx.logger?.error(
+              `${kref} is owned by live endpoint ${ownerVatID} which has no ` +
+                `c-list entry for it; treating it as orphaned`,
+            );
+            orphanKernelObject(kref, ownerVatID);
             ownerVatID = undefined;
           } else if (ownerVatID && !terminated) {
             const vatConsidersReachable = getReachableFlag(ownerVatID, kref);

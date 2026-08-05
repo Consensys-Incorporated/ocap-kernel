@@ -139,15 +139,25 @@ export class VatManager {
     } catch (error) {
       // The worker is already running, so leaving it would strand a vat the
       // kernel has no record of. Tear it down before reporting the failure.
-      await this.stopVat(vatId, true).catch((stopError) => {
+      let stopFailure: unknown;
+      try {
+        await this.stopVat(vatId, true);
+      } catch (caught) {
+        stopFailure = caught;
         this.#logger.error(
-          `Failed to stop vat ${vatId} after incomplete launch:`,
-          stopError,
+          `Failed to stop vat ${vatId} after incomplete launch; its worker may still be running:`,
+          caught,
         );
-      });
-      throw new Error(`Failed to launch vat ${vatId} (${vatName})`, {
-        cause: error,
-      });
+      }
+      // `stopVat` only tears down the worker. Whatever store records the
+      // partial launch did write — the endpoint counters, the root's c-list
+      // pair, its owner entry — are reclaimed by the terminated-vat cleanup,
+      // which never runs unless the vat is marked.
+      this.#kernelStore.markVatAsTerminated(vatId);
+      throw new Error(
+        `Failed to launch vat ${vatId} (${vatName})${stopFailure ? ' (cleanup also failed)' : ''}`,
+        { cause: error },
+      );
     }
   }
 

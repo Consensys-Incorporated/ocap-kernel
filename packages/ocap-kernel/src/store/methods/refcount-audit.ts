@@ -410,8 +410,8 @@ export function getRefCountAuditMethods(ctx: StoreContext) {
     const violations = auditRefCounts();
     if (violations.length > 0) {
       const report = formatRefCountViolations(violations);
-      // Logged as well as thrown: this fires from inside a crank, and whoever
-      // catches that has no way to render the report itself.
+      // Logged as well as thrown: if this is the last crank before the kernel
+      // goes idle, nobody sends another message and the log is the only record.
       ctx.logger?.error(`reference count invariant violated:\n${report}`);
       throw Error(`reference count invariant violated:\n${report}`);
     }

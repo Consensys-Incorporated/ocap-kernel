@@ -67,6 +67,7 @@ describe('KernelRouter', () => {
       deleteCListEntry: vi.fn(),
       forgetKref: vi.fn(),
       orphanKernelObject: vi.fn(),
+      hasCListEntry: vi.fn().mockReturnValue(true),
       createCrankSavepoint: vi.fn(),
     } as unknown as KernelStore;
 
@@ -796,7 +797,10 @@ describe('KernelRouter', () => {
         expect(
           (kernelStore.orphanKernelObject as unknown as MockInstance).mock
             .calls,
-        ).toStrictEqual([['ko1'], ['ko2']]);
+        ).toStrictEqual([
+          ['ko1', 'v1'],
+          ['ko2', 'v1'],
+        ]);
       });
 
       it('leaves ownership alone when delivering retireImports', async () => {
@@ -809,7 +813,7 @@ describe('KernelRouter', () => {
         expect(kernelStore.orphanKernelObject).not.toHaveBeenCalled();
       });
 
-      it('skips the action when the endpoint has vanished', async () => {
+      it('still releases the kernel side when the endpoint has vanished', async () => {
         getEndpoint.mockImplementationOnce(() => {
           throw Error('vat v1 not found');
         });
@@ -821,10 +825,50 @@ describe('KernelRouter', () => {
         });
 
         expect(result).toStrictEqual({ didDelivery: 'v1' });
-        expect(kernelStore.deleteCListEntry).not.toHaveBeenCalled();
+        // The action has already been consumed, so skipping the teardown would
+        // lose it and leave the entry behind for good
+        expect(kernelStore.deleteCListEntry).toHaveBeenCalledWith(
+          'v1',
+          'ko1',
+          'translated-ko1',
+        );
       });
 
-      it('survives a failed delivery', async () => {
+      it('skips krefs already cleaned up before delivery', async () => {
+        (
+          kernelStore.hasCListEntry as unknown as MockInstance
+        ).mockImplementation(
+          (_endpointId: string, kref: string) => kref === 'ko1',
+        );
+
+        await kernelRouter.deliver({
+          type: 'retireImports',
+          endpointId: 'v1',
+          krefs: ['ko1', 'ko2'],
+        });
+
+        expect(
+          (kernelStore.deleteCListEntry as unknown as MockInstance).mock.calls,
+        ).toStrictEqual([['v1', 'ko1', 'translated-ko1']]);
+      });
+
+      it('does nothing when every kref is already gone', async () => {
+        (kernelStore.hasCListEntry as unknown as MockInstance).mockReturnValue(
+          false,
+        );
+
+        const result = await kernelRouter.deliver({
+          type: 'retireImports',
+          endpointId: 'v1',
+          krefs: ['ko1'],
+        });
+
+        expect(result).toStrictEqual({ didDelivery: 'v1' });
+        expect(kernelStore.deleteCListEntry).not.toHaveBeenCalled();
+        expect(endpointHandle.deliverRetireImports).not.toHaveBeenCalled();
+      });
+
+      it('rolls back and terminates the vat when delivery fails', async () => {
         (
           endpointHandle.deliverRetireImports as unknown as MockInstance
         ).mockRejectedValueOnce(Error('endpoint went away mid-delivery'));
@@ -835,7 +879,24 @@ describe('KernelRouter', () => {
           krefs: ['ko1'],
         });
 
-        expect(result).toStrictEqual({ didDelivery: 'v1' });
+        // Committing the release while v1 still holds the eref would leave the
+        // two disagreeing, and v1 would mint a fresh kref for the same object
+        expect(result?.abort).toBe(true);
+        expect(result?.terminate?.vatId).toBe('v1');
+      });
+
+      it('rolls back without terminating when a remote fails', async () => {
+        (
+          endpointHandle.deliverRetireImports as unknown as MockInstance
+        ).mockRejectedValueOnce(Error('remote queue full'));
+
+        const result = await kernelRouter.deliver({
+          type: 'retireImports',
+          endpointId: 'r1',
+          krefs: ['ko1'],
+        });
+
+        expect(result).toStrictEqual({ abort: true });
       });
     });
 
