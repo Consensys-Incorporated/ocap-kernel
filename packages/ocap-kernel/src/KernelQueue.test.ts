@@ -272,6 +272,57 @@ describe('KernelQueue', () => {
       );
     });
 
+    // The same invariant one level down, inside the flush itself: moving every
+    // buffered item onto the run queue is store work too, and it can fail
+    // part-way. Answering the first caller while the second enqueue is still
+    // ahead would hand out a result the crank's rollback then discards.
+    it('answers no caller until every buffered item is enqueued', async () => {
+      const mockItem: RunQueueItem = {
+        type: 'send',
+        target: 'ko123',
+        message: { result: 'kp1' } as KernelMessage,
+      };
+      (kernelStore.runQueueLength as unknown as MockInstance)
+        .mockReturnValueOnce(1)
+        .mockReturnValue(0);
+      (kernelStore.dequeueRun as unknown as MockInstance).mockReturnValueOnce(
+        mockItem,
+      );
+
+      const resolve = vi.fn();
+      const reject = vi.fn();
+      kernelQueue.subscriptions.set('kp1', { resolve, reject });
+
+      // Two resolutions to hand over, the caller's first.
+      (
+        kernelStore.flushCrankBuffer as unknown as MockInstance
+      ).mockReturnValueOnce([
+        { type: 'notify', endpointId: 'v1', kpid: 'kp1' },
+        { type: 'notify', endpointId: 'v2', kpid: 'kp2' },
+      ]);
+      (kernelStore.getKernelPromise as unknown as MockInstance).mockReturnValue(
+        { state: 'fulfilled', value: { body: '"answer"', slots: [] } },
+      );
+
+      // The second enqueue is the write that fails.
+      const enqueueError = new Error('database is gone');
+      let enqueued = 0;
+      (kernelStore.enqueueRun as unknown as MockInstance).mockImplementation(
+        () => {
+          enqueued += 1;
+          if (enqueued > 1) {
+            throw enqueueError;
+          }
+        },
+      );
+
+      const deliver = vi.fn().mockResolvedValue(undefined);
+      await expect(kernelQueue.run(deliver)).rejects.toBe(enqueueError);
+
+      expect(kernelStore.rollbackCrank).toHaveBeenCalledWith('delivery');
+      expect(resolve).not.toHaveBeenCalled();
+    });
+
     // Rolling back to the crank's *outermost* savepoint discards the enclosing
     // transaction (see `rollbackSavepoint`), which would leave the work an aborted
     // crank still owes — terminating the vat whose delivery failed, collecting
