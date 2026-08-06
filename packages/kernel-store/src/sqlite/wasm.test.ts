@@ -517,10 +517,7 @@ describe('makeSQLKernelDatabase', () => {
       expect(mockDb._inTx).toBe(false);
     });
 
-    // The same hazard `rollbackSavepoint` guards against, by the other door: a
-    // RELEASE that throws leaves the savepoint on the stack and the transaction
-    // open with nothing to ever commit or abort it, so every later write on this
-    // connection joins it, reports success, and vanishes on close.
+    // The hazard `rollbackSavepoint` guards against, by the other door.
     it('releaseSavepoint discards the transaction when the release fails', async () => {
       const db = await makeSQLKernelDatabase({});
       mockDb._inTx = true;
@@ -555,9 +552,8 @@ describe('makeSQLKernelDatabase', () => {
       expect(mockDb._inTx).toBe(false);
     });
 
-    // `_inTx` is tracked here rather than read from SQLite, so a failed abort is
-    // the one case that can leave it disagreeing with the database. Left true,
-    // `beginIfNeeded` becomes a no-op forever after.
+    // A failed abort is the one case that can leave `_inTx` disagreeing with the
+    // database. Left true, `beginIfNeeded` is a no-op forever after.
     it('stops believing it is in a transaction when the abort fails too', async () => {
       const db = await makeSQLKernelDatabase({});
       mockDb._inTx = true;
@@ -576,10 +572,9 @@ describe('makeSQLKernelDatabase', () => {
       expect(mockDb._inTx).toBe(false);
     });
 
-    // The consequence of the above, and the reason it is worth asserting: a
-    // savepoint created outside a transaction autocommits when released
-    // (Agoric/agoric-sdk#8423), so no later rollback can undo the delivery — an
-    // aborted crank would silently keep its writes.
+    // Why that matters: a savepoint created outside a transaction commits when
+    // released (Agoric/agoric-sdk#8423), so an aborted crank would keep its
+    // writes.
     it('begins a transaction for the next savepoint after a failed abort', async () => {
       const db = await makeSQLKernelDatabase({});
       mockDb._inTx = true;

@@ -121,19 +121,15 @@ describe('Garbage Collection', () => {
    * Reap the importer vat until the kernel's bookkeeping catches up with the
    * vat's own garbage collection, or the attempts run out.
    *
-   * `bringOutYourDead` can only report an import as dropped once the engine has
+   * `bringOutYourDead` reports an import as dropped only once the engine has
    * collected the vat's presence and run its finalizer, which `gcAndFinalize`
-   * does not guarantee on the first attempt. Reaping once and then cranking
-   * repeatedly buys one attempt rather than several, because `nextReapAction`
-   * shifts the single scheduled entry off and the later cranks find nothing to
-   * do — so each attempt has to schedule its own reap, with a message to the vat
-   * to wake the run loop and consume it.
+   * does not guarantee on the first attempt. Each attempt needs its own reap —
+   * `nextReapAction` shifts the one scheduled entry off, so cranking again finds
+   * nothing to do — plus a message to wake the run loop and consume it.
    *
-   * Gives up after five attempts and lets the caller's assertion report the
-   * failure, which names the refcount that never arrived.
+   * Gives up after five attempts; the caller's assertion reports the failure.
    *
-   * @param settled - Predicate answering whether the state under test has
-   * arrived.
+   * @param settled - Whether the state under test has arrived yet.
    */
   async function reapImporterUntil(settled: () => boolean): Promise<void> {
     const isImporter = (vatId: VatId): boolean => vatId === importerVatId;

@@ -154,11 +154,9 @@ describe('crank methods', () => {
       expect(mockCrankBuffer).toHaveLength(0);
     });
 
-    // A failed rollback discards the whole transaction, so the enclosing
-    // savepoints are gone from the database too — not just the one rolled back
-    // to. Truncating to the ordinal would leave `endCrank` releasing a `t0` the
-    // database no longer has, and that "No such savepoint" would be thrown from
-    // the run loop's `finally`, over whatever really killed the kernel.
+    // A failed rollback discards every savepoint, not just this one. Truncating
+    // to the ordinal would have `endCrank` release a `t0` the database lacks and
+    // throw over whatever really killed the kernel.
     it('forgets every savepoint when the rollback fails', () => {
       context.inCrank = true;
       crankMethods.createCrankSavepoint('crank');
@@ -230,11 +228,9 @@ describe('crank methods', () => {
       expect(await waiter).toBeUndefined();
     });
 
-    // What `rollbackCrank` already does when its own rollback fails. Settling
-    // the crank regardless means callers proceed, so a savepoint left listed
-    // here has the next crank number its savepoint `t1` while the database still
-    // has `t0`: from then on `releaseAllSavepoints` releases the wrong one and
-    // every rollback aims past the crank it meant to undo.
+    // As `rollbackCrank` does. Left listed, the next crank numbers its savepoint
+    // `t1` against a database that has none, and every later release and rollback
+    // aims one crank past its target.
     it('forgets its savepoints even if releasing them fails', () => {
       crankMethods.startCrank();
       context.savepoints = ['test'];

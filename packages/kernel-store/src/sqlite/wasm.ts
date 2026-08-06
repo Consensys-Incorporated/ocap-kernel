@@ -210,16 +210,12 @@ export async function makeSQLKernelDatabase({
    */
   function rollbackIfNeeded(): void {
     if (db._inTx) {
-      // Out of the transaction as far as this driver is concerned before the
-      // abort is even attempted, because the abort can throw. Unlike the nodejs
-      // driver, which reads `inTransaction` from SQLite, `_inTx` is tracked here,
-      // so a throw is the one thing that can leave the two disagreeing. Left
-      // true, `beginIfNeeded` is a no-op from then on: writes outside a savepoint
-      // autocommit one statement at a time, and the outermost `RELEASE` of a
-      // savepoint created in autocommit mode commits rather than nesting (see
-      // `createSavepoint`). Setting it false instead means the next `BEGIN`
-      // throws if SQLite really is still in a transaction, which is the failure
-      // worth having.
+      // Cleared before the abort is attempted, because the abort can throw and
+      // `_inTx` is tracked here rather than read from SQLite as the nodejs driver
+      // does. Left true, `beginIfNeeded` is a no-op forever after and writes
+      // autocommit one statement at a time (see `createSavepoint`). Cleared, a
+      // still-open transaction surfaces as a failed `BEGIN` — the louder
+      // failure.
       db._inTx = false;
       db._spStack.length = 0;
       sqlAbortTransaction.step();
@@ -391,10 +387,9 @@ export async function makeSQLKernelDatabase({
       try {
         rollbackIfNeeded();
       } catch (abortError) {
-        // The rollback failure below is the one worth reporting. `_inTx` is
-        // already false by then, so the next `beginIfNeeded` issues its `BEGIN`
-        // and SQLite says loudly if it really is still in a transaction — but
-        // that is a crank away, and this is where the evidence is.
+        // The rollback failure below is the one worth reporting. The next
+        // `BEGIN` will fail if SQLite really is still in a transaction, but that
+        // is a crank away and this is where the evidence is.
         logger?.error(
           'failed to discard transaction after rollback',
           abortError,
@@ -432,10 +427,9 @@ export async function makeSQLKernelDatabase({
       try {
         rollbackIfNeeded();
       } catch (abortError) {
-        // The release failure below is the one worth reporting. `_inTx` is
-        // already false by then, so the next `beginIfNeeded` issues its `BEGIN`
-        // and SQLite says loudly if it really is still in a transaction — but
-        // that is a crank away, and this is where the evidence is.
+        // The release failure below is the one worth reporting. The next
+        // `BEGIN` will fail if SQLite really is still in a transaction, but that
+        // is a crank away and this is where the evidence is.
         logger?.error(
           'failed to discard transaction after release',
           abortError,

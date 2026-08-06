@@ -214,13 +214,8 @@ describe('KernelQueue', () => {
       expect(kernelStore.endCrank).toHaveBeenCalled();
     });
 
-    // `#flushCrankBuffer` settles the promise `enqueueMessage` handed an external
-    // caller, reading the resolution out of the store on the way. Were the crank
-    // rolled back after that, the store would un-resolve the promise and restore
-    // the run queue item, so a restart would deliver the message a second time
-    // and notify every other subscriber again — while the original caller had
-    // already been told the first answer. So the flush comes last, after
-    // everything that could still fail.
+    // Why the flush comes after the crank's fallible work: see
+    // `#processCrankResult`. Here the terminate is what fails.
     it('answers no caller from a crank it then rolls back', async () => {
       const mockItem: RunQueueItem = {
         type: 'send',
@@ -272,10 +267,8 @@ describe('KernelQueue', () => {
       );
     });
 
-    // The same invariant one level down, inside the flush itself: moving every
-    // buffered item onto the run queue is store work too, and it can fail
-    // part-way. Answering the first caller while the second enqueue is still
-    // ahead would hand out a result the crank's rollback then discards.
+    // The same invariant inside the flush: `#enqueueRun` is store work and can
+    // fail part-way, so no caller may be answered until all of it lands.
     it('answers no caller until every buffered item is enqueued', async () => {
       const mockItem: RunQueueItem = {
         type: 'send',
@@ -323,13 +316,8 @@ describe('KernelQueue', () => {
       expect(resolve).not.toHaveBeenCalled();
     });
 
-    // Rolling back to the crank's *outermost* savepoint discards the enclosing
-    // transaction (see `rollbackSavepoint`), which would leave the work an aborted
-    // crank still owes — terminating the vat whose delivery failed, collecting
-    // garbage — autocommitting statement by statement, beyond the reach of any
-    // later rollback. That work has to follow the rollback, since the worker is
-    // already gone and the store must not go on believing the vat is alive, so it
-    // is the rollback that has to spare the transaction.
+    // Why two savepoints: see `#runLoop`. This pins that the rollback spares the
+    // transaction, so the work an aborted crank still owes stays inside it.
     it.each([
       {
         label: 'an abort',

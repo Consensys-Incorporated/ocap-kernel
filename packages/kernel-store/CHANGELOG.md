@@ -12,12 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `rollbackSavepoint` discards the enclosing transaction when `ROLLBACK TO` itself fails, instead of leaving the savepoint on its stack and the transaction open ([#1005](https://github.com/MetaMask/ocap-kernel/pull/1005))
   - Nothing would ever commit or abort that transaction, so every later write on the connection silently joined it, reported success, and vanished on close. Discarding it is no wider than the caller asked for: the transaction begins with the outermost savepoint, so it holds only the work the rollback was abandoning
   - The rollback failure is still what gets thrown, even if aborting the transaction fails too
-- `releaseSavepoint` discards the enclosing transaction when `RELEASE` itself fails, the same way `rollbackSavepoint` already did when `ROLLBACK TO` failed ([#1012](https://github.com/MetaMask/ocap-kernel/pull/1012))
-  - The same hazard by the other door: the savepoint stayed on the stack and the transaction stayed open with nothing left that would ever commit or abort it. The release failure is what gets thrown, even if aborting fails too
-- The wasm driver leaves `_inTx` false when aborting a transaction throws, rather than believing it is still in one ([#1012](https://github.com/MetaMask/ocap-kernel/pull/1012))
-  - It tracks `_inTx` itself instead of reading it from SQLite, so a throwing abort was the one case that could leave the two disagreeing. Left true, `beginIfNeeded` became a permanent no-op and later writes autocommitted a statement at a time; left false, the next `BEGIN` fails loudly if SQLite really is still in a transaction. The nodejs driver reads `db.inTransaction` and was never affected
-- An abort that fails while recovering from a failed savepoint operation is logged, in both drivers ([#1012](https://github.com/MetaMask/ocap-kernel/pull/1012))
-  - The savepoint failure is still the one thrown, but the abandoned transaction it leaves behind was previously silent
+- `releaseSavepoint` discards the enclosing transaction when `RELEASE` fails, as `rollbackSavepoint` already did for `ROLLBACK TO` ([#1012](https://github.com/MetaMask/ocap-kernel/pull/1012))
+  - Otherwise the savepoint stayed on the stack and the transaction open with nothing left to commit or abort it. The release failure is still what gets thrown
+- The wasm driver clears `_inTx` when aborting a transaction throws, instead of believing it is still in one ([#1012](https://github.com/MetaMask/ocap-kernel/pull/1012))
+  - Left true, `beginIfNeeded` became a permanent no-op and later writes autocommitted. The nodejs driver reads `db.inTransaction` and was never affected
+- An abort that fails while recovering from a failed savepoint operation is now logged in both drivers ([#1012](https://github.com/MetaMask/ocap-kernel/pull/1012))
 
 ## [0.6.0]
 

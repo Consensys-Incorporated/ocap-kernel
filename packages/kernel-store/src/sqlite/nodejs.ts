@@ -300,9 +300,8 @@ export async function makeSQLKernelDatabase({
         rollbackIfNeeded();
       } catch (abortError) {
         // The rollback failure below is the one worth reporting, but a failed
-        // abort leaves SQLite holding a transaction this driver has stopped
-        // tracking, which the next crank would silently write into. Nothing here
-        // can repair that, so at least say so.
+        // abort leaves SQLite holding a transaction the next crank would
+        // silently write into. Nothing here can repair that.
         logger?.error(
           'failed to discard transaction after rollback',
           abortError,
@@ -341,9 +340,8 @@ export async function makeSQLKernelDatabase({
         rollbackIfNeeded();
       } catch (abortError) {
         // The release failure below is the one worth reporting, but a failed
-        // abort leaves SQLite holding a transaction this driver has stopped
-        // tracking, which the next crank would silently write into. Nothing here
-        // can repair that, so at least say so.
+        // abort leaves SQLite holding a transaction the next crank would
+        // silently write into. Nothing here can repair that.
         logger?.error(
           'failed to discard transaction after release',
           abortError,

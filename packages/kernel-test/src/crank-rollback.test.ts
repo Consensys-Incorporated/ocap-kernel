@@ -138,9 +138,8 @@ describe('crank rollback against a real database', () => {
     expect(kdb.kernelKVStore.get('second')).toBe('yes');
   });
 
-  // An aborted crank rolls its delivery back and then still has work to do —
-  // terminating the vat whose delivery failed, collecting garbage — whose writes
-  // have to survive that rollback, since the vat's worker is already gone.
+  // An aborted crank still owes work after the rollback — terminating the vat,
+  // collecting garbage — whose writes have to survive it.
   it('keeps the writes a crank makes after rolling its delivery back', async () => {
     const { kernelStore, kdb } = await makeStore();
 
@@ -157,12 +156,9 @@ describe('crank rollback against a real database', () => {
     expect(kdb.kernelKVStore.get('terminated')).toBe('yes');
   });
 
-  // And they survive it *as part of the crank's transaction*, which is why the
-  // delivery gets a savepoint of its own rather than rolling back the crank's:
-  // rolling back the outermost savepoint discards the transaction, after which
-  // those writes would autocommit one statement at a time. Nothing in the run
-  // loop rolls the crank's own savepoint back — it is the only way from here to
-  // observe that the writes are still undoable at all.
+  // And survive it *inside the crank's transaction*, not as autocommitted
+  // statements. Rolling back `crank` is the only way to observe that from here;
+  // the run loop never does it.
   it('holds those writes in the transaction rather than autocommitting them', async () => {
     const { kernelStore, kdb } = await makeStore();
 

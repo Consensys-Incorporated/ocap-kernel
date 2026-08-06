@@ -360,10 +360,7 @@ describe('makeSQLKernelDatabase', () => {
       expect(mockDb._spStack).toStrictEqual([]);
     });
 
-    // The same hazard `rollbackSavepoint` guards against, by the other door: a
-    // RELEASE that throws leaves the savepoint on the stack and the transaction
-    // open with nothing to ever commit or abort it, so every later write on this
-    // connection joins it, reports success, and vanishes on close.
+    // The hazard `rollbackSavepoint` guards against, by the other door.
     it('releaseSavepoint discards the transaction when the release fails', async () => {
       const db = await makeSQLKernelDatabase({});
       mockDb.inTransaction = true;
