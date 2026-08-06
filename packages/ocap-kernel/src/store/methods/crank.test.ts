@@ -153,6 +153,29 @@ describe('crank methods', () => {
 
       expect(mockCrankBuffer).toHaveLength(0);
     });
+
+    // A failed rollback discards the whole transaction, so the enclosing
+    // savepoints are gone from the database too — not just the one rolled back
+    // to. Truncating to the ordinal would leave `endCrank` releasing a `t0` the
+    // database no longer has, and that "No such savepoint" would be thrown from
+    // the run loop's `finally`, over whatever really killed the kernel.
+    it('forgets every savepoint when the rollback fails', () => {
+      context.inCrank = true;
+      crankMethods.createCrankSavepoint('crank');
+      crankMethods.createCrankSavepoint('delivery');
+      vi.mocked(kdb.rollbackSavepoint).mockImplementationOnce(() => {
+        throw new Error('disk I/O error');
+      });
+
+      expect(() => crankMethods.rollbackCrank('delivery')).toThrow(
+        'disk I/O error',
+      );
+
+      expect(context.savepoints).toStrictEqual([]);
+      // The release `endCrank` would otherwise attempt, and throw over.
+      crankMethods.endCrank();
+      expect(kdb.releaseSavepoint).not.toHaveBeenCalled();
+    });
   });
 
   describe('endCrank', () => {
@@ -207,11 +230,11 @@ describe('crank methods', () => {
       expect(await waiter).toBeUndefined();
     });
 
-    // What `rollbackCrank` already does in its own `finally`. Settling the crank
-    // regardless means callers proceed, so a savepoint left listed here has the
-    // next crank number its savepoint `t1` while the database still has `t0`:
-    // from then on `releaseAllSavepoints` releases the wrong one and every
-    // rollback aims past the crank it meant to undo.
+    // What `rollbackCrank` already does when its own rollback fails. Settling
+    // the crank regardless means callers proceed, so a savepoint left listed
+    // here has the next crank number its savepoint `t1` while the database still
+    // has `t0`: from then on `releaseAllSavepoints` releases the wrong one and
+    // every rollback aims past the crank it meant to undo.
     it('forgets its savepoints even if releasing them fails', () => {
       crankMethods.startCrank();
       context.savepoints = ['test'];

@@ -51,13 +51,19 @@ export function getCrankMethods(ctx: StoreContext, kdb: KernelDatabase) {
       if (ctx.savepoints[ordinal] === savepoint) {
         try {
           kdb.rollbackSavepoint(`t${ordinal}`);
-        } finally {
-          // Forget the savepoint even if the rollback failed. Leaving it listed
-          // would have `endCrank`'s release commit the crank we just abandoned —
-          // the half-finished state this rollback exists to discard. A failed
-          // rollback discards the whole transaction instead (see
-          // `rollbackSavepoint`), which for a crank is the same boundary.
+          // Forget the savepoint. Leaving it listed would have `endCrank`'s
+          // release commit the crank we just abandoned — the half-finished state
+          // this rollback exists to discard.
           ctx.savepoints.length = ordinal;
+        } catch (error) {
+          // A failed rollback discards the whole transaction (see
+          // `rollbackSavepoint`), taking every savepoint with it, not just this
+          // one. Truncating to `ordinal` would leave the enclosing savepoints
+          // listed against a database that no longer has them, and `endCrank`
+          // would then throw "No such savepoint: t0" from the run loop's
+          // `finally` — burying the failure that actually killed the kernel.
+          ctx.savepoints.length = 0;
+          throw error;
         }
         // The rollback reverted DB state but in-memory caches are stale.
         // Recreate the run queue so its cached head/tail are re-read from DB.
@@ -81,11 +87,11 @@ export function getCrankMethods(ctx: StoreContext, kdb: KernelDatabase) {
         kdb.releaseSavepoint('t0');
       } finally {
         // Forget the savepoints even if the release failed, as `rollbackCrank`
-        // does. A failed release discards the whole transaction (see
-        // `releaseSavepoint`), so the database has no savepoints left either;
-        // leaving them listed here would have the next crank number its savepoint
-        // `t1`, and from then on every release and rollback would aim one crank
-        // past the one it meant to end.
+        // does when its own rollback fails. A failed release discards the whole
+        // transaction (see `releaseSavepoint`), so the database has no savepoints
+        // left either; leaving them listed here would have the next crank number
+        // its savepoint `t1`, and from then on every release and rollback would
+        // aim one crank past the one it meant to end.
         ctx.savepoints.length = 0;
       }
     }
