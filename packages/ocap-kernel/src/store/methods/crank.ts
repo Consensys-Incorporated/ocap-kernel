@@ -77,8 +77,17 @@ export function getCrankMethods(ctx: StoreContext, kdb: KernelDatabase) {
    */
   function releaseAllSavepoints(): void {
     if (ctx.savepoints.length > 0) {
-      kdb.releaseSavepoint('t0');
-      ctx.savepoints.length = 0;
+      try {
+        kdb.releaseSavepoint('t0');
+      } finally {
+        // Forget the savepoints even if the release failed, as `rollbackCrank`
+        // does. A failed release discards the whole transaction (see
+        // `releaseSavepoint`), so the database has no savepoints left either;
+        // leaving them listed here would have the next crank number its savepoint
+        // `t1`, and from then on every release and rollback would aim one crank
+        // past the one it meant to end.
+        ctx.savepoints.length = 0;
+      }
     }
   }
 

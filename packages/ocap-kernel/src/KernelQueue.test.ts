@@ -93,6 +93,23 @@ describe('KernelQueue', () => {
   };
 
   /**
+   * Stop the run loop by failing the *next* crank's start, so that the crank
+   * under test runs to completion. Throwing from one of a crank's own store calls
+   * cuts it short, which hides everything the crank does after that call.
+   */
+  const stopAfterOneCrank = (): void => {
+    let cranks = 0;
+    (kernelStore.startCrank as unknown as MockInstance).mockImplementation(
+      () => {
+        cranks += 1;
+        if (cranks > 1) {
+          throw new Error(STOP_RUN_LOOP);
+        }
+      },
+    );
+  };
+
+  /**
    * Run a single crank whose delivery blows up, killing the run loop.
    *
    * @param error - The error the delivery fails with.
@@ -128,7 +145,8 @@ describe('KernelQueue', () => {
       const deliver = vi.fn().mockRejectedValue(deliverError);
       await expect(kernelQueue.run(deliver)).rejects.toBe(deliverError);
       expect(kernelStore.startCrank).toHaveBeenCalled();
-      expect(kernelStore.createCrankSavepoint).toHaveBeenCalledWith('start');
+      expect(kernelStore.createCrankSavepoint).toHaveBeenCalledWith('crank');
+      expect(kernelStore.createCrankSavepoint).toHaveBeenCalledWith('delivery');
       expect(processGCActionSetSpy).toHaveBeenCalled();
       expect(kernelStore.nextReapAction).toHaveBeenCalled();
       expect(kernelStore.nextTerminatedVatCleanup).toHaveBeenCalled();
@@ -156,9 +174,9 @@ describe('KernelQueue', () => {
       });
       await expect(kernelQueue.run(deliver)).rejects.toThrow(STOP_RUN_LOOP);
       expect(kernelStore.startCrank).toHaveBeenCalled();
-      expect(kernelStore.createCrankSavepoint).toHaveBeenCalledWith('start');
+      expect(kernelStore.createCrankSavepoint).toHaveBeenCalledWith('delivery');
       expect(deliver).toHaveBeenCalledWith(mockItem);
-      expect(kernelStore.rollbackCrank).toHaveBeenCalledWith('start');
+      expect(kernelStore.rollbackCrank).toHaveBeenCalledWith('delivery');
       expect(kernelStore.collectGarbage).toHaveBeenCalled();
       expect(kernelStore.endCrank).toHaveBeenCalled();
     });
@@ -197,12 +215,13 @@ describe('KernelQueue', () => {
     });
 
     // `#flushCrankBuffer` settles the promise `enqueueMessage` handed an external
-    // caller, reading the resolution out of the store on the way. Rolling the
-    // crank back afterwards un-resolves that promise in the store and restores
-    // the run queue item, so a restart delivers the message a second time and
-    // notifies every other subscriber again — while the original caller has
-    // already been told the first answer.
-    it('does not roll back a crank whose result the caller already received', async () => {
+    // caller, reading the resolution out of the store on the way. Were the crank
+    // rolled back after that, the store would un-resolve the promise and restore
+    // the run queue item, so a restart would deliver the message a second time
+    // and notify every other subscriber again — while the original caller had
+    // already been told the first answer. So the flush comes last, after
+    // everything that could still fail.
+    it('answers no caller from a crank it then rolls back', async () => {
       const mockItem: RunQueueItem = {
         type: 'send',
         target: 'ko123',
@@ -220,7 +239,7 @@ describe('KernelQueue', () => {
       const reject = vi.fn();
       kernelQueue.subscriptions.set('kp1', { resolve, reject });
 
-      // The crank succeeds, so the flush hands that caller its answer...
+      // The delivery succeeds and its result is there for the flush to hand over...
       (
         kernelStore.flushCrankBuffer as unknown as MockInstance
       ).mockReturnValueOnce([
@@ -233,7 +252,7 @@ describe('KernelQueue', () => {
         },
       );
 
-      // ...and only then does the kernel die, in work that runs after the flush.
+      // ...but the crank still has fallible work left, and it dies there.
       const terminationError = new Error('vat worker already gone');
       (terminateVat as unknown as MockInstance).mockRejectedValueOnce(
         terminationError,
@@ -244,26 +263,39 @@ describe('KernelQueue', () => {
 
       await expect(kernelQueue.run(deliver)).rejects.toBe(terminationError);
 
-      expect(resolve).toHaveBeenCalledWith({ body: '"answer"', slots: [] });
-      expect(kernelStore.rollbackCrank).not.toHaveBeenCalled();
+      expect(kernelStore.rollbackCrank).toHaveBeenCalledWith('delivery');
+      expect(resolve).not.toHaveBeenCalled();
+      // Told the result will never come, rather than left waiting on a crank the
+      // store no longer has any record of.
+      expect(reject).toHaveBeenCalledWith(
+        expect.objectContaining({ cause: terminationError }),
+      );
     });
 
-    // `rollbackCrank('start')` rolls back the crank's outermost savepoint, which
-    // ends the transaction — so anything the crank does to the store afterwards
-    // autocommits piecemeal and no rollback can reach it. Whatever the ordering,
-    // the rollback has to be the last thing the crank asks of the store.
+    // Rolling back to the crank's *outermost* savepoint discards the enclosing
+    // transaction (see `rollbackSavepoint`), which would leave the work an aborted
+    // crank still owes — terminating the vat whose delivery failed, collecting
+    // garbage — autocommitting statement by statement, beyond the reach of any
+    // later rollback. That work has to follow the rollback, since the worker is
+    // already gone and the store must not go on believing the vat is alive, so it
+    // is the rollback that has to spare the transaction.
     it.each([
-      { label: 'an abort', crankResult: { abort: true } },
+      {
+        label: 'an abort',
+        crankResult: { abort: true },
+        storeOrder: ['rollbackCrank', 'collectGarbage'],
+      },
       {
         label: 'an abort that also terminates',
         crankResult: {
           abort: true,
           terminate: { vatId: 'v1', info: { body: '"exit"', slots: [] } },
         },
+        storeOrder: ['rollbackCrank', 'terminateVat', 'collectGarbage'],
       },
     ])(
-      'does no store work after rolling back $label',
-      async ({ crankResult }) => {
+      'keeps the crank transactional after rolling back $label',
+      async ({ crankResult, storeOrder }) => {
         const mockItem: RunQueueItem = {
           type: 'send',
           target: 'ko123',
@@ -297,8 +329,13 @@ describe('KernelQueue', () => {
         const deliver = vi.fn().mockResolvedValue(crankResult);
         await expect(kernelQueue.run(deliver)).rejects.toThrow(STOP_RUN_LOOP);
 
-        expect(storeCalls).toContain('rollbackCrank');
-        expect(storeCalls.at(-1)).toBe('rollbackCrank');
+        expect(storeCalls).toStrictEqual(storeOrder);
+        expect(
+          (
+            kernelStore.createCrankSavepoint as unknown as MockInstance
+          ).mock.calls.flat(),
+        ).toStrictEqual(['crank', 'delivery']);
+        expect(kernelStore.rollbackCrank).not.toHaveBeenCalledWith('crank');
       },
     );
   });
@@ -393,7 +430,7 @@ describe('KernelQueue', () => {
       await killRunLoop(new Error('crank exploded'));
       // Without this, endCrank's savepoint release commits the half-finished
       // crank and the dequeued item is lost.
-      expect(kernelStore.rollbackCrank).toHaveBeenCalledWith('start');
+      expect(kernelStore.rollbackCrank).toHaveBeenCalledWith('delivery');
     });
 
     it('does not roll back when the savepoint was never created', async () => {
@@ -949,7 +986,7 @@ describe('KernelQueue', () => {
         throw new Error(STOP_RUN_LOOP);
       });
       await expect(kernelQueue.run(deliver)).rejects.toThrow(STOP_RUN_LOOP);
-      expect(kernelStore.rollbackCrank).toHaveBeenCalledWith('start');
+      expect(kernelStore.rollbackCrank).toHaveBeenCalledWith('delivery');
       expect(rejectSpy).toHaveBeenCalledWith(terminateInfo);
       expect(kernelQueue.subscriptions.has('kp99')).toBe(false);
     });
@@ -985,7 +1022,7 @@ describe('KernelQueue', () => {
         throw new Error(STOP_RUN_LOOP);
       });
       await expect(kernelQueue.run(deliver)).rejects.toThrow(STOP_RUN_LOOP);
-      expect(kernelStore.rollbackCrank).toHaveBeenCalledWith('start');
+      expect(kernelStore.rollbackCrank).toHaveBeenCalledWith('delivery');
       expect(rejectedAfterAbort).toBe(false);
       expect(resolveSpy).not.toHaveBeenCalled();
       expect(subscribedAfterAbort).toBe(true);
@@ -1055,11 +1092,7 @@ describe('KernelQueue', () => {
         mockItem,
       );
       const deliver = vi.fn().mockResolvedValue(undefined);
-      (
-        kernelStore.collectGarbage as unknown as MockInstance
-      ).mockImplementation(() => {
-        throw new Error(STOP_RUN_LOOP);
-      });
+      stopAfterOneCrank();
       await expect(kernelQueue.run(deliver)).rejects.toThrow(STOP_RUN_LOOP);
       expect(rejectSpy).toHaveBeenCalledWith(rejectedValue);
       expect(resolveSpy).not.toHaveBeenCalled();
@@ -1094,11 +1127,7 @@ describe('KernelQueue', () => {
         mockItem,
       );
       const deliver = vi.fn().mockResolvedValue(undefined);
-      (
-        kernelStore.collectGarbage as unknown as MockInstance
-      ).mockImplementation(() => {
-        throw new Error(STOP_RUN_LOOP);
-      });
+      stopAfterOneCrank();
       await expect(kernelQueue.run(deliver)).rejects.toThrow(STOP_RUN_LOOP);
       expect(resolveSpy).toHaveBeenCalledWith(fulfilledValue);
       expect(rejectSpy).not.toHaveBeenCalled();

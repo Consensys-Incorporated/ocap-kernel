@@ -383,6 +383,25 @@ describe('makeSQLKernelDatabase', () => {
       mockDb.inTransaction = false;
     });
 
+    it('releaseSavepoint reports the release failure even if the abort fails too', async () => {
+      const db = await makeSQLKernelDatabase({});
+      mockDb.inTransaction = true;
+      mockDb._spStack = ['point1'];
+      mockDb.exec.mockImplementationOnce(() => {
+        throw new Error('disk I/O error');
+      });
+      mockStatement.run.mockImplementationOnce(() => {
+        throw new Error('cannot rollback');
+      });
+
+      expect(() => db.releaseSavepoint('point1')).toThrowError(
+        'disk I/O error',
+      );
+
+      expect(mockDb._spStack).toStrictEqual([]);
+      mockDb.inTransaction = false;
+    });
+
     it('supports nested savepoints', async () => {
       const db = await makeSQLKernelDatabase({});
       db.createSavepoint('outer');

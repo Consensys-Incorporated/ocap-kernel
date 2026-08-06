@@ -488,7 +488,6 @@ describe('makeSQLKernelDatabase', () => {
       );
 
       expect(mockDb._spStack).toStrictEqual([]);
-      mockDb._inTx = false;
     });
 
     it('releaseSavepoint validates savepoint exists', async () => {
@@ -535,6 +534,24 @@ describe('makeSQLKernelDatabase', () => {
       );
 
       expect(mockDb._spStack).toStrictEqual([]);
+      expect(mockDb._inTx).toBe(false);
+    });
+
+    it('releaseSavepoint reports the release failure even if the abort fails too', async () => {
+      const db = await makeSQLKernelDatabase({});
+      mockDb._inTx = true;
+      mockDb._spStack = ['point1'];
+      mockDb.exec.mockImplementationOnce(() => {
+        throw new Error('disk I/O error');
+      });
+      mockStatement.step.mockImplementationOnce(() => {
+        throw new Error('cannot rollback');
+      });
+
+      expect(() => db.releaseSavepoint('point1')).toThrowError(
+        'disk I/O error',
+      );
+
       expect(mockDb._inTx).toBe(false);
     });
 

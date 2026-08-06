@@ -210,10 +210,18 @@ export async function makeSQLKernelDatabase({
    */
   function rollbackIfNeeded(): void {
     if (db._inTx) {
-      sqlAbortTransaction.step();
-      sqlAbortTransaction.reset();
+      // Out of the transaction as far as this driver is concerned before the
+      // abort is even attempted. Unlike the nodejs driver, which reads
+      // `inTransaction` from SQLite, `_inTx` is tracked here — and an abort
+      // typically fails because SQLite already rolled back on its own as part of
+      // whatever went wrong. Left true, `beginIfNeeded` is a no-op from then on
+      // and the next `createSavepoint` runs in autocommit mode, where its
+      // `RELEASE` commits (see `createSavepoint`) and no later rollback can undo
+      // the delivery.
       db._inTx = false;
       db._spStack.length = 0;
+      sqlAbortTransaction.step();
+      sqlAbortTransaction.reset();
     }
   }
 
@@ -403,7 +411,22 @@ export async function makeSQLKernelDatabase({
       throw new Error(`No such savepoint: ${name}`);
     }
     const query = SQL_QUERIES.RELEASE_SAVEPOINT.replace('%NAME%', name);
-    db.exec(query);
+    try {
+      db.exec(query);
+    } catch (error) {
+      // The hazard `rollbackSavepoint` guards against, by the other door: left as
+      // it was, the savepoint stays on the stack and the transaction open with
+      // nothing to ever commit or abort it, so every later write on this
+      // connection joins it, reports success, and vanishes on close. There is no
+      // committing this transaction now, so discard it.
+      db._spStack.length = 0;
+      try {
+        rollbackIfNeeded();
+      } catch {
+        // The release failure below is the one worth reporting.
+      }
+      throw error;
+    }
     db._spStack.splice(idx);
     if (db._spStack.length === 0) {
       commitIfNeeded();
