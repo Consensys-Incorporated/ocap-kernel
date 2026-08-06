@@ -388,8 +388,15 @@ export async function makeSQLKernelDatabase({
       db._spStack.length = 0;
       try {
         rollbackIfNeeded();
-      } catch {
-        // The rollback failure below is the one worth reporting.
+      } catch (abortError) {
+        // The rollback failure below is the one worth reporting. `_inTx` is
+        // already false by then, so the next `beginIfNeeded` issues its `BEGIN`
+        // and SQLite says loudly if it really is still in a transaction — but
+        // that is a crank away, and this is where the evidence is.
+        logger?.error(
+          'failed to discard transaction after rollback',
+          abortError,
+        );
       }
       throw error;
     }
@@ -422,8 +429,15 @@ export async function makeSQLKernelDatabase({
       db._spStack.length = 0;
       try {
         rollbackIfNeeded();
-      } catch {
-        // The release failure below is the one worth reporting.
+      } catch (abortError) {
+        // The release failure below is the one worth reporting. `_inTx` is
+        // already false by then, so the next `beginIfNeeded` issues its `BEGIN`
+        // and SQLite says loudly if it really is still in a transaction — but
+        // that is a crank away, and this is where the evidence is.
+        logger?.error(
+          'failed to discard transaction after release',
+          abortError,
+        );
       }
       throw error;
     }

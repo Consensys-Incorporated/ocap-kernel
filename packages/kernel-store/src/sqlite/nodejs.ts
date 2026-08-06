@@ -298,8 +298,15 @@ export async function makeSQLKernelDatabase({
       db._spStack.length = 0;
       try {
         rollbackIfNeeded();
-      } catch {
-        // The rollback failure below is the one worth reporting.
+      } catch (abortError) {
+        // The rollback failure below is the one worth reporting, but a failed
+        // abort leaves SQLite holding a transaction this driver has stopped
+        // tracking, which the next crank would silently write into. Nothing here
+        // can repair that, so at least say so.
+        logger?.error(
+          'failed to discard transaction after rollback',
+          abortError,
+        );
       }
       throw error;
     }
@@ -332,8 +339,15 @@ export async function makeSQLKernelDatabase({
       db._spStack.length = 0;
       try {
         rollbackIfNeeded();
-      } catch {
-        // The release failure below is the one worth reporting.
+      } catch (abortError) {
+        // The release failure below is the one worth reporting, but a failed
+        // abort leaves SQLite holding a transaction this driver has stopped
+        // tracking, which the next crank would silently write into. Nothing here
+        // can repair that, so at least say so.
+        logger?.error(
+          'failed to discard transaction after release',
+          abortError,
+        );
       }
       throw error;
     }
