@@ -138,6 +138,46 @@ describe('crank rollback against a real database', () => {
     expect(kdb.kernelKVStore.get('second')).toBe('yes');
   });
 
+  // An aborted crank rolls its delivery back and then still has work to do —
+  // terminating the vat whose delivery failed, collecting garbage — whose writes
+  // have to survive that rollback, since the vat's worker is already gone.
+  it('keeps the writes a crank makes after rolling its delivery back', async () => {
+    const { kernelStore, kdb } = await makeStore();
+
+    kernelStore.startCrank();
+    kernelStore.createCrankSavepoint('crank');
+    kernelStore.createCrankSavepoint('delivery');
+    kdb.kernelKVStore.set('delivered', 'yes');
+
+    kernelStore.rollbackCrank('delivery');
+    kdb.kernelKVStore.set('terminated', 'yes');
+    kernelStore.endCrank();
+
+    expect(kdb.kernelKVStore.get('delivered')).toBeUndefined();
+    expect(kdb.kernelKVStore.get('terminated')).toBe('yes');
+  });
+
+  // And they survive it *as part of the crank's transaction*, which is why the
+  // delivery gets a savepoint of its own rather than rolling back the crank's:
+  // rolling back the outermost savepoint discards the transaction, after which
+  // those writes would autocommit one statement at a time. Nothing in the run
+  // loop rolls the crank's own savepoint back — it is the only way from here to
+  // observe that the writes are still undoable at all.
+  it('holds those writes in the transaction rather than autocommitting them', async () => {
+    const { kernelStore, kdb } = await makeStore();
+
+    kernelStore.startCrank();
+    kernelStore.createCrankSavepoint('crank');
+    kernelStore.createCrankSavepoint('delivery');
+    kernelStore.rollbackCrank('delivery');
+    kdb.kernelKVStore.set('terminated', 'yes');
+
+    kernelStore.rollbackCrank('crank');
+    kernelStore.endCrank();
+
+    expect(kdb.kernelKVStore.get('terminated')).toBeUndefined();
+  });
+
   // `createCrankSavepoint` records the name only once the database has the
   // savepoint. Asking to roll back one that was never created must therefore say
   // so, rather than releasing someone else's savepoint.
