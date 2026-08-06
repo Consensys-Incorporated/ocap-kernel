@@ -211,13 +211,15 @@ export async function makeSQLKernelDatabase({
   function rollbackIfNeeded(): void {
     if (db._inTx) {
       // Out of the transaction as far as this driver is concerned before the
-      // abort is even attempted. Unlike the nodejs driver, which reads
-      // `inTransaction` from SQLite, `_inTx` is tracked here — and an abort
-      // typically fails because SQLite already rolled back on its own as part of
-      // whatever went wrong. Left true, `beginIfNeeded` is a no-op from then on
-      // and the next `createSavepoint` runs in autocommit mode, where its
-      // `RELEASE` commits (see `createSavepoint`) and no later rollback can undo
-      // the delivery.
+      // abort is even attempted, because the abort can throw. Unlike the nodejs
+      // driver, which reads `inTransaction` from SQLite, `_inTx` is tracked here,
+      // so a throw is the one thing that can leave the two disagreeing. Left
+      // true, `beginIfNeeded` is a no-op from then on: writes outside a savepoint
+      // autocommit one statement at a time, and the outermost `RELEASE` of a
+      // savepoint created in autocommit mode commits rather than nesting (see
+      // `createSavepoint`). Setting it false instead means the next `BEGIN`
+      // throws if SQLite really is still in a transaction, which is the failure
+      // worth having.
       db._inTx = false;
       db._spStack.length = 0;
       sqlAbortTransaction.step();

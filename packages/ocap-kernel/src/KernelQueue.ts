@@ -135,8 +135,11 @@ export class KernelQueue {
         // the enclosing transaction (see `rollbackSavepoint`), and the work an
         // aborted crank still owes — terminating the vat whose delivery failed,
         // collecting garbage — would then autocommit statement by statement,
-        // beyond the reach of any later rollback. Only `delivery` is ever rolled
-        // back; releasing `crank` in `endCrank` is this crank's one commit point.
+        // beyond the reach of any later rollback. The run loop only ever rolls
+        // back `delivery`; `crank` is released by `endCrank`, which is this
+        // crank's one commit point. That release names the *first* savepoint
+        // created here, by ordinal — see `releaseAllSavepoints` — so `crank` has
+        // to stay first.
         this.#kernelStore.createCrankSavepoint('crank');
         this.#kernelStore.createCrankSavepoint('delivery');
 
@@ -342,21 +345,30 @@ export class KernelQueue {
       // restart it and terminate the vat only after a certain number of failed
       // retries. This is probably where we should implement the vat restart logic.
     }
-    // Vat termination during delivery is triggered by an illegal syscall
-    // or by syscall.exit(). Its store writes have to survive the rollback above:
-    // the worker is already gone, so a store that still believed the vat was
-    // alive would relaunch it after a restart and redeliver what killed it.
+    // Vat termination during delivery is triggered by an illegal syscall or by
+    // syscall.exit(). This call is what kills the worker, and its store writes
+    // have to survive the rollback above: once the worker is gone, a store that
+    // still believed the vat was alive would relaunch it after a restart and
+    // redeliver what killed it. Hence the rollback goes only as far as
+    // `delivery`, leaving these writes inside the crank's transaction.
     if (crankResult?.terminate) {
       const { vatId, info } = crankResult.terminate;
       await this.#terminateVat(vatId, info);
     }
     this.#kernelStore.collectGarbage();
     if (!crankResult?.abort) {
-      // The crank survived, so hand its buffered outputs on — last, once nothing
-      // fallible remains. The flush settles the promise `enqueueMessage` gave an
-      // external caller, reading the result out of the store; were the crank
-      // rolled back after that, the caller would keep an answer computed from
-      // state the store discarded, and a restart would deliver the message again.
+      // The crank survived, so hand its buffered outputs on — after the store
+      // work above, which can still fail. The flush settles the promise
+      // `enqueueMessage` gave an external caller, reading the result out of the
+      // store; were the crank rolled back after that, the caller would keep an
+      // answer computed from state the store discarded, and a restart would
+      // deliver the message again.
+      //
+      // Not airtight: `#terminateVat` resolves the promises the dying vat was
+      // deciding via `resolvePromises`, which defaults to `immediate` and so
+      // invokes their kernel subscriptions before `collectGarbage` runs. Closing
+      // that would mean deferring those too, which is a change to termination
+      // semantics rather than to crank ordering.
       this.#flushCrankBuffer();
     }
     // After the flush, because the audit reads the run queue as ground truth
@@ -396,8 +408,9 @@ export class KernelQueue {
         resolved.push(item.kpid);
       }
     }
-    // Also promises resolved during this crank that don't have kernel-level
-    // subscribers (e.g., promises from enqueueMessage).
+    // Plus promises resolved during this crank that produced no notify of their
+    // own — nothing in the store was subscribed to them — but that the kernel
+    // itself is waiting on (e.g., promises from `enqueueMessage`).
     resolved.push(...this.#resolvedWithKernelSubscription);
     this.#resolvedWithKernelSubscription = [];
 
