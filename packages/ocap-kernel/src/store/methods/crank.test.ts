@@ -206,6 +206,23 @@ describe('crank methods', () => {
       expect(context.resolveCrank).toBeUndefined();
       expect(await waiter).toBeUndefined();
     });
+
+    // What `rollbackCrank` already does in its own `finally`. Settling the crank
+    // regardless means callers proceed, so a savepoint left listed here has the
+    // next crank number its savepoint `t1` while the database still has `t0`:
+    // from then on `releaseAllSavepoints` releases the wrong one and every
+    // rollback aims past the crank it meant to undo.
+    it('forgets its savepoints even if releasing them fails', () => {
+      crankMethods.startCrank();
+      context.savepoints = ['test'];
+      vi.mocked(kdb.releaseSavepoint).mockImplementationOnce(() => {
+        throw new Error('database is gone');
+      });
+
+      expect(() => crankMethods.endCrank()).toThrow('database is gone');
+
+      expect(context.savepoints).toStrictEqual([]);
+    });
   });
 
   describe('releaseAllSavepoints', () => {
