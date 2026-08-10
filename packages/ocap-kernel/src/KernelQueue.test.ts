@@ -25,6 +25,24 @@ vi.mock('@endo/promise-kit', () => ({
  */
 const STOP_RUN_LOOP = 'test: stop run loop';
 
+/**
+ * Collect an error and every error reachable through its `cause` chain, so that
+ * a test can assert a root cause survived without pinning how its reporter
+ * chose to wrap it.
+ *
+ * @param error - The error to walk.
+ * @returns The chain, outermost first.
+ */
+const causeChain = (error: unknown): unknown[] => {
+  const chain: unknown[] = [];
+  let current = error;
+  while (current instanceof Error) {
+    chain.push(current);
+    current = current.cause;
+  }
+  return chain;
+};
+
 describe('KernelQueue', () => {
   let kernelStore: KernelStore;
   let kernelQueue: KernelQueue;
@@ -536,6 +554,43 @@ describe('KernelQueue', () => {
           'Run loop died and its crank could not be rolled back: Error: database is gone',
         // The headline names the rollback, so only `detail` can carry the error
         // that actually killed the kernel to the one consumer that reports it.
+        detail: expect.stringContaining('crank exploded'),
+      });
+    });
+
+    // FAILING REPRO — see the commit message for this test.
+    //
+    // The companion of the case above, at the other end of the crank. Since the
+    // delivery rollback now spares `crank`, `endCrank`'s release is a real
+    // RELEASE + COMMIT on the dying path where it used to be a no-op, and
+    // `#runLoop` calls it from a bare `finally` — so when it throws it replaces
+    // the error that killed the kernel instead of being reported alongside it.
+    it('reports both failures when endCrank also fails', async () => {
+      (
+        kernelStore.runQueueLength as unknown as MockInstance
+      ).mockReturnValueOnce(1);
+      (kernelStore.dequeueRun as unknown as MockInstance).mockReturnValueOnce({
+        type: 'send',
+        target: 'ko123',
+        message: {} as KernelMessage,
+      });
+      (kernelStore.endCrank as unknown as MockInstance).mockImplementation(
+        () => {
+          throw new Error('database is gone');
+        },
+      );
+      const crankError = new Error('crank exploded');
+      const deliver = vi.fn().mockRejectedValue(crankError);
+
+      const failure = await kernelQueue
+        .run(deliver)
+        .catch((error: unknown) => error);
+
+      // However the release failure is named, the error that actually killed the
+      // kernel has to stay reachable — as the rollback path already manages.
+      expect(causeChain(failure)).toContain(crankError);
+      expect(kernelQueue.getRunLoopStatus()).toMatchObject({
+        state: 'failed',
         detail: expect.stringContaining('crank exploded'),
       });
     });
