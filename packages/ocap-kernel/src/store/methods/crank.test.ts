@@ -17,6 +17,8 @@ describe('crank methods', () => {
       savepoints: [],
       crankBuffer: mockCrankBuffer,
       refreshRunQueue: vi.fn(),
+      refreshCachedValues: vi.fn(),
+      maybeFreeKrefs: new Set(),
     } as unknown as StoreContext;
 
     kdb = {

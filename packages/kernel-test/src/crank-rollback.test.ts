@@ -174,6 +174,70 @@ describe('crank rollback against a real database', () => {
     expect(kdb.kernelKVStore.get('terminated')).toBeUndefined();
   });
 
+  // Every `provideCachedStoredValue` keeps its value in a closure and writes
+  // through to kv, so a rollback that only reverts the database leaves the cache
+  // holding the abandoned crank's value — and the next `set` persists it. The GC
+  // action set is the case that matters: `processGCActionSet` consumes an action
+  // before delivering it, so losing the rollback loses the action outright.
+  it('restores the GC action set consumed by a rolled-back crank', async () => {
+    const { kernelStore } = await makeStore();
+    kernelStore.addGCActions(['v1 dropExport ko1']);
+
+    kernelStore.startCrank();
+    kernelStore.createCrankSavepoint('crank');
+    kernelStore.createCrankSavepoint('delivery');
+    // Consume the action the way `processGCActionSet` does.
+    kernelStore.setGCActions(new Set());
+
+    kernelStore.rollbackCrank('delivery');
+    kernelStore.endCrank();
+
+    expect([...kernelStore.getGCActions()]).toStrictEqual([
+      'v1 dropExport ko1',
+    ]);
+  });
+
+  // Same closure, same failure: a reap scheduled and then consumed by a crank
+  // that rolls back must still be pending afterwards.
+  it('restores the reap queue consumed by a rolled-back crank', async () => {
+    const { kernelStore } = await makeStore();
+    kernelStore.scheduleReap('v1');
+
+    kernelStore.startCrank();
+    kernelStore.createCrankSavepoint('crank');
+    kernelStore.createCrankSavepoint('delivery');
+    expect(kernelStore.nextReapAction()).toBeDefined();
+
+    kernelStore.rollbackCrank('delivery');
+    kernelStore.endCrank();
+
+    expect(kernelStore.nextReapAction()).toBeDefined();
+  });
+
+  // `maybeFreeKrefs` is RAM-only, so nothing rolls it back. Left populated, the
+  // next crank's `collectGarbage` visits krefs whose decrements were undone —
+  // and `getKernelPromise` throws outright for one the rollback deleted, which
+  // kills the run loop.
+  it('discards GC candidates accumulated by a rolled-back crank', async () => {
+    const { kernelStore } = await makeStore();
+
+    kernelStore.startCrank();
+    kernelStore.createCrankSavepoint('crank');
+    kernelStore.createCrankSavepoint('delivery');
+    // Born at 1, so this drops it to 0 and leaves `kpid` in `maybeFreeKrefs`
+    // while the rollback removes the promise record it names.
+    const kpid = kernelStore.initKernelPromise()[0];
+    kernelStore.decrementRefCount(kpid, 'test');
+
+    kernelStore.rollbackCrank('delivery');
+    kernelStore.endCrank();
+
+    kernelStore.startCrank();
+    kernelStore.createCrankSavepoint('crank');
+    expect(() => kernelStore.collectGarbage()).not.toThrow();
+    kernelStore.endCrank();
+  });
+
   // `createCrankSavepoint` records the name only once the database has the
   // savepoint. Asking to roll back one that was never created must therefore say
   // so, rather than releasing someone else's savepoint.
