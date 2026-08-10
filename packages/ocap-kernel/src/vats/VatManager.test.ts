@@ -15,6 +15,17 @@ import type { VatId, VatConfig, PlatformServices } from '../types.ts';
 import { VatHandle } from './VatHandle.ts';
 import { VatManager } from './VatManager.ts';
 
+/**
+ * Let the pending microtasks run, so an operation under test gets as far as its
+ * first real await.
+ *
+ * @returns A promise that resolves once the microtask queue has drained.
+ */
+const drainMicrotasks = async (): Promise<void> =>
+  new Promise((resolve) => {
+    setTimeout(resolve, 0);
+  });
+
 describe('VatManager', () => {
   let mockPlatformServices: Mocked<PlatformServices>;
   let mockKernelStore: Mocked<KernelStore>;
@@ -80,6 +91,13 @@ describe('VatManager', () => {
 
     mockKernelQueue = {
       waitForCrank: vi.fn().mockResolvedValue(undefined),
+      // A restart is the run loop's work, so stand in for it reaching the
+      // request on its next crank. The failure is absorbed here rather than
+      // dropped: the real run loop would die of it, and the caller hears about
+      // it from the waiter `restartVat` registered, not from this call.
+      enqueueRestartVat: vi.fn((vatId: VatId) => {
+        vatManager.performVatRestart(vatId).catch(() => undefined);
+      }),
     } as unknown as Mocked<KernelQueue>;
 
     mockLogger = new Logger('test');
@@ -394,6 +412,32 @@ describe('VatManager', () => {
         expect.objectContaining({ message: 'Vat termination: Custom reason' }),
       );
     });
+
+    it('waits out the crank in flight before recording the vat as in flux', async () => {
+      await vatManager.runVat('v1', createMockVatConfig());
+      let finishCrank!: () => void;
+      (
+        mockKernelQueue.waitForCrank as unknown as MockInstance
+      ).mockReturnValueOnce(
+        new Promise<void>((resolve) => {
+          finishCrank = resolve;
+        }),
+      );
+
+      const terminated = vatManager.terminateVat('v1');
+      await drainMicrotasks();
+
+      // Recording first and waiting after would deadlock, and this is the
+      // assertion that catches it: a crank already running reaches its endpoint
+      // lookup here, and would find a record whose teardown is waiting for that
+      // same crank to end. Reverse the order in `#trackFlux` and this hangs.
+      expect(await vatManager.provideVat('v1')).toBe(vatHandles[0]);
+
+      finishCrank();
+      await terminated;
+
+      expect(mockKernelStore.markVatAsTerminated).toHaveBeenCalledWith('v1');
+    });
   });
 
   describe('restartVat', () => {
@@ -404,7 +448,7 @@ describe('VatManager', () => {
 
       const result = await vatManager.restartVat('v1');
 
-      expect(mockKernelQueue.waitForCrank).toHaveBeenCalled();
+      expect(mockKernelQueue.enqueueRestartVat).toHaveBeenCalledWith('v1');
       expect(originalHandle?.terminate).toHaveBeenCalledWith(false, undefined);
       expect(mockPlatformServices.launch).toHaveBeenCalledTimes(2);
       expect(makeVatHandleMock).toHaveBeenCalledTimes(2);
@@ -432,20 +476,58 @@ describe('VatManager', () => {
         VatNotFoundError,
       );
     });
+
+    it('releases the root pin when its relaunch fails', async () => {
+      await vatManager.runVat('v1', createMockVatConfig());
+      makeVatHandleMock.mockRejectedValueOnce(new Error('worker died'));
+
+      await expect(vatManager.restartVat('v1')).rejects.toThrow('worker died');
+
+      // The restart's `stopVat` was told the vat was coming back, so it kept the
+      // pin, and vat cleanup does not release pins. Without this the root's
+      // refcount is held for the life of the kernel.
+      expect(mockKernelStore.unpinObject).toHaveBeenCalledWith('ko1');
+    });
+
+    it('leaves the vat in place until the run loop takes the request', async () => {
+      await vatManager.runVat('v1', createMockVatConfig());
+      const originalHandle = vatHandles[0];
+      // Queue the request without standing in for the run loop.
+      (
+        mockKernelQueue.enqueueRestartVat as unknown as MockInstance
+      ).mockImplementation(() => undefined);
+
+      const restarted = vatManager.restartVat('v1');
+      await drainMicrotasks();
+
+      // The vat is only ever out of reach inside the crank that carries the
+      // request out, where no other crank can see it.
+      expect(vatManager.getVat('v1')).toBe(originalHandle);
+      expect(originalHandle?.terminate).not.toHaveBeenCalled();
+
+      await vatManager.performVatRestart('v1');
+
+      expect(await restarted).toBe(vatHandles[1]);
+    });
+
+    it('supersedes a caller waiting on an earlier request for the same vat', async () => {
+      await vatManager.runVat('v1', createMockVatConfig());
+      (
+        mockKernelQueue.enqueueRestartVat as unknown as MockInstance
+      ).mockImplementation(() => undefined);
+
+      const first = vatManager.restartVat('v1');
+      const second = vatManager.restartVat('v1');
+
+      // One waiter per vat, so the earlier caller is told rather than left
+      // waiting on a restart the later one will consume.
+      await expect(first).rejects.toThrow('superseded');
+      await vatManager.performVatRestart('v1');
+      expect(await second).toBe(vatHandles[1]);
+    });
   });
 
   describe('provideVat', () => {
-    /**
-     * Let the pending microtasks run, so an operation under test gets as far as
-     * its first real await.
-     *
-     * @returns A promise that resolves once the microtask queue has drained.
-     */
-    const drainMicrotasks = async (): Promise<void> =>
-      new Promise((resolve) => {
-        setTimeout(resolve, 0);
-      });
-
     it('returns the running handle when the vat is not in flux', async () => {
       await vatManager.runVat('v1', createMockVatConfig());
 
@@ -456,40 +538,6 @@ describe('VatManager', () => {
       await expect(vatManager.provideVat('v1')).rejects.toThrow(
         VatNotFoundError,
       );
-    });
-
-    it('waits out a restart in flight and answers with the new handle', async () => {
-      await vatManager.runVat('v1', createMockVatConfig());
-      const originalHandle = vatHandles[0];
-      let finishLaunch!: () => void;
-      makeVatHandleMock.mockImplementationOnce(
-        async ({
-          vatId,
-          vatConfig,
-        }: {
-          vatId: VatId;
-          vatConfig: VatConfig;
-        }) => {
-          await new Promise<void>((resolve) => {
-            finishLaunch = resolve;
-          });
-          return createMockVatHandle(vatId, vatConfig);
-        },
-      );
-
-      const restarted = vatManager.restartVat('v1');
-      await drainMicrotasks();
-
-      // The window: the old worker is gone and the new one is still coming up,
-      // while the kernel's c-list for the vat is whole.
-      expect(() => vatManager.getVat('v1')).toThrow(VatNotFoundError);
-      const provided = vatManager.provideVat('v1');
-
-      finishLaunch();
-
-      expect(await provided).toBe(vatHandles[1]);
-      expect(await provided).not.toBe(originalHandle);
-      await restarted;
     });
 
     it('reports a vat gone only once its termination has been recorded', async () => {
