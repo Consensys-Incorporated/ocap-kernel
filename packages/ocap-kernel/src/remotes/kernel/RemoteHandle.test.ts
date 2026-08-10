@@ -220,6 +220,49 @@ describe('RemoteHandle', () => {
       });
     });
 
+    // FAILING REPRO — see the commit message for this test.
+    //
+    // `handleRemoteMessage` releases its savepoint inside the `try` and rolls
+    // back in the `catch`. #1012 made a failed `RELEASE` discard the whole
+    // savepoint stack, so that rollback now reports a savepoint that no longer
+    // exists, and it throws out of the `catch` in place of the failure that
+    // brought it there.
+    it('reports the release failure rather than a missing savepoint', async () => {
+      // The drivers' bookkeeping as #1012 leaves it, verified against both: a
+      // failed RELEASE clears `_spStack`, and rolling back a name that is not on
+      // it throws `No such savepoint`.
+      const savepoints: string[] = [];
+      const releaseFailure = new Error('database or disk is full');
+      mockKernelStore = {
+        ...mockKernelStore,
+        createSavepoint: (name: string) => {
+          savepoints.push(name);
+        },
+        releaseSavepoint: () => {
+          savepoints.length = 0;
+          throw releaseFailure;
+        },
+        rollbackSavepoint: (name: string) => {
+          if (!savepoints.includes(name)) {
+            throw new Error(`No such savepoint: ${name}`);
+          }
+        },
+      } as KernelStore;
+      const remote = makeRemote();
+
+      const delivery = JSON.stringify({
+        seq: 1,
+        method: 'deliver',
+        params: ['bringOutYourDead'],
+      });
+
+      // The error an operator needs is the one the database gave, not the
+      // bookkeeping artefact of trying to clean up after it.
+      await expect(remote.handleRemoteMessage(delivery)).rejects.toBe(
+        releaseFailure,
+      );
+    });
+
     // A dead run loop will never deliver the message, and `handleRemoteMessage`
     // rolls back without advancing the received sequence number, so the peer
     // retries and gives up rather than being acknowledged by a black hole.
