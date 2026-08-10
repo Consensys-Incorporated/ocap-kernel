@@ -248,14 +248,15 @@ export class KernelRouter {
       const isKernelServiceMessage = endpointId === 'kernel';
       let endpoint: EndpointHandle | null = null;
       if (!isKernelServiceMessage) {
-        try {
-          endpoint = await this.#getEndpoint(endpointId);
-        } catch {
-          // TODO: Narrow this catch to the expected error type (e.g.,
-          // VatNotFoundError) so that unexpected errors are not silently
-          // swallowed and deliverable messages are not incorrectly discarded.
-          // Endpoint vanished (e.g., vat terminated but ownership entries not
-          // yet cleaned up). Treat the same as a splat.
+        // An endpoint that is gone for good — a terminated vat whose ownership
+        // entries are not cleaned up yet, or a disconnected remote — has nothing
+        // to deliver to, so the message goes splat. Anything else `resolveEndpoint`
+        // propagates, rather than reporting a live endpoint as unreachable and
+        // discarding a deliverable message.
+        endpoint =
+          (await this.#resolveEndpoint(endpointId, `send of ${target}`)) ??
+          null;
+        if (!endpoint) {
           if (message.result) {
             const promise = this.#kernelStore.getKernelPromise(message.result);
             this.#kernelQueue.resolvePromises(promise.decider, [
