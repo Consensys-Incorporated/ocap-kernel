@@ -111,12 +111,12 @@ export class Kernel {
    * @param options.onRunLoopFailure - Optional handler called if the run loop dies.
    * @param options.auditRefCounts - If true, verify every kref's reference
    * counts against the references the kernel actually holds at the end of each
-   * crank, and throw on any mismatch. This is the check standing in for the
-   * accounting invariant `collectGarbage` still cannot assert (see the comment
-   * on its `retireExport` branch), so it is not optional
-   * instrumentation: it is off by default only because it walks the whole store
-   * every crank. Any kernel whose accounting is under test wants it on, and
-   * every kernel `kernel-test` builds enables it.
+   * crank, and throw on any mismatch. Not optional instrumentation: it is what
+   * establishes that the accounting is right, and is off by default only because
+   * it walks the whole store every crank. Any kernel whose accounting is under
+   * test wants it on, and every kernel `kernel-test` builds enables it. Note
+   * that it checks counts against their holders, which is a different invariant
+   * from the one `collectGarbage`'s `retireExport` branch still cannot assert.
    */
   // eslint-disable-next-line no-restricted-syntax
   private constructor(
@@ -652,10 +652,11 @@ export class Kernel {
   /**
    * Gets an endpoint by its ID.
    *
-   * Asynchronous because a vat may be between workers: `provideVat` waits for a
-   * restart in flight rather than reporting the vat missing, so a crank that
-   * lands mid-restart delivers to the new incarnation instead of resolving a
-   * live vat as a dead one.
+   * Asynchronous because a vat may be mid-teardown: `provideVat` waits that out
+   * rather than answering from a vat table the store has not caught up with, so
+   * by the time a caller is told the vat is gone the store says so too — which
+   * is what lets `#resolveEndpoint` tell a terminated vat from a missing one. A
+   * restart needs no such window, being carried out by the run loop itself.
    *
    * @param endpointId - The ID of the endpoint to retrieve.
    * @returns A promise for the endpoint handle for the given ID.

@@ -445,13 +445,19 @@ export class KernelRouter {
    * The handle for an endpoint, or `undefined` if the endpoint is gone for good
    * and the work addressed to it can be dropped.
    *
-   * Gone for good means a vat the store has marked terminated, whose cleanup
-   * takes its whole c-list with it, or a remote, which reconciles on its next
-   * incarnation. A vat that is absent and *not* terminated is a disagreement
-   * between the kernel's vat table and its store: `restartVat` is carried out by
-   * the run loop and `terminateVat` records the vat as in flux, so neither leaves
-   * a vat in that state, and the caller is better served by the error than by an
-   * answer that says "gone" about a vat that isn't.
+   * Gone for good means a vat the store has no live record of — marked
+   * terminated, and so awaiting a cleanup that takes its whole c-list with it,
+   * or already cleaned up — or a remote, which reconciles on its next
+   * incarnation. Both halves are needed: cleanup ends with `forgetTerminatedVat`,
+   * so a vat that is long gone is no longer *marked* terminated either, and work
+   * outliving it (a `bringOutYourDead` scheduled before it died, say) would
+   * otherwise be read as a disagreement.
+   *
+   * A vat the store still calls active but the kernel has no handle for is that
+   * disagreement: `restartVat` is carried out by the run loop and `terminateVat`
+   * records the vat as in flux, so neither leaves a vat in that state, and the
+   * caller is better served by the error than by an answer that says "gone"
+   * about a vat that isn't.
    *
    * @param endpointId - The endpoint to resolve.
    * @param what - What was being delivered, for the log.
@@ -466,6 +472,7 @@ export class KernelRouter {
     } catch (error) {
       if (
         isVatId(endpointId) &&
+        this.#kernelStore.isVatActive(endpointId) &&
         !this.#kernelStore.isVatTerminated(endpointId)
       ) {
         throw error;
@@ -495,15 +502,9 @@ export class KernelRouter {
     // survives still has to be released on the kernel's side: the action has
     // already been consumed from the durable set, so skipping the teardown
     // would lose it and leave the entry behind for good.
-    const live = krefs.filter((kref) =>
-      this.#kernelStore.hasCListEntry(endpointId, kref),
-    );
-    if (live.length < krefs.length) {
-      this.#logger?.error(
-        `${type} for ${endpointId}: ${krefs.length - live.length} of ${krefs.length} kref(s) were cleaned up before delivery`,
-      );
-    }
-    if (live.length === 0) {
+    const stillHeld = (): KRef[] =>
+      krefs.filter((kref) => this.#kernelStore.hasCListEntry(endpointId, kref));
+    if (stillHeld().length === 0) {
       return { didDelivery: endpointId };
     }
     // Resolved before anything is torn down, so a lookup that fails has nothing
@@ -522,8 +523,23 @@ export class KernelRouter {
     // to wait on — a run loop that is dead without saying so.
     const endpoint = await this.#resolveEndpoint(
       endpointId,
-      `${type} of ${JSON.stringify(live)}; releasing the kernel's side anyway`,
+      `${type}; releasing the kernel's side anyway`,
     );
+    // Re-read after the await, not before it: resolving an endpoint yields to
+    // other work, and a remote's incarnation change tears its c-list down
+    // without waiting for the crank. Reusing the earlier answer would hand
+    // `krefsToErefs` a kref whose entry has since gone, and it throws rather
+    // than returning short — killing the run loop over an entry that is
+    // already, correctly, released.
+    const live = stillHeld();
+    if (live.length < krefs.length) {
+      this.#logger?.error(
+        `${type} for ${endpointId}: ${krefs.length - live.length} of ${krefs.length} kref(s) were cleaned up before delivery`,
+      );
+    }
+    if (live.length === 0) {
+      return { didDelivery: endpointId };
+    }
     const erefs = this.#kernelStore.krefsToErefs(endpointId, live);
     // Telling an endpoint to let go is also the kernel letting go. Otherwise a
     // dropped export stays flagged reachable, so the same action gets derived
@@ -620,10 +636,13 @@ export class KernelRouter {
    * Carry out a queued request to replace a vat's worker.
    *
    * Not a delivery, so no `didDelivery`: nothing was handed to the vat, and the
-   * incarnation that comes back has taken no deliveries yet. A failure is left to
-   * propagate and take the crank down, because `restartVat` marks the vat
-   * terminated on the way out and aborting the crank would undo that mark, which
-   * is what makes the vat's remaining c-list reclaimable.
+   * incarnation that comes back has taken no deliveries yet.
+   *
+   * `performVatRestart` reports a failed restart by terminating the vat rather
+   * than by throwing, so this commits either way. Neither ending a crank is open
+   * to it: aborting and throwing both roll the crank back, which would undo the
+   * termination records *and* put this request back on the run queue, leaving
+   * the same failing restart to be replayed for the life of the store.
    *
    * @param item - The restart request.
    * @returns Nothing; the crank has no outcome to report.
@@ -631,9 +650,7 @@ export class KernelRouter {
   async #restartVatWorker(
     item: RunQueueItemRestartVat,
   ): Promise<CrankResult | undefined> {
-    const { vatId } = item;
-    this.#logger?.log(`@@@@ restart ${vatId}`);
-    await this.#restartVat(vatId);
+    await this.#restartVat(item.vatId);
     return undefined;
   }
 }

@@ -73,6 +73,7 @@ describe('KernelRouter', () => {
       orphanKernelObject: vi.fn(),
       hasCListEntry: vi.fn().mockReturnValue(true),
       isVatTerminated: vi.fn().mockReturnValue(false),
+      isVatActive: vi.fn().mockReturnValue(true),
       createCrankSavepoint: vi.fn(),
     } as unknown as KernelStore;
 
@@ -356,6 +357,48 @@ describe('KernelRouter', () => {
         expect(
           (kernelStore.decrementRefCount as unknown as MockInstance).mock.calls,
         ).toStrictEqual([[target, 'deliver|send|target']]);
+      });
+
+      // The same distinction, on the path that discovers the endpoint is gone
+      // only after routing has already succeeded. Every other test of this
+      // branch aims at a plain object, where the item's target and the routed
+      // target are the same kref and the two spellings are indistinguishable.
+      it('charges the promise, not the object it resolved to, when the endpoint is gone', async () => {
+        const promiseId = 'kp123';
+        const resolvedObject = 'ko456';
+        (
+          kernelStore.getKernelPromise as unknown as MockInstance
+        ).mockReturnValueOnce({
+          state: 'fulfilled',
+          value: { body: '#"$0"', slots: [resolvedObject] },
+        });
+        (kernelStore.getOwner as unknown as MockInstance).mockReturnValue('v1');
+        (
+          kernelStore.isVatTerminated as unknown as MockInstance
+        ).mockReturnValue(true);
+        (getEndpoint as unknown as MockInstance).mockRejectedValueOnce(
+          new Error('vat v1 not found'),
+        );
+
+        await kernelRouter.deliver({
+          type: 'send',
+          target: promiseId,
+          message: {
+            methargs: { body: 'method args', slots: [] },
+            result: null,
+          },
+        });
+
+        expect(kernelStore.decrementRefCount).toHaveBeenCalledWith(
+          promiseId,
+          'deliver|splat|target',
+        );
+        // Charging this instead leaks the promise and collects an object that
+        // nobody released.
+        expect(kernelStore.decrementRefCount).not.toHaveBeenCalledWith(
+          resolvedObject,
+          'deliver|splat|target',
+        );
       });
 
       it('splats message when promise resolves to a non-object', async () => {
@@ -1064,6 +1107,30 @@ describe('KernelRouter', () => {
 
         // A reap only asks an endpoint to tidy up, so one that is gone has
         // nothing left to ask — and nothing was delivered.
+        expect(result).toBeUndefined();
+        expect(endpointHandle.deliverBringOutYourDead).not.toHaveBeenCalled();
+      });
+
+      // Nothing purges the reap queue when a vat dies, and cleanup ends by
+      // *unmarking* the vat it finished — so a reap scheduled before the vat
+      // died arrives at an endpoint that is neither present nor terminated.
+      // Read as a disagreement, that throw kills the run loop.
+      it('skips a reap for a vat that has already been cleaned up', async () => {
+        (
+          kernelStore.isVatTerminated as unknown as MockInstance
+        ).mockReturnValue(false);
+        (kernelStore.isVatActive as unknown as MockInstance).mockReturnValue(
+          false,
+        );
+        (getEndpoint as unknown as MockInstance).mockRejectedValueOnce(
+          new Error('vat v1 not found'),
+        );
+
+        const result = await kernelRouter.deliver({
+          type: 'bringOutYourDead',
+          endpointId: 'v1',
+        });
+
         expect(result).toBeUndefined();
         expect(endpointHandle.deliverBringOutYourDead).not.toHaveBeenCalled();
       });

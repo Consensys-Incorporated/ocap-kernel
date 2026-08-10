@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 
 import { makeMapKernelDatabase } from '../../../test/storage.ts';
+import type { RemoteInfo } from '../../remotes/types.ts';
 import type { VatConfig, VatId } from '../../types.ts';
 import { makeKernelStore } from '../index.ts';
 
@@ -385,6 +386,44 @@ describe('c-list reference accounting', () => {
       expect([...kernelStore.getGCActions()]).toStrictEqual([
         `v1 dropExport ${kref}`,
         `v1 retireExport ${kref}`,
+      ]);
+      expect(kernelStore.auditRefCounts()).toStrictEqual([]);
+    });
+  });
+
+  describe('a remote importer', () => {
+    beforeEach(() => {
+      kernelStore.setRemoteInfo('r1', { peerId: 'peer-1' } as RemoteInfo);
+      kernelStore.initEndpoint('r1');
+    });
+
+    it('counts towards an object the same as a vat does', () => {
+      const kref = kernelStore.exportFromEndpoint('v1', 'o+1');
+      kernelStore.translateRefKtoE('r1', kref, true);
+
+      expect(kernelStore.getObjectRefCount(kref)).toStrictEqual({
+        reachable: 1,
+        recognizable: 1,
+      });
+      expect(kernelStore.getImporters(kref)).toStrictEqual(['r1']);
+      expect(kernelStore.auditRefCounts()).toStrictEqual([]);
+    });
+
+    // `retireKernelObjects` deletes the object once it has told every importer,
+    // so an importer it never enumerated is left holding a c-list entry naming
+    // nothing — which nothing tears down, and which the audit reports as
+    // dangling, taking the run loop with it.
+    it('is told to retire an object the owner has abandoned', () => {
+      const kref = kernelStore.exportFromEndpoint('v1', 'o+1');
+      kernelStore.translateRefKtoE('r1', kref, true);
+      // Dropped but still recognized, so collection retires rather than drops.
+      kernelStore.clearReachableFlag('r1', kref);
+      kernelStore.orphanKernelObject(kref, 'v1');
+
+      kernelStore.collectGarbage();
+
+      expect([...kernelStore.getGCActions()]).toStrictEqual([
+        `r1 retireImport ${kref}`,
       ]);
       expect(kernelStore.auditRefCounts()).toStrictEqual([]);
     });
