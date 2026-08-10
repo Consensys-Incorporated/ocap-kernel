@@ -599,7 +599,7 @@ describe('makeSQLKernelDatabase', () => {
       expect(mockDb.exec).toHaveBeenCalledWith('SAVEPOINT next');
     });
 
-    // FAILING REPRO — see the commit message for this test.
+    // FAILING REPRO.
     //
     // `commitIfNeeded` still steps the COMMIT before clearing `_inTx`, the exact
     // ordering `rollbackIfNeeded` was corrected to avoid. A COMMIT that throws
@@ -609,9 +609,9 @@ describe('makeSQLKernelDatabase', () => {
     // (Agoric/agoric-sdk#8423). This is the crank's commit point, so the writes
     // that leak are a whole crank's.
     //
-    // The comment above `stops believing it is in a transaction when the abort
-    // fails too` calls a failed abort "the one case that can leave `_inTx`
-    // disagreeing with the database". This is the second case.
+    // A failed abort is therefore not, as the abort case above claims, the one
+    // case that can leave `_inTx` disagreeing with the database. This is the
+    // second.
     it('stops believing it is in a transaction when the commit fails', async () => {
       const db = await makeSQLKernelDatabase({});
       mockDb._inTx = true;

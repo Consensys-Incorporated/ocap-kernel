@@ -33,8 +33,8 @@ const STOP_RUN_LOOP = 'test: stop run loop';
  * @param error - The error to walk.
  * @returns The chain, outermost first.
  */
-const causeChain = (error: unknown): unknown[] => {
-  const chain: unknown[] = [];
+const causeChain = (error: unknown): Error[] => {
+  const chain: Error[] = [];
   let current = error;
   while (current instanceof Error) {
     chain.push(current);
@@ -558,7 +558,7 @@ describe('KernelQueue', () => {
       });
     });
 
-    // FAILING REPRO — see the commit message for this test.
+    // FAILING REPRO.
     //
     // The companion of the case above, at the other end of the crank. Since the
     // delivery rollback now spares `crank`, `endCrank`'s release is a real

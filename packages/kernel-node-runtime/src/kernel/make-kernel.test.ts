@@ -23,16 +23,17 @@ describe('makeKernel', () => {
     expect(kernel).toBeInstanceOf(Kernel);
   });
 
-  // FAILING REPRO — see the commit message for this test.
+  // FAILING REPRO.
   //
   // The kernel store is the only collaborator `makeKernel` builds without
   // handing it a logger, so every `logger?.` call inside the SQLite driver is
   // dead code in production — including the four abort failures #1012 added
-  // logging for.
+  // logging for. `kernel-worker.ts` omits it too, which keeps the wasm driver's
+  // pair dead even once this passes.
   it('gives the kernel store a logger', async () => {
     await makeKernel({});
 
-    expect(makeSQLKernelDatabase).toHaveBeenCalledWith(
+    expect(vi.mocked(makeSQLKernelDatabase)).toHaveBeenCalledWith(
       expect.objectContaining({ logger: expect.any(Logger) }),
     );
   });

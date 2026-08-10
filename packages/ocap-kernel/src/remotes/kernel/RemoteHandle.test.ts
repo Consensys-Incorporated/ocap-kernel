@@ -220,7 +220,7 @@ describe('RemoteHandle', () => {
       });
     });
 
-    // FAILING REPRO — see the commit message for this test.
+    // FAILING REPRO.
     //
     // `handleRemoteMessage` releases its savepoint inside the `try` and rolls
     // back in the `catch`. #1012 made a failed `RELEASE` discard the whole
@@ -230,9 +230,16 @@ describe('RemoteHandle', () => {
     it('reports the release failure rather than a missing savepoint', async () => {
       // The drivers' bookkeeping as #1012 leaves it, verified against both: a
       // failed RELEASE clears `_spStack`, and rolling back a name that is not on
-      // it throws `No such savepoint`.
+      // it throws `No such savepoint`. Replacing the store wholesale rather than
+      // assigning over its methods because `makeKernelStore` hardens what it
+      // returns.
       const savepoints: string[] = [];
       const releaseFailure = new Error('database or disk is full');
+      const rollbackSavepoint = vi.fn((name: string) => {
+        if (!savepoints.includes(name)) {
+          throw new Error(`No such savepoint: ${name}`);
+        }
+      });
       mockKernelStore = {
         ...mockKernelStore,
         createSavepoint: (name: string) => {
@@ -242,12 +249,8 @@ describe('RemoteHandle', () => {
           savepoints.length = 0;
           throw releaseFailure;
         },
-        rollbackSavepoint: (name: string) => {
-          if (!savepoints.includes(name)) {
-            throw new Error(`No such savepoint: ${name}`);
-          }
-        },
-      } as KernelStore;
+        rollbackSavepoint,
+      };
       const remote = makeRemote();
 
       const delivery = JSON.stringify({
@@ -261,6 +264,10 @@ describe('RemoteHandle', () => {
       await expect(remote.handleRemoteMessage(delivery)).rejects.toBe(
         releaseFailure,
       );
+      // Still attempted, so that abandoning the rollback is not a way to pass
+      // this test: a release that failed for a reason of its own may well have
+      // left the savepoint standing.
+      expect(rollbackSavepoint).toHaveBeenCalledWith('receive_r0_1');
     });
 
     // A dead run loop will never deliver the message, and `handleRemoteMessage`
