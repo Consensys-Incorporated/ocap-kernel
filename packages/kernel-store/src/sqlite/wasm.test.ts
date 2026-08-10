@@ -599,6 +599,44 @@ describe('makeSQLKernelDatabase', () => {
       expect(mockDb.exec).toHaveBeenCalledWith('SAVEPOINT next');
     });
 
+    // FAILING REPRO — see the commit message for this test.
+    //
+    // `commitIfNeeded` still steps the COMMIT before clearing `_inTx`, the exact
+    // ordering `rollbackIfNeeded` was corrected to avoid. A COMMIT that throws
+    // therefore leaves `_inTx` true against a database that may hold no
+    // transaction, `beginIfNeeded` is a no-op forever after, and the next
+    // savepoint is created outside a transaction — which commits when released
+    // (Agoric/agoric-sdk#8423). This is the crank's commit point, so the writes
+    // that leak are a whole crank's.
+    //
+    // The comment above `stops believing it is in a transaction when the abort
+    // fails too` calls a failed abort "the one case that can leave `_inTx`
+    // disagreeing with the database". This is the second case.
+    it('stops believing it is in a transaction when the commit fails', async () => {
+      const db = await makeSQLKernelDatabase({});
+      mockDb._inTx = true;
+      mockDb._spStack = ['point1'];
+      // The RELEASE goes through `exec` and succeeds; COMMIT is the first
+      // prepared statement this path steps, and it is what fails.
+      mockStatement.step.mockImplementationOnce(() => {
+        throw new Error('disk I/O error');
+      });
+
+      expect(() => db.releaseSavepoint('point1')).toThrowError(
+        'disk I/O error',
+      );
+
+      expect(mockDb._inTx).toBe(false);
+
+      // And so the next savepoint gets a transaction of its own rather than
+      // being created bare.
+      mockDb.exec.mockClear();
+      mockStatement.step.mockClear();
+      db.createSavepoint('next');
+      expect(mockStatement.step).toHaveBeenCalledOnce();
+      expect(mockDb.exec).toHaveBeenCalledWith('SAVEPOINT next');
+    });
+
     it('supports nested savepoints', async () => {
       const db = await makeSQLKernelDatabase({});
       db.createSavepoint('outer');
