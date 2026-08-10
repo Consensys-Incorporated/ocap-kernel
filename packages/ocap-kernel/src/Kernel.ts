@@ -651,13 +651,18 @@ export class Kernel {
   /**
    * Gets an endpoint by its ID.
    *
+   * Asynchronous because a vat may be between workers: `provideVat` waits for a
+   * restart in flight rather than reporting the vat missing, so a crank that
+   * lands mid-restart delivers to the new incarnation instead of resolving a
+   * live vat as a dead one.
+   *
    * @param endpointId - The ID of the endpoint to retrieve.
-   * @returns The endpoint handle for the given ID.
+   * @returns A promise for the endpoint handle for the given ID.
    * @throws If the endpoint ID is invalid (neither a vat ID nor a remote ID).
    */
-  #getEndpoint(endpointId: EndpointId): EndpointHandle {
+  async #getEndpoint(endpointId: EndpointId): Promise<EndpointHandle> {
     if (isVatId(endpointId)) {
-      return this.#vatManager.getVat(endpointId);
+      return await this.#vatManager.provideVat(endpointId);
     }
     if (isRemoteId(endpointId)) {
       return this.#remoteManager.getRemote(endpointId);

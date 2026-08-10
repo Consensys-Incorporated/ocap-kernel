@@ -22,7 +22,9 @@ describe('KernelRouter', () => {
   // Mock dependencies
   let kernelStore: KernelStore;
   let kernelQueue: KernelQueue;
-  let getEndpoint: (endpointId: EndpointId) => EndpointHandle;
+  let getEndpoint: (
+    endpointId: EndpointId,
+  ) => EndpointHandle | Promise<EndpointHandle>;
   let endpointHandle: EndpointHandle;
   let kernelRouter: KernelRouter;
 
@@ -812,6 +814,38 @@ describe('KernelRouter', () => {
         });
 
         expect(kernelStore.orphanKernelObject).not.toHaveBeenCalled();
+      });
+
+      it('waits for a vat that is coming back, then delivers to it', async () => {
+        // The restart window: `provideVat` answers once the new incarnation is
+        // up, so the crank waits instead of resolving a live vat as a dead one.
+        let finishRestart!: (handle: EndpointHandle) => void;
+        (getEndpoint as unknown as MockInstance).mockReturnValueOnce(
+          new Promise<EndpointHandle>((resolve) => {
+            finishRestart = resolve;
+          }),
+        );
+
+        const delivered = kernelRouter.deliver({
+          type: 'retireImports',
+          endpointId: 'v1',
+          krefs: ['ko1'],
+        });
+
+        // Nothing is released ahead of knowing where the action is going.
+        expect(kernelStore.deleteCListEntry).not.toHaveBeenCalled();
+
+        finishRestart(endpointHandle);
+        await delivered;
+
+        expect(endpointHandle.deliverRetireImports).toHaveBeenCalledWith([
+          'translated-ko1',
+        ]);
+        expect(kernelStore.deleteCListEntry).toHaveBeenCalledWith(
+          'v1',
+          'ko1',
+          'translated-ko1',
+        );
       });
 
       it('still releases the kernel side when a terminated vat has vanished', async () => {
