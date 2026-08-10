@@ -31,13 +31,23 @@ const mocks = vi.hoisted(() => {
 
     #rejectRunLoop: ((error: Error) => void) | undefined;
 
+    #deliver: ((item: unknown) => Promise<unknown>) | undefined;
+
     // Like the real run loop, this settles only if the kernel dies.
-    run = vi.fn(
-      async () =>
-        new Promise<never>((_resolve, reject) => {
-          this.#rejectRunLoop = reject;
-        }),
-    );
+    run = vi.fn(async (deliver: (item: unknown) => Promise<unknown>) => {
+      this.#deliver = deliver;
+      return new Promise<never>((_resolve, reject) => {
+        this.#rejectRunLoop = reject;
+      });
+    });
+
+    // A restart is the run loop's work, so stand in for it reaching the request
+    // on its next crank. The failure is absorbed here rather than dropped: the
+    // real run loop would die of it, and the caller hears about it from the
+    // waiter `restartVat` registered, not from this call.
+    enqueueRestartVat = vi.fn((vatId: string) => {
+      this.#deliver?.({ type: 'restartVat', vatId }).catch(() => undefined);
+    });
 
     /**
      * Fail the run loop, in the order the real `KernelQueue.run` does: the
