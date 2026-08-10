@@ -46,7 +46,7 @@ export class KernelRouter {
   readonly #kernelQueue: KernelQueue;
 
   /** A function that returns an endpoint handle for a given endpoint id. */
-  readonly #getEndpoint: (endpointId: EndpointId) => EndpointHandle;
+  readonly #getEndpoint: (endpointId: EndpointId) => Promise<EndpointHandle>;
 
   /** A function that invokes a method on a kernel service. */
   readonly #invokeKernelService: (target: KRef, message: KernelMessage) => void;
@@ -66,7 +66,7 @@ export class KernelRouter {
   constructor(
     kernelStore: KernelStore,
     kernelQueue: KernelQueue,
-    getEndpoint: (endpointId: EndpointId) => EndpointHandle,
+    getEndpoint: (endpointId: EndpointId) => Promise<EndpointHandle>,
     invokeKernelService: (target: KRef, message: KernelMessage) => void,
     logger?: Logger,
   ) {
@@ -236,7 +236,7 @@ export class KernelRouter {
       let endpoint: EndpointHandle | null = null;
       if (!isKernelServiceMessage) {
         try {
-          endpoint = this.#getEndpoint(endpointId);
+          endpoint = await this.#getEndpoint(endpointId);
         } catch {
           // TODO: Narrow this catch to the expected error type (e.g.,
           // VatNotFoundError) so that unexpected errors are not silently
@@ -415,7 +415,7 @@ export class KernelRouter {
     // exported ocap URLs by scanning these entries. The cost of keeping them is
     // that a settled promise reached this way holds a count forever, so it is
     // never collected and its resolution slots are never released.
-    const endpoint = this.#getEndpoint(endpointId);
+    const endpoint = await this.#getEndpoint(endpointId);
     return await endpoint.deliverNotify(resolutions);
   }
 
@@ -452,19 +452,24 @@ export class KernelRouter {
     // halfway through.
     let endpoint: EndpointHandle | undefined;
     try {
-      endpoint = this.#getEndpoint(endpointId);
+      endpoint = await this.#getEndpoint(endpointId);
     } catch (error) {
       // A vat absent from the kernel's vat table but not marked terminated is a
       // vat between incarnations, and its c-list is whole: every kref here is one
-      // the returning incarnation still has in its own tables. `restartVat`
-      // takes a vat out of that table for as long as launching a worker and
-      // negotiating with it takes, so this is reachable, and releasing the
+      // the returning incarnation still has in its own tables, so releasing the
       // kernel's side would commit exactly the disagreement the failed delivery
       // below rolls back to avoid — the vat would mint fresh krefs for objects
-      // the kernel thinks it let go of. Fail the crank rather than commit that.
-      // Nothing here can make the restart safe: the action is already spent from
-      // the durable set, and a crank that neither delivers nor releases would
-      // simply be handed the same action again on the next one.
+      // the kernel thinks it let go of.
+      //
+      // `provideVat` waits out a restart rather than reporting the vat missing,
+      // so a vat on its way back does not arrive here at all. What is left is a
+      // vat that is absent with nothing bringing it back, and for that this
+      // throw — which kills the run loop — is the least bad of three: committing
+      // the release corrupts silently, and aborting spins. An abort does keep the
+      // action, since `rollbackCrank` restores the cached GC set, but nothing
+      // about the vat changes between cranks, so the same action is re-selected
+      // and re-aborted with no delivery to wait on — a run loop that is dead
+      // without saying so.
       if (
         isVatId(endpointId) &&
         !this.#kernelStore.isVatTerminated(endpointId)
@@ -560,7 +565,7 @@ export class KernelRouter {
   ): Promise<CrankResult | undefined> {
     const { endpointId } = item;
     this.#logger?.log(`@@@@ deliver ${endpointId} bringOutYourDead`);
-    const endpoint = this.#getEndpoint(endpointId);
+    const endpoint = await this.#getEndpoint(endpointId);
     const crankResult = await endpoint.deliverBringOutYourDead();
     return crankResult;
   }

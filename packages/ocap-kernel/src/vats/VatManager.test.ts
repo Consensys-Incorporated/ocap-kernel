@@ -418,6 +418,103 @@ describe('VatManager', () => {
         VatNotFoundError,
       );
     });
+
+    it('marks a vat terminated when its relaunch fails', async () => {
+      await vatManager.runVat('v1', createMockVatConfig());
+      makeVatHandleMock.mockRejectedValueOnce(new Error('worker died'));
+
+      await expect(vatManager.restartVat('v1')).rejects.toThrow('worker died');
+
+      // Nothing else reclaims a vat with no worker that the store still counts
+      // among the living.
+      expect(mockKernelStore.markVatAsTerminated).toHaveBeenCalledWith('v1');
+      await expect(vatManager.provideVat('v1')).rejects.toThrow(
+        VatNotFoundError,
+      );
+    });
+  });
+
+  describe('provideVat', () => {
+    /**
+     * Let the pending microtasks run, so an operation under test gets as far as
+     * its first real await.
+     *
+     * @returns A promise that resolves once the microtask queue has drained.
+     */
+    const drainMicrotasks = async (): Promise<void> =>
+      new Promise((resolve) => {
+        setTimeout(resolve, 0);
+      });
+
+    it('returns the running handle when the vat is not in flux', async () => {
+      await vatManager.runVat('v1', createMockVatConfig());
+
+      expect(await vatManager.provideVat('v1')).toBe(vatHandles[0]);
+    });
+
+    it('throws if vat not found', async () => {
+      await expect(vatManager.provideVat('v1')).rejects.toThrow(
+        VatNotFoundError,
+      );
+    });
+
+    it('waits out a restart in flight and answers with the new handle', async () => {
+      await vatManager.runVat('v1', createMockVatConfig());
+      const originalHandle = vatHandles[0];
+      let finishLaunch!: () => void;
+      makeVatHandleMock.mockImplementationOnce(
+        async ({
+          vatId,
+          vatConfig,
+        }: {
+          vatId: VatId;
+          vatConfig: VatConfig;
+        }) => {
+          await new Promise<void>((resolve) => {
+            finishLaunch = resolve;
+          });
+          return createMockVatHandle(vatId, vatConfig);
+        },
+      );
+
+      const restarted = vatManager.restartVat('v1');
+      await drainMicrotasks();
+
+      // The window: the old worker is gone and the new one is still coming up,
+      // while the kernel's c-list for the vat is whole.
+      expect(() => vatManager.getVat('v1')).toThrow(VatNotFoundError);
+      const provided = vatManager.provideVat('v1');
+
+      finishLaunch();
+
+      expect(await provided).toBe(vatHandles[1]);
+      expect(await provided).not.toBe(originalHandle);
+      await restarted;
+    });
+
+    it('reports a vat gone only once its termination has been recorded', async () => {
+      await vatManager.runVat('v1', createMockVatConfig());
+      let finishStop!: () => void;
+      (vatHandles[0]?.terminate as unknown as MockInstance).mockImplementation(
+        async () =>
+          new Promise<void>((resolve) => {
+            finishStop = resolve;
+          }),
+      );
+
+      const terminated = vatManager.terminateVat('v1');
+      await drainMicrotasks();
+      const provided = vatManager.provideVat('v1');
+
+      finishStop();
+
+      await expect(provided).rejects.toThrow(VatNotFoundError);
+      // The store agrees by the time a waiter is told, so a caller acting on
+      // "gone" — releasing the kernel's side of a GC action, say — is acting on
+      // a vat the store also calls terminated.
+      expect(mockKernelStore.markVatAsTerminated).toHaveBeenCalledWith('v1');
+      await terminated;
+    });
   });
 
   describe('pingVat', () => {

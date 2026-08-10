@@ -36,6 +36,22 @@ export class VatManager {
   /** Currently running vats, by ID */
   readonly #vats: Map<VatId, VatHandle>;
 
+  /**
+   * Vats whose worker is being replaced or torn down, by ID, each mapped to a
+   * promise for whatever follows it: the new handle for a restart, nothing for a
+   * termination. {@link provideVat} waits on these, which is what keeps a vat
+   * mid-flux from being read as a vat that is gone — the kernel's c-list for a
+   * restarting vat is whole, and every kref in it is one the returning
+   * incarnation still holds.
+   *
+   * Recorded rather than guarded against: the run loop is free to run cranks
+   * throughout, and a delivery that arrives mid-flux waits for the vat instead
+   * of the flux waiting for the run loop. Inverted the other way — a lock the
+   * restart holds while the loop stands still — the holder must never await
+   * anything the run loop has to deliver, which is a much sharper edge.
+   */
+  readonly #vatsInFlux: Map<VatId, Promise<VatHandle | undefined>>;
+
   /** Service to spawn workers (in iframes) for vats to run in */
   readonly #platformServices: PlatformServices;
 
@@ -69,6 +85,7 @@ export class VatManager {
     allowedGlobalNames,
   }: VatManagerOptions) {
     this.#vats = new Map();
+    this.#vatsInFlux = new Map();
     this.#platformServices = platformServices;
     this.#kernelStore = kernelStore;
     this.#kernelQueue = kernelQueue;
@@ -234,23 +251,131 @@ export class VatManager {
    */
   async terminateVat(vatId: VatId, reason?: CapData<KRef>): Promise<void> {
     await this.#kernelQueue.waitForCrank();
+    await this.#trackFlux(vatId, this.#endVat(vatId, reason));
+  }
+
+  /**
+   * Take a vat's worker down and mark the vat for cleanup.
+   *
+   * @param vatId - The ID of the vat.
+   * @param reason - The reason for the termination, if there is one.
+   * @returns Nothing: this vat has no successor.
+   */
+  async #endVat(
+    vatId: VatId,
+    reason?: CapData<KRef>,
+  ): Promise<VatHandle | undefined> {
     await this.stopVat(vatId, true, reason);
-    // Mark for deletion (which will happen later, in vat-cleanup events)
+    // Mark for deletion (which will happen later, in vat-cleanup events). Not
+    // marked before `stopVat`, even though that would close the same window
+    // this method's flux record closes: the mark makes the vat eligible for
+    // `nextTerminatedVatCleanup`, which would wipe the c-list from under a
+    // worker that is still being shut down.
     this.#kernelStore.markVatAsTerminated(vatId);
+    return undefined;
   }
 
   /**
    * Restarts a vat.
+   *
+   * The wait for the crank in flight stays ahead of the flux record on purpose.
+   * Recording first and waiting after looks tighter, and deadlocks: a crank that
+   * is already running reaches its endpoint lookup, finds the record, and waits
+   * for the restart, which is waiting for that crank to end.
+   *
+   * What that ordering leaves open is a crank the run loop starts in the turn
+   * between the wait resolving and the record appearing; it takes the outgoing
+   * handle and can still be mid-delivery when the worker goes down. Closing that
+   * needs the restart to happen inside a crank — the vat is idle by construction
+   * there, and no state changes outside the run loop at all.
    *
    * @param vatId - The ID of the vat.
    * @returns A promise for the restarted vat.
    */
   async restartVat(vatId: VatId): Promise<VatHandle> {
     await this.#kernelQueue.waitForCrank();
-    const vat = this.getVat(vatId);
-    const { config } = vat;
+    const { config } = this.getVat(vatId);
+    return (await this.#trackFlux(
+      vatId,
+      this.#replaceVat(vatId, config),
+    )) as VatHandle;
+  }
+
+  /**
+   * Replace a vat's worker, keeping the vat and everything the kernel holds for
+   * it.
+   *
+   * @param vatId - The ID of the vat.
+   * @param config - Its configuration, read before the old handle went away.
+   * @returns A promise for the new handle.
+   */
+  async #replaceVat(vatId: VatId, config: VatConfig): Promise<VatHandle> {
     await this.stopVat(vatId, false);
-    await this.runVat(vatId, config);
+    try {
+      await this.runVat(vatId, config);
+    } catch (error) {
+      // The vat now has no worker while the store still counts it among the
+      // living, and nothing else reclaims that: `cleanupTerminatedVat` only
+      // visits vats that are marked. Mark it so the c-list its absent worker
+      // still owns can be torn down.
+      this.#kernelStore.markVatAsTerminated(vatId);
+      throw error;
+    }
+    return this.getVat(vatId);
+  }
+
+  /**
+   * Record that a vat is mid-flux for as long as the given operation runs, so a
+   * delivery arriving meanwhile waits for its outcome.
+   *
+   * @param vatId - The vat being replaced or torn down.
+   * @param flux - The operation, resolving to the vat's successor if it has one.
+   * @returns The operation's own result, failure included.
+   */
+  async #trackFlux(
+    vatId: VatId,
+    flux: Promise<VatHandle | undefined>,
+  ): Promise<VatHandle | undefined> {
+    // Recorded before this function's first await, and `flux` has not been
+    // awaited either, so no crank can run between the operation's first step and
+    // this record. Anything that introduces an await above this line reopens the
+    // window the record exists to close.
+    //
+    // Waiters see `undefined` rather than a failure, because by then the vat is
+    // marked terminated and "gone" is what they should act on. The caller still
+    // gets the failure, from `flux` itself.
+    this.#vatsInFlux.set(
+      vatId,
+      flux.catch(() => undefined),
+    );
+    try {
+      return await flux;
+    } finally {
+      this.#vatsInFlux.delete(vatId);
+    }
+  }
+
+  /**
+   * The handle for a vat, waiting first for any replacement or teardown in
+   * flight. The counterpart to {@link getVat} for callers that can afford to
+   * wait — a crank, above all, which would otherwise resolve a vat that is
+   * merely between workers as one that no longer exists.
+   *
+   * @param vatId - The ID of the vat.
+   * @returns A promise for the vat's handle.
+   * @throws If the vat does not exist, or stopped existing while being awaited.
+   */
+  async provideVat(vatId: VatId): Promise<VatHandle> {
+    const flux = this.#vatsInFlux.get(vatId);
+    if (flux) {
+      const successor = await flux;
+      if (successor) {
+        return successor;
+      }
+      // Torn down, or a restart that failed and marked the vat terminated
+      // either way. Absent for good, which is what `getVat` reports.
+      throw new VatNotFoundError(vatId);
+    }
     return this.getVat(vatId);
   }
 
