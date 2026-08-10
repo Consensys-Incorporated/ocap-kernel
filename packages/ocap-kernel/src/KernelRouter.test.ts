@@ -68,6 +68,7 @@ describe('KernelRouter', () => {
       forgetKref: vi.fn(),
       orphanKernelObject: vi.fn(),
       hasCListEntry: vi.fn().mockReturnValue(true),
+      isVatTerminated: vi.fn().mockReturnValue(false),
       createCrankSavepoint: vi.fn(),
     } as unknown as KernelStore;
 
@@ -813,10 +814,13 @@ describe('KernelRouter', () => {
         expect(kernelStore.orphanKernelObject).not.toHaveBeenCalled();
       });
 
-      it('still releases the kernel side when the endpoint has vanished', async () => {
+      it('still releases the kernel side when a terminated vat has vanished', async () => {
         getEndpoint.mockImplementationOnce(() => {
           throw Error('vat v1 not found');
         });
+        (
+          kernelStore.isVatTerminated as unknown as MockInstance
+        ).mockReturnValue(true);
 
         const result = await kernelRouter.deliver({
           type: 'retireImports',
@@ -833,6 +837,48 @@ describe('KernelRouter', () => {
           'translated-ko1',
         );
       });
+
+      it('still releases the kernel side when a remote has vanished', async () => {
+        getEndpoint.mockImplementationOnce(() => {
+          throw Error('remote r1 not found');
+        });
+
+        const result = await kernelRouter.deliver({
+          type: 'retireImports',
+          endpointId: 'r1',
+          krefs: ['ko1'],
+        });
+
+        expect(result).toStrictEqual({ didDelivery: 'r1' });
+        expect(kernelStore.deleteCListEntry).toHaveBeenCalledWith(
+          'r1',
+          'ko1',
+          'translated-ko1',
+        );
+      });
+
+      it.each(['dropExports', 'retireExports', 'retireImports'] as const)(
+        'refuses to release %s for a vat that is absent but not terminated',
+        async (actionType) => {
+          // A vat between incarnations still holds every one of these krefs, so
+          // committing the kernel's release would leave the two disagreeing.
+          getEndpoint.mockImplementationOnce(() => {
+            throw Error('vat v1 not found');
+          });
+
+          await expect(
+            kernelRouter.deliver({
+              type: actionType,
+              endpointId: 'v1',
+              krefs: ['ko1'],
+            }),
+          ).rejects.toThrow('vat v1 not found');
+
+          expect(kernelStore.clearReachableFlag).not.toHaveBeenCalled();
+          expect(kernelStore.deleteCListEntry).not.toHaveBeenCalled();
+          expect(kernelStore.orphanKernelObject).not.toHaveBeenCalled();
+        },
+      );
 
       it('skips krefs already cleaned up before delivery', async () => {
         (

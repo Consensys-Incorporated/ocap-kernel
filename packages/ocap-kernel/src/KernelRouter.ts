@@ -447,6 +447,39 @@ export class KernelRouter {
     if (live.length === 0) {
       return { didDelivery: endpointId };
     }
+    // Resolved before anything is torn down, so a lookup that fails has nothing
+    // to undo, and so the two outcomes below are decided rather than discovered
+    // halfway through.
+    let endpoint: EndpointHandle | undefined;
+    try {
+      endpoint = this.#getEndpoint(endpointId);
+    } catch (error) {
+      // A vat absent from the kernel's vat table but not marked terminated is a
+      // vat between incarnations, and its c-list is whole: every kref here is one
+      // the returning incarnation still has in its own tables. `restartVat`
+      // takes a vat out of that table for as long as launching a worker and
+      // negotiating with it takes, so this is reachable, and releasing the
+      // kernel's side would commit exactly the disagreement the failed delivery
+      // below rolls back to avoid — the vat would mint fresh krefs for objects
+      // the kernel thinks it let go of. Fail the crank rather than commit that.
+      // Nothing here can make the restart safe: the action is already spent from
+      // the durable set, and a crank that neither delivers nor releases would
+      // simply be handed the same action again on the next one.
+      if (
+        isVatId(endpointId) &&
+        !this.#kernelStore.isVatTerminated(endpointId)
+      ) {
+        throw error;
+      }
+      // A terminated vat's cleanup tears its c-list down wholesale, and a remote
+      // reconciles on its next incarnation, so for those the release below is
+      // safe to commit — and has to be, since the action is already spent from
+      // the durable set.
+      this.#logger?.error(
+        `Endpoint ${endpointId} vanished before ${type} of ${JSON.stringify(live)}; releasing the kernel's side anyway:`,
+        error,
+      );
+    }
     const erefs = this.#kernelStore.krefsToErefs(endpointId, live);
     // Telling an endpoint to let go is also the kernel letting go. Otherwise a
     // dropped export stays flagged reachable, so the same action gets derived
@@ -469,14 +502,7 @@ export class KernelRouter {
         this.#kernelStore.orphanKernelObject(kref, endpointId);
       }
     });
-    let endpoint: EndpointHandle;
-    try {
-      endpoint = this.#getEndpoint(endpointId);
-    } catch (error) {
-      this.#logger?.error(
-        `Endpoint ${endpointId} vanished before ${type} of ${JSON.stringify(live)}; released the kernel's side anyway:`,
-        error,
-      );
+    if (!endpoint) {
       return { didDelivery: endpointId };
     }
     const method =
