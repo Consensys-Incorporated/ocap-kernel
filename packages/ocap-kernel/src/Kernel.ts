@@ -111,8 +111,12 @@ export class Kernel {
    * @param options.onRunLoopFailure - Optional handler called if the run loop dies.
    * @param options.auditRefCounts - If true, verify every kref's reference
    * counts against the references the kernel actually holds at the end of each
-   * crank, and throw on any mismatch. Intended for tests and debugging; the
-   * audit walks the whole store.
+   * crank, and throw on any mismatch. This is the check standing in for the
+   * accounting invariant `collectGarbage` still cannot assert (see the comment
+   * on its `retireExport` branch), so it is not optional
+   * instrumentation: it is off by default only because it walks the whole store
+   * every crank. Any kernel whose accounting is under test wants it on, and
+   * every kernel `kernel-test` builds enables it.
    */
   // eslint-disable-next-line no-restricted-syntax
   private constructor(

@@ -298,6 +298,15 @@ export function getRefCountAuditMethods(ctx: StoreContext) {
    * Compare every kref's stored reference counts against the references the
    * kernel can be seen to hold.
    *
+   * What this can and cannot find is worth being precise about, because the
+   * ground truth here *is* the holder set. A count that disagrees with its
+   * holders is caught in either direction: too low, and a live capability can be
+   * collected; too high with no holder left, and the count itself is orphaned.
+   * But a holder that should have been torn down and wasn't justifies its own
+   * count — at any value — so a leaked *reference* is invisible to this by
+   * construction. A c-list entry that outlives what it names is the case that
+   * matters: see the settled-promise TODO in `KernelRouter`.
+   *
    * @returns The krefs whose counts disagree with ground truth, in kref order.
    */
   function auditRefCounts(): RefCountViolation[] {
