@@ -205,6 +205,36 @@ describe('crank rollback against a real database', () => {
     kernelStore.endCrank();
   });
 
+  // The set is not per-crank: only `collectGarbage` empties it, and that runs at
+  // the end of a crank that had an item. So a candidate created while the run
+  // loop was idle — `terminateVat` unpinning a root is the real path — is still
+  // owed a collection, and an unrelated crank's rollback must not cancel it.
+  it('keeps GC candidates that predate the crank it rolled back', async () => {
+    const { kernelStore } = await makeStore();
+    const idle = kernelStore.initKernelPromise()[0];
+    kernelStore.decrementRefCount(idle, 'test');
+
+    kernelStore.startCrank();
+    kernelStore.createCrankSavepoint('start');
+    const abandoned = kernelStore.initKernelPromise()[0];
+    kernelStore.decrementRefCount(abandoned, 'test');
+    kernelStore.rollbackCrank('start');
+    kernelStore.endCrank();
+
+    kernelStore.startCrank();
+    kernelStore.createCrankSavepoint('start');
+    kernelStore.collectGarbage();
+    kernelStore.endCrank();
+
+    // Collected, because it was owed before the abandoned crank began.
+    expect(() => kernelStore.getKernelPromise(idle)).toThrow(
+      'unknown kernel promise',
+    );
+  });
+
+  // `createCrankSavepoint` records the name only once the database has the
+  // savepoint. Asking to roll back one that was never created must therefore say
+  // so, rather than releasing someone else's savepoint.
   it('refuses to roll back a savepoint that was never created', async () => {
     const { kernelStore } = await makeStore();
 

@@ -356,6 +356,11 @@ test.describe('Control Panel', () => {
     await expect(
       popupPage.locator('[data-testid="message-output"]'),
     ).toContainText(`{"key":"${v3Promise}.refCount","value":"1"}`);
+    // v3's cleanup took its own c-list, not v1's import, so the root survives
+    // its owner at the one count that import justifies.
+    await expect(
+      popupPage.locator('[data-testid="message-output"]'),
+    ).toContainText(`{"key":"${v3Root}.refCount","value":"1,1"}`);
     await popupPage.click('button:text("Control Panel")');
     await popupPage.locator('[data-testid="accordion-header"]').first().click();
     // delete v1

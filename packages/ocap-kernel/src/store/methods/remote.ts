@@ -48,7 +48,7 @@ export function getRemoteMethods(ctx: StoreContext) {
   }
 
   /**
-   * Get the IDs of all active remotes.
+   * The IDs of every remote the kernel knows about, without reading their info.
    *
    * @returns The remote IDs.
    */

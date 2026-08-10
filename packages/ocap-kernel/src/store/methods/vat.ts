@@ -147,7 +147,7 @@ export function getVatMethods(ctx: StoreContext) {
   /**
    * Checks if an endpoint imports the specified kernel slot.
    *
-   * @param endpointId - The ID of the endpoint to check.
+   * @param endpointId - The ID of the vat or remote to check.
    * @param kernelSlot - The kernel slot reference.
    * @returns True if the endpoint imports the kernel slot, false otherwise.
    */
