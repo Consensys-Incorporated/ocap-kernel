@@ -449,13 +449,41 @@ describe('KernelRouter', () => {
         );
       });
 
+      it('propagates a lookup failure for a vat that is absent but not terminated', async () => {
+        // Not a splat: reporting a live endpoint as unreachable would discard a
+        // deliverable message and reject its result for no reason.
+        (kernelStore.getOwner as unknown as MockInstance).mockReturnValueOnce(
+          'v1',
+        );
+        (getEndpoint as unknown as MockInstance).mockImplementationOnce(() => {
+          throw new Error('vat v1 not found');
+        });
+
+        await expect(
+          kernelRouter.deliver({
+            type: 'send',
+            target: 'ko123',
+            message: {
+              methargs: { body: 'method args', slots: [] },
+              result: 'kp1',
+            } as unknown as SwingsetMessage,
+          }),
+        ).rejects.toThrow('vat v1 not found');
+
+        expect(kernelQueue.resolvePromises).not.toHaveBeenCalled();
+      });
+
       it('splats message with ENDPOINT_UNREACHABLE when endpoint vanishes', async () => {
         const endpointId = 'v1';
         const target = 'ko123';
         (kernelStore.getOwner as unknown as MockInstance).mockReturnValueOnce(
           endpointId,
         );
-        // getEndpoint throws (endpoint gone)
+        // The endpoint is gone for good, which is what makes it a splat rather
+        // than an error worth propagating.
+        (
+          kernelStore.isVatTerminated as unknown as MockInstance
+        ).mockReturnValue(true);
         (getEndpoint as unknown as MockInstance).mockImplementationOnce(() => {
           throw new Error('vat not found');
         });
