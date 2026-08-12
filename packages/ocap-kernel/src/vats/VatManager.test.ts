@@ -445,6 +445,109 @@ describe('VatManager', () => {
     });
   });
 
+  describe('recording a vat as dead', () => {
+    /**
+     * The four writes that make up a vat's death, as the store saw them.
+     *
+     * @returns How many times each was made.
+     */
+    const recorded = (): {
+      rejectedItsPromises: number;
+      unpinnedItsRoot: number;
+      deletedItsRecords: number;
+      marked: number;
+    } => {
+      const callsTo = (mock: unknown): number =>
+        (mock as MockInstance).mock.calls.length;
+      return {
+        rejectedItsPromises: callsTo(mockKernelQueue.resolvePromises),
+        unpinnedItsRoot: callsTo(mockKernelStore.unpinObject),
+        deletedItsRecords: callsTo(mockKernelStore.deleteVat),
+        marked: callsTo(mockKernelStore.markVatAsTerminated),
+      };
+    };
+
+    it('records all of it even when the worker refuses to go', async () => {
+      await vatManager.runVat('v1', createMockVatConfig());
+      (
+        mockKernelStore.getPromisesByDecider as unknown as MockInstance
+      ).mockReturnValueOnce(['kp1']);
+      (
+        vatHandles[0]?.terminate as unknown as MockInstance
+      ).mockRejectedValueOnce(new Error('stream would not close'));
+
+      await expect(vatManager.terminateVat('v1')).rejects.toThrow(
+        'stream would not close',
+      );
+
+      // A partial record is the state nothing recovers from: marked terminated
+      // while `vatConfig` survives reads as *active* again as soon as cleanup
+      // drops the mark, and the router kills the run loop over the
+      // disagreement. All four land, or the failure above is the lesser bug.
+      expect(recorded()).toStrictEqual({
+        rejectedItsPromises: 1,
+        unpinnedItsRoot: 1,
+        deletedItsRecords: 1,
+        marked: 1,
+      });
+      expect(vatManager.hasVat('v1')).toBe(false);
+    });
+
+    it('records it for a vat the store still lists but the kernel has lost', async () => {
+      // What `terminateSubcluster` hands us: it iterates the store's own vat
+      // list, which can name a vat whose handle is already gone.
+      (mockKernelStore.isVatActive as unknown as MockInstance) = vi
+        .fn()
+        .mockReturnValue(true);
+
+      await vatManager.terminateVat('v1');
+
+      expect(mockKernelStore.deleteVat).toHaveBeenCalledWith('v1');
+      expect(mockKernelStore.markVatAsTerminated).toHaveBeenCalledWith('v1');
+    });
+
+    it('refuses a vat neither the kernel nor the store knows about', async () => {
+      (mockKernelStore.isVatActive as unknown as MockInstance) = vi
+        .fn()
+        .mockReturnValue(false);
+
+      await expect(vatManager.terminateVat('v9')).rejects.toThrow(
+        VatNotFoundError,
+      );
+      expect(mockKernelStore.markVatAsTerminated).not.toHaveBeenCalled();
+    });
+
+    it('records it when a vat`s stream fails under it', async () => {
+      await vatManager.runVat('v1', createMockVatConfig());
+      const { onCriticalFailure } = makeVatHandleMock.mock
+        .calls[0]?.[0] as unknown as {
+        onCriticalFailure: (error: Error) => void;
+      };
+
+      onCriticalFailure(new Error('read error'));
+
+      // Left on the books, the handle stays resolvable, so the next delivery
+      // goes to a worker that cannot answer and the crank never completes —
+      // the RPC client has no timeout.
+      expect(vatManager.hasVat('v1')).toBe(false);
+      expect(mockKernelStore.markVatAsTerminated).toHaveBeenCalledWith('v1');
+    });
+
+    it('records none of it for a restart', async () => {
+      await vatManager.runVat('v1', createMockVatConfig());
+
+      await vatManager.stopVat('v1', false);
+
+      // The same vat, and the same root, are coming back.
+      expect(recorded()).toStrictEqual({
+        rejectedItsPromises: 0,
+        unpinnedItsRoot: 0,
+        deletedItsRecords: 0,
+        marked: 0,
+      });
+    });
+  });
+
   describe('restartVat', () => {
     it('restarts a vat successfully', async () => {
       const config = createMockVatConfig();
