@@ -155,10 +155,13 @@ export class Kernel {
     // which would deadlock — this callback is invoked from within a crank.
     this.#kernelQueue = new KernelQueue(
       this.#kernelStore,
-      async (vatId, reason) => {
-        await this.#vatManager.stopVat(vatId, true, reason);
-        this.#kernelStore.markVatAsTerminated(vatId);
-      },
+      // `stopVat` rather than `terminateVat`: this runs inside the crank that
+      // decided the vat has to go, and `terminateVat` would wait for that same
+      // crank to end. It needs no such wait — the run loop is right here — and
+      // `stopVat` puts the whole death on record before its first await, so a
+      // worker that refuses to die cannot leave the store half-told.
+      async (vatId, reason) =>
+        await this.#vatManager.stopVat(vatId, true, reason),
     );
 
     this.#vatManager = new VatManager({

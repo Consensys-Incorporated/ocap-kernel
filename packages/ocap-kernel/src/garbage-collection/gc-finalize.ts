@@ -50,6 +50,14 @@ export function makeGCAndFinalize(logger?: Logger): () => Promise<void> {
       const gcFunction = await gcFunctionPromise;
 
       if (gcFunction) {
+        // Drain the queues *before* collecting. A pending continuation still
+        // holds its closure's objects, so a sweep run with work outstanding
+        // finds them reachable and drops nothing — which is the difference
+        // between a vat reporting its dead imports on this `bringOutYourDead`
+        // and reporting them on some later one. Twice, because a drained turn
+        // can itself schedule the next.
+        await delay(0);
+        await delay(0);
         // First GC pass
         gcFunction();
         // Allow finalization callbacks to run
