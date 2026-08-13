@@ -207,6 +207,55 @@ describe('VatManager', () => {
 
       expect((error as Error).cause).toBe(cause);
     });
+
+    it('tears the worker down when kernel-side registration fails', async () => {
+      const config = createMockVatConfig();
+      const cause = new Error('initEndpoint threw');
+      mockKernelStore.initEndpoint.mockImplementationOnce(() => {
+        throw cause;
+      });
+
+      const error = await vatManager
+        .launchVat(config, 'bob', 's1')
+        .catch((reason: unknown) => reason);
+
+      expect((error as Error).message).toBe('Failed to launch vat v1 (bob)');
+      expect((error as Error).cause).toBe(cause);
+      // The worker is already running by this point, so it has to be stopped,
+      // and the vat marked so the terminated-vat cleanup reclaims what the
+      // partial launch wrote.
+      expect(mockPlatformServices.terminate).toHaveBeenCalledWith(
+        'v1',
+        expect.any(Error),
+      );
+      expect(vatHandles[0]?.terminate).toHaveBeenCalled();
+      expect(mockKernelStore.markVatAsTerminated).toHaveBeenCalledWith('v1');
+      expect(vatManager.hasVat('v1')).toBe(false);
+    });
+
+    it('still marks the vat terminated when the cleanup itself fails', async () => {
+      const config = createMockVatConfig();
+      const cause = new Error('setVatConfig threw');
+      mockKernelStore.setVatConfig.mockImplementationOnce(() => {
+        throw cause;
+      });
+      // `stopVat` unpins the root it was launched with, which is the first
+      // thing in the teardown that can fail.
+      mockKernelStore.unpinObject.mockImplementationOnce(() => {
+        throw new Error('worker will not die');
+      });
+
+      const error = await vatManager
+        .launchVat(config, 'bob', 's1')
+        .catch((reason: unknown) => reason);
+
+      expect((error as Error).message).toBe(
+        'Failed to launch vat v1 (bob) (cleanup also failed)',
+      );
+      // The launch failure, not the cleanup failure, is what the caller needs.
+      expect((error as Error).cause).toBe(cause);
+      expect(mockKernelStore.markVatAsTerminated).toHaveBeenCalledWith('v1');
+    });
   });
 
   describe('runVat', () => {
