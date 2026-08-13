@@ -44,7 +44,10 @@ async function main(): Promise<void> {
         isJsonRpcMessage,
       ),
       PlatformServicesClient.make(globalThis as PostMessageTarget),
-      makeSQLKernelDatabase({ dbFilename: DB_FILENAME }),
+      makeSQLKernelDatabase({
+        dbFilename: DB_FILENAME,
+        logger: logger.subLogger({ tags: ['kernel-store'] }),
+      }),
     ]);
 
   setupConsoleForwarding({

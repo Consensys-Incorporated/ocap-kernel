@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The kernel worker gives the kernel store a logger, so the wasm SQLite driver's diagnostics — including the transaction aborts it reports on the kernel's dying path — reach the log rather than nowhere ([#1012](https://github.com/MetaMask/ocap-kernel/pull/1012))
 - Process platform-services RPC request handlers in the background so a request handler that fires a reentrant outbound RPC (e.g. transport handshake calling back into the kernel) cannot deadlock waiting for its response ([#948](https://github.com/MetaMask/ocap-kernel/pull/948))
 
 ## [0.6.0]
