@@ -187,6 +187,15 @@ export class VatManager {
           caught,
         );
       }
+      // `stopVat` normally records the death itself, via `#retireVat`, before it
+      // touches the worker. But it can refuse before it gets that far — a vat
+      // the kernel has no handle for and the store does not call active is one
+      // it declines outright — and a partial launch is exactly the shape that
+      // reaches. The mark is what makes the terminated-vat cleanup reclaim the
+      // endpoint counters, the root's c-list pair and its owner entry, so it is
+      // asserted here rather than assumed. Marking an already-marked vat is a
+      // no-op.
+      this.#kernelStore.markVatAsTerminated(vatId);
       throw new Error(
         `Failed to launch vat ${vatId} (${vatName})${stopFailure ? ' (cleanup also failed)' : ''}`,
         { cause: error },

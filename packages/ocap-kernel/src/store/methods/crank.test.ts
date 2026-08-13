@@ -192,9 +192,14 @@ describe('crank methods', () => {
 
     it('reverts the caches the database cannot reach even when the rollback fails', () => {
       context.inCrank = true;
+      // Predates the savepoint, so it survives: only `collectGarbage` empties
+      // this set, and a candidate owed a collection before this crank began is
+      // still owed one after it is abandoned.
       context.maybeFreeKrefs.add('kp1');
       crankMethods.createCrankSavepoint('crank');
       crankMethods.createCrankSavepoint('delivery');
+      // Added by the crank being rolled back, so it goes.
+      context.maybeFreeKrefs.add('kp2');
       vi.mocked(kdb.rollbackSavepoint).mockImplementationOnce(() => {
         throw new Error('disk I/O error');
       });
@@ -206,7 +211,7 @@ describe('crank methods', () => {
       expect(context.refreshCachedValues).toHaveBeenCalled();
       expect(context.refreshRunQueue).toHaveBeenCalled();
       expect(context.runQueueLengthCache).toBe(-1);
-      expect([...context.maybeFreeKrefs]).toStrictEqual([]);
+      expect([...context.maybeFreeKrefs]).toStrictEqual(['kp1']);
     });
 
     it('keeps the rollback failure as the cause when reverting also fails', () => {
