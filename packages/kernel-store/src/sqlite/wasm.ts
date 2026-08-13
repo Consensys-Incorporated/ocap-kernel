@@ -199,9 +199,13 @@ export async function makeSQLKernelDatabase({
    */
   function commitIfNeeded(): void {
     if (db._inTx && db._spStack.length === 0) {
+      // Cleared before the commit is attempted, for the reason `rollbackIfNeeded`
+      // gives: a throwing COMMIT would otherwise wedge `_inTx` true, and every
+      // later savepoint would be created bare — where its RELEASE commits
+      // (Agoric/agoric-sdk#8423) and no rollback can undo the delivery.
+      db._inTx = false;
       sqlCommitTransaction.step();
       sqlCommitTransaction.reset();
-      db._inTx = false;
     }
   }
 
