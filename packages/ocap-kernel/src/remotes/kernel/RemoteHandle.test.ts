@@ -5,6 +5,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 import { RemoteHandle } from './RemoteHandle.ts';
 import { createMockRemotesFactory } from '../../../test/remotes-mocks.ts';
+import { withFailingSavepointRelease } from '../../../test/savepoint-stack.ts';
 import type { KernelQueue } from '../../KernelQueue.ts';
 import type { KernelStore } from '../../store/index.ts';
 import { parseRef } from '../../store/utils/parse-ref.ts';
@@ -220,37 +221,15 @@ describe('RemoteHandle', () => {
       });
     });
 
-    // FAILING REPRO.
-    //
     // `handleRemoteMessage` releases its savepoint inside the `try` and rolls
     // back in the `catch`. #1012 made a failed `RELEASE` discard the whole
-    // savepoint stack, so that rollback now reports a savepoint that no longer
-    // exists, and it throws out of the `catch` in place of the failure that
-    // brought it there.
+    // savepoint stack, so that rollback reports a savepoint that no longer
+    // exists, and left unguarded it throws out of the `catch` in place of the
+    // failure that brought it there.
     it('reports the release failure rather than a missing savepoint', async () => {
-      // The drivers' bookkeeping as #1012 leaves it, verified against both: a
-      // failed RELEASE clears `_spStack`, and rolling back a name that is not on
-      // it throws `No such savepoint`. Replacing the store wholesale rather than
-      // assigning over its methods because `makeKernelStore` hardens what it
-      // returns.
-      const savepoints: string[] = [];
-      const releaseFailure = new Error('database or disk is full');
-      const rollbackSavepoint = vi.fn((name: string) => {
-        if (!savepoints.includes(name)) {
-          throw new Error(`No such savepoint: ${name}`);
-        }
-      });
-      mockKernelStore = {
-        ...mockKernelStore,
-        createSavepoint: (name: string) => {
-          savepoints.push(name);
-        },
-        releaseSavepoint: () => {
-          savepoints.length = 0;
-          throw releaseFailure;
-        },
-        rollbackSavepoint,
-      };
+      const failing = withFailingSavepointRelease(mockKernelStore);
+      const { releaseFailure, rollbackSavepoint } = failing;
+      mockKernelStore = failing.kernelStore;
       const remote = makeRemote();
 
       const delivery = JSON.stringify({
