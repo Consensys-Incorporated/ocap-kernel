@@ -220,25 +220,36 @@ export class VatManager {
       loggerStream as unknown as Parameters<typeof vatLogger.injectStream>[0],
       (error) => this.#logger.error(`Vat ${vatId} error: ${stringify(error)}`),
     );
+    // A handle put on the books after its vat was retired is the
+    // store-says-dead, kernel-says-live disagreement all of this exists to
+    // prevent, and the stream can break at any point below.
+    let fatalError: Error | undefined;
     const vat = await VatHandle.make({
       vatId,
       vatConfig,
       vatStream,
       kernelStore: this.#kernelStore,
       kernelQueue: this.#kernelQueue,
-      onCriticalFailure: (error) => {
+      // Takes the handle rather than closing over `vat`, which does not exist
+      // yet while `make` is initializing — the very window in which the pending
+      // `initVat` needs rejecting, since nothing else would ever settle it.
+      onCriticalFailure: (error, failedVat) => {
         // The vat's channel has broken, so nothing can be delivered to it again
         // and no worker teardown is going to change that. Retire it rather than
         // leaving a handle the router will keep resolving successfully, which is
         // a crank that never completes: the write goes nowhere and the RPC
         // client has no timeout.
         this.#logger.error(`Retiring vat ${vatId} after a fatal error:`, error);
+        fatalError = error;
         this.#retireVat(vatId, error);
-        this.#startFailedVatTeardown(vatId, vat, error);
+        this.#startFailedVatTeardown(vatId, failedVat, error);
       },
       logger: vatLogger,
       allowedGlobalNames: this.#allowedGlobalNames,
     });
+    if (fatalError) {
+      throw fatalError;
+    }
     this.#vats.set(vatId, vat);
   }
 
@@ -373,22 +384,25 @@ export class VatManager {
     vat: VatHandle,
     error: Error,
   ): Promise<void> {
-    try {
-      await this.#platformServices.terminate(vatId, error);
-    } catch (terminateError) {
-      this.#logger.error(
-        `Failed to stop the worker of vat ${vatId} after a fatal error:`,
-        terminateError,
-      );
-    }
-    try {
-      await vat.terminate(true, error);
-    } catch (terminateError) {
-      this.#logger.error(
-        `Failed to close the channel of vat ${vatId} after a fatal error:`,
-        terminateError,
-      );
-    }
+    await Promise.all([
+      // `terminate` rejects the vat's pending RPCs before it awaits anything,
+      // so starting it first frees the parked delivery in this turn rather than
+      // behind a worker kill that may be slow to settle, or never settle.
+      vat.terminate(true, error).catch((terminateError: unknown) => {
+        this.#logger.error(
+          `Failed to close the channel of vat ${vatId} after a fatal error:`,
+          terminateError,
+        );
+      }),
+      this.#platformServices
+        .terminate(vatId, error)
+        .catch((terminateError: unknown) => {
+          this.#logger.error(
+            `Failed to stop the worker of vat ${vatId} after a fatal error:`,
+            terminateError,
+          );
+        }),
+    ]);
   }
 
   /**
