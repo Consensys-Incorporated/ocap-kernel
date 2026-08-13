@@ -45,8 +45,11 @@ type VatConstructorProps = {
   /**
    * Called when this vat has failed in a way it cannot come back from, so the
    * manager can end it. See the drain handler in {@link VatHandle.make}.
+   *
+   * Handed the handle, because the failure can come before `make` has returned
+   * it.
    */
-  onCriticalFailure: (error: Error) => void;
+  onCriticalFailure: (error: Error, vat: VatHandle) => void;
   logger?: Logger | undefined;
   allowedGlobalNames?: AllowedGlobalName[] | undefined;
 };
@@ -77,7 +80,7 @@ export class VatHandle implements EndpointHandle {
   readonly #vatSyscall: VatSyscall;
 
   /** Tells the manager this vat cannot be delivered to again */
-  readonly #onCriticalFailure: (error: Error) => void;
+  readonly #onCriticalFailure: (error: Error, vat: VatHandle) => void;
 
   readonly #rpcClient: RpcClient<typeof vatMethodSpecs>;
 
@@ -175,6 +178,7 @@ export class VatHandle implements EndpointHandle {
         // manager can put the vat's death on record.
         this.#onCriticalFailure(
           new StreamReadError({ vatId: this.vatId }, error),
+          this,
         );
       },
     );

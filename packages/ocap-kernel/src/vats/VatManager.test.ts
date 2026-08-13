@@ -519,14 +519,23 @@ describe('VatManager', () => {
       expect(mockKernelStore.markVatAsTerminated).not.toHaveBeenCalled();
     });
 
-    it('records it when a vat`s stream fails under it', async () => {
-      await vatManager.runVat('v1', createMockVatConfig());
+    /**
+     * Report a fatal stream failure for a vat, as its handle's drain catch does.
+     *
+     * @param vat - The handle reporting it.
+     */
+    const failStream = (vat: VatHandle): void => {
       const { onCriticalFailure } = makeVatHandleMock.mock
         .calls[0]?.[0] as unknown as {
-        onCriticalFailure: (error: Error) => void;
+        onCriticalFailure: (error: Error, failed: VatHandle) => void;
       };
+      onCriticalFailure(new Error('read error'), vat);
+    };
 
-      onCriticalFailure(new Error('read error'));
+    it('records it when a vat`s stream fails under it', async () => {
+      await vatManager.runVat('v1', createMockVatConfig());
+
+      failStream(vatHandles[0] as VatHandle);
 
       // Left on the books, the handle stays resolvable, so the next delivery
       // goes to a worker that cannot answer and the crank never completes —
@@ -537,12 +546,8 @@ describe('VatManager', () => {
 
     it('rejects the delivery in flight when a vat`s stream fails under it', async () => {
       await vatManager.runVat('v1', createMockVatConfig());
-      const { onCriticalFailure } = makeVatHandleMock.mock
-        .calls[0]?.[0] as unknown as {
-        onCriticalFailure: (error: Error) => void;
-      };
 
-      onCriticalFailure(new Error('read error'));
+      failStream(vatHandles[0] as VatHandle);
 
       // Recording the death only helps the *next* delivery. The one that was in
       // flight when the worker died is still parked on an RPC client with no
@@ -555,6 +560,49 @@ describe('VatManager', () => {
           expect.any(Error),
         );
       });
+    });
+
+    it('rejects it without waiting for the worker to die', async () => {
+      await vatManager.runVat('v1', createMockVatConfig());
+      (
+        mockPlatformServices.terminate as unknown as MockInstance
+      ).mockReturnValueOnce(new Promise(() => undefined));
+
+      failStream(vatHandles[0] as VatHandle);
+
+      // A worker that will not go must not be what keeps the delivery parked.
+      await vi.waitFor(() => {
+        expect(vatHandles[0]?.terminate).toHaveBeenCalledWith(
+          true,
+          expect.any(Error),
+        );
+      });
+    });
+
+    it('records it when the stream fails before the handle is returned', async () => {
+      // The failure can land while `VatHandle.make` is still initializing the
+      // vat, when the manager has no handle of its own to tear down with — and
+      // the pending `initVat` that nothing else will settle is exactly what is
+      // owed a rejection.
+      makeVatHandleMock.mockImplementationOnce(
+        async ({ vatId, vatConfig, onCriticalFailure }) => {
+          const handle = createMockVatHandle(vatId, vatConfig);
+          onCriticalFailure(new Error('read error'), handle);
+          return handle;
+        },
+      );
+
+      await expect(
+        vatManager.runVat('v1', createMockVatConfig()),
+      ).rejects.toThrow('read error');
+
+      expect(vatHandles[0]?.terminate).toHaveBeenCalledWith(
+        true,
+        expect.any(Error),
+      );
+      // On the books, this handle would be one the store already calls dead.
+      expect(vatManager.hasVat('v1')).toBe(false);
+      expect(mockKernelStore.markVatAsTerminated).toHaveBeenCalledWith('v1');
     });
 
     it('records none of it for a restart', async () => {
