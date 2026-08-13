@@ -234,6 +234,7 @@ export class VatManager {
         // client has no timeout.
         this.#logger.error(`Retiring vat ${vatId} after a fatal error:`, error);
         this.#retireVat(vatId, error);
+        this.#startFailedVatTeardown(vatId, vat, error);
       },
       logger: vatLogger,
       allowedGlobalNames: this.#allowedGlobalNames,
@@ -330,6 +331,64 @@ export class VatManager {
     // `nextTerminatedVatCleanup`, which reclaims the c-list everything above
     // needed, and which must not run against a vat still being written.
     this.#kernelStore.markVatAsTerminated(vatId);
+  }
+
+  /**
+   * Begin closing down a vat whose channel has broken. Detached deliberately:
+   * the stream's drain catch has nobody to await it, and the teardown settles
+   * its own failures rather than rejecting.
+   *
+   * @param vatId - The vat that failed.
+   * @param vat - Its handle, whose pending RPCs are owed a rejection.
+   * @param error - What broke, for those rejections.
+   */
+  #startFailedVatTeardown(vatId: VatId, vat: VatHandle, error: Error): void {
+    this.#tearDownFailedVat(vatId, vat, error).catch((unexpected: unknown) =>
+      this.#logger.error(
+        `Unexpected failure tearing down vat ${vatId}:`,
+        unexpected,
+      ),
+    );
+  }
+
+  /**
+   * Close down a vat whose channel has broken, after {@link #retireVat} has put
+   * its death on record.
+   *
+   * Recording the death only saves the deliveries that come after it. Any
+   * already in flight are parked on an RPC client with no timeout, so without
+   * this their cranks never finish either — the same hang, one delivery
+   * earlier. `terminate` rejects them, and the worker is stopped because
+   * nothing else will now that the handle is off the books.
+   *
+   * Never rejects: both steps are best-effort against a vat that is already
+   * gone, and there is nobody left to report to.
+   *
+   * @param vatId - The vat that failed.
+   * @param vat - Its handle, whose pending RPCs are owed a rejection.
+   * @param error - What broke, for those rejections.
+   */
+  async #tearDownFailedVat(
+    vatId: VatId,
+    vat: VatHandle,
+    error: Error,
+  ): Promise<void> {
+    try {
+      await this.#platformServices.terminate(vatId, error);
+    } catch (terminateError) {
+      this.#logger.error(
+        `Failed to stop the worker of vat ${vatId} after a fatal error:`,
+        terminateError,
+      );
+    }
+    try {
+      await vat.terminate(true, error);
+    } catch (terminateError) {
+      this.#logger.error(
+        `Failed to close the channel of vat ${vatId} after a fatal error:`,
+        terminateError,
+      );
+    }
   }
 
   /**

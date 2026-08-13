@@ -46,7 +46,9 @@ describe('VatManager', () => {
     const handle = {
       vatId,
       config,
-      terminate: vi.fn(),
+      // Resolved rather than bare, so callers that chain off it — rather than
+      // awaiting — behave as they would against the real async method.
+      terminate: vi.fn().mockResolvedValue(undefined),
       ping: vi.fn().mockResolvedValue({ pong: true }),
     } as unknown as Mocked<VatHandle>;
     vatHandles.push(handle);
@@ -531,6 +533,28 @@ describe('VatManager', () => {
       // the RPC client has no timeout.
       expect(vatManager.hasVat('v1')).toBe(false);
       expect(mockKernelStore.markVatAsTerminated).toHaveBeenCalledWith('v1');
+    });
+
+    it('rejects the delivery in flight when a vat`s stream fails under it', async () => {
+      await vatManager.runVat('v1', createMockVatConfig());
+      const { onCriticalFailure } = makeVatHandleMock.mock
+        .calls[0]?.[0] as unknown as {
+        onCriticalFailure: (error: Error) => void;
+      };
+
+      onCriticalFailure(new Error('read error'));
+
+      // Recording the death only helps the *next* delivery. The one that was in
+      // flight when the worker died is still parked on an RPC client with no
+      // timeout, so its crank never completes — the same hang, one delivery
+      // earlier. `terminate` is what rejects it, and the worker has to go too.
+      await vi.waitFor(() => {
+        expect(vatHandles[0]?.terminate).toHaveBeenCalled();
+        expect(mockPlatformServices.terminate).toHaveBeenCalledWith(
+          'v1',
+          expect.any(Error),
+        );
+      });
     });
 
     it('records none of it for a restart', async () => {
