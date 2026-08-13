@@ -122,6 +122,9 @@ export class KernelQueue {
   ): Promise<never> {
     for (;;) {
       let wakeUpPromise: Promise<void> | undefined;
+      // Boxed rather than left `undefined`, so that a crank which threw
+      // `undefined` is still distinguishable from one that did not throw.
+      let crankFailure: { error: unknown } | undefined;
 
       this.#kernelStore.startCrank();
       this.#crankRollbackAttempted = false;
@@ -170,12 +173,40 @@ export class KernelQueue {
           }
           throw error;
         }
+      } catch (error) {
+        crankFailure = { error };
+        throw error;
       } finally {
-        this.#kernelStore.endCrank();
+        this.#endCrank(crankFailure);
         if (wakeUpPromise) {
           await wakeUpPromise;
         }
       }
+    }
+  }
+
+  /**
+   * End the crank without losing the error that is already unwinding. Since the
+   * delivery rollback now spares `crank`, `endCrank`'s release is a real RELEASE
+   * and COMMIT on the dying path, where it used to be a no-op — and from a bare
+   * `finally` a failing one would silently replace whatever killed the kernel.
+   *
+   * @param crankFailure - The error already in flight, if the crank threw.
+   * @param crankFailure.error - That error.
+   */
+  #endCrank(crankFailure?: { error: unknown }): void {
+    try {
+      this.#kernelStore.endCrank();
+    } catch (endCrankError) {
+      if (!crankFailure) {
+        throw endCrankError;
+      }
+      // The original failure stays the `cause`, as on the rollback path; the
+      // release failure is named here.
+      throw new Error(
+        `Run loop died and its crank could not be ended: ${String(endCrankError)}`,
+        { cause: crankFailure.error },
+      );
     }
   }
 
