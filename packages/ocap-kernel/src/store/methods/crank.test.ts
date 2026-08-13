@@ -176,6 +176,48 @@ describe('crank methods', () => {
       crankMethods.endCrank();
       expect(kdb.releaseSavepoint).not.toHaveBeenCalled();
     });
+
+    // The two halves of this function compose the wrong way round if the
+    // failure path simply rethrows: a failed rollback discards the whole
+    // transaction, so the database has moved back at least as far as a
+    // successful rollback would have taken it and the caches it left behind are
+    // at least as stale.
+    it('reverts the caches the database cannot reach even when the rollback fails', () => {
+      context.inCrank = true;
+      context.maybeFreeKrefs.add('kp1');
+      crankMethods.createCrankSavepoint('crank');
+      crankMethods.createCrankSavepoint('delivery');
+      vi.mocked(kdb.rollbackSavepoint).mockImplementationOnce(() => {
+        throw new Error('disk I/O error');
+      });
+
+      expect(() => crankMethods.rollbackCrank('delivery')).toThrow(
+        'disk I/O error',
+      );
+
+      expect(context.refreshCachedValues).toHaveBeenCalled();
+      expect(context.refreshRunQueue).toHaveBeenCalled();
+      expect(context.runQueueLengthCache).toBe(-1);
+      expect([...context.maybeFreeKrefs]).toStrictEqual([]);
+    });
+
+    // Reverting must not become a way to lose the database error either.
+    it('keeps the rollback failure as the cause when reverting also fails', () => {
+      context.inCrank = true;
+      const rollbackFailure = new Error('disk I/O error');
+      crankMethods.createCrankSavepoint('crank');
+      crankMethods.createCrankSavepoint('delivery');
+      vi.mocked(kdb.rollbackSavepoint).mockImplementationOnce(() => {
+        throw rollbackFailure;
+      });
+      vi.mocked(context.refreshCachedValues).mockImplementationOnce(() => {
+        throw new Error('database is gone');
+      });
+
+      expect(() => crankMethods.rollbackCrank('delivery')).toThrow(
+        expect.objectContaining({ cause: rollbackFailure }),
+      );
+    });
   });
 
   describe('endCrank', () => {
