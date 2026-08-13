@@ -12,11 +12,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `rollbackSavepoint` discards the enclosing transaction when `ROLLBACK TO` itself fails, instead of leaving the savepoint on its stack and the transaction open ([#1005](https://github.com/MetaMask/ocap-kernel/pull/1005))
   - Nothing would ever commit or abort that transaction, so every later write on the connection silently joined it, reported success, and vanished on close. Discarding it is no wider than the caller asked for: the transaction begins with the outermost savepoint, so it holds only the work the rollback was abandoning
   - The rollback failure is still what gets thrown, even if aborting the transaction fails too
-- `releaseSavepoint` discards the enclosing transaction when `RELEASE` fails, as `rollbackSavepoint` already did for `ROLLBACK TO` ([#1012](https://github.com/MetaMask/ocap-kernel/pull/1012))
+- `releaseSavepoint` discards the enclosing transaction when `RELEASE` fails, as `rollbackSavepoint` already did for `ROLLBACK TO` ([#1021](https://github.com/MetaMask/ocap-kernel/pull/1021))
   - Otherwise the savepoint stayed on the stack and the transaction open with nothing left to commit or abort it. The release failure is still what gets thrown
-- The wasm driver clears `_inTx` when aborting or committing a transaction throws, instead of believing it is still in one ([#1012](https://github.com/MetaMask/ocap-kernel/pull/1012))
+- The wasm driver clears `_inTx` when aborting or committing a transaction throws, instead of believing it is still in one ([#1021](https://github.com/MetaMask/ocap-kernel/pull/1021))
   - Left true, `beginIfNeeded` became a permanent no-op and later writes autocommitted — including the next savepoint, which was then created bare, where its `RELEASE` commits and no rollback could undo the delivery. The nodejs driver reads `db.inTransaction` and was never affected
-- An abort that fails while recovering from a failed savepoint operation is now logged in both drivers ([#1012](https://github.com/MetaMask/ocap-kernel/pull/1012))
+- An abort that fails while recovering from a failed savepoint operation is now logged in both drivers ([#1021](https://github.com/MetaMask/ocap-kernel/pull/1021))
 
 ## [0.6.0]
 
