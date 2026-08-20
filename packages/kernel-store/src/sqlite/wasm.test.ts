@@ -599,19 +599,7 @@ describe('makeSQLKernelDatabase', () => {
       expect(mockDb.exec).toHaveBeenCalledWith('SAVEPOINT next');
     });
 
-    // FAILING REPRO.
-    //
-    // `commitIfNeeded` still steps the COMMIT before clearing `_inTx`, the exact
-    // ordering `rollbackIfNeeded` was corrected to avoid. A COMMIT that throws
-    // therefore leaves `_inTx` true against a database that may hold no
-    // transaction, `beginIfNeeded` is a no-op forever after, and the next
-    // savepoint is created outside a transaction — which commits when released
-    // (Agoric/agoric-sdk#8423). This is the crank's commit point, so the writes
-    // that leak are a whole crank's.
-    //
-    // A failed abort is therefore not, as the abort case above claims, the one
-    // case that can leave `_inTx` disagreeing with the database. This is the
-    // second.
+    // Why the ordering matters: see `commitIfNeeded`.
     it('stops believing it is in a transaction when the commit fails', async () => {
       const db = await makeSQLKernelDatabase({});
       mockDb._inTx = true;
@@ -635,6 +623,58 @@ describe('makeSQLKernelDatabase', () => {
       db.createSavepoint('next');
       expect(mockStatement.step).toHaveBeenCalledOnce();
       expect(mockDb.exec).toHaveBeenCalledWith('SAVEPOINT next');
+    });
+
+    // Why the COMMIT path discards too: see `commitIfNeeded`.
+    it('releaseSavepoint discards the transaction when the commit fails', async () => {
+      const db = await makeSQLKernelDatabase({});
+      mockStatement.step.mockClear();
+      mockDb._inTx = true;
+      mockDb._spStack = ['point1'];
+      // The RELEASE goes through `exec` and succeeds; COMMIT is the first
+      // prepared statement this path steps, and it is what fails.
+      mockStatement.step.mockImplementationOnce(() => {
+        throw new Error('database is locked');
+      });
+
+      expect(() => db.releaseSavepoint('point1')).toThrowError(
+        'database is locked',
+      );
+
+      // Every statement shares one mock, so the ABORT is only visible as a
+      // second step.
+      expect(mockStatement.step).toHaveBeenCalledTimes(2);
+      expect(mockDb._inTx).toBe(false);
+    });
+
+    it('releaseSavepoint reports the commit failure even if the abort fails too', async () => {
+      const logger = {
+        debug: vi.fn(),
+        warn: vi.fn(),
+        error: vi.fn(),
+        subLogger: vi.fn(() => logger),
+      } as unknown as Logger;
+      const db = await makeSQLKernelDatabase({ logger });
+      mockStatement.step.mockClear();
+      mockDb._inTx = true;
+      mockDb._spStack = ['point1'];
+      mockStatement.step
+        .mockImplementationOnce(() => {
+          throw new Error('database is locked');
+        })
+        .mockImplementationOnce(() => {
+          throw new Error('cannot rollback');
+        });
+
+      expect(() => db.releaseSavepoint('point1')).toThrowError(
+        'database is locked',
+      );
+
+      expect(logger.error).toHaveBeenCalledWith(
+        'failed to discard transaction after commit',
+        expect.objectContaining({ message: 'cannot rollback' }),
+      );
+      expect(mockDb._inTx).toBe(false);
     });
 
     it('supports nested savepoints', async () => {
