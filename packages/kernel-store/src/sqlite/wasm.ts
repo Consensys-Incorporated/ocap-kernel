@@ -204,8 +204,24 @@ export async function makeSQLKernelDatabase({
       // later savepoint would be created bare — where its RELEASE commits
       // (Agoric/agoric-sdk#8423) and no rollback can undo the delivery.
       db._inTx = false;
-      sqlCommitTransaction.step();
-      sqlCommitTransaction.reset();
+      try {
+        sqlCommitTransaction.step();
+        sqlCommitTransaction.reset();
+      } catch (error) {
+        // Discarded for the reason `releaseSavepoint` gives: a failed COMMIT can
+        // leave the transaction open too. Stepped directly because `_inTx` is
+        // already false above, which makes `rollbackIfNeeded` a no-op.
+        try {
+          sqlAbortTransaction.step();
+          sqlAbortTransaction.reset();
+        } catch (abortError) {
+          logger?.error(
+            'failed to discard transaction after commit',
+            abortError,
+          );
+        }
+        throw error;
+      }
     }
   }
 
