@@ -950,10 +950,6 @@ describe('RemoteManager', () => {
       expect(finalizeSpy).not.toHaveBeenCalled();
     });
 
-    // The same shape `RemoteHandle.handleRemoteMessage` has: the release sits
-    // inside the `try` and the rollback in the `catch`, so a failed RELEASE —
-    // which discards the whole savepoint stack — leaves the rollback naming a
-    // savepoint that is gone.
     it('reports the release failure rather than a missing savepoint', async () => {
       const peerId = 'peer-whose-release-fails';
       const {
@@ -976,14 +972,10 @@ describe('RemoteManager', () => {
         observedIncarnation: string,
       ) => Promise<boolean>;
 
-      // The error an operator needs is the one the database gave, not the
-      // bookkeeping artefact of trying to clean up after it.
       await expect(onIncarnationChange(peerId, 'incarnation-A')).rejects.toBe(
         releaseFailure,
       );
-      // Still attempted, so that abandoning the rollback is not a way to pass:
-      // a release that failed for a reason of its own may well have left the
-      // savepoint standing.
+      // Still attempted: abandoning the rollback is not a way to pass this.
       expect(rollbackSavepoint).toHaveBeenCalledWith(
         `peerIncarnation_${peerId}`,
       );

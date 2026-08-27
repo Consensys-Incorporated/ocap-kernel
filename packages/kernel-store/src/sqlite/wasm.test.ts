@@ -517,7 +517,6 @@ describe('makeSQLKernelDatabase', () => {
       expect(mockDb._inTx).toBe(false);
     });
 
-    // The hazard `rollbackSavepoint` guards against, by the other door.
     it('releaseSavepoint discards the transaction when the release fails', async () => {
       const db = await makeSQLKernelDatabase({});
       mockDb._inTx = true;
@@ -552,8 +551,6 @@ describe('makeSQLKernelDatabase', () => {
       expect(mockDb._inTx).toBe(false);
     });
 
-    // A failed abort is the one case that can leave `_inTx` disagreeing with the
-    // database. Left true, `beginIfNeeded` is a no-op forever after.
     it('stops believing it is in a transaction when the abort fails too', async () => {
       const db = await makeSQLKernelDatabase({});
       mockDb._inTx = true;
@@ -572,9 +569,6 @@ describe('makeSQLKernelDatabase', () => {
       expect(mockDb._inTx).toBe(false);
     });
 
-    // Why that matters: a savepoint created outside a transaction commits when
-    // released (Agoric/agoric-sdk#8423), so an aborted crank would keep its
-    // writes.
     it('begins a transaction for the next savepoint after a failed abort', async () => {
       const db = await makeSQLKernelDatabase({});
       mockDb._inTx = true;
@@ -599,13 +593,12 @@ describe('makeSQLKernelDatabase', () => {
       expect(mockDb.exec).toHaveBeenCalledWith('SAVEPOINT next');
     });
 
-    // Why the ordering matters: see `commitIfNeeded`.
     it('stops believing it is in a transaction when the commit fails', async () => {
       const db = await makeSQLKernelDatabase({});
       mockDb._inTx = true;
       mockDb._spStack = ['point1'];
-      // The RELEASE goes through `exec` and succeeds; COMMIT is the first
-      // prepared statement this path steps, and it is what fails.
+      // The RELEASE goes through `exec`; COMMIT is the first prepared statement
+      // this path steps.
       mockStatement.step.mockImplementationOnce(() => {
         throw new Error('disk I/O error');
       });
@@ -616,8 +609,6 @@ describe('makeSQLKernelDatabase', () => {
 
       expect(mockDb._inTx).toBe(false);
 
-      // And so the next savepoint gets a transaction of its own rather than
-      // being created bare.
       mockDb.exec.mockClear();
       mockStatement.step.mockClear();
       db.createSavepoint('next');
@@ -625,14 +616,13 @@ describe('makeSQLKernelDatabase', () => {
       expect(mockDb.exec).toHaveBeenCalledWith('SAVEPOINT next');
     });
 
-    // Why the COMMIT path discards too: see `commitIfNeeded`.
     it('releaseSavepoint discards the transaction when the commit fails', async () => {
       const db = await makeSQLKernelDatabase({});
       mockStatement.step.mockClear();
       mockDb._inTx = true;
       mockDb._spStack = ['point1'];
-      // The RELEASE goes through `exec` and succeeds; COMMIT is the first
-      // prepared statement this path steps, and it is what fails.
+      // The RELEASE goes through `exec`; COMMIT is the first prepared statement
+      // this path steps.
       mockStatement.step.mockImplementationOnce(() => {
         throw new Error('database is locked');
       });

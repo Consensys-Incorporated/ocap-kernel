@@ -308,7 +308,6 @@ describe('makeSQLKernelDatabase', () => {
       );
 
       expect(mockDb._spStack).toStrictEqual([]);
-      // The abort is the only prepared statement this path runs.
       expect(mockStatement.run).toHaveBeenCalledOnce();
       mockDb.inTransaction = false;
     });
@@ -360,7 +359,6 @@ describe('makeSQLKernelDatabase', () => {
       expect(mockDb._spStack).toStrictEqual([]);
     });
 
-    // The hazard `rollbackSavepoint` guards against, by the other door.
     it('releaseSavepoint discards the transaction when the release fails', async () => {
       const db = await makeSQLKernelDatabase({});
       mockDb.inTransaction = true;

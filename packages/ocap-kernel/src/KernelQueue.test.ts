@@ -232,8 +232,6 @@ describe('KernelQueue', () => {
       expect(kernelStore.endCrank).toHaveBeenCalled();
     });
 
-    // Why the flush comes after the crank's fallible work: see
-    // `#processCrankResult`. Here the terminate is what fails.
     it('answers no caller from a crank it then rolls back', async () => {
       const mockItem: RunQueueItem = {
         type: 'send',
@@ -278,15 +276,11 @@ describe('KernelQueue', () => {
 
       expect(kernelStore.rollbackCrank).toHaveBeenCalledWith('delivery');
       expect(resolve).not.toHaveBeenCalled();
-      // Told the result will never come, rather than left waiting on a crank the
-      // store no longer has any record of.
       expect(reject).toHaveBeenCalledWith(
         expect.objectContaining({ cause: terminationError }),
       );
     });
 
-    // The same invariant inside the flush: `#enqueueRun` is store work and can
-    // fail part-way, so no caller may be answered until all of it lands.
     it('answers no caller until every buffered item is enqueued', async () => {
       const mockItem: RunQueueItem = {
         type: 'send',
@@ -334,8 +328,6 @@ describe('KernelQueue', () => {
       expect(resolve).not.toHaveBeenCalled();
     });
 
-    // Why two savepoints: see `#runLoop`. This pins that the rollback spares the
-    // transaction, so the work an aborted crank still owes stays inside it.
     it.each([
       {
         label: 'an abort',
@@ -558,13 +550,6 @@ describe('KernelQueue', () => {
       });
     });
 
-    // FAILING REPRO.
-    //
-    // The companion of the case above, at the other end of the crank. Since the
-    // delivery rollback now spares `crank`, `endCrank`'s release is a real
-    // RELEASE + COMMIT on the dying path where it used to be a no-op, and
-    // `#runLoop` calls it from a bare `finally` — so when it throws it replaces
-    // the error that killed the kernel instead of being reported alongside it.
     it('reports both failures when endCrank also fails', async () => {
       (
         kernelStore.runQueueLength as unknown as MockInstance
@@ -586,8 +571,6 @@ describe('KernelQueue', () => {
         .run(deliver)
         .catch((error: unknown) => error);
 
-      // However the release failure is named, the error that actually killed the
-      // kernel has to stay reachable — as the rollback path already manages.
       expect(causeChain(failure)).toContain(crankError);
       expect(kernelQueue.getRunLoopStatus()).toMatchObject({
         state: 'failed',

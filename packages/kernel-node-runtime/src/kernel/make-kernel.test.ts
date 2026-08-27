@@ -10,8 +10,6 @@ vi.mock('@metamask/kernel-store/sqlite/nodejs', async () => {
     '../../../ocap-kernel/test/storage.ts'
   );
   return {
-    // Wrapped so that a test can see what the database was constructed with,
-    // while still getting a real store back.
     makeSQLKernelDatabase: vi.fn(makeMapKernelDatabase),
   };
 });
@@ -23,13 +21,6 @@ describe('makeKernel', () => {
     expect(kernel).toBeInstanceOf(Kernel);
   });
 
-  // FAILING REPRO.
-  //
-  // The kernel store is the only collaborator `makeKernel` builds without
-  // handing it a logger, so every `logger?.` call inside the SQLite driver is
-  // dead code in production — including the four abort failures #1012 added
-  // logging for. `kernel-worker.ts` omits it too, which keeps the wasm driver's
-  // pair dead even once this passes.
   it('gives the kernel store a logger', async () => {
     await makeKernel({});
 

@@ -221,11 +221,6 @@ describe('RemoteHandle', () => {
       });
     });
 
-    // `handleRemoteMessage` releases its savepoint inside the `try` and rolls
-    // back in the `catch`. #1012 made a failed `RELEASE` discard the whole
-    // savepoint stack, so that rollback reports a savepoint that no longer
-    // exists, and left unguarded it throws out of the `catch` in place of the
-    // failure that brought it there.
     it('reports the release failure rather than a missing savepoint', async () => {
       const failing = withFailingSavepointRelease(mockKernelStore);
       const { releaseFailure, rollbackSavepoint } = failing;
@@ -238,14 +233,10 @@ describe('RemoteHandle', () => {
         params: ['bringOutYourDead'],
       });
 
-      // The error an operator needs is the one the database gave, not the
-      // bookkeeping artefact of trying to clean up after it.
       await expect(remote.handleRemoteMessage(delivery)).rejects.toBe(
         releaseFailure,
       );
-      // Still attempted, so that abandoning the rollback is not a way to pass
-      // this test: a release that failed for a reason of its own may well have
-      // left the savepoint standing.
+      // Still attempted: abandoning the rollback is not a way to pass this.
       expect(rollbackSavepoint).toHaveBeenCalledWith('receive_r0_1');
     });
 

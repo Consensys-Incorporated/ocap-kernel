@@ -156,9 +156,6 @@ describe('crank methods', () => {
       expect(mockCrankBuffer).toHaveLength(0);
     });
 
-    // A failed rollback discards every savepoint, not just this one. Truncating
-    // to the ordinal would have `endCrank` release a `t0` the database lacks and
-    // throw over whatever really killed the kernel.
     it('forgets every savepoint when the rollback fails', () => {
       context.inCrank = true;
       crankMethods.createCrankSavepoint('crank');
@@ -172,16 +169,10 @@ describe('crank methods', () => {
       );
 
       expect(context.savepoints).toStrictEqual([]);
-      // The release `endCrank` would otherwise attempt, and throw over.
       crankMethods.endCrank();
       expect(kdb.releaseSavepoint).not.toHaveBeenCalled();
     });
 
-    // The two halves of this function compose the wrong way round if the
-    // failure path simply rethrows: a failed rollback discards the whole
-    // transaction, so the database has moved back at least as far as a
-    // successful rollback would have taken it and the caches it left behind are
-    // at least as stale.
     it('reverts the caches the database cannot reach even when the rollback fails', () => {
       context.inCrank = true;
       context.maybeFreeKrefs.add('kp1');
@@ -201,7 +192,6 @@ describe('crank methods', () => {
       expect([...context.maybeFreeKrefs]).toStrictEqual([]);
     });
 
-    // Reverting must not become a way to lose the database error either.
     it('keeps the rollback failure as the cause when reverting also fails', () => {
       context.inCrank = true;
       const rollbackFailure = new Error('disk I/O error');
@@ -272,9 +262,6 @@ describe('crank methods', () => {
       expect(await waiter).toBeUndefined();
     });
 
-    // As `rollbackCrank` does. Left listed, the next crank numbers its savepoint
-    // `t1` against a database that has none, and every later release and rollback
-    // aims one crank past its target.
     it('forgets its savepoints even if releasing them fails', () => {
       crankMethods.startCrank();
       context.savepoints = ['test'];
