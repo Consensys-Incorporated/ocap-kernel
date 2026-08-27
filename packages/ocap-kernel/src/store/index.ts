@@ -130,7 +130,7 @@ export function makeKernelStore(kdb: KernelDatabase, logger?: Logger) {
   /**
    * Every cached stored value the context holds, as `field: [key, initial]`.
    * Declared once so that initialization and `refreshCachedValues` cannot
-   * disagree about which values exist: adding one here does both.
+   * disagree about which values exist.
    */
   const CACHED_VALUES = {
     /** Counter for allocating kernel object IDs */
@@ -152,8 +152,7 @@ export function makeKernelStore(kdb: KernelDatabase, logger?: Logger) {
   } as const satisfies Record<string, readonly [key: string, init: string]>;
 
   /**
-   * Provide a fresh stored value for each of {@link CACHED_VALUES}, reading its
-   * current setting out of the database.
+   * Provide a fresh stored value for each of {@link CACHED_VALUES}.
    *
    * @returns The stored values, keyed by the context field that holds each.
    */
@@ -181,10 +180,10 @@ export function makeKernelStore(kdb: KernelDatabase, logger?: Logger) {
     },
     ...provideCachedValues(),
     /**
-     * Re-read every cached stored value from the database. Each one closes over
-     * the last value written through it (see `provideCachedStoredValue`), so
-     * reverting the database alone is not enough: the closure would still hold
-     * the abandoned value and the next `set` would write it straight back.
+     * Re-read every cached stored value from the database. Each closes over the
+     * last value written through it (see `provideCachedStoredValue`), so after a
+     * rollback the closure would otherwise still hold the abandoned value and
+     * the next `set` would write it straight back.
      */
     refreshCachedValues: () => {
       Object.assign(context, provideCachedValues());
@@ -434,9 +433,6 @@ export function makeKernelStore(kdb: KernelDatabase, logger?: Logger) {
       return Number(kv.get(`${OCAP_URL_PREFIX}${kref}`) ?? 0);
     },
     retainForOcapURL(kref: KRef): void {
-      // Refuse to mint a token for something already collected: the URL would
-      // name a capability that can never be delivered to. Refusing here names
-      // what was attempted, and does it before anything has been written.
       this.kernelRefExists(kref) ||
         Fail`cannot issue an ocap URL for deleted kref ${kref}`;
       const issuances = this.getOcapURLIssuanceCount(kref);
@@ -451,16 +447,12 @@ export function makeKernelStore(kdb: KernelDatabase, logger?: Logger) {
         kv.set(`${OCAP_URL_PREFIX}${kref}`, `${issuances - 1}`);
         return;
       }
-      // The last issuance, or none at all: either way, what is left of the
-      // retention is exactly what a release drops.
       this.releaseOcapURLRetentions(kref);
     },
     releaseOcapURLRetentions(kref: KRef): void {
       if (this.getOcapURLIssuanceCount(kref) === 0) {
         return;
       }
-      // Spend the pin before forgetting the retention, so a failure to release
-      // it leaves a ledger that still says the retention is held.
       this.unpinObject(kref);
       kv.delete(`${OCAP_URL_PREFIX}${kref}`);
     },

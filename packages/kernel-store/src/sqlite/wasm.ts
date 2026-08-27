@@ -199,18 +199,14 @@ export async function makeSQLKernelDatabase({
    */
   function commitIfNeeded(): void {
     if (db._inTx && db._spStack.length === 0) {
-      // Cleared before the commit is attempted, for the reason `rollbackIfNeeded`
-      // gives: a throwing COMMIT would otherwise wedge `_inTx` true, and every
-      // later savepoint would be created bare — where its RELEASE commits
-      // (Agoric/agoric-sdk#8423) and no rollback can undo the delivery.
+      // Cleared first, for the reason `rollbackIfNeeded` gives.
       db._inTx = false;
       try {
         sqlCommitTransaction.step();
         sqlCommitTransaction.reset();
       } catch (error) {
-        // Discarded for the reason `releaseSavepoint` gives: a failed COMMIT can
-        // leave the transaction open too. Stepped directly because `_inTx` is
-        // already false above, which makes `rollbackIfNeeded` a no-op.
+        // A failed COMMIT can leave the transaction open. Stepped directly
+        // because `_inTx` above already made `rollbackIfNeeded` a no-op.
         try {
           sqlAbortTransaction.step();
           sqlAbortTransaction.reset();
@@ -230,12 +226,9 @@ export async function makeSQLKernelDatabase({
    */
   function rollbackIfNeeded(): void {
     if (db._inTx) {
-      // Cleared before the abort is attempted, because the abort can throw and
-      // `_inTx` is tracked here rather than read from SQLite as the nodejs driver
-      // does. Left true, `beginIfNeeded` is a no-op forever after and writes
-      // autocommit one statement at a time (see `createSavepoint`). Cleared, a
-      // still-open transaction surfaces as a failed `BEGIN` — the louder
-      // failure.
+      // Cleared before the abort, which can throw: left true, `beginIfNeeded` is
+      // a no-op forever after and writes autocommit one statement at a time (see
+      // `createSavepoint`).
       db._inTx = false;
       db._spStack.length = 0;
       sqlAbortTransaction.step();
@@ -407,9 +400,6 @@ export async function makeSQLKernelDatabase({
       try {
         rollbackIfNeeded();
       } catch (abortError) {
-        // The rollback failure below is the one worth reporting. The next
-        // `BEGIN` will fail if SQLite really is still in a transaction, but that
-        // is a crank away and this is where the evidence is.
         logger?.error(
           'failed to discard transaction after rollback',
           abortError,
@@ -438,18 +428,12 @@ export async function makeSQLKernelDatabase({
     try {
       db.exec(query);
     } catch (error) {
-      // The hazard `rollbackSavepoint` guards against, by the other door: left as
-      // it was, the savepoint stays on the stack and the transaction open with
-      // nothing to ever commit or abort it, so every later write on this
-      // connection joins it, reports success, and vanishes on close. There is no
-      // committing this transaction now, so discard it.
+      // The hazard `rollbackSavepoint` guards against, by the other door, and
+      // there is no committing this transaction now.
       db._spStack.length = 0;
       try {
         rollbackIfNeeded();
       } catch (abortError) {
-        // The release failure below is the one worth reporting. The next
-        // `BEGIN` will fail if SQLite really is still in a transaction, but that
-        // is a crank away and this is where the evidence is.
         logger?.error(
           'failed to discard transaction after release',
           abortError,

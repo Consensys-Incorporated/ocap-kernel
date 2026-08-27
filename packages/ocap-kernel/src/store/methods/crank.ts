@@ -32,9 +32,6 @@ export function getCrankMethods(ctx: StoreContext, kdb: KernelDatabase) {
   function createCrankSavepoint(name: string): void {
     ctx.inCrank || Fail`createCrankSavepoint outside of crank`;
     const ordinal = ctx.savepoints.length;
-    // Record the name only once the database has the savepoint. Recording it
-    // first would leave `endCrank` trying to release a savepoint that was never
-    // created, and that error would replace whatever really went wrong.
     kdb.createSavepoint(`t${ordinal}`);
     ctx.savepoints.push(name);
   }
@@ -51,21 +48,9 @@ export function getCrankMethods(ctx: StoreContext, kdb: KernelDatabase) {
       if (ctx.savepoints[ordinal] === savepoint) {
         try {
           kdb.rollbackSavepoint(`t${ordinal}`);
-          // Left listed, `endCrank`'s release would commit the crank we just
-          // abandoned.
           ctx.savepoints.length = ordinal;
         } catch (error) {
-          // A failed rollback discards the whole transaction, so every savepoint
-          // is gone, not just this one. Truncating to `ordinal` would have
-          // `endCrank` release a `t0` the database lacks and throw over whatever
-          // really killed the kernel.
           ctx.savepoints.length = 0;
-          // Before the rethrow, and not only on the path below. A failed
-          // rollback discards the whole transaction, so the database has moved
-          // back at least as far as a successful rollback would have taken it
-          // and these caches are at least as stale. Rethrowing ahead of this
-          // would leave the dying crank holding the GC action it consumed and
-          // the freed krefs it was about to collect.
           revertStateBeneathRollback(error);
           throw error;
         }
@@ -80,29 +65,15 @@ export function getCrankMethods(ctx: StoreContext, kdb: KernelDatabase) {
    * Revert what a database rollback cannot reach: the in-memory caches built
    * over the abandoned crank's writes.
    *
-   * @param rollbackError - The error the rollback threw, if it threw. Kept as
-   * the `cause` should reverting fail too, since it is the root cause an
-   * operator needs.
+   * @param rollbackError - The error the rollback threw, if it threw.
    */
   function revertStateBeneathRollback(rollbackError?: unknown): void {
     try {
-      // Recreate the run queue so its cached head/tail are re-read from the
-      // database, and invalidate the length cache, since the rollback may have
-      // restored dequeued items.
       ctx.refreshRunQueue();
       ctx.runQueueLengthCache = -1;
-      // Same staleness, worse consequence: a cached value reads from its
-      // closure and only writes through to kv, so one this crank consumed stays
-      // consumed and the next `set` persists that. `processGCActionSet` takes an
-      // action out of the set before delivering it, so an action not restored
-      // here is lost rather than retried.
       ctx.refreshCachedValues();
-      // Nothing rolls back RAM. These krefs are collection candidates only
-      // because this crank decremented them, and that is precisely what was just
-      // undone. Left in place, `collectGarbage` throws on a later crank for any
-      // promise this one created — killing the run loop over work that no longer
-      // exists. Correct only while every rollback discards the whole delivery,
-      // which is all any caller asks for.
+      // Clearing all of them is correct only while a rollback discards the whole
+      // delivery, which is all any caller asks for.
       ctx.maybeFreeKrefs.clear();
     } catch (revertError) {
       if (rollbackError === undefined) {
@@ -123,10 +94,6 @@ export function getCrankMethods(ctx: StoreContext, kdb: KernelDatabase) {
       try {
         kdb.releaseSavepoint('t0');
       } finally {
-        // A failed release discards the transaction too, so the database has no
-        // savepoints left either. Left listed, the next crank would number its
-        // savepoint `t1` and aim every later release and rollback one crank past
-        // the one it meant to end.
         ctx.savepoints.length = 0;
       }
     }

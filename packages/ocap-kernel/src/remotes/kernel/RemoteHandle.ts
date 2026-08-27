@@ -1035,11 +1035,8 @@ export class RemoteHandle implements EndpointHandle {
       try {
         this.#kernelStore.rollbackSavepoint(savepointName);
       } catch (rollbackError) {
-        // The release above is inside the `try`, and a failed RELEASE discards
-        // the whole savepoint stack — so this rollback reports a savepoint that
-        // is already gone, over the database failure an operator actually needs.
-        // Still attempted, because a release that failed for a reason of its own
-        // may well have left the savepoint standing.
+        // A failed RELEASE above discards the whole savepoint stack, so this
+        // rollback would report a savepoint already gone over the real error.
         this.#logger.error(
           `${this.#peerId.slice(0, 8)}:: rollback of ${savepointName} failed`,
           rollbackError,

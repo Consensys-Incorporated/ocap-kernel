@@ -56,10 +56,8 @@ export class KernelQueue {
 
   /**
    * Whether this crank's savepoint has already been handed to `rollbackCrank`.
-   * Attempted, not necessarily succeeded: it is forgotten either way, so a second
-   * attempt could only report "no such savepoint" over the real error. Recorded
-   * at the attempt rather than returned, because `#processCrankResult` can throw
-   * after rolling back.
+   * Attempted, not necessarily succeeded: it is forgotten either way, so asking
+   * twice could only report "no such savepoint" over the real error.
    */
   #crankRollbackAttempted: boolean = false;
 
@@ -122,8 +120,8 @@ export class KernelQueue {
   ): Promise<never> {
     for (;;) {
       let wakeUpPromise: Promise<void> | undefined;
-      // Boxed rather than left `undefined`, so that a crank which threw
-      // `undefined` is still distinguishable from one that did not throw.
+      // Boxed, so a crank that threw `undefined` stays distinguishable from one
+      // that did not throw.
       let crankFailure: { error: unknown } | undefined;
 
       this.#kernelStore.startCrank();
@@ -133,7 +131,6 @@ export class KernelQueue {
         // enclosing transaction (see `rollbackSavepoint`) and an aborted crank
         // still has writes to make. Only `delivery` is ever rolled back;
         // releasing `crank` in `endCrank` is this crank's one commit point.
-        // `releaseAllSavepoints` names it by ordinal, so `crank` must stay first.
         this.#kernelStore.createCrankSavepoint('crank');
         this.#kernelStore.createCrankSavepoint('delivery');
 
@@ -163,8 +160,6 @@ export class KernelQueue {
             try {
               this.#kernelStore.rollbackCrank('delivery');
             } catch (rollbackError) {
-              // The original failure stays the `cause`; the rollback failure is
-              // named here.
               throw new Error(
                 `Run loop died and its crank could not be rolled back: ${String(rollbackError)}`,
                 { cause: error },
@@ -186,10 +181,9 @@ export class KernelQueue {
   }
 
   /**
-   * End the crank without losing the error that is already unwinding. Since the
-   * delivery rollback now spares `crank`, `endCrank`'s release is a real RELEASE
-   * and COMMIT on the dying path, where it used to be a no-op — and from a bare
-   * `finally` a failing one would silently replace whatever killed the kernel.
+   * End the crank without losing the error that is already unwinding. Now that
+   * the delivery rollback spares `crank`, `endCrank` is a real RELEASE and
+   * COMMIT on the dying path where it used to be a no-op.
    *
    * @param crankFailure - The error already in flight, if the crank threw.
    * @param crankFailure.error - That error.
@@ -201,8 +195,6 @@ export class KernelQueue {
       if (!crankFailure) {
         throw endCrankError;
       }
-      // The original failure stays the `cause`, as on the rollback path; the
-      // release failure is named here.
       throw new Error(
         `Run loop died and its crank could not be ended: ${String(endCrankError)}`,
         { cause: crankFailure.error },
@@ -337,9 +329,7 @@ export class KernelQueue {
       try {
         this.#kernelStore.rollbackCrank('delivery');
       } finally {
-        // Set even when the rollback threw: the savepoint is gone either way, so
-        // a second attempt would report a missing savepoint as the reason the
-        // kernel died, burying the error that actually killed it.
+        // Set even when the rollback threw: the savepoint is gone either way.
         this.#crankRollbackAttempted = true;
       }
       // Discard kernel subscriptions that were queued for invocation
@@ -363,28 +353,21 @@ export class KernelQueue {
       // restart it and terminate the vat only after a certain number of failed
       // retries. This is probably where we should implement the vat restart logic.
     }
-    // This call kills the worker, so its writes must outlive the rollback above:
-    // a store that still believed the vat was alive would relaunch it after a
-    // restart and redeliver what killed it.
+    // This kills the worker, so its writes must outlive the rollback above: a
+    // store that still believed the vat was alive would relaunch it.
     if (crankResult?.terminate) {
       const { vatId, info } = crankResult.terminate;
       await this.#terminateVat(vatId, info);
     }
     this.#kernelStore.collectGarbage();
     if (!crankResult?.abort) {
-      // After the fallible work above, not before it. The flush settles the
+      // After the fallible work above, not before it: the flush settles the
       // promise `enqueueMessage` gave an external caller, so a later rollback
       // would discard the state that answer was computed from.
-      //
-      // Not airtight: `#terminateVat` resolves the dying vat's promises through
-      // `resolvePromises`, which defaults to `immediate` and invokes their
-      // subscriptions before `collectGarbage`. Deferring those too would change
-      // termination semantics, not crank ordering.
       this.#flushCrankBuffer();
     }
-    // After the flush, because the audit reads the run queue as ground truth
-    // while a buffered item's references were already counted when it was
-    // enqueued: audited mid-flush, every buffered item reads as a leak.
+    // After the flush: a buffered item's references were counted when it was
+    // enqueued, so audited mid-flush every one of them reads as a leak.
     this.#kernelStore.assertRefCountsIfAuditing();
   }
 

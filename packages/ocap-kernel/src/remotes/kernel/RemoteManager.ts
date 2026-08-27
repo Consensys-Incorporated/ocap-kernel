@@ -264,11 +264,7 @@ export class RemoteManager {
       try {
         this.#kernelStore.rollbackSavepoint(savepoint);
       } catch (rollbackError) {
-        // The release above is inside the `try`, and a failed RELEASE discards
-        // the whole savepoint stack — so this rollback reports a savepoint that
-        // is already gone, over the database failure an operator actually needs.
-        // Still attempted, because a release that failed for a reason of its own
-        // may well have left the savepoint standing.
+        // Same reasoning as `RemoteHandle.handleRemoteMessage`.
         this.#logger?.error(`Rollback of ${savepoint} failed`, rollbackError);
       }
       throw error;

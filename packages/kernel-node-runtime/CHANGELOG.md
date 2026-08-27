@@ -23,7 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- `makeKernel` gives the kernel store a logger, so the SQLite driver's diagnostics — including the transaction aborts it reports on the kernel's dying path — reach the log rather than nowhere ([#1021](https://github.com/MetaMask/ocap-kernel/pull/1021))
+- `makeKernel` gives the kernel store a logger, so the SQLite driver's diagnostics reach the log rather than nowhere ([#1021](https://github.com/MetaMask/ocap-kernel/pull/1021))
 - The RPC socket server refuses to bind a Unix socket that has a live listener, rather than unlinking it and orphaning the previous owner; stale socket files with no listener are still cleaned up automatically ([#952](https://github.com/MetaMask/ocap-kernel/pull/952))
 
 ## [0.1.0]

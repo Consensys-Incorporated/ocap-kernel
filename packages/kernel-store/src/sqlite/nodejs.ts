@@ -299,9 +299,6 @@ export async function makeSQLKernelDatabase({
       try {
         rollbackIfNeeded();
       } catch (abortError) {
-        // The rollback failure below is the one worth reporting, but a failed
-        // abort leaves SQLite holding a transaction the next crank would
-        // silently write into. Nothing here can repair that.
         logger?.error(
           'failed to discard transaction after rollback',
           abortError,
@@ -330,18 +327,12 @@ export async function makeSQLKernelDatabase({
     try {
       db.exec(query);
     } catch (error) {
-      // The hazard `rollbackSavepoint` guards against, by the other door: left as
-      // it was, the savepoint stays on the stack and the transaction open with
-      // nothing to ever commit or abort it, so every later write on this
-      // connection joins it, reports success, and vanishes on close. There is no
-      // committing this transaction now, so discard it.
+      // The hazard `rollbackSavepoint` guards against, by the other door, and
+      // there is no committing this transaction now.
       db._spStack.length = 0;
       try {
         rollbackIfNeeded();
       } catch (abortError) {
-        // The release failure below is the one worth reporting, but a failed
-        // abort leaves SQLite holding a transaction the next crank would
-        // silently write into. Nothing here can repair that.
         logger?.error(
           'failed to discard transaction after release',
           abortError,
