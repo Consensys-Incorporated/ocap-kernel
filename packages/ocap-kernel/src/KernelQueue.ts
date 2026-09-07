@@ -123,6 +123,25 @@ export class KernelQueue {
       // Boxed, so a crank that threw `undefined` stays distinguishable from one
       // that did not throw.
       let crankFailure: { error: unknown } | undefined;
+      let delivered = false;
+
+      // Work that has to be its own transaction — an inbound remote message, a
+      // peer restart — can only run while no crank is open, and this loop is
+      // synchronous from `endCrank` to here. Without this yield its only gap is
+      // the sleep below, so such work would wait for the queue to drain or, as
+      // it used to, nest a savepoint inside a crank whose rollback would
+      // discard it. Undefined on the usual path, which keeps that path
+      // synchronous.
+      // Re-checked rather than awaited once: a caller registers synchronously,
+      // so one arriving in a microtask queued ahead of this loop's resumption
+      // would otherwise meet `startCrank`'s refusal and kill the kernel over
+      // ordinary concurrent remote traffic. The last check and `startCrank`
+      // have no await between them, which is what makes the handoff airtight.
+      let outOfCrankWork = this.#kernelStore.outOfCrankWorkPending();
+      while (outOfCrankWork) {
+        await outOfCrankWork;
+        outOfCrankWork = this.#kernelStore.outOfCrankWorkPending();
+      }
 
       this.#kernelStore.startCrank();
       this.#crankRollbackAttempted = false;
@@ -141,6 +160,7 @@ export class KernelQueue {
         try {
           const queueItem = this.#getNextRunQueueItem();
           if (queueItem) {
+            delivered = true;
             this.#kernelStore.nextTerminatedVatCleanup();
             const crankResult = await deliver(queueItem);
             await this.#processCrankResult(crankResult, queueItem);
@@ -176,6 +196,19 @@ export class KernelQueue {
         if (wakeUpPromise) {
           await wakeUpPromise;
         }
+      }
+
+      if (delivered) {
+        // After the crank has been committed, not inside it. The audit has to
+        // run after the flush, because a buffered item's references were
+        // counted when it was enqueued and so read as a leak mid-flush — but
+        // the flush is also what answers an external caller of
+        // `enqueueMessage`. Auditing while the delivery savepoint still existed
+        // put those two together: a violation would roll back the state the
+        // caller had already been answered from. Out here a violation still
+        // kills the run loop, which is what an audit failure means, without
+        // pretending to undo a crank that has landed.
+        this.#kernelStore.assertRefCountsIfAuditing();
       }
     }
   }
@@ -366,9 +399,6 @@ export class KernelQueue {
       // would discard the state that answer was computed from.
       this.#flushCrankBuffer();
     }
-    // After the flush: a buffered item's references were counted when it was
-    // enqueued, so audited mid-flush every one of them reads as a leak.
-    this.#kernelStore.assertRefCountsIfAuditing();
   }
 
   /**

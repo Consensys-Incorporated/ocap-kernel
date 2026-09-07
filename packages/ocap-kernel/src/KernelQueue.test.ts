@@ -74,6 +74,9 @@ describe('KernelQueue', () => {
       getGCActions: vi.fn().mockReturnValue([]),
       startCrank: vi.fn(),
       endCrank: vi.fn(),
+      beginOutOfCrank: vi.fn().mockResolvedValue(undefined),
+      endOutOfCrank: vi.fn(),
+      outOfCrankWorkPending: vi.fn().mockReturnValue(undefined),
       createCrankSavepoint: vi.fn(),
       rollbackCrank: vi.fn(),
       waitForCrank: vi.fn(),
@@ -1136,6 +1139,102 @@ describe('KernelQueue', () => {
       expect(kernelStore.startCrank).toHaveBeenCalledTimes(2);
       expect(kernelStore.endCrank).toHaveBeenCalledTimes(2);
       expect(deliver).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('out-of-crank work', () => {
+    it('waits for a caller holding the store before starting a crank', async () => {
+      let releaseHolder!: () => void;
+      const held = new Promise<void>((resolve) => {
+        releaseHolder = resolve;
+      });
+      let cranksWhileHeld = 0;
+      // Return values rather than an implementation: the contract is that
+      // nothing waiting is `undefined` and not a resolved promise, and an
+      // `async` mock cannot express that.
+      (kernelStore.outOfCrankWorkPending as unknown as MockInstance)
+        .mockReturnValueOnce(held)
+        .mockReturnValue(undefined);
+      (kernelStore.startCrank as unknown as MockInstance).mockImplementation(
+        () => {
+          cranksWhileHeld += 1;
+          throw new Error(STOP_RUN_LOOP);
+        },
+      );
+
+      const runLoop = kernelQueue.run(vi.fn());
+      await Promise.resolve();
+      expect(cranksWhileHeld).toBe(0);
+
+      releaseHolder();
+      await expect(runLoop).rejects.toThrow(STOP_RUN_LOOP);
+      expect(cranksWhileHeld).toBe(1);
+    });
+
+    it('starts the crank without yielding when nothing is waiting', async () => {
+      stopAfterOneCrank();
+      (kernelStore.runQueueLength as unknown as MockInstance).mockReturnValue(
+        0,
+      );
+
+      await expect(kernelQueue.run(vi.fn())).rejects.toThrow(STOP_RUN_LOOP);
+      expect(kernelStore.outOfCrankWorkPending).toHaveBeenCalled();
+    });
+
+    // A caller registers synchronously, so one can arrive in a microtask queued
+    // ahead of this loop's resumption. Checking once would leave `startCrank`
+    // refusing, which kills the kernel outright.
+    it('keeps yielding while callers keep arriving', async () => {
+      const pending =
+        kernelStore.outOfCrankWorkPending as unknown as MockInstance;
+      // Two callers in a row, then nothing. `undefined` rather than a resolved
+      // promise is the contract; an `async` mock would loop here forever.
+      pending
+        .mockReturnValueOnce(Promise.resolve())
+        .mockReturnValueOnce(Promise.resolve())
+        .mockReturnValue(undefined);
+      let checksBeforeCrank = -1;
+      (kernelStore.startCrank as unknown as MockInstance).mockImplementation(
+        () => {
+          checksBeforeCrank = pending.mock.calls.length;
+          throw new Error(STOP_RUN_LOOP);
+        },
+      );
+
+      await expect(kernelQueue.run(vi.fn())).rejects.toThrow(STOP_RUN_LOOP);
+
+      // Both gates awaited, and the check that found nothing waiting is the one
+      // immediately before the crank starts.
+      expect(checksBeforeCrank).toBe(3);
+    });
+  });
+
+  describe('reference count audit', () => {
+    it('audits a crank that delivered something', async () => {
+      stopAfterOneCrank();
+      (
+        kernelStore.runQueueLength as unknown as MockInstance
+      ).mockReturnValueOnce(1);
+      (kernelStore.dequeueRun as unknown as MockInstance).mockReturnValueOnce({
+        type: 'send',
+        target: 'ko123',
+        message: {} as KernelMessage,
+      });
+
+      await expect(
+        kernelQueue.run(vi.fn().mockResolvedValue(undefined)),
+      ).rejects.toThrow(STOP_RUN_LOOP);
+      expect(kernelStore.assertRefCountsIfAuditing).toHaveBeenCalled();
+    });
+
+    it('leaves an idle crank alone', async () => {
+      stopAfterOneCrank();
+      (kernelStore.runQueueLength as unknown as MockInstance).mockReturnValue(
+        0,
+      );
+
+      await expect(kernelQueue.run(vi.fn())).rejects.toThrow(STOP_RUN_LOOP);
+      expect(kernelStore.assertRefCountsIfAuditing).not.toHaveBeenCalled();
     });
   });
 
