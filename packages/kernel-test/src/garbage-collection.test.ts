@@ -258,10 +258,18 @@ describe('Garbage Collection', () => {
      *
      * @param vatId - The vat to reap.
      * @param rootKRef - That vat's root, to poke with cranks afterwards.
+     * @param settled - Whether the state under test has arrived yet.
      */
-    async function reapAndSettle(vatId: VatId, rootKRef: KRef): Promise<void> {
-      kernel.reapVats((id) => id === vatId);
-      for (let i = 0; i < 3; i++) {
+    async function reapAndSettle(
+      vatId: VatId,
+      rootKRef: KRef,
+      settled: () => boolean,
+    ): Promise<void> {
+      // Reap until the vat's GC is visible rather than a fixed number of times:
+      // three was enough on an idle machine and not under a loaded one, which
+      // made this the last flake in the file.
+      for (let attempt = 0; attempt < 5 && !settled(); attempt += 1) {
+        kernel.reapVats((id) => id === vatId);
         await kernel.queueMessage(rootKRef, 'noop', []);
         await waitUntilQuiescent(500);
       }
@@ -298,7 +306,11 @@ describe('Garbage Collection', () => {
       await kernel.queueMessage(importerKRef, 'makeWeak', [objectId]);
       await kernel.queueMessage(importerKRef, 'forgetImport', []);
       await waitUntilQuiescent();
-      await reapAndSettle(importerVatId, importerKRef);
+      await reapAndSettle(importerVatId, importerKRef, () =>
+        kernelStore
+          .getImporters(sharedKRef)
+          .every((vatId) => vatId !== importerVatId),
+      );
 
       // The exporter must not have been told to drop it: the second importer
       // legitimately still holds it
@@ -331,7 +343,11 @@ describe('Garbage Collection', () => {
       await kernel.queueMessage(secondImporterKRef, 'makeWeak', [objectId]);
       await kernel.queueMessage(secondImporterKRef, 'forgetImport', []);
       await waitUntilQuiescent();
-      await reapAndSettle(secondImporterVatId, secondImporterKRef);
+      await reapAndSettle(
+        secondImporterVatId,
+        secondImporterKRef,
+        () => kernelStore.getImporters(sharedKRef).length === 0,
+      );
 
       expect(kernelStore.getImporters(sharedKRef)).toStrictEqual([]);
       // Only the createObject result's stored value still names it
