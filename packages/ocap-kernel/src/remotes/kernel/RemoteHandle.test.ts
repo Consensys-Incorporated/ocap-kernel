@@ -238,6 +238,58 @@ describe('RemoteHandle', () => {
       );
       // Still attempted: abandoning the rollback is not a way to pass this.
       expect(rollbackSavepoint).toHaveBeenCalledWith('receive_r0_1');
+      // And the turn is given back even on the way out. A leaked waiter leaves
+      // the gate unresolved, and the run loop parks on it for good.
+      expect(mockKernelStore.outOfCrankWorkPending()).toBeUndefined();
+      expect(() => mockKernelStore.startCrank()).not.toThrow();
+    });
+
+    it('gives the run loop its turn back after handling a message', async () => {
+      const remote = makeRemote();
+      const delivery = JSON.stringify({
+        seq: 1,
+        method: 'deliver',
+        params: ['bringOutYourDead'],
+      });
+
+      await remote.handleRemoteMessage(delivery);
+
+      expect(mockKernelStore.outOfCrankWorkPending()).toBeUndefined();
+      expect(() => mockKernelStore.startCrank()).not.toThrow();
+    });
+
+    // The savepoint window has to stay synchronous: an await inside it parks the
+    // run loop for the duration and lets a crank interleave with the savepoint.
+    it('decodes an incoming redeemURL before opening its savepoint', async () => {
+      const replyKRef = mockKernelStore.initKernelObject('kernel');
+      // Wrapped rather than spied: the store is hardened.
+      const createSavepoint = vi.fn(mockKernelStore.createSavepoint);
+      mockKernelStore = { ...mockKernelStore, createSavepoint } as KernelStore;
+      const remote = makeRemote();
+      mockKernelStore.initEndpoint(remote.remoteId);
+
+      let finishDecoding!: (kref: string) => void;
+      vi.spyOn(mockRemoteComms, 'redeemLocalOcapURL').mockReturnValue(
+        new Promise((resolve) => {
+          finishDecoding = resolve;
+        }),
+      );
+
+      const handled = remote.handleRemoteMessage(
+        JSON.stringify({
+          seq: 1,
+          method: 'redeemURL',
+          params: ['as if it was a URL', 'replyKey'],
+        }),
+      );
+      await Promise.resolve();
+
+      expect(createSavepoint).not.toHaveBeenCalled();
+
+      finishDecoding(replyKRef);
+      await handled;
+
+      expect(createSavepoint).toHaveBeenCalledWith('receive_r0_1');
     });
 
     // A dead run loop will never deliver the message, and `handleRemoteMessage`

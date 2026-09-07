@@ -68,7 +68,7 @@
  *   kernelService.${serviceName} = ${koid}   // kref of kernel service object ${serviceName}
  */
 
-import { Fail } from '@endo/errors';
+import { Fail, q } from '@endo/errors';
 import type { KernelDatabase, KVStore, VatStore } from '@metamask/kernel-store';
 import { Logger } from '@metamask/logger';
 
@@ -300,9 +300,16 @@ export function makeKernelStore(kdb: KernelDatabase, logger?: Logger) {
   /**
    * Create a savepoint for atomic operations on persistent storage.
    *
+   * These are invisible to `createCrankSavepoint`'s ordinal naming, so one
+   * opened inside a crank would be rolled back by a delivery that has nothing
+   * to do with it — after its owner had already reported success to a peer.
+   * Callers take their turn through `beginOutOfCrank`.
+   *
    * @param name - The savepoint name.
    */
   function createSavepoint(name: string): void {
+    !context.inCrank ||
+      Fail`createSavepoint ${q(name)} inside a crank; use beginOutOfCrank`;
     kdb.createSavepoint(name);
   }
 

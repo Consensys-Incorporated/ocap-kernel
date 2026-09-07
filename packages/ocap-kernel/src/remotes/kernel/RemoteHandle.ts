@@ -83,6 +83,11 @@ type DeferredRedeemURLRequest =
   | { type: 'redeemURL'; replyKey: string; ref: ERef }
   | { type: 'redeemURL'; replyKey: string; error: string };
 
+/** What a redeemURL's URL decoded to, before anything is written down. */
+type RedeemURLResolution =
+  | { replyKey: string; kref: KRef }
+  | { replyKey: string; error: string };
+
 type DeferredRedeemURLReply =
   | { type: 'redeemURLReply'; replyKey: string; ref: KRef }
   | { type: 'redeemURLReply'; replyKey: string; error: string };
@@ -869,29 +874,61 @@ export class RemoteHandle implements EndpointHandle {
   }
 
   /**
-   * Prepare to handle an incoming redeemURL message. Validates and translates
-   * but does not send the reply. Returns data needed to complete after commit.
+   * Decode an incoming redeemURL message's URL. Awaits a decrypt and writes
+   * nothing, so it runs before the savepoint opens: a savepoint held across an
+   * await interleaves with the run loop's crank.
    *
    * @param url - The ocap URL attempting to be redeemed.
    * @param replyKey - A sender-provided tag to send with the reply.
-   * @returns Data needed to complete the operation after commit.
+   * @returns The kref the URL names, or the reason it names none.
    */
-  async #handleRedeemURLRequest(
+  async #resolveRedeemURLRequest(
     url: string,
     replyKey: string,
-  ): Promise<DeferredRedeemURLRequest> {
+  ): Promise<RedeemURLResolution> {
     assert.typeof(replyKey, 'string');
-    let kref: KRef;
     try {
-      kref = await this.#remoteComms.redeemLocalOcapURL(url);
-    } catch (error) {
       return {
-        type: 'redeemURL',
         replyKey,
-        error: `${(error as Error).message}`,
+        kref: await this.#remoteComms.redeemLocalOcapURL(url),
+      };
+    } catch (error) {
+      // Only the message crosses the wire, so the stack and cause chain stop
+      // here. This catch is unqualified — a bad URL and a broken decode path
+      // look the same to the peer — so it is logged locally to tell them apart.
+      this.#logger.error(
+        `${this.#peerId.slice(0, 8)}:: redeeming URL for ${replyKey} failed`,
+        error,
+      );
+      return {
+        replyKey,
+        error: error instanceof Error ? error.message : String(error),
       };
     }
-    const ref = this.#kernelStore.translateRefKtoE(this.remoteId, kref, true);
+  }
+
+  /**
+   * Enter a resolved redeemURL request in the c-list. Synchronous, and so safe
+   * inside the savepoint. Returns data needed to complete after commit.
+   *
+   * @param resolution - What {@link #resolveRedeemURLRequest} decoded.
+   * @returns Data needed to complete the operation after commit.
+   */
+  #recordRedeemURLRequest(
+    resolution: RedeemURLResolution | undefined,
+  ): DeferredRedeemURLRequest {
+    if (!resolution) {
+      throw Error('redeemURL reached the store without being resolved');
+    }
+    const { replyKey } = resolution;
+    if ('error' in resolution) {
+      return { type: 'redeemURL', replyKey, error: resolution.error };
+    }
+    const ref = this.#kernelStore.translateRefKtoE(
+      this.remoteId,
+      resolution.kref,
+      true,
+    );
     return { type: 'redeemURL', replyKey, ref };
   }
 
@@ -1001,48 +1038,66 @@ export class RemoteHandle implements EndpointHandle {
       return null;
     }
 
+    // Decoded before the savepoint opens, because it awaits. It writes nothing,
+    // so the atomicity below is unaffected.
+    const redeemURLResolution =
+      method === 'redeemURL'
+        ? await this.#resolveRedeemURLRequest(...params)
+        : undefined;
+
     // Wrap message processing in a transaction for atomicity: Either both (1)
     // message processing and (2) seq update succeed together, or neither
     // happens. This ensures crash-safe exactly-once delivery.
+    //
+    // The savepoint is the outermost one on the connection and so its own
+    // commit point, which it can only be while no crank is open — hence the
+    // turn taken here, and the rule that everything between the two is
+    // synchronous.
     const savepointName = `receive_${this.remoteId}_${seq}`;
-    this.#kernelStore.createSavepoint(savepointName);
+    await this.#kernelStore.beginOutOfCrank();
 
     let deferredCompletion: DeferredCompletion | undefined;
 
     try {
-      switch (method) {
-        case 'deliver':
-          this.#handleRemoteDeliver(params);
-          break;
-        case 'redeemURL':
-          deferredCompletion = await this.#handleRedeemURLRequest(...params);
-          break;
-        case 'redeemURLReply':
-          deferredCompletion = this.#handleRedeemURLReply(...params);
-          break;
-        default:
-          // eslint-disable-next-line @typescript-eslint/restrict-template-expressions
-          throw Error(`unknown remote message type ${method}`);
-      }
-
-      // Persist sequence tracking at the end, within the transaction
-      this.#kernelStore.setRemoteHighestReceivedSeq(this.remoteId, seq);
-
-      // Commit the transaction
-      this.#kernelStore.releaseSavepoint(savepointName);
-    } catch (error) {
-      // Rollback on any error - in-memory state unchanged since we didn't update it yet
+      this.#kernelStore.createSavepoint(savepointName);
       try {
-        this.#kernelStore.rollbackSavepoint(savepointName);
-      } catch (rollbackError) {
-        // A failed RELEASE above discards the whole savepoint stack, so this
-        // rollback would report a savepoint already gone over the real error.
-        this.#logger.error(
-          `${this.#peerId.slice(0, 8)}:: rollback of ${savepointName} failed`,
-          rollbackError,
-        );
+        switch (method) {
+          case 'deliver':
+            this.#handleRemoteDeliver(params);
+            break;
+          case 'redeemURL':
+            deferredCompletion =
+              this.#recordRedeemURLRequest(redeemURLResolution);
+            break;
+          case 'redeemURLReply':
+            deferredCompletion = this.#handleRedeemURLReply(...params);
+            break;
+          default:
+            // eslint-disable-next-line @typescript-eslint/restrict-template-expressions
+            throw Error(`unknown remote message type ${method}`);
+        }
+
+        // Persist sequence tracking at the end, within the transaction
+        this.#kernelStore.setRemoteHighestReceivedSeq(this.remoteId, seq);
+
+        // Commit the transaction
+        this.#kernelStore.releaseSavepoint(savepointName);
+      } catch (error) {
+        // Rollback on any error - in-memory state unchanged since we didn't update it yet
+        try {
+          this.#kernelStore.rollbackSavepoint(savepointName);
+        } catch (rollbackError) {
+          // A failed RELEASE above discards the whole savepoint stack, so this
+          // rollback would report a savepoint already gone over the real error.
+          this.#logger.error(
+            `${this.#peerId.slice(0, 8)}:: rollback of ${savepointName} failed`,
+            rollbackError,
+          );
+        }
+        throw error;
       }
-      throw error;
+    } finally {
+      this.#kernelStore.endOutOfCrank();
     }
 
     // All in-memory state changes happen after commit

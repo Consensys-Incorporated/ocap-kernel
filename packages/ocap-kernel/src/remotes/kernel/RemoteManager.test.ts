@@ -948,6 +948,21 @@ describe('RemoteManager', () => {
       // finalize must not run if the persisted phase failed: in-memory
       // mutations would otherwise drift from the rolled-back kv view.
       expect(finalizeSpy).not.toHaveBeenCalled();
+      // And the turn is given back on the way out. A leaked waiter leaves the
+      // gate unresolved, and the run loop parks on it for good.
+      expect(kernelStore.outOfCrankWorkPending()).toBeUndefined();
+      expect(() => kernelStore.startCrank()).not.toThrow();
+    });
+
+    it('gives the run loop its turn back after advancing the incarnation', async () => {
+      const peerId = 'peer-that-restarted-cleanly';
+      remoteManager.establishRemote(peerId);
+      kernelStore.setPeerIncarnation(peerId, 'incarnation-A');
+
+      await getOnIncarnationChange()(peerId, 'incarnation-B');
+
+      expect(kernelStore.outOfCrankWorkPending()).toBeUndefined();
+      expect(() => kernelStore.startCrank()).not.toThrow();
     });
 
     it('reports the release failure rather than a missing savepoint', async () => {
