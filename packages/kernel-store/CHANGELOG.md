@@ -14,7 +14,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - The rollback failure is still what gets thrown, even if aborting the transaction fails too
 - `releaseSavepoint` discards the enclosing transaction when `RELEASE` fails, as `rollbackSavepoint` already did for `ROLLBACK TO`; the release failure is still what gets thrown ([#1021](https://github.com/MetaMask/ocap-kernel/pull/1021))
 - The wasm driver no longer considers itself in a transaction after a commit or abort throws, and discards the transaction a failed `COMMIT` leaves open ([#1021](https://github.com/MetaMask/ocap-kernel/pull/1021))
-  - Otherwise later writes autocommitted — including the next savepoint, created bare, where `RELEASE` commits and no rollback can undo the work. The nodejs driver reads `db.inTransaction` and was never affected
+  - Otherwise later writes autocommitted — including the next savepoint, created bare, where `RELEASE` commits and no rollback can undo the work. The nodejs driver reads `db.inTransaction` and was never affected by the wedged flag
+- The nodejs driver discards the transaction a failed `COMMIT` leaves open, as the wasm driver already did ([#1021](https://github.com/MetaMask/ocap-kernel/pull/1021))
+  - `releaseSavepoint` reaches `commitIfNeeded` outside any try of its own, so a throwing `COMMIT` left the transaction open with nothing to end it. Reading `db.inTransaction` prevents a wedged flag but does not end an unowned transaction
+- Neither driver commits a transaction whose discarding abort failed ([#1021](https://github.com/MetaMask/ocap-kernel/pull/1021))
+  - The savepoint list was emptied while SQLite still held the transaction, so the next `createSavepoint` skipped `BEGIN`, nested inside it, and committed the abandoned crank on release. Both drivers now retry the abort before beginning, and abort rather than commit while one is outstanding
 - Both drivers log an abort that fails while recovering from a failed savepoint operation ([#1021](https://github.com/MetaMask/ocap-kernel/pull/1021))
 
 ## [0.6.0]
