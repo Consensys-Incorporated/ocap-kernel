@@ -179,12 +179,21 @@ export async function makeSQLKernelDatabase({
   const sqlCommitTransaction = db.prepare(SQL_QUERIES.COMMIT_TRANSACTION);
   const sqlAbortTransaction = db.prepare(SQL_QUERIES.ABORT_TRANSACTION);
 
+  // Set when an abort meant to discard a transaction fails, which leaves SQLite
+  // holding one `_inTx` no longer accounts for: nothing will try to end it
+  // again, and a savepoint taken inside it would be released into it. The
+  // nodejs driver reads `db.inTransaction` instead of caching it and so cannot
+  // wedge the flag, but it has the same unowned-transaction gap; both drivers
+  // close it the same way.
+  let txAbandoned = false;
+
   /**
    * Begin a transaction if not already in one
    *
    * @returns True if a new transaction was started, false if already in one
    */
   function beginIfNeeded(): boolean {
+    assertNotAbandoned();
     if (db._inTx) {
       return false;
     }
@@ -195,30 +204,70 @@ export async function makeSQLKernelDatabase({
   }
 
   /**
+   * Refuse to touch a transaction an earlier abort could not end. A savepoint
+   * created inside one is released into it, committing the crank that abort was
+   * discarding, and a COMMIT makes those writes durable outright. Retried once
+   * first, since the failure may have been transient.
+   *
+   * Checked before `_inTx` rather than after: `abortTransaction` clears the flag
+   * on its way to failing, so the abandoned transaction is exactly the one
+   * `_inTx` no longer admits to.
+   *
+   * @throws If the transaction is still there afterwards, because reporting
+   * that this connection can no longer persist anything is the only honest
+   * answer left — returning normally would tell the caller its write landed.
+   */
+  function assertNotAbandoned(): void {
+    if (!txAbandoned) {
+      return;
+    }
+    discardTransaction('abandonment');
+    if (txAbandoned) {
+      throw new Error(
+        'transaction cannot be ended; refusing further writes on this connection',
+      );
+    }
+  }
+
+  /**
    * Commit a transaction if one is active and no savepoints remain
    */
   function commitIfNeeded(): void {
-    if (db._inTx && db._spStack.length === 0) {
-      // Cleared first, for the reason `rollbackIfNeeded` gives.
-      db._inTx = false;
-      try {
-        sqlCommitTransaction.step();
-        sqlCommitTransaction.reset();
-      } catch (error) {
-        // A failed COMMIT can leave the transaction open. Stepped directly
-        // because `_inTx` above already made `rollbackIfNeeded` a no-op.
-        try {
-          sqlAbortTransaction.step();
-          sqlAbortTransaction.reset();
-        } catch (abortError) {
-          logger?.error(
-            'failed to discard transaction after commit',
-            abortError,
-          );
-        }
-        throw error;
-      }
+    assertNotAbandoned();
+    if (!db._inTx || db._spStack.length > 0) {
+      return;
     }
+    // Cleared first, for the reason `rollbackIfNeeded` gives.
+    db._inTx = false;
+    try {
+      sqlCommitTransaction.step();
+      sqlCommitTransaction.reset();
+    } catch (error) {
+      // A failed COMMIT can leave the transaction open, and `releaseSavepoint`
+      // reaches here outside any try of its own.
+      discardTransaction('commit');
+      throw error;
+    }
+  }
+
+  /**
+   * Abort the transaction, whatever `_inTx` currently says — the callers that
+   * most need this have already cleared it.
+   */
+  function abortTransaction(): void {
+    // Cleared before the abort, which can throw: left true, `beginIfNeeded` is
+    // a no-op forever after and writes autocommit one statement at a time (see
+    // `createSavepoint`).
+    db._inTx = false;
+    db._spStack.length = 0;
+    try {
+      sqlAbortTransaction.step();
+      sqlAbortTransaction.reset();
+    } catch (error) {
+      txAbandoned = true;
+      throw error;
+    }
+    txAbandoned = false;
   }
 
   /**
@@ -226,13 +275,22 @@ export async function makeSQLKernelDatabase({
    */
   function rollbackIfNeeded(): void {
     if (db._inTx) {
-      // Cleared before the abort, which can throw: left true, `beginIfNeeded` is
-      // a no-op forever after and writes autocommit one statement at a time (see
-      // `createSavepoint`).
-      db._inTx = false;
-      db._spStack.length = 0;
-      sqlAbortTransaction.step();
-      sqlAbortTransaction.reset();
+      abortTransaction();
+    }
+  }
+
+  /**
+   * Discard the transaction after a failure that leaves it unowned, keeping the
+   * error that got us here rather than the abort's.
+   *
+   * @param after - What failed, completing "failed to discard transaction after
+   * ...".
+   */
+  function discardTransaction(after: string): void {
+    try {
+      abortTransaction();
+    } catch (error) {
+      logger?.error(`failed to discard transaction after ${after}`, error);
     }
   }
 
@@ -396,15 +454,7 @@ export async function makeSQLKernelDatabase({
       // connection joins it, reports success, and vanishes on close. Discarding
       // the whole transaction is safe: it begins with the outermost savepoint, so
       // it holds only what this rollback was abandoning anyway.
-      db._spStack.length = 0;
-      try {
-        rollbackIfNeeded();
-      } catch (abortError) {
-        logger?.error(
-          'failed to discard transaction after rollback',
-          abortError,
-        );
-      }
+      discardTransaction('rollback');
       throw error;
     }
     db._spStack.splice(idx);
@@ -430,15 +480,7 @@ export async function makeSQLKernelDatabase({
     } catch (error) {
       // The hazard `rollbackSavepoint` guards against, by the other door, and
       // there is no committing this transaction now.
-      db._spStack.length = 0;
-      try {
-        rollbackIfNeeded();
-      } catch (abortError) {
-        logger?.error(
-          'failed to discard transaction after release',
-          abortError,
-        );
-      }
+      discardTransaction('release');
       throw error;
     }
     db._spStack.splice(idx);

@@ -569,7 +569,7 @@ describe('makeSQLKernelDatabase', () => {
       expect(mockDb._inTx).toBe(false);
     });
 
-    it('begins a transaction for the next savepoint after a failed abort', async () => {
+    it('retries the abort before beginning the next savepoint', async () => {
       const db = await makeSQLKernelDatabase({});
       mockDb._inTx = true;
       mockDb._spStack = ['point1'];
@@ -587,9 +587,12 @@ describe('makeSQLKernelDatabase', () => {
       mockStatement.step.mockClear();
       db.createSavepoint('next');
 
-      // BEGIN is the only prepared statement `createSavepoint` runs; the
+      // The abort that failed above may have left SQLite holding a transaction
+      // `_inTx` no longer accounts for, and BEGIN inside one throws. So the
+      // abort is retried first: two prepared statements, that and BEGIN. The
       // SAVEPOINT itself goes through `exec`.
-      expect(mockStatement.step).toHaveBeenCalledOnce();
+      expect(mockStatement.step).toHaveBeenCalledTimes(2);
+      expect(mockDb._inTx).toBe(true);
       expect(mockDb.exec).toHaveBeenCalledWith('SAVEPOINT next');
     });
 
