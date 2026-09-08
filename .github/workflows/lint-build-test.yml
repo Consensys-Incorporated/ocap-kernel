@@ -12,7 +12,7 @@ jobs:
         node-version: [22.x, 24.x]
     steps:
       - name: Checkout and setup environment
-        uses: MetaMask/action-checkout-and-setup@v3
+        uses: MetaMask/action-checkout-and-setup@0543b5929698c71e3ccc6ed24eac87825669b5de # v3.5.0
         with:
           cache-node-modules: true
           is-high-risk-environment: false
@@ -27,7 +27,7 @@ jobs:
         node-version: [24.x]
     steps:
       - name: Checkout and setup environment
-        uses: MetaMask/action-checkout-and-setup@v3
+        uses: MetaMask/action-checkout-and-setup@0543b5929698c71e3ccc6ed24eac87825669b5de # v3.5.0
         with:
           is-high-risk-environment: false
           node-version: ${{ matrix.node-version }}
@@ -49,7 +49,7 @@ jobs:
         node-version: [24.x]
     steps:
       - name: Checkout and setup environment
-        uses: MetaMask/action-checkout-and-setup@v3
+        uses: MetaMask/action-checkout-and-setup@0543b5929698c71e3ccc6ed24eac87825669b5de # v3.5.0
         with:
           is-high-risk-environment: false
           node-version: ${{ matrix.node-version }}
@@ -71,7 +71,7 @@ jobs:
         node-version: [24.x]
     steps:
       - name: Checkout and setup environment
-        uses: MetaMask/action-checkout-and-setup@v3
+        uses: MetaMask/action-checkout-and-setup@0543b5929698c71e3ccc6ed24eac87825669b5de # v3.5.0
         with:
           is-high-risk-environment: false
           node-version: ${{ matrix.node-version }}
@@ -93,7 +93,7 @@ jobs:
         node-version: [22.x, 24.x]
     steps:
       - name: Checkout and setup environment
-        uses: MetaMask/action-checkout-and-setup@v3
+        uses: MetaMask/action-checkout-and-setup@0543b5929698c71e3ccc6ed24eac87825669b5de # v3.5.0
         with:
           is-high-risk-environment: false
           node-version: ${{ matrix.node-version }}
@@ -102,7 +102,7 @@ jobs:
       - run: "yarn test --coverage=${{ matrix.node-version == '24.x' && 'true' || 'false' }}"
       - name: Upload coverage artifact
         if: ${{ matrix.node-version == '24.x' }}
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: coverage
           path: coverage/
@@ -124,7 +124,7 @@ jobs:
         node-version: [22.x, 24.x]
     steps:
       - name: Checkout and setup environment
-        uses: MetaMask/action-checkout-and-setup@v3
+        uses: MetaMask/action-checkout-and-setup@0543b5929698c71e3ccc6ed24eac87825669b5de # v3.5.0
         with:
           is-high-risk-environment: false
           node-version: ${{ matrix.node-version }}
@@ -166,7 +166,7 @@ jobs:
             directory: evm-wallet-experiment
     steps:
       - name: Checkout and setup environment
-        uses: MetaMask/action-checkout-and-setup@v3
+        uses: MetaMask/action-checkout-and-setup@0543b5929698c71e3ccc6ed24eac87825669b5de # v3.5.0
         with:
           is-high-risk-environment: false
           node-version: ${{ matrix.node-version }}
@@ -177,7 +177,7 @@ jobs:
         run: yarn workspace ${{ matrix.package }} test:e2e:ci
       - name: Upload test artifacts
         if: ${{ failure() && steps.e2e.conclusion == 'failure' }}
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: playwright-traces-${{ matrix.directory }}
           path: packages/${{ matrix.directory }}/test-results
