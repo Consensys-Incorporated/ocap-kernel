@@ -8,6 +8,7 @@ import {
   makeKernel,
   makeMockLogger,
   runTestVats,
+  takeRunLoopFailure,
 } from './utils.ts';
 
 /**
@@ -57,6 +58,12 @@ describe('reference count audit', () => {
 
     expect(failure.message).toMatch(/Kernel run loop died/u);
     expect(String(failure.cause)).toMatch(
+      /reference count invariant violated/u,
+    );
+
+    // This test kills the loop deliberately, so the death is its result and not
+    // a stray one for the shared hooks to report against it.
+    expect(String(takeRunLoopFailure())).toMatch(
       /reference count invariant violated/u,
     );
   }, 30000);

@@ -208,6 +208,7 @@ describe('reference count audit', () => {
 
         expect(kernelStore.auditRefCounts()).toStrictEqual([
           {
+            kind: 'mismatch',
             kref: koid,
             stored: '1,1',
             expected: '0,0',
@@ -268,10 +269,11 @@ describe('reference count audit', () => {
       // kernel would arrive: `getObjectRefCount` throws on all three, so
       // reading the row through it would take the whole sweep down with the
       // one violation it exists to report.
-      kernelDatabase.kernelKVStore.set(`${kref}.refCount`, row);
+      setStoredCount(kref, row);
 
       expect(kernelStore.auditRefCounts()).toStrictEqual([
         {
+          kind: 'mismatch',
           kref,
           stored: row,
           expected: '1,1',
