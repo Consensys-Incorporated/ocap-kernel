@@ -19,6 +19,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `releaseSavepoint` reaches `commitIfNeeded` outside any try of its own, so a throwing `COMMIT` left the transaction open with nothing to end it. Reading `db.inTransaction` prevents a wedged flag but does not end an unowned transaction
 - Neither driver commits a transaction whose discarding abort failed ([#1021](https://github.com/MetaMask/ocap-kernel/pull/1021))
   - The savepoint list was emptied while SQLite still held the transaction, so the next `createSavepoint` skipped `BEGIN`, nested inside it, and committed the abandoned crank on release. Both drivers now retry the abort before beginning, and abort rather than commit while one is outstanding
+- Every write refuses while a transaction the drivers could not abort is outstanding, not just the ones that pass through `beginIfNeeded` or `commitIfNeeded` ([#1021](https://github.com/MetaMask/ocap-kernel/pull/1021))
+  - `kernelKVStore.set`, `kernelKVStore.delete`, `clear`, `deleteVatStore`, the savepoint operations, and the nodejs driver's vatstore update joined the abandoned transaction and reported success. Teardown such as `reset` looked like it had landed, and the writes went with the transaction on close
+  - `executeQuery` stays exempt: its callers are debug surfaces, which would not expect a query to roll anything back
 - Both drivers log an abort that fails while recovering from a failed savepoint operation ([#1021](https://github.com/MetaMask/ocap-kernel/pull/1021))
 
 ## [0.6.0]

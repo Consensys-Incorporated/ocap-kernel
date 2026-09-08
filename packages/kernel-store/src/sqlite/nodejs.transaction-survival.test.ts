@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
+import { SQL_QUERIES } from './common.ts';
 import { makeSQLKernelDatabase } from './nodejs.ts';
+import type { KernelDatabase } from '../types.ts';
 
 /**
  * Two invariants the crank layer relies on:
@@ -123,25 +125,67 @@ describe('the nodejs driver after a failure it tolerates', () => {
     ]);
   });
 
-  it('refuses to write once the transaction cannot be discarded at all', async () => {
-    const kdb = await makeSQLKernelDatabase({});
-    mockDb.inTransaction = true;
-    mockDb._spStack = ['t0', 't1'];
-    issued = [];
+  // Teardown after the run loop dies reaches the store by many doors, most of
+  // which never touch `beginIfNeeded`.
+  it.each([
+    {
+      what: 'a savepoint',
+      write: (kdb: KernelDatabase) => kdb.createSavepoint('teardown'),
+      sql: 'SAVEPOINT teardown',
+    },
+    {
+      what: 'a savepoint rollback',
+      write: (kdb: KernelDatabase) => kdb.rollbackSavepoint('t0'),
+      sql: 'ROLLBACK TO SAVEPOINT t0',
+    },
+    {
+      what: 'a savepoint release',
+      write: (kdb: KernelDatabase) => kdb.releaseSavepoint('t0'),
+      sql: 'RELEASE SAVEPOINT t0',
+    },
+    {
+      what: 'a kv write',
+      write: (kdb: KernelDatabase) => kdb.kernelKVStore.set('k', 'v'),
+      sql: SQL_QUERIES.SET,
+    },
+    {
+      what: 'a kv delete',
+      write: (kdb: KernelDatabase) => kdb.kernelKVStore.delete('k'),
+      sql: SQL_QUERIES.DELETE,
+    },
+    {
+      what: 'a clear',
+      write: (kdb: KernelDatabase) => kdb.clear(),
+      sql: SQL_QUERIES.CLEAR,
+    },
+    {
+      what: 'a vatstore delete',
+      write: (kdb: KernelDatabase) => kdb.deleteVatStore('v1'),
+      sql: SQL_QUERIES.DELETE_VS_ALL,
+    },
+    {
+      what: 'a vatstore update',
+      write: (kdb: KernelDatabase) =>
+        kdb.makeVatStore('v1').updateKVData([['k', 'v']], []),
+      sql: SQL_QUERIES.SET_VS,
+    },
+  ])(
+    'refuses $what once the transaction cannot be discarded at all',
+    async ({ write, sql }) => {
+      const kdb = await makeSQLKernelDatabase({});
+      mockDb.inTransaction = true;
+      mockDb._spStack = ['t0', 't1'];
+      issued = [];
 
-    failOnce.add('ROLLBACK TO SAVEPOINT t1');
-    failOnce.add('ROLLBACK TRANSACTION');
-    expect(() => kdb.rollbackSavepoint('t1')).toThrow('SQLITE_IOERR');
+      failOnce.add('ROLLBACK TO SAVEPOINT t1');
+      failOnce.add('ROLLBACK TRANSACTION');
+      expect(() => kdb.rollbackSavepoint('t1')).toThrow('SQLITE_IOERR');
 
-    // The retry fails too, so there is no honest way to carry on: a savepoint
-    // taken now would be released into the abandoned transaction, committing
-    // the crank the abort was trying to discard.
-    failOnce.add('ROLLBACK TRANSACTION');
-    expect(() => kdb.createSavepoint('teardown')).toThrow(
-      'refusing further writes',
-    );
-    expect(issued).not.toContain('SAVEPOINT teardown');
-  });
+      failOnce.add('ROLLBACK TRANSACTION');
+      expect(() => write(kdb)).toThrow('refusing further writes');
+      expect(issued).not.toContain(sql);
+    },
+  );
 
   it('discards the transaction when the commit fails', async () => {
     const kdb = await makeSQLKernelDatabase({});

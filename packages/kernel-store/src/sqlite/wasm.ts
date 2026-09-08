@@ -51,10 +51,20 @@ export async function initDB(
  * Makes a {@link KVStore} on top of a SQLite database
  *
  * @param db - The (open) database to use.
- * @param logger - A logger object for recording activity.
+ * @param options - Options for the store.
+ * @param options.assertWritable - Throws if this connection can no longer
+ * persist anything, which every write here must ask first: one issued into a
+ * transaction nothing can end reports success and is lost with it.
+ * @param options.logger - A logger object for recording activity.
  * @returns A key/value store using the given database.
  */
-function makeKVStore(db: Database, logger?: Logger): KVStore {
+function makeKVStore(
+  db: Database,
+  {
+    assertWritable,
+    logger,
+  }: { assertWritable: () => void; logger?: Logger | undefined },
+): KVStore {
   db.exec(SQL_QUERIES.CREATE_TABLE);
 
   const sqlKVGet = db.prepare(SQL_QUERIES.GET);
@@ -116,6 +126,7 @@ function makeKVStore(db: Database, logger?: Logger): KVStore {
    * @param value - The value to assign to it.
    */
   function kvSet(key: string, value: string): void {
+    assertWritable();
     logger?.debug(`kv set '${key}' to '${value}'`);
     sqlKVSet.bind([key, value]);
     sqlKVSet.step();
@@ -130,6 +141,7 @@ function makeKVStore(db: Database, logger?: Logger): KVStore {
    * @param key - The key to remove.
    */
   function kvDelete(key: string): void {
+    assertWritable();
     logger?.debug(`kv delete '${key}'`);
     sqlKVDelete.bind([key]);
     sqlKVDelete.step();
@@ -165,7 +177,10 @@ export async function makeSQLKernelDatabase({
   const db = await initDB(dbFilename ?? DEFAULT_DB_FILENAME, logger);
 
   logger?.debug('Initializing kernel store');
-  const kvStore = makeKVStore(db, logger?.subLogger({ tags: ['kv'] }));
+  const kvStore = makeKVStore(db, {
+    assertWritable: assertNotAbandoned,
+    logger: logger?.subLogger({ tags: ['kv'] }),
+  });
 
   db.exec(SQL_QUERIES.CREATE_TABLE_VS);
 
@@ -318,6 +333,7 @@ export async function makeSQLKernelDatabase({
    * Delete everything from the database.
    */
   function kvClear(): void {
+    assertNotAbandoned();
     logger?.debug('clearing all kernel state');
     sqlKVClear.step();
     sqlKVClear.reset();
@@ -326,7 +342,10 @@ export async function makeSQLKernelDatabase({
   }
 
   /**
-   * Execute a SQL query.
+   * Execute a SQL query. Unlike the other write paths this one does not consult
+   * `assertNotAbandoned`, whose side effect is a rollback: the debug surfaces
+   * that call it would not expect a query to end a transaction. `step` will run
+   * DML given it, where the nodejs driver's `all` refuses anything but a SELECT.
    *
    * @param sql - The SQL query to execute.
    * @returns An array of results.
@@ -413,6 +432,7 @@ export async function makeSQLKernelDatabase({
    * @param vatId - The vat whose store is to be deleted.
    */
   function deleteVatStore(vatId: string): void {
+    assertNotAbandoned();
     sqlVatstoreDeleteAll.bind([vatId]);
     sqlVatstoreDeleteAll.step();
     sqlVatstoreDeleteAll.reset();
@@ -440,6 +460,7 @@ export async function makeSQLKernelDatabase({
    * @param name - The name of the savepoint.
    */
   function rollbackSavepoint(name: string): void {
+    assertNotAbandoned();
     assertSafeIdentifier(name);
     const idx = db._spStack.lastIndexOf(name);
     if (idx < 0) {
@@ -469,6 +490,7 @@ export async function makeSQLKernelDatabase({
    * @param name - The name of the savepoint.
    */
   function releaseSavepoint(name: string): void {
+    assertNotAbandoned();
     assertSafeIdentifier(name);
     const idx = db._spStack.lastIndexOf(name);
     if (idx < 0) {
