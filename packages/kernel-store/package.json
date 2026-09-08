@@ -79,7 +79,7 @@
   "dependencies": {
     "@metamask/logger": "workspace:^",
     "@sqlite.org/sqlite-wasm": "^3.49.1-build3",
-    "better-sqlite3": "^12.4.1",
+    "better-sqlite3": "^13.0.3",
     "ses": "^1.14.0"
   },
   "devDependencies": {
