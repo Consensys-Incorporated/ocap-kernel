@@ -24,7 +24,7 @@ jobs:
       - name: Check pull request merge queue status
         id: check-skip-merge-queue
         if: github.event_name == 'merge_group'
-        uses: MetaMask/github-tools/.github/actions/check-skip-merge-queue@d0f155aad5d7b5403d29a094c2f752238bf43237 # v1.18.2
+        uses: ./.github/actions/check-skip-merge-queue
 
   detect-changes:
     name: Detect changes
@@ -149,10 +149,11 @@ jobs:
       matrix:
         node-version: [24.x]
     steps:
-      - name: Checkout and setup environment
-        uses: MetaMask/action-checkout-and-setup@0543b5929698c71e3ccc6ed24eac87825669b5de # v3.5.0
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up environment
+        uses: ./.github/actions/setup-environment
         with:
-          is-high-risk-environment: false
           node-version: ${{ matrix.node-version }}
       - run: yarn lint
       - name: Require clean working directory

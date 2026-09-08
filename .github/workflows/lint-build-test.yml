@@ -11,11 +11,11 @@ jobs:
       matrix:
         node-version: [22.x, 24.x]
     steps:
-      - name: Checkout and setup environment
-        uses: MetaMask/action-checkout-and-setup@0543b5929698c71e3ccc6ed24eac87825669b5de # v3.5.0
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up environment
+        uses: ./.github/actions/setup-environment
         with:
-          cache-node-modules: true
-          is-high-risk-environment: false
           node-version: ${{ matrix.node-version }}
 
   lint:
@@ -26,10 +26,11 @@ jobs:
       matrix:
         node-version: [24.x]
     steps:
-      - name: Checkout and setup environment
-        uses: MetaMask/action-checkout-and-setup@0543b5929698c71e3ccc6ed24eac87825669b5de # v3.5.0
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up environment
+        uses: ./.github/actions/setup-environment
         with:
-          is-high-risk-environment: false
           node-version: ${{ matrix.node-version }}
       - run: yarn lint
       - name: Require clean working directory
@@ -48,10 +49,11 @@ jobs:
       matrix:
         node-version: [24.x]
     steps:
-      - name: Checkout and setup environment
-        uses: MetaMask/action-checkout-and-setup@0543b5929698c71e3ccc6ed24eac87825669b5de # v3.5.0
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up environment
+        uses: ./.github/actions/setup-environment
         with:
-          is-high-risk-environment: false
           node-version: ${{ matrix.node-version }}
       - run: yarn changelog:validate
       - name: Require clean working directory
@@ -70,10 +72,11 @@ jobs:
       matrix:
         node-version: [24.x]
     steps:
-      - name: Checkout and setup environment
-        uses: MetaMask/action-checkout-and-setup@0543b5929698c71e3ccc6ed24eac87825669b5de # v3.5.0
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up environment
+        uses: ./.github/actions/setup-environment
         with:
-          is-high-risk-environment: false
           node-version: ${{ matrix.node-version }}
       - run: yarn build
       - name: Require clean working directory
@@ -92,10 +95,11 @@ jobs:
       matrix:
         node-version: [22.x, 24.x]
     steps:
-      - name: Checkout and setup environment
-        uses: MetaMask/action-checkout-and-setup@0543b5929698c71e3ccc6ed24eac87825669b5de # v3.5.0
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up environment
+        uses: ./.github/actions/setup-environment
         with:
-          is-high-risk-environment: false
           node-version: ${{ matrix.node-version }}
       - uses: ./.github/actions/playwright-install
       - run: yarn build
@@ -123,10 +127,11 @@ jobs:
       matrix:
         node-version: [22.x, 24.x]
     steps:
-      - name: Checkout and setup environment
-        uses: MetaMask/action-checkout-and-setup@0543b5929698c71e3ccc6ed24eac87825669b5de # v3.5.0
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up environment
+        uses: ./.github/actions/setup-environment
         with:
-          is-high-risk-environment: false
           node-version: ${{ matrix.node-version }}
       - run: yarn build
       - run: yarn test:integration
@@ -165,10 +170,11 @@ jobs:
           - package: '@ocap/evm-wallet-experiment'
             directory: evm-wallet-experiment
     steps:
-      - name: Checkout and setup environment
-        uses: MetaMask/action-checkout-and-setup@0543b5929698c71e3ccc6ed24eac87825669b5de # v3.5.0
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up environment
+        uses: ./.github/actions/setup-environment
         with:
-          is-high-risk-environment: false
           node-version: ${{ matrix.node-version }}
       - uses: ./.github/actions/playwright-install
       - run: VITE_DB_FOLDER=e2e yarn build

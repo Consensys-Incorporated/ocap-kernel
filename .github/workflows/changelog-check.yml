@@ -8,12 +8,58 @@ jobs:
   check-changelog:
     name: Check changelog
     runs-on: ubuntu-latest
+    # `no-changelog` is the escape hatch for a pull request that genuinely
+    # changes no published behaviour.
+    if: ${{ !contains(github.event.pull_request.labels.*.name, 'no-changelog') }}
     steps:
-      - name: Check changelog
-        uses: MetaMask/github-tools/.github/actions/check-changelog@d0f155aad5d7b5403d29a094c2f752238bf43237 # v1.18.2
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          base-branch: ${{ github.event.pull_request.base.ref }}
-          head-ref: ${{ github.head_ref }}
-          labels: ${{ toJSON(github.event.pull_request.labels) }}
-          pr-number: ${{ github.event.pull_request.number }}
-          repo: ${{ github.repository }}
+          # The whole comparison is against the merge base, so the history back
+          # to it has to be here.
+          fetch-depth: 0
+
+      - name: Require a changelog entry for every package this changes
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          # Against the merge base rather than the base tip, so that commits
+          # landing on the base branch after this pull request opened are not
+          # read as its own changes.
+          merge_base="$(git merge-base "$BASE_SHA" "$HEAD_SHA")"
+          changed="$(git diff --name-only "$merge_base" "$HEAD_SHA")"
+
+          missing=()
+          for package_dir in packages/*/; do
+            package="${package_dir%/}"
+            changelog="${package}/CHANGELOG.md"
+
+            # A package with no changelog is private and releases nothing, so
+            # there is no entry for it to be missing. This is the same set
+            # `yarn changelog:validate` covers, which runs `--no-private`.
+            [[ -f "$changelog" ]] || continue
+
+            # Changes to the changelog itself do not oblige a changelog entry.
+            if ! grep -qE "^${package}/" <<< "$changed" \
+               || [[ "$(grep -E "^${package}/" <<< "$changed")" == "$changelog" ]]; then
+              continue
+            fi
+
+            grep -qxF "$changelog" <<< "$changed" || missing+=("$package")
+          done
+
+          if [[ ${#missing[@]} -gt 0 ]]; then
+            echo "::error::These packages changed without a changelog entry:"
+            printf '  %s\n' "${missing[@]}"
+            echo
+            echo "Add an entry under '## [Unreleased]' in each package's CHANGELOG.md,"
+            echo "or apply the 'no-changelog' label if this genuinely changes no"
+            echo "published behaviour."
+            exit 1
+          fi
+
+          echo "Every changed package has a changelog entry."

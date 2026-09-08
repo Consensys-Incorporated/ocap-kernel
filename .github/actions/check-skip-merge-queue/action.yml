@@ -1,0 +1,119 @@
+name: Check skip merge queue
+description: >-
+  Report whether the pull request in a merge group is first in the queue and
+  already up to date with the base branch, in which case the checks about to run
+  would test a commit nothing has changed under.
+
+  Only the report is produced here. Nothing can make the merge queue skip an
+  entry from inside a workflow, so callers gate their own jobs on the output.
+
+# Ported from MetaMask/github-tools/.github/actions/check-skip-merge-queue,
+# which calls actions/github-script by mutable tag. See the note in
+# ../checkout-and-setup/action.yml for why that cannot be pinned from outside.
+
+inputs:
+  head-ref:
+    description: The merge group's head ref, which carries the pull request number.
+    required: true
+    default: ${{ github.event.merge_group.head_ref }}
+  base-ref:
+    description: The branch the pull request is merging into.
+    required: true
+    default: main
+  github-token:
+    description: The token used to read the pull request and compare branches.
+    required: true
+    default: ${{ github.token }}
+
+outputs:
+  up-to-date:
+    description: >-
+      Whether the pull request is first in the queue and up to date with the
+      base branch. `false` whenever that cannot be established, so a failure
+      here costs a redundant run rather than an untested merge.
+    value: ${{ steps.up-to-date.outputs.up-to-date || 'false' }}
+
+runs:
+  using: composite
+  steps:
+    # `continue-on-error` on both steps: this is an optimization, and the safe
+    # answer is always available. A throw here leaves `up-to-date` empty, which
+    # the output above reads as `false`.
+    - name: Find the pull request behind the merge group
+      continue-on-error: true
+      id: pr-details
+      uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+      env:
+        HEAD_REF: ${{ inputs.head-ref }}
+      with:
+        github-token: ${{ inputs.github-token }}
+        script: |
+          const { HEAD_REF } = process.env;
+          const match = HEAD_REF.match(/\/pr-([0-9]+)-/u);
+          if (!match) {
+            return core.setFailed(`Could not extract pull request number from head ref: "${HEAD_REF}".`);
+          }
+
+          const number = parseInt(match[1], 10);
+          const result = await github.graphql(`
+            query($owner: String!, $name: String!, $number: Int!) {
+              repository(owner: $owner, name: $name) {
+                pullRequest(number: $number) {
+                  headRefName
+                  mergeQueueEntry { position }
+                }
+              }
+            }
+          `, {
+            owner: context.repo.owner,
+            name: context.repo.repo,
+            number,
+          });
+
+          if (!result.repository.pullRequest) {
+            return core.setFailed(`Pull request #${number} not found in repository "${context.repo.owner}/${context.repo.repo}".`);
+          }
+
+          const position = result.repository.pullRequest.mergeQueueEntry?.position;
+          if (!position) {
+            return core.setFailed(`Pull request #${number} is not in the merge queue.`);
+          }
+
+          core.setOutput('pr-number', number);
+          core.setOutput('pr-branch', result.repository.pullRequest.headRefName);
+          core.setOutput('merge-queue-position', position);
+
+    - name: Check whether it is up to date with the base branch
+      continue-on-error: true
+      id: up-to-date
+      uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+      env:
+        BASE_REF: ${{ inputs.base-ref }}
+        PR_BRANCH: ${{ steps.pr-details.outputs.pr-branch }}
+        MERGE_QUEUE_POSITION: ${{ steps.pr-details.outputs.merge-queue-position }}
+      with:
+        github-token: ${{ inputs.github-token }}
+        script: |
+          const { BASE_REF, PR_BRANCH, MERGE_QUEUE_POSITION } = process.env;
+
+          // Only the first entry can be up to date with the base branch by
+          // definition; anything behind it is waiting on merges above it.
+          if (parseInt(MERGE_QUEUE_POSITION, 10) !== 1) {
+            core.info(`Pull request is not first in the merge queue (position: ${MERGE_QUEUE_POSITION}).`);
+            core.setOutput('up-to-date', 'false');
+            return;
+          }
+
+          const comparison = await github.rest.repos.compareCommitsWithBasehead({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            basehead: `${BASE_REF}...${PR_BRANCH}`,
+          });
+
+          if (comparison.data.status === 'identical' || comparison.data.status === 'ahead') {
+            core.info(`Pull request branch "${PR_BRANCH}" is up-to-date with base branch "${BASE_REF}".`);
+            core.setOutput('up-to-date', 'true');
+          } else {
+            core.info(`Pull request branch "${PR_BRANCH}" is not up-to-date with base branch "${BASE_REF}".`);
+            core.setOutput('up-to-date', 'false');
+          }

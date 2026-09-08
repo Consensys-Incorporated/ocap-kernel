@@ -1,0 +1,65 @@
+name: Set up environment
+description: Set up Node.js and Yarn and install dependencies, in a repository already checked out.
+
+# Replaces the setup half of MetaMask/action-checkout-and-setup. That action is
+# pinned by SHA where we call it, but calls actions/checkout, actions/setup-node
+# and actions/cache by mutable tag internally, which this organization refuses --
+# rightly, since a pin one layer deep is no pin at all. Keeping the steps here is
+# the only way to pin the whole chain, and the chain is short.
+#
+# Checkout is not part of this action and cannot be: `uses: ./...` resolves
+# against the workspace, so the repository has to be on disk before the runner
+# can find this file. Callers check out first, with their own pinned step.
+#
+# Deliberately narrower than the action it replaces: no node_modules cache and
+# no lookup-only fast path, only Yarn's download cache. Those are worth real
+# minutes on a monorepo this size, but they turn on a cache key that has to
+# account for the native rebuilds `postinstall` runs, and getting that subtly
+# wrong yields a job that passes against stale binaries. `yarn install` runs
+# every time here, so what is on disk always matches the lockfile.
+
+inputs:
+  node-version:
+    description: The Node.js version to use. Defaults to the one in `.nvmrc`.
+    required: false
+    default: ''
+  cache:
+    description: >-
+      Whether to restore and save Yarn's download cache. Pass `false` from jobs
+      holding publish credentials, where a poisoned entry buys an attacker more
+      than the cache saves us.
+    required: false
+    default: 'true'
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Node.js
+      uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      with:
+        node-version: ${{ inputs.node-version }}
+        node-version-file: ${{ inputs.node-version == '' && '.nvmrc' || '' }}
+
+    - name: Enable Corepack
+      shell: bash
+      run: corepack enable
+
+    # `enableGlobalCache: false` puts Yarn's downloads in `.yarn/cache`, which is
+    # gitignored, so without this every job refetches the whole dependency tree.
+    # Restoring a partial cache is still worth it, hence `restore-keys`: a
+    # lockfile change invalidates the key but leaves most entries reusable.
+    - name: Restore Yarn's download cache
+      if: inputs.cache == 'true'
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      with:
+        path: .yarn/cache
+        key: yarn-${{ runner.os }}-${{ inputs.node-version }}-${{ hashFiles('yarn.lock') }}
+        restore-keys: |
+          yarn-${{ runner.os }}-${{ inputs.node-version }}-
+          yarn-${{ runner.os }}-
+
+    # The LavaMoat plugin in `.yarnrc.yml` runs the scripts `lavamoat.allowScripts`
+    # permits, so there is no separate `yarn allow-scripts` step to run.
+    - name: Install dependencies
+      shell: bash
+      run: yarn install --immutable
