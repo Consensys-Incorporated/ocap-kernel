@@ -61,6 +61,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `Kernel.stop` records the last active time on a best-effort basis, logging rather than throwing when the store refuses the write ([#1021](https://github.com/MetaMask/ocap-kernel/pull/1021))
+  - A store that can no longer persist anything refuses every write, and this one sits ahead of stopping remote comms, terminating the vat workers, and closing the database. The timestamp is meaningless once the state it dates is unreachable; the worker processes are not
 - A message delivered to a kernel-owned kref with no registered service now rejects the caller with `ENDPOINT_UNREACHABLE` instead of throwing, which escaped the crank and killed the run loop — turning one unreachable reference into a dead kernel ([#1007](https://github.com/MetaMask/ocap-kernel/pull/1007))
   - Reachable without any kernel bug: an anonymous kernel object hosts something that cannot outlive the process, such as an accepted socket connection, so a vat holding one across a restart or a message to one still queued from the previous incarnation lands here. That surviving reference is exactly what stops the init sweep deleting the object, so its `kernel` owner survives with it
   - Matches what `KernelRouter` already does for a delivery whose endpoint has vanished. A message sent with no result promise has nobody to report to, so it is logged instead

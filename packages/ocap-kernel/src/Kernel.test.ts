@@ -787,6 +787,27 @@ describe('Kernel', () => {
       expect(timestamp).toBeGreaterThanOrEqual(before);
       expect(timestamp).toBeLessThanOrEqual(after);
     });
+
+    it('releases the vat workers even when the store refuses the timestamp', async () => {
+      const workerTerminateAllMock = vi
+        .spyOn(mockPlatformServices, 'terminateAll')
+        .mockResolvedValue(undefined);
+      const kernel = await Kernel.make(
+        mockPlatformServices,
+        mockKernelDatabase,
+      );
+      // What a driver holding a transaction it could not abort does to every
+      // write, teardown's included.
+      vi.spyOn(mockKernelDatabase.kernelKVStore, 'set').mockImplementation(
+        () => {
+          throw new Error('refusing further writes on this connection');
+        },
+      );
+
+      await kernel.stop();
+
+      expect(workerTerminateAllMock).toHaveBeenCalledOnce();
+    });
   });
 
   describe('restartVat()', () => {
