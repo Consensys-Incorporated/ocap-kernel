@@ -2,13 +2,7 @@ import type { Guarded, Methods } from '@endo/exo';
 import { M } from '@endo/patterns';
 import type { Pattern } from '@endo/patterns';
 
-/**
- * A narrowing, addressed by method name and then by argument position.
- *
- * A method absent from the delta is dropped from the narrowing. An `undefined`
- * slot leaves that argument position as the base has it.
- */
-export type NarrowingDelta = Record<string, (Pattern | undefined)[]>;
+import type { NarrowingDelta } from './narrow-interface-guard.ts';
 
 /**
  * `base` is `object` rather than `Methods` because an `@endo/exo` carries no
