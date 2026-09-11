@@ -123,7 +123,7 @@ describe('isVatConfig', () => {
       config: {
         bundleSpec: 'bundle.js',
         platformConfig: {
-          fs: { rootDir: '/tmp' },
+          fs: { root: ['tmp'] },
         },
       },
       expected: true,
@@ -135,7 +135,7 @@ describe('isVatConfig', () => {
         creationOptions: { foo: 'bar' },
         parameters: { baz: 123 },
         platformConfig: {
-          fs: { rootDir: '/tmp', methods: ['readFile'] },
+          fs: { root: ['tmp'], methods: ['readFile'] },
         },
       },
       expected: true,
@@ -159,7 +159,7 @@ describe('isVatConfig', () => {
       config: {
         bundleSpec: 'bundle.js',
         platformConfig: {
-          fs: { rootDir: 123 },
+          fs: { root: 123 },
         },
       },
     },

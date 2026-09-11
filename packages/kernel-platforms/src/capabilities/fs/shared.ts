@@ -3,8 +3,8 @@ import { M } from '@endo/patterns';
 import type { MethodGuard } from '@endo/patterns';
 
 import type {
-  PathLike,
-  SyncPathCaveat,
+  PathSegments,
+  SegmentsCaveat,
   ReadFile,
   Access,
   FsConfig,
@@ -15,38 +15,92 @@ import type {
 import { fsConfigStruct } from './types.ts';
 import { makeCapabilitySpecification } from '../../specification.ts';
 
+// The guard can only require strings, so `['srv', 'data/../../etc']` reaches
+// here intact and would resolve to `/etc` on the way to a syscall. Rejecting
+// these is what makes a prefix check sufficient.
+const plainSegment = /^[^/\\]+$/u;
+
 /**
- * Cross-platform FS operation wrapper with validation
+ * Asserts that every segment addresses exactly one path component.
  *
- * @param operation - The underlying operation to wrap
- * @param syncPathCaveat - The caveat to apply to path arguments
+ * @param segments - The segments to check
+ * @param label - What is being checked, for the error message
+ */
+export const assertPlainSegments = (
+  segments: PathSegments,
+  label: string,
+): void => {
+  const bad = segments.find(
+    (segment) =>
+      segment === '.' || segment === '..' || !plainSegment.test(segment),
+  );
+  if (bad !== undefined) {
+    throw new Error(
+      `${label} contains an invalid segment: ${JSON.stringify(bad)}`,
+    );
+  }
+};
+
+/**
+ * Wraps a path-taking FS operation as a segments-taking one, with validation.
+ *
+ * @param options - The operation and the restrictions to apply to it
+ * @param options.operation - The underlying operation to wrap
+ * @param options.caveat - The caveat to apply to the segments argument
+ * @param options.toPath - Converts segments to a platform path
  * @returns The operation restricted by the provided caveat
  */
-export const makeCaveatedFsOperation = <
-  Operation extends (...args: never[]) => Promise<unknown>,
->(
-  operation: Operation,
-  syncPathCaveat: SyncPathCaveat,
-): Operation => {
-  return harden(async (...args: Parameters<Operation>) => {
+export const makeCaveatedFsOperation = ({
+  operation,
+  caveat,
+  toPath,
+}: {
+  operation: (...args: never[]) => Promise<unknown>;
+  caveat: SegmentsCaveat;
+  toPath: (segments: PathSegments) => string;
+}): ((segments: PathSegments, ...rest: unknown[]) => Promise<unknown>) => {
+  return harden(async (segments: PathSegments, ...rest: unknown[]) => {
     try {
-      // Assuming first argument is always the path
-      syncPathCaveat(args[0] as unknown as PathLike);
+      assertPlainSegments(segments, 'path');
+      caveat(segments);
       // We don't need async caveats yet, but we could await one here.
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : 'Caveat failed';
       throw new Error(`fs.${operation.name}: ${message}`, { cause });
     }
-    return operation(...args);
-  }) as Operation;
+    return operation(...([toPath(segments), ...rest] as unknown as never[]));
+  });
+};
+
+/**
+ * Builds a caveat requiring segments to fall under a root.
+ *
+ * @param root - The root the segments must extend
+ * @returns A caveat that rejects segments outside the root
+ */
+export const makeRootCaveat = (root: PathSegments): SegmentsCaveat => {
+  return (segments: PathSegments): void => {
+    if (
+      segments.length < root.length ||
+      root.some((segment, index) => segments[index] !== segment)
+    ) {
+      throw new Error(
+        `Path ${JSON.stringify(segments)} is outside allowed root ${JSON.stringify(root)}`,
+      );
+    }
+  };
 };
 
 // Written out per method rather than via `makeDefaultExo`, whose
 // `defaultGuards: 'passable'` leaves an empty guard map: narrowing conjoins a
 // delta onto a per-argument guard, so there has to be one to conjoin onto.
 const fsMethodGuards: Record<FsMethodName, MethodGuard> = harden({
-  readFile: M.callWhen(M.string()).optional(M.any()).returns(M.any()),
-  access: M.callWhen(M.string()).optional(M.number()).returns(M.undefined()),
+  readFile: M.callWhen(M.arrayOf(M.string()))
+    .optional(M.any())
+    .returns(M.any()),
+  access: M.callWhen(M.arrayOf(M.string()))
+    .optional(M.number())
+    .returns(M.undefined()),
 });
 
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
@@ -57,22 +111,26 @@ const fsMethodGuards: Record<FsMethodName, MethodGuard> = harden({
  * @param config.makeReadFile - The factory returning a read file operation
  * @param config.makeAccess - The factory returning an access operation
  * @param config.makePathCaveat - Factory function to create path caveats
+ * @param config.toPath - Converts segments to a platform path
  * @returns The capability specification
  */
 export const makeFsSpecification = ({
   makeReadFile,
   makeAccess,
   makePathCaveat,
+  toPath,
 }: {
   makeReadFile: () => ReadFile;
   makeAccess: () => Access;
-  makePathCaveat: (rootDir: string) => SyncPathCaveat;
+  makePathCaveat: (root: PathSegments) => SegmentsCaveat;
+  toPath: (segments: PathSegments) => string;
 }) =>
   makeCapabilitySpecification(
     fsConfigStruct,
     (config: FsConfig): FsCapability => {
-      const { rootDir, methods = [] } = config;
-      const caveat = makePathCaveat(rootDir);
+      const { root, methods = [] } = config;
+      assertPlainSegments(root, 'root');
+      const caveat = makePathCaveat(root);
       const makeOperation = { readFile: makeReadFile, access: makeAccess };
 
       const guards: Partial<Record<FsMethodName, MethodGuard>> = {};
@@ -80,10 +138,11 @@ export const makeFsSpecification = ({
         {};
       for (const name of methods) {
         guards[name] = fsMethodGuards[name];
-        operations[name] = makeCaveatedFsOperation(
-          makeOperation[name](),
+        operations[name] = makeCaveatedFsOperation({
+          operation: makeOperation[name](),
           caveat,
-        );
+          toPath,
+        }) as FsMethods[FsMethodName];
       }
 
       return makeExo(

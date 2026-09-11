@@ -255,7 +255,7 @@ describe('VatSupervisor', () => {
   describe('platform configuration', () => {
     it('accepts makePlatform and platformOptions parameters', async () => {
       const makePlatform = vi.fn().mockResolvedValue({});
-      const platformOptions = { fs: { rootDir: '/tmp' } };
+      const platformOptions = { fs: { root: ['tmp'] } };
 
       const { supervisor } = await makeVatSupervisor({
         makePlatform,
