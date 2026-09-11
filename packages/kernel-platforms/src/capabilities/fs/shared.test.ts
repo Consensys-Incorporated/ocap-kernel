@@ -1,13 +1,15 @@
 import { GET_INTERFACE_GUARD } from '@endo/exo';
 import { getInterfaceGuardPayload, M } from '@endo/patterns';
 import type { MethodGuard } from '@endo/patterns';
+import { pathUnder } from '@metamask/kernel-utils';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
   assertPlainSegments,
+  compileFsDelta,
   makeCaveatedFsOperation,
+  makeFsBase,
   makeFsSpecification,
-  makeRootCaveat,
 } from './shared.ts';
 import type {
   ReadFile,
@@ -90,174 +92,116 @@ describe('assertPlainSegments', () => {
   });
 });
 
-describe('makeRootCaveat', () => {
-  it.each([
-    { name: 'the root itself', segments: ['srv', 'data'] },
-    { name: 'a path under the root', segments: ['srv', 'data', 'x', 'y'] },
-  ])('accepts $name', ({ segments }) => {
-    expect(() => makeRootCaveat(['srv', 'data'])(segments)).not.toThrow();
+describe('compileFsDelta', () => {
+  it('scopes each configured method to the root', () => {
+    expect(
+      compileFsDelta({ root: ['srv', 'data'], methods: ['readFile'] }),
+    ).toStrictEqual({ readFile: [pathUnder(['srv', 'data'])] });
   });
 
-  it.each([
-    { name: 'a sibling of the root', segments: ['srv', 'other'] },
-    { name: 'a prefix of the root', segments: ['srv'] },
-    { name: 'a disjoint path', segments: ['etc', 'passwd'] },
-    // `['srv', 'data']` must not admit `/srv/database`.
-    { name: 'a longer first segment', segments: ['srv', 'database', 'x'] },
-  ])('rejects $name', ({ segments }) => {
-    expect(() => makeRootCaveat(['srv', 'data'])(segments)).toThrow(
-      'is outside allowed root',
-    );
+  it('compiles an omitted method list to an empty delta', () => {
+    expect(compileFsDelta({ root: ['srv'] })).toStrictEqual({});
   });
 });
 
-describe('makeFsSpecification', () => {
-  const createMockSpecification = () => {
+describe('makeFsBase', () => {
+  const createMockBase = () => {
     const mockReadFile: ReadFile = vi.fn();
     const mockAccess: Access = vi.fn();
     const mockPathCaveat: SegmentsCaveat = vi.fn();
-    const makeReadFile = vi.fn(() => mockReadFile);
-    const makeAccess = vi.fn(() => mockAccess);
 
     return {
-      specification: makeFsSpecification({
-        makeReadFile,
-        makeAccess,
+      base: makeFsBase({
+        makeReadFile: () => mockReadFile,
+        makeAccess: () => mockAccess,
         makePathCaveat: () => mockPathCaveat,
         toPath,
-      }),
+      }) as unknown as Record<string, CallableFunction>,
       mockReadFile,
       mockAccess,
       mockPathCaveat,
-      makeReadFile,
-      makeAccess,
     };
   };
 
-  const methodGuards = (
-    capability: FsCapability,
-  ): Record<string, MethodGuard> =>
-    (
-      getInterfaceGuardPayload(
-        capability[GET_INTERFACE_GUARD](),
-      ) as unknown as {
-        methodGuards: Record<string, MethodGuard>;
-      }
-    ).methodGuards;
-
   const guardedMethodNames = (capability: FsCapability): string[] =>
-    Object.keys(methodGuards(capability));
+    Object.keys(
+      (
+        getInterfaceGuardPayload(
+          capability[GET_INTERFACE_GUARD](),
+        ) as unknown as { methodGuards: Record<string, MethodGuard> }
+      ).methodGuards,
+    );
+
+  it('holds every method, leaving the method set to the narrowing', () => {
+    const { base } = createMockBase();
+
+    expect(
+      guardedMethodNames(base as unknown as FsCapability).sort(),
+    ).toStrictEqual(['access', 'readFile']);
+  });
+
+  it('guards a path as a string array', () => {
+    const { base } = createMockBase();
+
+    expect(
+      (
+        getInterfaceGuardPayload(
+          (base as unknown as FsCapability)[GET_INTERFACE_GUARD](),
+        ) as unknown as { methodGuards: Record<string, MethodGuard> }
+      ).methodGuards.readFile,
+    ).toStrictEqual(
+      M.callWhen(M.arrayOf(M.string()), M.string()).returns(M.string()),
+    );
+  });
+
+  it('forwards a call through the caveat as a joined path', async () => {
+    const { base, mockReadFile, mockPathCaveat } = createMockBase();
+    vi.mocked(mockReadFile).mockResolvedValue('contents' as never);
+
+    expect(await base.readFile?.(['root', 'file.txt'], 'utf8')).toBe(
+      'contents',
+    );
+    expect(mockPathCaveat).toHaveBeenCalledWith(['root', 'file.txt']);
+    expect(mockReadFile).toHaveBeenCalledWith('/root/file.txt', 'utf8');
+  });
+
+  // `pathUnder` matches segment by segment and cannot see inside one, so a
+  // segment like this satisfies a narrowing on its prefix positions and is
+  // stopped only here. That is why replacing the root caveat with a pattern is
+  // safe, and why this check cannot be dropped along with it.
+  it('rejects a separator inside a segment that a prefix pattern admits', async () => {
+    const { base, mockReadFile } = createMockBase();
+
+    await expect(
+      base.readFile?.(['root', 'x/../../etc'], 'utf8'),
+    ).rejects.toThrow('path contains an invalid segment');
+    expect(mockReadFile).not.toHaveBeenCalled();
+  });
+});
+
+// The configured capability narrows the base, and `narrow` forwards over `E()`,
+// which reads `globalThis.HandledPromise` when it loads; `mock-endoify` sets
+// that to plain `Promise`. So only the checks that precede the narrowing can be
+// exercised here — the narrowed capability is covered in `@ocap/kernel-test`.
+describe('makeFsSpecification', () => {
+  const specification = makeFsSpecification({
+    makeReadFile: () => vi.fn() as unknown as ReadFile,
+    makeAccess: () => vi.fn() as unknown as Access,
+    makePathCaveat: () => vi.fn(),
+    toPath,
+  });
 
   it('creates specification with all capabilities enabled', () => {
-    const { specification } = createMockSpecification();
-
     expect(specification).toHaveProperty('configStruct');
     expect(specification).toHaveProperty('capabilityFactory');
   });
 
   it.each([
-    { methods: ['readFile'] as const },
-    { methods: ['access'] as const },
-    { methods: ['readFile', 'access'] as const },
-    { methods: [] as const },
-  ])('exposes exactly the methods named by $methods', ({ methods }) => {
-    const { specification } = createMockSpecification();
-    const capability = specification.capabilityFactory({
-      root: ['root'],
-      methods: [...methods],
-    });
-
-    expect(guardedMethodNames(capability).sort()).toStrictEqual(
-      [...methods].sort(),
-    );
-  });
-
-  it('exposes no methods when the config omits the method list', () => {
-    const { specification } = createMockSpecification();
-    const capability = specification.capabilityFactory({ root: ['root'] });
-
-    expect(guardedMethodNames(capability)).toStrictEqual([]);
-  });
-
-  it('does not build an operation the config omits', () => {
-    const { specification, makeReadFile, makeAccess } =
-      createMockSpecification();
-    specification.capabilityFactory({
-      root: ['root'],
-      methods: ['readFile'],
-    });
-
-    expect(makeReadFile).toHaveBeenCalledOnce();
-    expect(makeAccess).not.toHaveBeenCalled();
-  });
-
-  it('forwards a readFile call through the caveat', async () => {
-    const { specification, mockReadFile, mockPathCaveat } =
-      createMockSpecification();
-    vi.mocked(mockReadFile).mockResolvedValue('contents' as never);
-    const capability = specification.capabilityFactory({
-      root: ['root'],
-      methods: ['readFile'],
-    });
-
-    expect(await capability.readFile?.(['root', 'file.txt'])).toBe('contents');
-    expect(mockPathCaveat).toHaveBeenCalledWith(['root', 'file.txt']);
-    expect(mockReadFile).toHaveBeenCalledWith('/root/file.txt');
-  });
-
-  it('rejects a root the config cannot address', () => {
-    const { specification } = createMockSpecification();
-
-    expect(() =>
-      specification.capabilityFactory({ root: ['srv', '..'] }),
-    ).toThrow('root contains an invalid segment: ".."');
-  });
-
-  // Asserted by the operation not being reached rather than by the rejection
-  // value: `mock-endoify` stubs out `assert`, so a guard violation rejects with
-  // `undefined` and `rejects.toThrow()` would pass vacuously.
-  it.each([
-    { name: 'a bare string', segments: '/root/file.txt' },
-    { name: 'an array holding a non-string', segments: ['root', 42] },
-  ])('does not forward a readFile path that is $name', async ({ segments }) => {
-    const { specification, mockReadFile, mockPathCaveat } =
-      createMockSpecification();
-    const capability = specification.capabilityFactory({
-      root: ['root'],
-      methods: ['readFile'],
-    });
-
-    await capability
-      .readFile?.(segments as unknown as string[])
-      .catch(() => undefined);
-
-    expect(mockReadFile).not.toHaveBeenCalled();
-    expect(mockPathCaveat).not.toHaveBeenCalled();
-  });
-
-  it('does not forward an access mode that is not a number', async () => {
-    const { specification, mockAccess } = createMockSpecification();
-    const capability = specification.capabilityFactory({
-      root: ['root'],
-      methods: ['access'],
-    });
-
-    await capability
-      .access?.(['root', 'file.txt'], 'r' as unknown as number)
-      .catch(() => undefined);
-
-    expect(mockAccess).not.toHaveBeenCalled();
-  });
-
-  it('guards a readFile path as a string array', () => {
-    const { specification } = createMockSpecification();
-    const capability = specification.capabilityFactory({
-      root: ['root'],
-      methods: ['readFile'],
-    });
-
-    expect(methodGuards(capability).readFile).toStrictEqual(
-      M.callWhen(M.arrayOf(M.string())).optional(M.any()).returns(M.any()),
+    { name: 'a traversal', root: ['srv', '..'] },
+    { name: 'a separator', root: ['srv/data'] },
+  ])('rejects a root containing $name', async ({ root }) => {
+    await expect(specification.capabilityFactory({ root })).rejects.toThrow(
+      'root contains an invalid segment',
     );
   });
 });
