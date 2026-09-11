@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add `getInterfaceMethodGuards`, `getMethodPayload`, `getGuardAt`, `buildMethodGuard`, and `asyncifyMethodGuards`, plus the `MethodGuardPayload` type, for reading an `@endo/patterns` interface guard by argument position — required arguments, then optionals, then the rest guard — and reassembling it ([#1048](https://github.com/MetaMask/ocap-kernel/pull/1048))
 - Add `makeGuardedFetch` and the `FetchGuard` type, which wrap a `fetch` so that a guard runs before every request it makes, redirect hops included ([#1026](https://github.com/MetaMask/ocap-kernel/pull/1026))
   - `redirect: 'follow'`, in the caller's `init` or on a `Request`, is overridden so that each hop can be checked; `manual` and `error` are honoured. `baseFetch` is therefore always called with `redirect: 'manual'` and must honour it
   - A `dispatcher` in `init` is rejected, and a redirect that keeps the request body fails when that body cannot be sent again — which includes any `Request` carrying one

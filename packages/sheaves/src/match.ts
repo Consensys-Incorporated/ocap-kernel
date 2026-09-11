@@ -5,8 +5,11 @@
 import { GET_INTERFACE_GUARD } from '@endo/exo';
 import { matches } from '@endo/patterns';
 import type { InterfaceGuard } from '@endo/patterns';
+import {
+  getInterfaceMethodGuards,
+  getMethodPayload,
+} from '@metamask/kernel-utils';
 
-import { getInterfaceMethodGuards, getMethodPayload } from './guard.ts';
 import type { Section } from './types.ts';
 
 /**
