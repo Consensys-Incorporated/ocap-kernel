@@ -5,14 +5,19 @@ import { join, pathUnder } from './narrowing.ts';
 
 const makeBase = (): object => ({ readFile: () => 'contents' });
 
-// `narrow` is exercised end to end in `@ocap/kernel-test`. It cannot be
-// exercised here: `E` reads `globalThis.HandledPromise` when it loads, and this
-// package's tests run under `mock-endoify`, which sets that to plain `Promise`.
+// `narrow`, and every path of `join` that reaches a minted ref, are exercised
+// end to end in `@ocap/kernel-test`. They cannot be exercised here: `E` reads
+// `globalThis.HandledPromise` when it loads, and this package's tests run under
+// `mock-endoify`, which sets that to plain `Promise`. What is reachable here is
+// the refusal `join` raises before it mints anything.
 describe('join', () => {
-  it('is not implemented', async () => {
-    await expect(
-      join({ name: 'Joined', refs: [makeBase(), makeBase()] }),
-    ).rejects.toThrow('join is not implemented');
+  it.each([
+    { scenario: 'no ref was minted by narrowing', refs: [makeBase()] },
+    { scenario: 'no refs were given at all', refs: [] },
+  ])('refuses a join where $scenario', async ({ refs }) => {
+    await expect(join({ name: 'Joined', refs })).rejects.toThrow(
+      'Cannot join "Joined": no ref was minted by narrowing.',
+    );
   });
 });
 

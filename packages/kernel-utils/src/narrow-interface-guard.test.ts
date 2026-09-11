@@ -6,6 +6,7 @@ import { getInterfaceMethodGuards, getMethodPayload } from './guard-algebra.ts';
 import type { MethodGuardPayload } from './guard-algebra.ts';
 import {
   conjoinDeltas,
+  disjoinDeltas,
   narrowInterfaceGuard,
 } from './narrow-interface-guard.ts';
 import type { NarrowingDelta } from './narrow-interface-guard.ts';
@@ -182,4 +183,48 @@ describe('conjoinDeltas', () => {
 
     expect(combined.read![0]).toBeUndefined();
   });
+});
+
+describe('disjoinDeltas', () => {
+  it('takes the union of the methods the two deltas name', () => {
+    const disjoined = disjoinDeltas(
+      { read: [M.eq('a')] },
+      { read: [M.eq('b')], stat: [M.eq('b')] },
+    );
+
+    expect(Object.keys(disjoined).sort()).toStrictEqual(['read', 'stat']);
+  });
+
+  it('admits either pattern where both deltas name a method', () => {
+    const disjoined = disjoinDeltas(
+      { read: [M.eq('a')] },
+      { read: [M.eq('b')] },
+    );
+    const [pattern] = disjoined.read!;
+
+    expect(matches('a', pattern)).toBe(true);
+    expect(matches('b', pattern)).toBe(true);
+    expect(matches('c', pattern)).toBe(false);
+  });
+
+  it('carries a method only one delta names at that delta', () => {
+    const disjoined = disjoinDeltas({ read: [] }, { stat: [M.eq('b')] });
+    const [pattern] = disjoined.stat!;
+
+    expect(matches('b', pattern)).toBe(true);
+    expect(matches('a', pattern)).toBe(false);
+  });
+
+  it.each([
+    { side: 'the left', left: [undefined], right: [M.eq('b')] },
+    { side: 'the right', left: [M.eq('a')], right: [undefined] },
+    { side: 'the shorter', left: [M.eq('a')], right: [M.eq('a'), M.eq('x')] },
+  ])(
+    'leaves a position unconstrained where $side delta holes it',
+    ({ left, right }) => {
+      const disjoined = disjoinDeltas({ read: left }, { read: right });
+
+      expect(disjoined.read!.at(-1)).toBeUndefined();
+    },
+  );
 });
