@@ -7,7 +7,7 @@
     "rootDir": "./src",
     "types": ["ses", "node"]
   },
-  "references": [],
+  "references": [{ "path": "../kernel-utils/tsconfig.build.json" }],
   "files": [],
   "include": ["./src"]
 }

@@ -232,6 +232,11 @@ export const join = async <Joined extends Methods = Methods>({
  * the prefix lattice. A capability for which unbounded authority is a
  * configuration mistake rejects it at its own config boundary, not here.
  *
+ * A pattern cannot see inside a segment, so this confines nothing on its own:
+ * `['srv', 'x/../../etc']` matches `pathUnder(['srv'])` and resolves to `/etc`.
+ * The capability must itself reject a segment that is empty, `.`, `..`, or
+ * carries a separator, as `@metamask/kernel-platforms` does for `fs`.
+ *
  * @param segments - The prefix the matched arrays must start with.
  * @returns A pattern over segment arrays.
  */

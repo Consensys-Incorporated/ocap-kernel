@@ -1,6 +1,8 @@
 import { makeExo } from '@endo/exo';
 import { M } from '@endo/patterns';
 import type { MethodGuard } from '@endo/patterns';
+import { narrow, pathUnder } from '@metamask/kernel-utils';
+import type { NarrowingDelta } from '@metamask/kernel-utils';
 
 import type {
   PathSegments,
@@ -14,6 +16,7 @@ import type {
 } from './types.ts';
 import { fsConfigStruct } from './types.ts';
 import { makeCapabilitySpecification } from '../../specification.ts';
+import type { CapabilitySpecification } from '../../specification.ts';
 
 // The guard can only require strings, so `['srv', 'data/../../etc']` reaches
 // here intact and would resolve to `/etc` on the way to a syscall. Rejecting
@@ -73,83 +76,120 @@ export const makeCaveatedFsOperation = ({
 };
 
 /**
- * Builds a caveat requiring segments to fall under a root.
+ * Compile fs config into the narrowing delta that enforces it.
  *
- * @param root - The root the segments must extend
- * @returns A caveat that rejects segments outside the root
+ * Separate from the factory so that a general JSON delta encoding could replace
+ * it without touching the capability.
+ *
+ * @param config - The capability's configuration
+ * @param config.root - The prefix every path must extend
+ * @param config.methods - The methods the delta retains
+ * @returns The delta to narrow the full fs exo by
  */
-export const makeRootCaveat = (root: PathSegments): SegmentsCaveat => {
-  return (segments: PathSegments): void => {
-    if (
-      segments.length < root.length ||
-      root.some((segment, index) => segments[index] !== segment)
-    ) {
-      throw new Error(
-        `Path ${JSON.stringify(segments)} is outside allowed root ${JSON.stringify(root)}`,
-      );
-    }
-  };
-};
+export const compileFsDelta = ({
+  root,
+  methods = [],
+}: FsConfig): NarrowingDelta =>
+  Object.fromEntries(methods.map((name) => [name, [pathUnder(root)]]));
 
 // Written out per method rather than via `makeDefaultExo`, whose
 // `defaultGuards: 'passable'` leaves an empty guard map: narrowing conjoins a
 // delta onto a per-argument guard, so there has to be one to conjoin onto.
+// `readFile`'s encoding is required rather than optional because without one
+// Node resolves a `Buffer`, and no typed array is Passable even frozen, so the
+// result could never cross the exo boundary. Requiring it fails the call at the
+// call site instead of on the way back.
 const fsMethodGuards: Record<FsMethodName, MethodGuard> = harden({
-  readFile: M.callWhen(M.arrayOf(M.string()))
-    .optional(M.any())
-    .returns(M.any()),
+  readFile: M.callWhen(M.arrayOf(M.string()), M.string()).returns(M.string()),
   access: M.callWhen(M.arrayOf(M.string()))
     .optional(M.number())
     .returns(M.undefined()),
 });
 
-/* eslint-disable @typescript-eslint/explicit-function-return-type */
+export type FsPlatformOptions = {
+  makeReadFile: () => ReadFile;
+  makeAccess: () => Access;
+  makePathCaveat: () => SegmentsCaveat;
+  toPath: (segments: PathSegments) => string;
+};
+
 /**
- * Cross-platform FS capability specification factory
+ * Build the unrestricted fs exo that every configured capability narrows.
  *
- * @param config - The configuration for the capability specification
- * @param config.makeReadFile - The factory returning a read file operation
- * @param config.makeAccess - The factory returning an access operation
- * @param config.makePathCaveat - Factory function to create path caveats
- * @param config.toPath - Converts segments to a platform path
- * @returns The capability specification
+ * It holds every method and depends on no config, so one base serves all of a
+ * platform's narrowings and `join` reaches across them. Not exported from the
+ * package: a holder of this holds the whole filesystem.
+ *
+ * @param options - The platform's operations and path handling
+ * @param options.makeReadFile - The factory returning a read file operation
+ * @param options.makeAccess - The factory returning an access operation
+ * @param options.makePathCaveat - The factory returning the platform's caveat
+ * @param options.toPath - Converts segments to a platform path
+ * @returns The full fs exo
  */
-export const makeFsSpecification = ({
+export const makeFsBase = ({
   makeReadFile,
   makeAccess,
   makePathCaveat,
   toPath,
-}: {
-  makeReadFile: () => ReadFile;
-  makeAccess: () => Access;
-  makePathCaveat: (root: PathSegments) => SegmentsCaveat;
-  toPath: (segments: PathSegments) => string;
-}) =>
+}: FsPlatformOptions): FsCapability => {
+  const caveat = makePathCaveat();
+  const operations = {
+    readFile: makeCaveatedFsOperation({
+      operation: makeReadFile(),
+      caveat,
+      toPath,
+    }),
+    access: makeCaveatedFsOperation({
+      operation: makeAccess(),
+      caveat,
+      toPath,
+    }),
+  } as unknown as FsMethods;
+
+  return makeExo('FsBase', M.interface('FsBase', fsMethodGuards), {
+    ...operations,
+  });
+};
+
+/**
+ * Build the capability factory that narrows `base` by a config.
+ *
+ * The config's bound is the root of this capability's narrowing tree, so it is
+ * applied by the same `narrow` a holder would use. A holder narrowing further
+ * therefore flattens onto this base rather than stacking on it.
+ *
+ * @param base - The full fs exo to narrow
+ * @returns A factory taking config to the narrowed capability
+ */
+const makeNarrowingFactory =
+  (base: FsCapability) =>
+  async (config: FsConfig): Promise<FsCapability> => {
+    // `pathUnder([])` admits every path, so an unbounded root has to be refused
+    // here rather than by the pattern.
+    assertPlainSegments(config.root, 'root');
+    return narrow<Partial<FsMethods>>({
+      name: 'Fs',
+      base,
+      delta: compileFsDelta(config),
+    });
+  };
+
+export type FsSpecification = CapabilitySpecification<
+  typeof fsConfigStruct,
+  Promise<FsCapability>
+>;
+
+/**
+ * Cross-platform FS capability specification factory
+ *
+ * @param options - The platform's operations and path handling
+ * @returns The capability specification
+ */
+export const makeFsSpecification = (
+  options: FsPlatformOptions,
+): FsSpecification =>
   makeCapabilitySpecification(
     fsConfigStruct,
-    (config: FsConfig): FsCapability => {
-      const { root, methods = [] } = config;
-      assertPlainSegments(root, 'root');
-      const caveat = makePathCaveat(root);
-      const makeOperation = { readFile: makeReadFile, access: makeAccess };
-
-      const guards: Partial<Record<FsMethodName, MethodGuard>> = {};
-      const operations: Partial<Record<FsMethodName, FsMethods[FsMethodName]>> =
-        {};
-      for (const name of methods) {
-        guards[name] = fsMethodGuards[name];
-        operations[name] = makeCaveatedFsOperation({
-          operation: makeOperation[name](),
-          caveat,
-          toPath,
-        }) as FsMethods[FsMethodName];
-      }
-
-      return makeExo(
-        'Fs',
-        M.interface('Fs', guards),
-        operations as Partial<FsMethods>,
-      );
-    },
+    makeNarrowingFactory(makeFsBase(options)),
   );
-/* eslint-enable @typescript-eslint/explicit-function-return-type */

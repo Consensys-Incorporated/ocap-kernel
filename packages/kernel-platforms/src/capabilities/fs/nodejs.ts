@@ -2,8 +2,9 @@ import { lstatSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import { resolve, sep } from 'node:path';
 
-import { makeFsSpecification, makeRootCaveat } from './shared.ts';
-import type { PathSegments, SegmentsCaveat } from './types.ts';
+import { makeFsSpecification } from './shared.ts';
+import type { FsSpecification } from './shared.ts';
+import type { FsConfigStruct, PathSegments, SegmentsCaveat } from './types.ts';
 
 /**
  * Joins absolute segments into a Node.js path.
@@ -15,43 +16,32 @@ import type { PathSegments, SegmentsCaveat } from './types.ts';
  * @param segments - The segments to join
  * @returns The corresponding absolute path
  */
-const toPath = (segments: PathSegments): string => resolve(sep, ...segments);
+export const toPath = (segments: PathSegments): string =>
+  resolve(sep, ...segments);
 
 /**
  * Node.js specific symlink caveat factory using node:fs
  *
  * @returns A caveat function that validates segments against symlinks
  */
-const makeNoSymlinksCaveat = (): SegmentsCaveat => {
-  return (segments: PathSegments): void => {
+export const makeNoSymlinksCaveat = (): SegmentsCaveat => {
+  return harden((segments: PathSegments): void => {
     const path = toPath(segments);
     // eslint-disable-next-line n/no-sync
     const stats = lstatSync(path);
     if (stats.isSymbolicLink()) {
       throw new Error(`Symlinks are prohibited: ${path}`);
     }
-  };
-};
-
-/**
- * Node.js specific path caveat factory
- *
- * @param root - The root the segments must extend
- * @returns A caveat function that validates segments against configured constraints
- */
-const makeNodejsPathCaveat = (root: PathSegments): SegmentsCaveat => {
-  const withinRoot = makeRootCaveat(root);
-  const noSymlinks = makeNoSymlinksCaveat();
-
-  return harden((segments: PathSegments) => {
-    withinRoot(segments);
-    noSymlinks(segments);
   });
 };
 
-export const { configStruct, capabilityFactory } = makeFsSpecification({
+const specification: FsSpecification = makeFsSpecification({
   makeReadFile: () => fs.readFile,
   makeAccess: () => fs.access,
-  makePathCaveat: makeNodejsPathCaveat,
+  makePathCaveat: makeNoSymlinksCaveat,
   toPath,
 });
+
+// eslint-disable-next-line prefer-destructuring -- annotated for declaration emit
+export const configStruct: FsConfigStruct = specification.configStruct;
+export const { capabilityFactory } = specification;
