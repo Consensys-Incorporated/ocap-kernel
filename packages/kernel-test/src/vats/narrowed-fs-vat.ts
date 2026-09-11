@@ -14,11 +14,15 @@ type Store = {
 };
 
 /**
- * The fs endowment's eventual shape, claimed here rather than imported from
- * `@metamask/kernel-platforms`, where it does not exist yet. `it.fails` absorbs
- * a runtime failure, not a type error.
+ * The fs endowment's shape, claimed here rather than imported from
+ * `@metamask/kernel-platforms` so that this file typechecks independently of it.
+ *
+ * The encoding is required: `readFile` without one resolves a `Buffer`, and no
+ * typed array is Passable, so the result could not cross the exo boundary.
  */
-type FsExo = { readFile: (segments: string[]) => Promise<{ length: number }> };
+type FsExo = {
+  readFile: (segments: string[], encoding: string) => Promise<string>;
+};
 
 declare const fs: object;
 
@@ -107,7 +111,9 @@ export function buildRootObject() {
     },
 
     probeFs: async (segments: string[]) =>
-      probe(async () => (await E(fs as FsExo).readFile(segments)).length),
+      probe(
+        async () => (await E(fs as FsExo).readFile(segments, 'utf8')).length,
+      ),
 
     probeFsNarrowed: async (prefix: string[], segments: string[]) => {
       const scoped = await narrow<FsExo>({
@@ -115,7 +121,9 @@ export function buildRootObject() {
         base: fs,
         delta: { readFile: [pathUnder(prefix)] },
       });
-      return probe(async () => (await E(scoped).readFile(segments)).length);
+      return probe(
+        async () => (await E(scoped).readFile(segments, 'utf8')).length,
+      );
     },
   });
 }

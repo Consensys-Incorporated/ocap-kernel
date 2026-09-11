@@ -2815,6 +2815,7 @@ __metadata:
     "@metamask/eslint-config": "npm:^15.0.1"
     "@metamask/eslint-config-nodejs": "npm:^15.0.1"
     "@metamask/eslint-config-typescript": "npm:^15.0.1"
+    "@metamask/kernel-utils": "workspace:^"
     "@metamask/superstruct": "npm:^3.4.1"
     "@metamask/utils": "npm:^11.12.1"
     "@ocap/repo-tools": "workspace:^"
