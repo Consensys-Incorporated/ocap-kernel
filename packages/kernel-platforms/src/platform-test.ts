@@ -14,7 +14,7 @@ export const createPlatformTestSuite = (
     it.each([
       {
         name: 'fs capability',
-        config: { fs: { rootDir: '/tmp' } },
+        config: { fs: { root: ['tmp'] } },
         expectedFs: { type: 'object' },
       },
     ])('creates platform with $name', async ({ config, expectedFs }) => {
@@ -23,7 +23,7 @@ export const createPlatformTestSuite = (
     });
 
     it('creates platform with partial config', async () => {
-      const config = { fs: { rootDir: '/tmp' } };
+      const config = { fs: { root: ['tmp'] } };
       const platform = await makePlatform(config);
 
       expect(platform.fs).toBeDefined();

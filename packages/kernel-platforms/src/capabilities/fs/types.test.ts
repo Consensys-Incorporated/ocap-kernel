@@ -7,38 +7,48 @@ import { superstructValidationError } from '../../../test/utils.ts';
 describe('fs types', () => {
   describe('fsConfigStruct', () => {
     it.each([
-      { name: 'minimal config with rootDir', config: { rootDir: '/root' } },
+      { name: 'minimal config with root', config: { root: ['root'] } },
+      {
+        name: 'config with a multi-segment root',
+        config: { root: ['srv', 'data'] },
+      },
+      {
+        name: 'config with a drive-prefixed root',
+        config: { root: ['C:', 'srv'] },
+      },
       {
         name: 'config with one method',
-        config: { rootDir: '/root', methods: ['readFile'] },
+        config: { root: ['root'], methods: ['readFile'] },
       },
       {
         name: 'config with every method',
-        config: { rootDir: '/root', methods: ['readFile', 'access'] },
+        config: { root: ['root'], methods: ['readFile', 'access'] },
       },
       {
         name: 'config with an empty method list',
-        config: { rootDir: '/root', methods: [] },
+        config: { root: ['root'], methods: [] },
       },
-      { name: 'config with empty string rootDir', config: { rootDir: '' } },
     ])('validates $name', ({ config }) => {
       expect(() => fsConfigStruct.create(config)).not.toThrow();
     });
 
     it.each([
-      { name: 'config without rootDir', config: {} },
-      { name: 'config with non-string rootDir', config: { rootDir: 123 } },
+      { name: 'config without root', config: {} },
+      { name: 'config with a non-array root', config: { root: 123 } },
+      { name: 'config with a non-string segment', config: { root: [123] } },
+      // An empty root would denote the whole filesystem.
+      { name: 'config with an empty root', config: { root: [] } },
       {
         name: 'config with an unknown method',
-        config: { rootDir: '/root', methods: ['writeFile'] },
+        config: { root: ['root'], methods: ['writeFile'] },
       },
       {
         name: 'config with a non-array methods',
-        config: { rootDir: '/root', methods: 'readFile' },
+        config: { root: ['root'], methods: 'readFile' },
       },
       {
         name: 'config with additional properties',
-        config: { rootDir: '/root', extraProp: 'value' },
+        config: { root: ['root'], extraProp: 'value' },
       },
     ])('rejects $name', ({ config }) => {
       expect(() => fsConfigStruct.create(config)).toThrow(
@@ -47,18 +57,18 @@ describe('fs types', () => {
     });
 
     it('allows undefined properties', () => {
-      const config: FsConfig = { rootDir: '/root' };
+      const config: FsConfig = { root: ['root'] };
       const validated = fsConfigStruct.create(config);
 
-      expect(validated).toStrictEqual({ rootDir: '/root' });
+      expect(validated).toStrictEqual({ root: ['root'] });
     });
 
     it('preserves the method list', () => {
-      const config: FsConfig = { rootDir: '/root', methods: ['readFile'] };
+      const config: FsConfig = { root: ['root'], methods: ['readFile'] };
       const validated = fsConfigStruct.create(config);
 
       expect(validated).toStrictEqual({
-        rootDir: '/root',
+        root: ['root'],
         methods: ['readFile'],
       });
     });
