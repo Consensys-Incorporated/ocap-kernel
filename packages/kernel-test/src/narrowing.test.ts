@@ -99,24 +99,21 @@ const makeTempTree = async (): Promise<{
 };
 
 describe('narrowing', () => {
-  // Unmarks at PR-6.
-  it.fails('narrows a vat-local exo', async () => {
+  it('narrows a vat-local exo', async () => {
     const kernel = await launchNarrowingVat();
     expect(
       await probe(kernel, 'probeNarrowed', ['read', ['srv', 'data', 'x']]),
     ).toBe('ok:read:srv/data/x');
   });
 
-  // Unmarks at PR-6.
-  it.fails('rejects a call outside the narrowing', async () => {
+  it('rejects a call outside the narrowing', async () => {
     const kernel = await launchNarrowingVat();
     expect(
       await probe(kernel, 'probeNarrowed', ['read', ['etc', 'passwd']]),
     ).toMatch(/^rejected:.*\bread\b/u);
   });
 
-  // Unmarks at PR-6.
-  it.fails('drops methods absent from the delta', async () => {
+  it('drops methods absent from the delta', async () => {
     const kernel = await launchNarrowingVat();
     expect(
       await probe(kernel, 'probeNarrowed', ['stat', ['srv', 'data', 'x']]),
