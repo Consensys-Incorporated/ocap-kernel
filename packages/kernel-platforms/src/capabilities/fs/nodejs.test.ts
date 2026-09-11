@@ -1,10 +1,9 @@
 import { lstatSync, Stats } from 'node:fs';
 import fs from 'node:fs/promises';
-import { relative } from 'node:path';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
 import { capabilityFactory } from './nodejs.ts';
-import type { FsConfig, PathLike } from './types.ts';
+import type { FsConfig } from './types.ts';
 
 /* eslint-disable n/no-sync */
 
@@ -23,19 +22,11 @@ vi.mock('node:fs', () => ({
   lstatSync: vi.fn(),
 }));
 
-// Mock path
-vi.mock('node:path', () => ({
-  relative: vi.fn(),
-}));
-
 // Mock factories
 const createMockStats = (isSymlink: boolean): Stats =>
   ({
     isSymbolicLink: () => isSymlink,
   }) as unknown as Stats;
-
-const createMockRelative = (returnValue: string) =>
-  vi.mocked(relative).mockReturnValue(returnValue);
 
 const createMockLstatSync = (isSymlink: boolean) =>
   vi.mocked(lstatSync).mockReturnValue(createMockStats(isSymlink));
@@ -43,99 +34,7 @@ const createMockLstatSync = (isSymlink: boolean) =>
 describe('fs nodejs capability', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    // Default mocks
     createMockLstatSync(false);
-    createMockRelative('subdir/file.txt');
-  });
-
-  describe('caveat functions', () => {
-    describe('makeNoSymlinksCaveat', () => {
-      const createSymlinkCaveat = () => (path: PathLike) => {
-        const pathString = path.toString();
-        const stats = lstatSync(pathString);
-        if (stats.isSymbolicLink()) {
-          throw new Error(`Symlinks are prohibited: ${pathString}`);
-        }
-      };
-
-      it('throws error for symlinks', () => {
-        createMockLstatSync(true);
-        const caveat = createSymlinkCaveat();
-
-        expect(() => caveat('/symlink/path')).toThrow(
-          'Symlinks are prohibited: /symlink/path',
-        );
-        expect(lstatSync).toHaveBeenCalledWith('/symlink/path');
-      });
-
-      it.each([
-        {
-          name: 'string',
-          input: '/path',
-        },
-        {
-          name: 'Buffer',
-          input: Buffer.from('/path'),
-        },
-      ])('accepts $name paths', ({ input }) => {
-        createMockLstatSync(false);
-        const caveat = createSymlinkCaveat();
-
-        expect(caveat(input)).toBeUndefined();
-        expect(lstatSync).toHaveBeenCalledWith(input.toString());
-      });
-    });
-
-    describe('makeRootCaveat', () => {
-      const createRootCaveat = () => (path: PathLike) => {
-        const pathString = path.toString();
-        const relativePath = relative('/root', pathString);
-        if (relativePath.startsWith('..')) {
-          throw new Error(`Path ${pathString} is outside allowed root /root`);
-        }
-      };
-
-      it('accepts paths within root directory', () => {
-        createMockRelative('subdir/file.txt');
-        const caveat = createRootCaveat();
-
-        expect(caveat('/root/subdir/file.txt')).toBeUndefined();
-        expect(relative).toHaveBeenCalledWith('/root', '/root/subdir/file.txt');
-      });
-
-      it.each([
-        {
-          name: 'outside root',
-          input: '/outside/file.txt',
-          relativeReturn: '../../outside/file.txt',
-          expectedError: 'Path /outside/file.txt is outside allowed root /root',
-        },
-        {
-          name: 'with root prefix but outside',
-          input: '/root-other/file.txt',
-          relativeReturn: '../../root-other/file.txt',
-          expectedError:
-            'Path /root-other/file.txt is outside allowed root /root',
-        },
-      ])(
-        'throws error for paths $name',
-        ({ input, relativeReturn, expectedError }) => {
-          createMockRelative(relativeReturn);
-          const caveat = createRootCaveat();
-
-          expect(() => caveat(input)).toThrow(expectedError);
-          expect(relative).toHaveBeenCalledWith('/root', input.toString());
-        },
-      );
-
-      it('accepts root directory itself', () => {
-        createMockRelative('');
-        const caveat = createRootCaveat();
-
-        expect(caveat('/root')).toBeUndefined();
-        expect(relative).toHaveBeenCalledWith('/root', '/root');
-      });
-    });
   });
 
   describe('capabilityFactory', () => {
@@ -143,17 +42,15 @@ describe('fs nodejs capability', () => {
       {
         operation: 'readFile',
         mockFn: fs.readFile,
-        validArgs: ['/root/file.txt'],
         mockReturn: 'file content',
-        additionalArgs: ['/root/file.txt', { encoding: 'utf8' }],
+        additionalArg: { encoding: 'utf8' },
         additionalMockReturn: Buffer.from('file content'),
       },
       {
         operation: 'access',
         mockFn: fs.access,
-        validArgs: ['/root/file.txt'],
         mockReturn: undefined,
-        additionalArgs: ['/root/file.txt', 0o644],
+        additionalArg: 0o644,
         additionalMockReturn: undefined,
       },
     ])(
@@ -161,61 +58,67 @@ describe('fs nodejs capability', () => {
       ({
         operation,
         mockFn,
-        validArgs,
         mockReturn,
-        additionalArgs,
+        additionalArg,
         additionalMockReturn,
       }) => {
         type TestCapability = Record<string, CallableFunction>;
 
         const makeCapability = (): TestCapability => {
           const config: FsConfig = {
-            rootDir: '/root',
+            root: ['root'],
             methods: [operation],
           };
           return capabilityFactory(config) as unknown as TestCapability;
         };
 
-        it('returns expected result for valid path', async () => {
+        it('joins segments into a path for the underlying operation', async () => {
           vi.mocked(mockFn).mockResolvedValue(mockReturn as never);
 
-          const result = await makeCapability()[operation]?.(...validArgs);
-          expect(mockFn).toHaveBeenCalledWith(...validArgs);
+          const result = await makeCapability()[operation]?.([
+            'root',
+            'file.txt',
+          ]);
+
+          expect(mockFn).toHaveBeenCalledWith('/root/file.txt');
           expect(result).toBe(mockReturn);
         });
 
-        it.each([
-          {
-            name: 'outside root',
-            relativeReturn: '../../outside/file.txt',
-            isSymlink: false,
-            expectedError: `Path ${validArgs[0]} is outside allowed root /root`,
-          },
-          {
-            name: 'symlink',
-            relativeReturn: '/root/file.txt',
-            isSymlink: true,
-            expectedError: `Symlinks are prohibited: ${validArgs[0]}`,
-          },
-        ])(
-          'throws error for path $name',
-          async ({ relativeReturn, isSymlink, expectedError }) => {
-            createMockRelative(relativeReturn);
-            createMockLstatSync(isSymlink);
+        it('throws error for a path outside the root', async () => {
+          await expect(
+            makeCapability()[operation]?.(['outside', 'file.txt']),
+          ).rejects.toThrow('is outside allowed root');
+          expect(mockFn).not.toHaveBeenCalled();
+        });
 
-            await expect(
-              makeCapability()[operation]?.(...validArgs),
-            ).rejects.toThrow(expectedError);
-            expect(mockFn).not.toHaveBeenCalled();
-          },
-        );
+        it('throws error for a symlink', async () => {
+          createMockLstatSync(true);
+
+          await expect(
+            makeCapability()[operation]?.(['root', 'file.txt']),
+          ).rejects.toThrow('Symlinks are prohibited: /root/file.txt');
+          expect(mockFn).not.toHaveBeenCalled();
+        });
+
+        it.each([
+          { name: 'parent segments', segments: ['root', '..', '..', 'etc'] },
+          { name: 'an embedded traversal', segments: ['root', '../../etc'] },
+        ])('throws error for $name', async ({ segments }) => {
+          await expect(makeCapability()[operation]?.(segments)).rejects.toThrow(
+            'contains an invalid segment',
+          );
+          expect(mockFn).not.toHaveBeenCalled();
+        });
 
         it('handles additional arguments correctly', async () => {
           vi.mocked(mockFn).mockResolvedValue(additionalMockReturn as never);
 
-          const result = await makeCapability()[operation]?.(...additionalArgs);
+          const result = await makeCapability()[operation]?.(
+            ['root', 'file.txt'],
+            additionalArg,
+          );
 
-          expect(mockFn).toHaveBeenCalledWith(...additionalArgs);
+          expect(mockFn).toHaveBeenCalledWith('/root/file.txt', additionalArg);
           expect(result).toBe(additionalMockReturn);
         });
       },
