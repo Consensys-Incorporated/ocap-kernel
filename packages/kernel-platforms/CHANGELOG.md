@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING:** Make the `fs` capability promises-only ([#1055](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1055))
+  - `existsSync` and its config flag are gone, along with every other synchronous operation. A narrowed method forwards through `E()`, so nothing synchronous can survive narrowing.
+
 ### Removed
 
 - **BREAKING:** Remove the `fetch` platform capability and its exports (`fetchConfigStruct`, `FetchCapability`, `FetchConfig`, `makeHostCaveat`, `makeCaveatedFetch`) ([#942](https://github.com/MetaMask/ocap-kernel/pull/942))

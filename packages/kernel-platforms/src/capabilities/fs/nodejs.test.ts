@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, Stats } from 'node:fs';
+import { lstatSync, Stats } from 'node:fs';
 import fs from 'node:fs/promises';
 import { relative } from 'node:path';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
@@ -20,7 +20,6 @@ vi.mock('node:fs/promises', () => ({
 
 // Mock fs
 vi.mock('node:fs', () => ({
-  existsSync: vi.fn(),
   lstatSync: vi.fn(),
 }));
 
@@ -140,50 +139,6 @@ describe('fs nodejs capability', () => {
   });
 
   describe('capabilityFactory', () => {
-    describe('existsSync operation', () => {
-      it('returns true for existing file', () => {
-        vi.mocked(existsSync).mockReturnValue(true);
-
-        const config: FsConfig = { rootDir: '/root', existsSync: true };
-        const capability = capabilityFactory(config);
-
-        const result = capability.existsSync?.('/root/file.txt');
-        expect(existsSync).toHaveBeenCalledWith('/root/file.txt');
-        expect(result).toBe(true);
-      });
-
-      it.each([
-        {
-          name: 'outside root',
-          relativeReturn: '../../outside/file.txt',
-          isSymlink: false,
-          testPath: '/outside/file.txt',
-          expectedError: 'Path /outside/file.txt is outside allowed root /root',
-        },
-        {
-          name: 'symlink',
-          relativeReturn: '/root/file.txt',
-          isSymlink: true,
-          testPath: '/root/file.txt',
-          expectedError: 'Symlinks are prohibited: /root/file.txt',
-        },
-      ])(
-        'throws error for path $name',
-        ({ relativeReturn, isSymlink, testPath, expectedError }) => {
-          createMockRelative(relativeReturn);
-          createMockLstatSync(isSymlink);
-
-          const config: FsConfig = { rootDir: '/root', existsSync: true };
-          const capability = capabilityFactory(config);
-
-          expect(() => capability.existsSync?.(testPath)).toThrow(
-            expectedError,
-          );
-          expect(existsSync).not.toHaveBeenCalled();
-        },
-      );
-    });
-
     describe.each([
       {
         operation: 'readFile',
