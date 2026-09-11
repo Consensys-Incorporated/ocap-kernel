@@ -120,8 +120,7 @@ describe('narrowing', () => {
     ).toMatch(/^rejected:.*\bstat\b/u);
   });
 
-  // Unmarks at PR-7.
-  it.fails('joins two narrowings of a common base', async () => {
+  it('joins two narrowings of a common base', async () => {
     const kernel = await launchNarrowingVat();
     expect(await probe(kernel, 'probeJoined', [['srv', 'logs', 'y']])).toBe(
       'ok:read:srv/logs/y',

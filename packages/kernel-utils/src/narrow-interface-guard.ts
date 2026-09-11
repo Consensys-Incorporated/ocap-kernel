@@ -67,6 +67,46 @@ export const conjoinDeltas = (
 };
 
 /**
+ * Disjoin two deltas, so that a join admits whatever either operand admits.
+ *
+ * A join is a union of authority, which settles the whole key-and-hole rule at
+ * once: a method absent from an operand contributes the empty set, so it
+ * survives at the other operand's delta, and a hole contributes everything, so
+ * a hole on either side leaves that position unconstrained. A position past the
+ * end of a delta is a hole.
+ *
+ * Hence the keys are the union of both sides — the opposite of
+ * `conjoinDeltas`, which takes its keys from one side because narrowing must
+ * not restore authority an intermediate narrowing dropped.
+ *
+ * @param left - One operand's delta.
+ * @param right - The other operand's delta.
+ * @returns The disjoined delta.
+ */
+export const disjoinDeltas = (
+  left: NarrowingDelta,
+  right: NarrowingDelta,
+): NarrowingDelta => {
+  const disjoined: NarrowingDelta = { ...left, ...right };
+  for (const [methodName, leftPatterns] of Object.entries(left)) {
+    const rightPatterns = right[methodName];
+    if (rightPatterns === undefined) {
+      continue;
+    }
+    const length = Math.max(leftPatterns.length, rightPatterns.length);
+    disjoined[methodName] = Array.from({ length }, (_, index) => {
+      const leftPattern = leftPatterns[index];
+      const rightPattern = rightPatterns[index];
+      if (leftPattern === undefined || rightPattern === undefined) {
+        return undefined;
+      }
+      return M.or(leftPattern, rightPattern);
+    });
+  }
+  return disjoined;
+};
+
+/**
  * Narrow one method guard by conjoining the delta's patterns onto the
  * positions they address.
  *
