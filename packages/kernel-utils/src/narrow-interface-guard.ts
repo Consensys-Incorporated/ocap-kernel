@@ -29,6 +29,44 @@ const conjoin = (base: Pattern, pattern: Pattern | undefined): Pattern =>
   pattern === undefined ? base : M.and(base, pattern);
 
 /**
+ * Conjoin two deltas, so that narrowing a narrowing is one delta against the
+ * original base.
+ *
+ * Keys come from `incoming` alone, since it drops what it does not name, and a
+ * key it names that `existing` does not is a method the narrowing being
+ * narrowed no longer has. At each position a hole on either side leaves the
+ * other in place.
+ *
+ * @param existing - The delta the base was narrowed by.
+ * @param incoming - The delta narrowing it further.
+ * @returns The combined delta.
+ */
+export const conjoinDeltas = (
+  existing: NarrowingDelta,
+  incoming: NarrowingDelta,
+): NarrowingDelta => {
+  const combined: NarrowingDelta = {};
+  for (const [methodName, patterns] of Object.entries(incoming)) {
+    const inherited = existing[methodName];
+    if (inherited === undefined) {
+      throw new Error(
+        `Cannot narrow method "${methodName}": the base has no such method.`,
+      );
+    }
+    const length = Math.max(inherited.length, patterns.length);
+    combined[methodName] = Array.from({ length }, (_, index) => {
+      const left = inherited[index];
+      const right = patterns[index];
+      if (left === undefined) {
+        return right;
+      }
+      return conjoin(left, right);
+    });
+  }
+  return combined;
+};
+
+/**
  * Narrow one method guard by conjoining the delta's patterns onto the
  * positions they address.
  *

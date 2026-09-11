@@ -1,18 +1,13 @@
 import { matches } from '@endo/patterns';
 import { describe, it, expect } from 'vitest';
 
-import { join, narrow, pathUnder } from './narrowing.ts';
+import { join, pathUnder } from './narrowing.ts';
 
 const makeBase = (): object => ({ readFile: () => 'contents' });
 
-describe('narrow', () => {
-  it('is not implemented', async () => {
-    await expect(
-      narrow({ name: 'Scoped', base: makeBase(), delta: { readFile: [] } }),
-    ).rejects.toThrow('narrow is not implemented');
-  });
-});
-
+// `narrow` is exercised end to end in `@ocap/kernel-test`. It cannot be
+// exercised here: `E` reads `globalThis.HandledPromise` when it loads, and this
+// package's tests run under `mock-endoify`, which sets that to plain `Promise`.
 describe('join', () => {
   it('is not implemented', async () => {
     await expect(
