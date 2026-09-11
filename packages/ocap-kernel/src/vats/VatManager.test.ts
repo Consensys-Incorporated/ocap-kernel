@@ -827,6 +827,41 @@ describe('VatManager', () => {
       await vatManager.performVatRestart('v1');
       expect(await second).toBe(vatHandles[1]);
     });
+
+    it('queues one request when a second arrives before the crank', async () => {
+      await vatManager.runVat('v1', createMockVatConfig());
+      (
+        mockKernelQueue.enqueueRestartVat as unknown as MockInstance
+      ).mockImplementation(() => undefined);
+
+      const first = vatManager.restartVat('v1');
+      const second = vatManager.restartVat('v1');
+      await expect(first).rejects.toThrow('superseded');
+
+      expect(mockKernelQueue.enqueueRestartVat).toHaveBeenCalledOnce();
+      await vatManager.performVatRestart('v1');
+      expect(await second).toBe(vatHandles[1]);
+      // The initial launch and exactly one relaunch.
+      expect(mockPlatformServices.launch).toHaveBeenCalledTimes(2);
+    });
+
+    it('queues a fresh request once the crank has taken the last one', async () => {
+      await vatManager.runVat('v1', createMockVatConfig());
+      (
+        mockKernelQueue.enqueueRestartVat as unknown as MockInstance
+      ).mockImplementation(() => undefined);
+
+      const first = vatManager.restartVat('v1');
+      await vatManager.performVatRestart('v1');
+      await first;
+      const second = vatManager.restartVat('v1');
+      await vatManager.performVatRestart('v1');
+
+      // The waiter is taken when the crank starts, so a request arriving after
+      // that has no item to join and needs one of its own.
+      expect(mockKernelQueue.enqueueRestartVat).toHaveBeenCalledTimes(2);
+      expect(await second).toBe(vatHandles[2]);
+    });
   });
 
   describe('provideVat', () => {
