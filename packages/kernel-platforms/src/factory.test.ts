@@ -17,13 +17,13 @@ describe('makePlatformFactory', () => {
   it.each([
     {
       name: 'single capability',
-      config: { fs: { rootDir: '/tmp' } },
+      config: { fs: { root: ['tmp'] } },
       expectedCapabilities: ['fs'] as const,
       expectedOptions: {},
     },
     {
       name: 'with options',
-      config: { fs: { rootDir: '/tmp' } },
+      config: { fs: { root: ['tmp'] } },
       expectedCapabilities: ['fs'] as const,
       expectedOptions: { fs: { timeout: 5000 } },
     },
@@ -53,7 +53,7 @@ describe('makePlatformFactory', () => {
   it('creates platform with partial config', async () => {
     const mockFactories = createMockFactories();
     const platformFactory = makePlatformFactory(mockFactories);
-    const config = { fs: { rootDir: '/tmp' } };
+    const config = { fs: { root: ['tmp'] } };
 
     const platform = await platformFactory(config);
 
@@ -64,7 +64,7 @@ describe('makePlatformFactory', () => {
     const factories = { fs: vi.fn() };
     const platformFactory = makePlatformFactory(factories);
     const config = {
-      fs: { rootDir: '/tmp' },
+      fs: { root: ['tmp'] },
       unknown: {},
     } as Partial<PlatformConfig>;
     await expect(platformFactory(config)).rejects.toThrow(

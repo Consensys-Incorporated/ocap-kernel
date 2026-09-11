@@ -8,4 +8,5 @@ export const { configStruct, capabilityFactory } = makeFsSpecification({
   makeReadFile: () => notImplemented('readFile'),
   makeAccess: () => notImplemented('access'),
   makePathCaveat: () => () => undefined,
+  toPath: (segments) => `/${segments.join('/')}`,
 });

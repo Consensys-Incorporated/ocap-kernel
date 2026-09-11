@@ -26,7 +26,7 @@ describe('makeCapabilitySpecification', () => {
       mockCapabilityFactory,
     );
 
-    const validConfig: FsConfig = { rootDir: '/tmp' };
+    const validConfig: FsConfig = { root: ['tmp'] };
     expect(() => specification.configStruct.create(validConfig)).not.toThrow();
   });
 
@@ -37,7 +37,7 @@ describe('makeCapabilitySpecification', () => {
       mockCapabilityFactory,
     );
 
-    const invalidConfig = { rootDir: 123 };
+    const invalidConfig = { root: 123 };
     expect(() => specification.configStruct.create(invalidConfig)).toThrow(
       superstructValidationError,
     );
@@ -50,7 +50,7 @@ describe('makeCapabilitySpecification', () => {
       mockCapabilityFactory,
     );
 
-    const config: FsConfig = { rootDir: '/tmp' };
+    const config: FsConfig = { root: ['tmp'] };
     const options = { timeout: 5000 };
 
     const result = specification.capabilityFactory(config, options);
@@ -66,7 +66,7 @@ describe('makeCapabilitySpecification', () => {
       mockCapabilityFactory,
     );
 
-    const config: FsConfig = { rootDir: '/tmp' };
+    const config: FsConfig = { root: ['tmp'] };
 
     const result = specification.capabilityFactory(config);
 
