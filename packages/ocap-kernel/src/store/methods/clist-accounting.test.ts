@@ -428,4 +428,34 @@ describe('c-list reference accounting', () => {
       expect(kernelStore.auditRefCounts()).toStrictEqual([]);
     });
   });
+
+  describe('a terminated importer cleanup has not reached', () => {
+    beforeEach(() => {
+      // `deleteVat` reaches `removeVatFromSubcluster`, which fails for a vat
+      // belonging to no subcluster.
+      const subclusterId = kernelStore.addSubcluster({
+        bootstrap: 'alice',
+        vats: {},
+      } as unknown as Parameters<typeof kernelStore.addSubcluster>[0]);
+      kernelStore.addSubclusterVat(subclusterId, 'alice', 'v1');
+      kernelStore.addSubclusterVat(subclusterId, 'bob', 'v2');
+    });
+
+    it('is told to retire an object the owner has abandoned', () => {
+      const kref = kernelStore.exportFromEndpoint('v1', 'o+1');
+      kernelStore.translateRefKtoE('v2', kref, true);
+      kernelStore.clearReachableFlag('v2', kref);
+      kernelStore.deleteVat('v2');
+      kernelStore.markVatAsTerminated('v2');
+      kernelStore.orphanKernelObject(kref, 'v1');
+
+      kernelStore.collectGarbage();
+
+      expect(kernelStore.getImporters(kref)).toStrictEqual(['v2']);
+      expect([...kernelStore.getGCActions()]).toStrictEqual([
+        `v2 retireImport ${kref}`,
+      ]);
+      expect(kernelStore.auditRefCounts()).toStrictEqual([]);
+    });
+  });
 });

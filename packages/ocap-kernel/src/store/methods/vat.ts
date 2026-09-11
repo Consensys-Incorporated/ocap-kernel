@@ -169,17 +169,33 @@ export function getVatMethods(ctx: StoreContext) {
   /**
    * Gets all endpoints that import a specific kernel object.
    *
-   * Remotes count. `retireKernelObjects` deletes the object once it has queued a
+   * Remotes count, and so do terminated vats cleanup has not reached yet.
+   * `retireKernelObjects` deletes the object once it has queued a
    * `retireImport` for each importer, so an importer missing from this list
    * keeps a c-list entry naming an object that no longer exists — which nothing
    * ever tears down, and which the refcount audit reports as dangling.
+   *
+   * A terminated vat is the case `getVatIDs` alone cannot see: `deleteVat`
+   * drops the `vatConfig` row it enumerates, while the vat's c-list survives
+   * until `nextTerminatedVatCleanup` reaches it, one vat per crank. Terminate an
+   * object's owner and its importer close together, owner marked first, and the
+   * importer is deregistered but still holding the import when the orphaned
+   * object is collected.
    *
    * @param koid - The kernel object ID.
    * @returns An array of endpoint IDs that import the kernel object.
    */
   function getImporters(koid: KRef): EndpointId[] {
-    const importers: EndpointId[] = [...getVatIDs(), ...getRemoteIds()].filter(
-      (endpointId) => importsKernelSlot(endpointId, koid),
+    // Deduplicated: a vat marked terminated whose config survives — a launch
+    // whose cleanup could not record the death — appears in both lists, and a
+    // repeated importer would be a second `retireImport` for one entry.
+    const endpointIds = new Set<EndpointId>([
+      ...getVatIDs(),
+      ...getTerminatedVats(),
+      ...getRemoteIds(),
+    ]);
+    const importers: EndpointId[] = [...endpointIds].filter((endpointId) =>
+      importsKernelSlot(endpointId, koid),
     );
     importers.sort();
     return importers;
