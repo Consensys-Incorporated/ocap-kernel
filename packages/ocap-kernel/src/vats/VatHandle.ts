@@ -16,10 +16,7 @@ import { isJsonRpcNotification, isJsonRpcResponse } from '@metamask/utils';
 import type { JsonRpcNotification, JsonRpcResponse } from '@metamask/utils';
 
 import type { KernelQueue } from '../KernelQueue.ts';
-import {
-  makeKernelError,
-  makeFatalKernelError,
-} from '../liveslots/kernel-marshal.ts';
+import { makeFatalKernelError } from '../liveslots/kernel-marshal.ts';
 import { vatMethodSpecs, vatSyscallHandlers } from '../rpc/index.ts';
 import type { PingVatResult, VatMethod } from '../rpc/index.ts';
 import type { KernelStore } from '../store/index.ts';
@@ -45,6 +42,14 @@ type VatConstructorProps = {
   vatStream: VatStream;
   kernelStore: KernelStore;
   kernelQueue: KernelQueue;
+  /**
+   * Called when this vat has failed in a way it cannot come back from, so the
+   * manager can end it. See the drain handler in {@link VatHandle.make}.
+   *
+   * Handed the handle, because the failure can come before `make` has returned
+   * it.
+   */
+  onCriticalFailure: (error: Error, vat: VatHandle) => void;
   logger?: Logger | undefined;
   allowedGlobalNames?: AllowedGlobalName[] | undefined;
 };
@@ -68,17 +73,14 @@ export class VatHandle implements EndpointHandle {
   /** Optional list of allowed global names for vat endowments */
   readonly #allowedGlobalNames: AllowedGlobalName[] | undefined;
 
-  /** Storage holding the kernel's persistent state */
-  readonly #kernelStore: KernelStore;
-
   /** Storage holding this vat's persistent state */
   readonly #vatStore: VatStore;
 
   /** The vat's syscall */
   readonly #vatSyscall: VatSyscall;
 
-  /** The kernel's queue */
-  readonly #kernelQueue: KernelQueue;
+  /** Tells the manager this vat cannot be delivered to again */
+  readonly #onCriticalFailure: (error: Error, vat: VatHandle) => void;
 
   readonly #rpcClient: RpcClient<typeof vatMethodSpecs>;
 
@@ -93,6 +95,7 @@ export class VatHandle implements EndpointHandle {
    * @param params.vatStream - Communications channel connected to the vat worker.
    * @param params.kernelStore - The kernel's persistent state store.
    * @param params.kernelQueue - The kernel's queue.
+   * @param params.onCriticalFailure - Called when the vat has failed unrecoverably.
    * @param params.logger - Optional logger for error and diagnostic output.
    * @param params.allowedGlobalNames - Optional list of allowed global names for vat endowments.
    */
@@ -103,6 +106,7 @@ export class VatHandle implements EndpointHandle {
     vatStream,
     kernelStore,
     kernelQueue,
+    onCriticalFailure,
     logger,
     allowedGlobalNames,
   }: VatConstructorProps) {
@@ -111,9 +115,8 @@ export class VatHandle implements EndpointHandle {
     this.#logger = logger;
     this.#allowedGlobalNames = allowedGlobalNames;
     this.#vatStream = vatStream;
-    this.#kernelStore = kernelStore;
     this.#vatStore = kernelStore.makeVatStore(vatId);
-    this.#kernelQueue = kernelQueue;
+    this.#onCriticalFailure = onCriticalFailure;
     this.#vatSyscall = new VatSyscall({
       vatId,
       kernelQueue,
@@ -144,6 +147,7 @@ export class VatHandle implements EndpointHandle {
    * @param params.vatStream - Communications channel connected to the vat worker.
    * @param params.kernelStore - The kernel's persistent state store.
    * @param params.kernelQueue - The kernel's queue.
+   * @param params.onCriticalFailure - Called when the vat has failed unrecoverably.
    * @param params.logger - Optional logger for error and diagnostic output.
    * @returns A promise for the new VatHandle instance.
    */
@@ -165,11 +169,16 @@ export class VatHandle implements EndpointHandle {
    */
   async #init(): Promise<VatDeliveryResult> {
     Promise.all([this.#vatStream.drain(this.#handleMessage.bind(this))]).catch(
-      async (error) => {
+      (error) => {
         this.#logger?.error(`Unexpected read error`, error);
-        await this.terminate(
-          true,
+        // Handed to the manager rather than torn down here. A handle that
+        // retires itself leaves the manager still holding it and the store
+        // still calling the vat live, so the next delivery is handed to a
+        // worker that cannot answer and the crank never completes. Only the
+        // manager can put the vat's death on record.
+        this.#onCriticalFailure(
           new StreamReadError({ vatId: this.vatId }, error),
+          this,
         );
       },
     );
@@ -306,27 +315,25 @@ export class VatHandle implements EndpointHandle {
   }
 
   /**
-   * Terminates the vat.
+   * Closes this handle's channel to the vat worker.
    *
-   * @param terminating - If true, the vat is being killed permanently, so clean
-   *   up its state and reject any promises that would be left dangling.
+   * Only the handle's own business: the store side of a vat's death belongs to
+   * `VatManager.#retireVat`, which writes it in one synchronous step. Split that
+   * way because the two have opposite failure requirements — ending a stream can
+   * fail and it does not matter, since the worker is already being killed, while
+   * a store left half-told about a vat is a state nothing recovers from.
+   *
+   * @param terminating - If true, the vat is being killed permanently, so
+   *   callers waiting on a command it will never answer are told now.
    * @param error - The error to terminate the vat with.
    */
   async terminate(terminating: boolean, error?: Error): Promise<void> {
-    await this.#vatStream.end(error);
-    const terminationError = error ?? new VatDeletedError(this.vatId);
     if (terminating) {
-      // Reject promises exported to other vats for which this vat is the decider
-      const failure = makeKernelError(
-        'VAT_TERMINATED',
-        terminationError.message,
-      );
-      for (const kpid of this.#kernelStore.getPromisesByDecider(this.vatId)) {
-        this.#kernelQueue.resolvePromises(this.vatId, [[kpid, true, failure]]);
-      }
-      this.#rpcClient.rejectAll(terminationError);
-      this.#kernelStore.deleteVat(this.vatId);
+      // Ahead of the stream, so a stream that refuses to close does not leave
+      // these callers waiting on a worker that is already dead.
+      this.#rpcClient.rejectAll(error ?? new VatDeletedError(this.vatId));
     }
+    await this.#vatStream.end(error);
   }
 
   /**

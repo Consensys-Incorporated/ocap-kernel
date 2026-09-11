@@ -111,12 +111,12 @@ export class Kernel {
    * @param options.onRunLoopFailure - Optional handler called if the run loop dies.
    * @param options.auditRefCounts - If true, verify every kref's reference
    * counts against the references the kernel actually holds at the end of each
-   * crank, and throw on any mismatch. This is the check standing in for the
-   * accounting invariant `collectGarbage` still cannot assert (see the comment
-   * on its `retireExport` branch), so it is not optional
-   * instrumentation: it is off by default only because it walks the whole store
-   * every crank. Any kernel whose accounting is under test wants it on, and
-   * every kernel `kernel-test` builds enables it.
+   * crank, and throw on any mismatch. Not optional instrumentation: it is what
+   * establishes that the accounting is right, and is off by default only because
+   * it walks the whole store every crank. Any kernel whose accounting is under
+   * test wants it on, and every kernel `kernel-test` builds enables it. Note
+   * that it checks counts against their holders, which is a different invariant
+   * from the one `collectGarbage`'s `retireExport` branch still cannot assert.
    */
   // eslint-disable-next-line no-restricted-syntax
   private constructor(
@@ -155,10 +155,13 @@ export class Kernel {
     // which would deadlock — this callback is invoked from within a crank.
     this.#kernelQueue = new KernelQueue(
       this.#kernelStore,
-      async (vatId, reason) => {
-        await this.#vatManager.stopVat(vatId, true, reason);
-        this.#kernelStore.markVatAsTerminated(vatId);
-      },
+      // `stopVat` rather than `terminateVat`: this runs inside the crank that
+      // decided the vat has to go, and `terminateVat` would wait for that same
+      // crank to end. It needs no such wait — the run loop is right here — and
+      // `stopVat` puts the whole death on record before its first await, so a
+      // worker that refuses to die cannot leave the store half-told.
+      async (vatId, reason) =>
+        await this.#vatManager.stopVat(vatId, true, reason),
     );
 
     this.#vatManager = new VatManager({
@@ -230,6 +233,7 @@ export class Kernel {
       this.#kernelServiceManager.invokeKernelService.bind(
         this.#kernelServiceManager,
       ),
+      this.#vatManager.performVatRestart.bind(this.#vatManager),
       this.#logger,
     );
 
@@ -651,13 +655,19 @@ export class Kernel {
   /**
    * Gets an endpoint by its ID.
    *
+   * Asynchronous because a vat may be mid-teardown: `provideVat` waits that out
+   * rather than answering from a vat table the store has not caught up with, so
+   * by the time a caller is told the vat is gone the store says so too — which
+   * is what lets `#resolveEndpoint` tell a terminated vat from a missing one. A
+   * restart needs no such window, being carried out by the run loop itself.
+   *
    * @param endpointId - The ID of the endpoint to retrieve.
-   * @returns The endpoint handle for the given ID.
+   * @returns A promise for the endpoint handle for the given ID.
    * @throws If the endpoint ID is invalid (neither a vat ID nor a remote ID).
    */
-  #getEndpoint(endpointId: EndpointId): EndpointHandle {
+  async #getEndpoint(endpointId: EndpointId): Promise<EndpointHandle> {
     if (isVatId(endpointId)) {
-      return this.#vatManager.getVat(endpointId);
+      return await this.#vatManager.provideVat(endpointId);
     }
     if (isRemoteId(endpointId)) {
       return this.#remoteManager.getRemote(endpointId);

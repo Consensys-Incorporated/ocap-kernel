@@ -1310,6 +1310,27 @@ describe('KernelQueue', () => {
     });
   });
 
+  describe('enqueueRestartVat', () => {
+    it('enqueues the request for the run loop to carry out', () => {
+      kernelQueue.enqueueRestartVat('v1');
+
+      expect(kernelStore.enqueueRun).toHaveBeenCalledWith({
+        type: 'restartVat',
+        vatId: 'v1',
+      });
+    });
+
+    it('refuses once the run loop has died', async () => {
+      await killRunLoop(new Error('boom'));
+
+      // The restart is the loop's work, so a dead loop will never do it and the
+      // caller would wait forever.
+      expect(() => kernelQueue.enqueueRestartVat('v1')).toThrow(
+        'Kernel run loop died; cannot restart a vat',
+      );
+    });
+  });
+
   describe('waitForCrank', () => {
     it('handles when waitForCrank returns a delayed promise', async () => {
       let resolvePromise: ((value: void) => void) | undefined;

@@ -12,6 +12,7 @@ import { extractSingleRef } from './store/utils/extract-ref.ts';
 import { parseRef } from './store/utils/parse-ref.ts';
 import { isPromiseRef } from './store/utils/promise-ref.ts';
 import type {
+  VatId,
   EndpointId,
   EndpointHandle,
   ERef,
@@ -22,6 +23,7 @@ import type {
   RunQueueItemBringOutYourDead,
   RunQueueItemNotify,
   RunQueueItemGCAction,
+  RunQueueItemRestartVat,
   CrankResult,
 } from './types.ts';
 import { isVatId } from './types.ts';
@@ -46,10 +48,16 @@ export class KernelRouter {
   readonly #kernelQueue: KernelQueue;
 
   /** A function that returns an endpoint handle for a given endpoint id. */
-  readonly #getEndpoint: (endpointId: EndpointId) => EndpointHandle;
+  readonly #getEndpoint: (endpointId: EndpointId) => Promise<EndpointHandle>;
 
   /** A function that invokes a method on a kernel service. */
   readonly #invokeKernelService: (target: KRef, message: KernelMessage) => void;
+
+  /**
+   * A function that replaces a vat's worker, for the crank that carries out a
+   * queued restart request.
+   */
+  readonly #restartVat: (vatId: VatId) => Promise<void>;
 
   /** The logger, if any. */
   readonly #logger: Logger | undefined;
@@ -61,19 +69,22 @@ export class KernelRouter {
    * @param kernelQueue - The kernel's queue.
    * @param getEndpoint - A function that returns an endpoint handle for a given endpoint id.
    * @param invokeKernelService - A function that calls a method on a kernel service object.
+   * @param restartVat - A function that replaces a vat's worker.
    * @param logger - The logger. If not provided, no logging will be done.
    */
   constructor(
     kernelStore: KernelStore,
     kernelQueue: KernelQueue,
-    getEndpoint: (endpointId: EndpointId) => EndpointHandle,
+    getEndpoint: (endpointId: EndpointId) => Promise<EndpointHandle>,
     invokeKernelService: (target: KRef, message: KernelMessage) => void,
+    restartVat: (vatId: VatId) => Promise<void>,
     logger?: Logger,
   ) {
     this.#kernelStore = kernelStore;
     this.#kernelQueue = kernelQueue;
     this.#getEndpoint = getEndpoint;
     this.#invokeKernelService = invokeKernelService;
+    this.#restartVat = restartVat;
     this.#logger = logger;
   }
 
@@ -107,6 +118,8 @@ export class KernelRouter {
         return await this.#deliverGCAction(item);
       case 'bringOutYourDead':
         return await this.#deliverBringOutYourDead(item);
+      case 'restartVat':
+        return await this.#restartVatWorker(item);
       default:
         // @ts-expect-error Runtime does not respect "never".
         Fail`unsupported or unknown run queue item type ${item.type}`;
@@ -235,14 +248,15 @@ export class KernelRouter {
       const isKernelServiceMessage = endpointId === 'kernel';
       let endpoint: EndpointHandle | null = null;
       if (!isKernelServiceMessage) {
-        try {
-          endpoint = this.#getEndpoint(endpointId);
-        } catch {
-          // TODO: Narrow this catch to the expected error type (e.g.,
-          // VatNotFoundError) so that unexpected errors are not silently
-          // swallowed and deliverable messages are not incorrectly discarded.
-          // Endpoint vanished (e.g., vat terminated but ownership entries not
-          // yet cleaned up). Treat the same as a splat.
+        // An endpoint that is gone for good — a terminated vat whose ownership
+        // entries are not cleaned up yet, or a disconnected remote — has nothing
+        // to deliver to, so the message goes splat. Anything else `resolveEndpoint`
+        // propagates, rather than reporting a live endpoint as unreachable and
+        // discarding a deliverable message.
+        endpoint =
+          (await this.#resolveEndpoint(endpointId, `send of ${target}`)) ??
+          null;
+        if (!endpoint) {
           if (message.result) {
             const promise = this.#kernelStore.getKernelPromise(message.result);
             this.#kernelQueue.resolvePromises(promise.decider, [
@@ -389,6 +403,15 @@ export class KernelRouter {
       // no c-list entry, already done
       return { didDelivery: endpointId };
     }
+    // Ahead of the translation below, which would otherwise mint c-list entries
+    // for an endpoint with no way to hear about them.
+    const endpoint = await this.#resolveEndpoint(
+      endpointId,
+      `notify of ${kpid}`,
+    );
+    if (!endpoint) {
+      return { didDelivery: endpointId };
+    }
     const targets = this.#kernelStore.getKpidsToRetire(kpid, value);
     if (targets.length === 0) {
       // no kpids to retire, already done
@@ -415,8 +438,51 @@ export class KernelRouter {
     // exported ocap URLs by scanning these entries. The cost of keeping them is
     // that a settled promise reached this way holds a count forever, so it is
     // never collected and its resolution slots are never released.
-    const endpoint = this.#getEndpoint(endpointId);
     return await endpoint.deliverNotify(resolutions);
+  }
+
+  /**
+   * The handle for an endpoint, or `undefined` if the endpoint is gone for good
+   * and the work addressed to it can be dropped.
+   *
+   * Gone for good means a vat the store has no live record of — marked
+   * terminated, and so awaiting a cleanup that takes its whole c-list with it,
+   * or already cleaned up — or a remote, which reconciles on its next
+   * incarnation. Both halves are needed: cleanup ends with `forgetTerminatedVat`,
+   * so a vat that is long gone is no longer *marked* terminated either, and work
+   * outliving it (a `bringOutYourDead` scheduled before it died, say) would
+   * otherwise be read as a disagreement.
+   *
+   * A vat the store still calls active but the kernel has no handle for is that
+   * disagreement: `restartVat` is carried out by the run loop and `terminateVat`
+   * records the vat as in flux, so neither leaves a vat in that state, and the
+   * caller is better served by the error than by an answer that says "gone"
+   * about a vat that isn't.
+   *
+   * @param endpointId - The endpoint to resolve.
+   * @param what - What was being delivered, for the log.
+   * @returns The endpoint handle, or undefined if it will not be back.
+   */
+  async #resolveEndpoint(
+    endpointId: EndpointId,
+    what: string,
+  ): Promise<EndpointHandle | undefined> {
+    try {
+      return await this.#getEndpoint(endpointId);
+    } catch (error) {
+      if (
+        isVatId(endpointId) &&
+        this.#kernelStore.isVatActive(endpointId) &&
+        !this.#kernelStore.isVatTerminated(endpointId)
+      ) {
+        throw error;
+      }
+      this.#logger?.error(
+        `Endpoint ${endpointId} vanished before ${what}:`,
+        error,
+      );
+      return undefined;
+    }
   }
 
   /**
@@ -436,9 +502,36 @@ export class KernelRouter {
     // survives still has to be released on the kernel's side: the action has
     // already been consumed from the durable set, so skipping the teardown
     // would lose it and leave the entry behind for good.
-    const live = krefs.filter((kref) =>
-      this.#kernelStore.hasCListEntry(endpointId, kref),
+    const stillHeld = (): KRef[] =>
+      krefs.filter((kref) => this.#kernelStore.hasCListEntry(endpointId, kref));
+    if (stillHeld().length === 0) {
+      return { didDelivery: endpointId };
+    }
+    // Resolved before anything is torn down, so a lookup that fails has nothing
+    // to undo, and so the two outcomes below are decided rather than discovered
+    // halfway through. An endpoint that is gone for good still gets the release:
+    // the action is already spent from the durable set, and for a terminated vat
+    // cleanup would take the entries anyway.
+    //
+    // The throw `#resolveEndpoint` reserves for a vat that is absent without
+    // being terminated is, here, the least bad of three. Committing the release
+    // corrupts silently — the vat's own tables still name every one of these
+    // krefs, which is the disagreement the failed delivery below rolls back to
+    // avoid. Aborting spins: it does keep the action, since `rollbackCrank`
+    // restores the cached GC set, but nothing about the vat changes between
+    // cranks, so the same action is re-selected and re-aborted with no delivery
+    // to wait on — a run loop that is dead without saying so.
+    const endpoint = await this.#resolveEndpoint(
+      endpointId,
+      `${type}; releasing the kernel's side anyway`,
     );
+    // Re-read after the await, not before it: resolving an endpoint yields to
+    // other work, and a remote's incarnation change tears its c-list down
+    // without waiting for the crank. Reusing the earlier answer would hand
+    // `krefsToErefs` a kref whose entry has since gone, and it throws rather
+    // than returning short — killing the run loop over an entry that is
+    // already, correctly, released.
+    const live = stillHeld();
     if (live.length < krefs.length) {
       this.#logger?.error(
         `${type} for ${endpointId}: ${krefs.length - live.length} of ${krefs.length} kref(s) were cleaned up before delivery`,
@@ -446,39 +539,6 @@ export class KernelRouter {
     }
     if (live.length === 0) {
       return { didDelivery: endpointId };
-    }
-    // Resolved before anything is torn down, so a lookup that fails has nothing
-    // to undo, and so the two outcomes below are decided rather than discovered
-    // halfway through.
-    let endpoint: EndpointHandle | undefined;
-    try {
-      endpoint = this.#getEndpoint(endpointId);
-    } catch (error) {
-      // A vat absent from the kernel's vat table but not marked terminated is a
-      // vat between incarnations, and its c-list is whole: every kref here is one
-      // the returning incarnation still has in its own tables. `restartVat`
-      // takes a vat out of that table for as long as launching a worker and
-      // negotiating with it takes, so this is reachable, and releasing the
-      // kernel's side would commit exactly the disagreement the failed delivery
-      // below rolls back to avoid — the vat would mint fresh krefs for objects
-      // the kernel thinks it let go of. Fail the crank rather than commit that.
-      // Nothing here can make the restart safe: the action is already spent from
-      // the durable set, and a crank that neither delivers nor releases would
-      // simply be handed the same action again on the next one.
-      if (
-        isVatId(endpointId) &&
-        !this.#kernelStore.isVatTerminated(endpointId)
-      ) {
-        throw error;
-      }
-      // A terminated vat's cleanup tears its c-list down wholesale, and a remote
-      // reconciles on its next incarnation, so for those the release below is
-      // safe to commit — and has to be, since the action is already spent from
-      // the durable set.
-      this.#logger?.error(
-        `Endpoint ${endpointId} vanished before ${type} of ${JSON.stringify(live)}; releasing the kernel's side anyway:`,
-        error,
-      );
     }
     const erefs = this.#kernelStore.krefsToErefs(endpointId, live);
     // Telling an endpoint to let go is also the kernel letting go. Otherwise a
@@ -560,8 +620,37 @@ export class KernelRouter {
   ): Promise<CrankResult | undefined> {
     const { endpointId } = item;
     this.#logger?.log(`@@@@ deliver ${endpointId} bringOutYourDead`);
-    const endpoint = this.#getEndpoint(endpointId);
-    const crankResult = await endpoint.deliverBringOutYourDead();
-    return crankResult;
+    const endpoint = await this.#resolveEndpoint(
+      endpointId,
+      'bringOutYourDead',
+    );
+    if (!endpoint) {
+      // A reap only asks an endpoint to tidy up, so one that is gone has nothing
+      // left to ask. No `didDelivery`, since nothing was delivered.
+      return undefined;
+    }
+    return await endpoint.deliverBringOutYourDead();
+  }
+
+  /**
+   * Carry out a queued request to replace a vat's worker.
+   *
+   * Not a delivery, so no `didDelivery`: nothing was handed to the vat, and the
+   * incarnation that comes back has taken no deliveries yet.
+   *
+   * `performVatRestart` reports a failed restart by terminating the vat rather
+   * than by throwing, so this commits either way. Neither ending a crank is open
+   * to it: aborting and throwing both roll the crank back, which would undo the
+   * termination records *and* put this request back on the run queue, leaving
+   * the same failing restart to be replayed for the life of the store.
+   *
+   * @param item - The restart request.
+   * @returns Nothing; the crank has no outcome to report.
+   */
+  async #restartVatWorker(
+    item: RunQueueItemRestartVat,
+  ): Promise<CrankResult | undefined> {
+    await this.#restartVat(item.vatId);
+    return undefined;
   }
 }
