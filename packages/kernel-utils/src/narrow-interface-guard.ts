@@ -154,6 +154,32 @@ const narrowMethodGuard = (
 };
 
 /**
+ * Synthesize a method guard for a method its base admits by default.
+ *
+ * `defaultGuards: 'passable'` admits any passable arguments, so there is
+ * nothing to conjoin onto and the delta's patterns are the whole guard. The
+ * result still admits no more calls than the base did — a delta of length 0
+ * synthesizes `M.callWhen().rest(M.any()).returns(M.any())`, which admits
+ * exactly what the base admits.
+ *
+ * Such a base names no methods, so a delta naming one it does not implement is
+ * indistinguishable from one it does, and no error can be raised here. The
+ * forward rejects at call time instead.
+ *
+ * @param patterns - The delta's patterns for this method.
+ * @returns The synthesized guard.
+ */
+const synthesizeMethodGuard = (
+  patterns: (Pattern | undefined)[],
+): MethodGuard =>
+  buildMethodGuard(
+    M.callWhen(...patterns.map((pattern) => pattern ?? M.any())),
+    [],
+    M.any(),
+    M.any(),
+  );
+
+/**
  * Derive the interface guard of a narrowing of a base capability.
  *
  * Each delta pattern is conjoined onto the base's guard at the argument
@@ -191,6 +217,10 @@ export const narrowInterfaceGuard = ({
   for (const [methodName, patterns] of Object.entries(delta)) {
     const baseMethodGuard = baseMethodGuards[methodName];
     if (baseMethodGuard === undefined) {
+      if (defaultGuards === 'passable') {
+        narrowedMethodGuards[methodName] = synthesizeMethodGuard(patterns);
+        continue;
+      }
       throw new Error(
         defaultGuards === undefined
           ? `Cannot narrow method "${methodName}": the base has no such method.`

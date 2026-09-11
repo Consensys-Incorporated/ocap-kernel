@@ -127,8 +127,7 @@ describe('narrowing', () => {
     );
   });
 
-  // Unmarks at PR-8, which synthesizes a guard for a `makeDefaultExo` base.
-  it.fails('narrows a default-guarded exo', async () => {
+  it('narrows a default-guarded exo', async () => {
     const kernel = await launchNarrowingVat();
     expect(
       await probe(kernel, 'probeDefaultGuarded', [['srv', 'data', 'x']]),
