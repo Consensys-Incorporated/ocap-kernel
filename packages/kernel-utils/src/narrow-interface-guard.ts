@@ -1,0 +1,130 @@
+import { M, getInterfaceGuardPayload } from '@endo/patterns';
+import type { InterfaceGuard, MethodGuard, Pattern } from '@endo/patterns';
+
+import {
+  buildMethodGuard,
+  getInterfaceMethodGuards,
+  getMethodPayload,
+} from './guard-algebra.ts';
+
+/**
+ * Patterns to conjoin onto a base capability's method guards, addressed by
+ * argument position.
+ *
+ * A method the delta does not name is dropped, so forgetting a method removes
+ * authority rather than granting it. Within a method, a hole leaves that
+ * position as the base has it, and an empty array leaves every position as the
+ * base has it.
+ */
+export type NarrowingDelta = Record<string, (Pattern | undefined)[]>;
+
+/**
+ * Conjoin a delta pattern onto a base guard.
+ *
+ * @param base - The base guard.
+ * @param pattern - The pattern to conjoin, or undefined at a hole.
+ * @returns The conjunction, or the base guard unchanged at a hole.
+ */
+const conjoin = (base: Pattern, pattern: Pattern | undefined): Pattern =>
+  pattern === undefined ? base : M.and(base, pattern);
+
+/**
+ * Narrow one method guard by conjoining the delta's patterns onto the
+ * positions they address.
+ *
+ * Positions are walked as required arguments, then optionals, then the rest
+ * guard, and each stays in the category it lands in. Every position past the
+ * fixed arity conjoins onto the one rest guard, which is the only thing a rest
+ * position can express.
+ *
+ * @param methodName - The method being narrowed, for error messages.
+ * @param baseMethodGuard - The guard to narrow.
+ * @param patterns - The delta's patterns for this method.
+ * @returns The narrowed guard, asyncified for forwarding.
+ */
+const narrowMethodGuard = (
+  methodName: string,
+  baseMethodGuard: MethodGuard,
+  patterns: (Pattern | undefined)[],
+): MethodGuard => {
+  const { argGuards, optionalArgGuards, restArgGuard, returnGuard } =
+    getMethodPayload(baseMethodGuard);
+  const optionals = optionalArgGuards ?? [];
+  const maxArity = argGuards.length + optionals.length;
+
+  const beyondArity = patterns.findIndex(
+    (pattern, index) => index >= maxArity && pattern !== undefined,
+  );
+  if (beyondArity !== -1 && restArgGuard === undefined) {
+    throw new Error(
+      `Cannot narrow argument ${beyondArity} of method "${methodName}": the base has arity ${maxArity} and no rest guard.`,
+    );
+  }
+
+  return buildMethodGuard(
+    M.callWhen(
+      ...argGuards.map((guard, index) => conjoin(guard, patterns[index])),
+    ),
+    optionals.map((guard, index) =>
+      conjoin(guard, patterns[argGuards.length + index]),
+    ),
+    restArgGuard === undefined
+      ? undefined
+      : patterns.slice(maxArity).reduce(conjoin, restArgGuard),
+    returnGuard,
+  );
+};
+
+/**
+ * Derive the interface guard of a narrowing of a base capability.
+ *
+ * Each delta pattern is conjoined onto the base's guard at the argument
+ * position it addresses. Arity, the required/optional/rest split, and return
+ * guards are inherited verbatim — a narrowed return guard could fail where the
+ * base succeeds, which would not be an unaltered forward. Methods the delta
+ * does not name are dropped.
+ *
+ * The result is constructed as a conjunction with the base's guard rather than
+ * checked against it, so it admits no call the base does not — the
+ * precondition that lets `join` disjoin deltas without deciding pattern
+ * subtyping.
+ *
+ * @param options - Options bag.
+ * @param options.name - The name for the derived interface guard.
+ * @param options.baseGuard - The interface guard being narrowed.
+ * @param options.delta - The patterns to conjoin, by method and position.
+ * @returns The derived interface guard.
+ */
+export const narrowInterfaceGuard = ({
+  name,
+  baseGuard,
+  delta,
+}: {
+  name: string;
+  baseGuard: InterfaceGuard;
+  delta: NarrowingDelta;
+}): InterfaceGuard => {
+  const baseMethodGuards = getInterfaceMethodGuards(baseGuard);
+  const { defaultGuards } = getInterfaceGuardPayload(baseGuard) as unknown as {
+    defaultGuards?: 'passable' | 'raw';
+  };
+
+  const narrowedMethodGuards: Record<string, MethodGuard> = {};
+  for (const [methodName, patterns] of Object.entries(delta)) {
+    const baseMethodGuard = baseMethodGuards[methodName];
+    if (baseMethodGuard === undefined) {
+      throw new Error(
+        defaultGuards === undefined
+          ? `Cannot narrow method "${methodName}": the base has no such method.`
+          : `Cannot narrow method "${methodName}": the base guards it by default, so there is no guard to conjoin onto.`,
+      );
+    }
+    narrowedMethodGuards[methodName] = narrowMethodGuard(
+      methodName,
+      baseMethodGuard,
+      patterns,
+    );
+  }
+
+  return M.interface(name, narrowedMethodGuards);
+};
