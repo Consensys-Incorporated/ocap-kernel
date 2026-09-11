@@ -157,7 +157,7 @@ describe('fs nodejs capability', () => {
         additionalMockReturn: undefined,
       },
     ])(
-      'promises.$operation operation',
+      '$operation operation',
       ({
         operation,
         mockFn,
@@ -166,18 +166,20 @@ describe('fs nodejs capability', () => {
         additionalArgs,
         additionalMockReturn,
       }) => {
-        type TestCapability = { promises: { [operation]: CallableFunction } };
+        type TestCapability = Record<string, CallableFunction>;
+
+        const makeCapability = (): TestCapability => {
+          const config: FsConfig = {
+            rootDir: '/root',
+            methods: [operation],
+          };
+          return capabilityFactory(config) as unknown as TestCapability;
+        };
 
         it('returns expected result for valid path', async () => {
           vi.mocked(mockFn).mockResolvedValue(mockReturn as never);
 
-          const config: FsConfig = {
-            rootDir: '/root',
-            promises: { [operation]: true },
-          };
-          const capability = capabilityFactory(config) as TestCapability;
-
-          const result = await capability.promises[operation]?.(...validArgs);
+          const result = await makeCapability()[operation]?.(...validArgs);
           expect(mockFn).toHaveBeenCalledWith(...validArgs);
           expect(result).toBe(mockReturn);
         });
@@ -201,37 +203,21 @@ describe('fs nodejs capability', () => {
             createMockRelative(relativeReturn);
             createMockLstatSync(isSymlink);
 
-            const config: FsConfig = {
-              rootDir: '/root',
-              promises: { [operation]: true },
-            };
-            const capability = capabilityFactory(config) as TestCapability;
-
             await expect(
-              capability.promises[operation]?.(...validArgs),
+              makeCapability()[operation]?.(...validArgs),
             ).rejects.toThrow(expectedError);
             expect(mockFn).not.toHaveBeenCalled();
           },
         );
 
-        if (additionalArgs && additionalMockReturn) {
-          it('handles additional arguments correctly', async () => {
-            vi.mocked(mockFn).mockResolvedValue(additionalMockReturn as never);
+        it('handles additional arguments correctly', async () => {
+          vi.mocked(mockFn).mockResolvedValue(additionalMockReturn as never);
 
-            const config: FsConfig = {
-              rootDir: '/root',
-              promises: { [operation]: true },
-            };
-            const capability = capabilityFactory(config) as TestCapability;
+          const result = await makeCapability()[operation]?.(...additionalArgs);
 
-            const result = await capability.promises[operation]?.(
-              ...additionalArgs,
-            );
-
-            expect(mockFn).toHaveBeenCalledWith(...additionalArgs);
-            expect(result).toBe(additionalMockReturn);
-          });
-        }
+          expect(mockFn).toHaveBeenCalledWith(...additionalArgs);
+          expect(result).toBe(additionalMockReturn);
+        });
       },
     );
   });

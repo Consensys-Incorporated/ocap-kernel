@@ -1,3 +1,7 @@
+import { makeExo } from '@endo/exo';
+import { M } from '@endo/patterns';
+import type { MethodGuard } from '@endo/patterns';
+
 import type {
   PathLike,
   SyncPathCaveat,
@@ -5,6 +9,8 @@ import type {
   Access,
   FsConfig,
   FsCapability,
+  FsMethodName,
+  FsMethods,
 } from './types.ts';
 import { fsConfigStruct } from './types.ts';
 import { makeCapabilitySpecification } from '../../specification.ts';
@@ -35,58 +41,56 @@ export const makeCaveatedFsOperation = <
   }) as Operation;
 };
 
+// Written out per method rather than via `makeDefaultExo`, whose
+// `defaultGuards: 'passable'` leaves an empty guard map: narrowing conjoins a
+// delta onto a per-argument guard, so there has to be one to conjoin onto.
+const fsMethodGuards: Record<FsMethodName, MethodGuard> = harden({
+  readFile: M.callWhen(M.string()).optional(M.any()).returns(M.any()),
+  access: M.callWhen(M.string()).optional(M.number()).returns(M.undefined()),
+});
+
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 /**
  * Cross-platform FS capability specification factory
  *
  * @param config - The configuration for the capability specification
- * @param config.promises - Object containing promise-based operation factories
- * @param config.promises.makeReadFile - The factory returning a read file operation
- * @param config.promises.makeAccess - The factory returning an access operation
+ * @param config.makeReadFile - The factory returning a read file operation
+ * @param config.makeAccess - The factory returning an access operation
  * @param config.makePathCaveat - Factory function to create path caveats
  * @returns The capability specification
  */
 export const makeFsSpecification = ({
-  promises,
+  makeReadFile,
+  makeAccess,
   makePathCaveat,
 }: {
-  promises: {
-    makeReadFile: () => ReadFile;
-    makeAccess: () => Access;
-  };
+  makeReadFile: () => ReadFile;
+  makeAccess: () => Access;
   makePathCaveat: (rootDir: string) => SyncPathCaveat;
 }) =>
   makeCapabilitySpecification(
     fsConfigStruct,
     (config: FsConfig): FsCapability => {
-      // The construction of this capability left ad-hoc until additional
-      // requirements dictate additional structure.
-      const { rootDir, promises: promisesConfig } = config;
+      const { rootDir, methods = [] } = config;
       const caveat = makePathCaveat(rootDir);
+      const makeOperation = { readFile: makeReadFile, access: makeAccess };
 
-      const toExport: FsCapability = {};
-
-      if (promisesConfig) {
-        const promisesObj: FsCapability['promises'] = {};
-
-        if (promisesConfig.readFile) {
-          promisesObj.readFile = makeCaveatedFsOperation(
-            promises.makeReadFile(),
-            caveat,
-          );
-        }
-
-        if (promisesConfig.access) {
-          promisesObj.access = makeCaveatedFsOperation(
-            promises.makeAccess(),
-            caveat,
-          );
-        }
-
-        toExport.promises = harden(promisesObj);
+      const guards: Partial<Record<FsMethodName, MethodGuard>> = {};
+      const operations: Partial<Record<FsMethodName, FsMethods[FsMethodName]>> =
+        {};
+      for (const name of methods) {
+        guards[name] = fsMethodGuards[name];
+        operations[name] = makeCaveatedFsOperation(
+          makeOperation[name](),
+          caveat,
+        );
       }
 
-      return harden(toExport);
+      return makeExo(
+        'Fs',
+        M.interface('Fs', guards),
+        operations as Partial<FsMethods>,
+      );
     },
   );
 /* eslint-enable @typescript-eslint/explicit-function-return-type */
