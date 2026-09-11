@@ -8,6 +8,12 @@ export {
   getMethodPayload,
 } from './guard-algebra.ts';
 export type { MethodGuardPayload } from './guard-algebra.ts';
+export { join, narrow, pathUnder } from './narrowing.ts';
+export type {
+  JoinOptions,
+  NarrowOptions,
+  NarrowingDelta,
+} from './narrowing.ts';
 export { GET_DESCRIPTION, makeDiscoverableExo } from './discoverable.ts';
 export type { DiscoverableExo } from './discoverable.ts';
 export { S } from './described.ts';
