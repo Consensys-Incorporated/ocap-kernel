@@ -488,7 +488,6 @@ describe('makeSQLKernelDatabase', () => {
       );
 
       expect(mockDb._spStack).toStrictEqual([]);
-      mockDb._inTx = false;
     });
 
     it('releaseSavepoint validates savepoint exists', async () => {
@@ -515,6 +514,159 @@ describe('makeSQLKernelDatabase', () => {
       mockDb._spStack = ['point1'];
       db.releaseSavepoint('point1');
       expect(mockDb._spStack).toStrictEqual([]);
+      expect(mockDb._inTx).toBe(false);
+    });
+
+    it('releaseSavepoint discards the transaction when the release fails', async () => {
+      const db = await makeSQLKernelDatabase({});
+      mockDb._inTx = true;
+      mockDb._spStack = ['point1'];
+      mockDb.exec.mockImplementationOnce(() => {
+        throw new Error('disk I/O error');
+      });
+
+      expect(() => db.releaseSavepoint('point1')).toThrowError(
+        'disk I/O error',
+      );
+
+      expect(mockDb._spStack).toStrictEqual([]);
+      expect(mockDb._inTx).toBe(false);
+    });
+
+    it('releaseSavepoint reports the release failure even if the abort fails too', async () => {
+      const db = await makeSQLKernelDatabase({});
+      mockDb._inTx = true;
+      mockDb._spStack = ['point1'];
+      mockDb.exec.mockImplementationOnce(() => {
+        throw new Error('disk I/O error');
+      });
+      mockStatement.step.mockImplementationOnce(() => {
+        throw new Error('cannot rollback');
+      });
+
+      expect(() => db.releaseSavepoint('point1')).toThrowError(
+        'disk I/O error',
+      );
+
+      expect(mockDb._inTx).toBe(false);
+    });
+
+    it('stops believing it is in a transaction when the abort fails too', async () => {
+      const db = await makeSQLKernelDatabase({});
+      mockDb._inTx = true;
+      mockDb._spStack = ['point1'];
+      mockDb.exec.mockImplementationOnce(() => {
+        throw new Error('disk I/O error');
+      });
+      mockStatement.step.mockImplementationOnce(() => {
+        throw new Error('cannot rollback');
+      });
+
+      expect(() => db.rollbackSavepoint('point1')).toThrowError(
+        'disk I/O error',
+      );
+
+      expect(mockDb._inTx).toBe(false);
+    });
+
+    it('retries the abort before beginning the next savepoint', async () => {
+      const db = await makeSQLKernelDatabase({});
+      mockDb._inTx = true;
+      mockDb._spStack = ['point1'];
+      mockDb.exec.mockImplementationOnce(() => {
+        throw new Error('disk I/O error');
+      });
+      mockStatement.step.mockImplementationOnce(() => {
+        throw new Error('cannot rollback');
+      });
+      expect(() => db.rollbackSavepoint('point1')).toThrowError(
+        'disk I/O error',
+      );
+
+      mockDb.exec.mockClear();
+      mockStatement.step.mockClear();
+      db.createSavepoint('next');
+
+      // The abort that failed above may have left SQLite holding a transaction
+      // `_inTx` no longer accounts for, and BEGIN inside one throws. So the
+      // abort is retried first: two prepared statements, that and BEGIN. The
+      // SAVEPOINT itself goes through `exec`.
+      expect(mockStatement.step).toHaveBeenCalledTimes(2);
+      expect(mockDb._inTx).toBe(true);
+      expect(mockDb.exec).toHaveBeenCalledWith('SAVEPOINT next');
+    });
+
+    it('stops believing it is in a transaction when the commit fails', async () => {
+      const db = await makeSQLKernelDatabase({});
+      mockDb._inTx = true;
+      mockDb._spStack = ['point1'];
+      // The RELEASE goes through `exec`; COMMIT is the first prepared statement
+      // this path steps.
+      mockStatement.step.mockImplementationOnce(() => {
+        throw new Error('disk I/O error');
+      });
+
+      expect(() => db.releaseSavepoint('point1')).toThrowError(
+        'disk I/O error',
+      );
+
+      expect(mockDb._inTx).toBe(false);
+
+      mockDb.exec.mockClear();
+      mockStatement.step.mockClear();
+      db.createSavepoint('next');
+      expect(mockStatement.step).toHaveBeenCalledOnce();
+      expect(mockDb.exec).toHaveBeenCalledWith('SAVEPOINT next');
+    });
+
+    it('releaseSavepoint discards the transaction when the commit fails', async () => {
+      const db = await makeSQLKernelDatabase({});
+      mockStatement.step.mockClear();
+      mockDb._inTx = true;
+      mockDb._spStack = ['point1'];
+      // The RELEASE goes through `exec`; COMMIT is the first prepared statement
+      // this path steps.
+      mockStatement.step.mockImplementationOnce(() => {
+        throw new Error('database is locked');
+      });
+
+      expect(() => db.releaseSavepoint('point1')).toThrowError(
+        'database is locked',
+      );
+
+      // Every statement shares one mock, so the ABORT is only visible as a
+      // second step.
+      expect(mockStatement.step).toHaveBeenCalledTimes(2);
+      expect(mockDb._inTx).toBe(false);
+    });
+
+    it('releaseSavepoint reports the commit failure even if the abort fails too', async () => {
+      const logger = {
+        debug: vi.fn(),
+        warn: vi.fn(),
+        error: vi.fn(),
+        subLogger: vi.fn(() => logger),
+      } as unknown as Logger;
+      const db = await makeSQLKernelDatabase({ logger });
+      mockStatement.step.mockClear();
+      mockDb._inTx = true;
+      mockDb._spStack = ['point1'];
+      mockStatement.step
+        .mockImplementationOnce(() => {
+          throw new Error('database is locked');
+        })
+        .mockImplementationOnce(() => {
+          throw new Error('cannot rollback');
+        });
+
+      expect(() => db.releaseSavepoint('point1')).toThrowError(
+        'database is locked',
+      );
+
+      expect(logger.error).toHaveBeenCalledWith(
+        'failed to discard transaction after commit',
+        expect.objectContaining({ message: 'cannot rollback' }),
+      );
       expect(mockDb._inTx).toBe(false);
     });
 

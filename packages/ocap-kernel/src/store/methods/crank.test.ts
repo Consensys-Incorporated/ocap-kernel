@@ -17,6 +17,8 @@ describe('crank methods', () => {
       savepoints: [],
       crankBuffer: mockCrankBuffer,
       refreshRunQueue: vi.fn(),
+      refreshCachedValues: vi.fn(),
+      maybeFreeKrefs: new Set(),
     } as unknown as StoreContext;
 
     kdb = {
@@ -153,6 +155,59 @@ describe('crank methods', () => {
 
       expect(mockCrankBuffer).toHaveLength(0);
     });
+
+    it('forgets every savepoint when the rollback fails', () => {
+      context.inCrank = true;
+      crankMethods.createCrankSavepoint('crank');
+      crankMethods.createCrankSavepoint('delivery');
+      vi.mocked(kdb.rollbackSavepoint).mockImplementationOnce(() => {
+        throw new Error('disk I/O error');
+      });
+
+      expect(() => crankMethods.rollbackCrank('delivery')).toThrow(
+        'disk I/O error',
+      );
+
+      expect(context.savepoints).toStrictEqual([]);
+      crankMethods.endCrank();
+      expect(kdb.releaseSavepoint).not.toHaveBeenCalled();
+    });
+
+    it('reverts the caches the database cannot reach even when the rollback fails', () => {
+      context.inCrank = true;
+      context.maybeFreeKrefs.add('kp1');
+      crankMethods.createCrankSavepoint('crank');
+      crankMethods.createCrankSavepoint('delivery');
+      vi.mocked(kdb.rollbackSavepoint).mockImplementationOnce(() => {
+        throw new Error('disk I/O error');
+      });
+
+      expect(() => crankMethods.rollbackCrank('delivery')).toThrow(
+        'disk I/O error',
+      );
+
+      expect(context.refreshCachedValues).toHaveBeenCalled();
+      expect(context.refreshRunQueue).toHaveBeenCalled();
+      expect(context.runQueueLengthCache).toBe(-1);
+      expect([...context.maybeFreeKrefs]).toStrictEqual([]);
+    });
+
+    it('keeps the rollback failure as the cause when reverting also fails', () => {
+      context.inCrank = true;
+      const rollbackFailure = new Error('disk I/O error');
+      crankMethods.createCrankSavepoint('crank');
+      crankMethods.createCrankSavepoint('delivery');
+      vi.mocked(kdb.rollbackSavepoint).mockImplementationOnce(() => {
+        throw rollbackFailure;
+      });
+      vi.mocked(context.refreshCachedValues).mockImplementationOnce(() => {
+        throw new Error('database is gone');
+      });
+
+      expect(() => crankMethods.rollbackCrank('delivery')).toThrow(
+        expect.objectContaining({ cause: rollbackFailure }),
+      );
+    });
   });
 
   describe('endCrank', () => {
@@ -205,6 +260,18 @@ describe('crank methods', () => {
       expect(context.inCrank).toBe(false);
       expect(context.resolveCrank).toBeUndefined();
       expect(await waiter).toBeUndefined();
+    });
+
+    it('forgets its savepoints even if releasing them fails', () => {
+      crankMethods.startCrank();
+      context.savepoints = ['test'];
+      vi.mocked(kdb.releaseSavepoint).mockImplementationOnce(() => {
+        throw new Error('database is gone');
+      });
+
+      expect(() => crankMethods.endCrank()).toThrow('database is gone');
+
+      expect(context.savepoints).toStrictEqual([]);
     });
   });
 

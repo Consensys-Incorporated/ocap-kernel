@@ -238,31 +238,45 @@ export class RemoteManager {
       ? Array.from(this.#kernelStore.getPromisesByDecider(remote.remoteId))
       : [];
 
+    // The savepoint is the outermost one on the connection and so its own
+    // commit point, which it can only be while no crank is open. Everything
+    // between here and `endOutOfCrank` is synchronous, for the reason
+    // `beginOutOfCrank` gives.
     const savepoint = `peerIncarnation_${peerId}`;
-    this.#kernelStore.createSavepoint(savepoint);
+    await this.#kernelStore.beginOutOfCrank();
     try {
-      if (isRestart) {
-        this.#logger?.log(
-          `Peer ${peerId.slice(0, 8)} restarted (incarnation ${stored.slice(0, 8)} → ${observedIncarnation.slice(0, 8)})`,
-        );
-        if (remote) {
-          remote.persistPeerRestart();
-        } else {
-          // No live RemoteHandle for the peer but a persisted incarnation
-          // exists — usually a transient race during kernel boot before
-          // initRemoteComms has finished restoring remotes. The persisted
-          // bookkeeping the missing handle would have cleaned up may leak.
-          // Surfacing as a warning so operators can correlate.
-          this.#logger?.warn(
-            `Peer ${peerId.slice(0, 8)} restart detected but no live RemoteHandle; advancing persisted incarnation without c-list cleanup`,
+      this.#kernelStore.createSavepoint(savepoint);
+      try {
+        if (isRestart) {
+          this.#logger?.log(
+            `Peer ${peerId.slice(0, 8)} restarted (incarnation ${stored.slice(0, 8)} → ${observedIncarnation.slice(0, 8)})`,
           );
+          if (remote) {
+            remote.persistPeerRestart();
+          } else {
+            // No live RemoteHandle for the peer but a persisted incarnation
+            // exists — usually a transient race during kernel boot before
+            // initRemoteComms has finished restoring remotes. The persisted
+            // bookkeeping the missing handle would have cleaned up may leak.
+            // Surfacing as a warning so operators can correlate.
+            this.#logger?.warn(
+              `Peer ${peerId.slice(0, 8)} restart detected but no live RemoteHandle; advancing persisted incarnation without c-list cleanup`,
+            );
+          }
         }
+        this.#kernelStore.setPeerIncarnation(peerId, observedIncarnation);
+        this.#kernelStore.releaseSavepoint(savepoint);
+      } catch (error) {
+        try {
+          this.#kernelStore.rollbackSavepoint(savepoint);
+        } catch (rollbackError) {
+          // Same reasoning as `RemoteHandle.handleRemoteMessage`.
+          this.#logger?.error(`Rollback of ${savepoint} failed`, rollbackError);
+        }
+        throw error;
       }
-      this.#kernelStore.setPeerIncarnation(peerId, observedIncarnation);
-      this.#kernelStore.releaseSavepoint(savepoint);
-    } catch (error) {
-      this.#kernelStore.rollbackSavepoint(savepoint);
-      throw error;
+    } finally {
+      this.#kernelStore.endOutOfCrank();
     }
 
     // Post-commit fan-out: in-memory state changes and run-queue

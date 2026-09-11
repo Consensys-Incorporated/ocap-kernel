@@ -1,3 +1,5 @@
+import { makeSQLKernelDatabase } from '@metamask/kernel-store/sqlite/nodejs';
+import { Logger } from '@metamask/logger';
 import { Kernel } from '@metamask/ocap-kernel';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -8,7 +10,7 @@ vi.mock('@metamask/kernel-store/sqlite/nodejs', async () => {
     '../../../ocap-kernel/test/storage.ts'
   );
   return {
-    makeSQLKernelDatabase: makeMapKernelDatabase,
+    makeSQLKernelDatabase: vi.fn(makeMapKernelDatabase),
   };
 });
 
@@ -17,5 +19,13 @@ describe('makeKernel', () => {
     const { kernel } = await makeKernel({});
 
     expect(kernel).toBeInstanceOf(Kernel);
+  });
+
+  it('gives the kernel store a logger', async () => {
+    await makeKernel({});
+
+    expect(vi.mocked(makeSQLKernelDatabase)).toHaveBeenCalledWith(
+      expect.objectContaining({ logger: expect.any(Logger) }),
+    );
   });
 });

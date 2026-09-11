@@ -68,7 +68,7 @@
  *   kernelService.${serviceName} = ${koid}   // kref of kernel service object ${serviceName}
  */
 
-import { Fail } from '@endo/errors';
+import { Fail, q } from '@endo/errors';
 import type { KernelDatabase, KVStore, VatStore } from '@metamask/kernel-store';
 import { Logger } from '@metamask/logger';
 
@@ -92,7 +92,7 @@ import { getRevocationMethods } from './methods/revocation.ts';
 import { getSubclusterMethods } from './methods/subclusters.ts';
 import { getTranslators } from './methods/translators.ts';
 import { getVatMethods } from './methods/vat.ts';
-import type { StoreContext } from './types.ts';
+import type { StoreContext, StoredValue } from './types.ts';
 
 /**
  * The prefix shared by the issuance count of every object an ocap URL names,
@@ -127,6 +127,47 @@ export function makeKernelStore(kdb: KernelDatabase, logger?: Logger) {
   const { getPrefixedKeys, provideCachedStoredValue, provideStoredQueue } =
     getBaseMethods(kv);
 
+  /**
+   * Every cached stored value the context holds, as `field: [key, initial]`.
+   * Declared once so that initialization and `refreshCachedValues` cannot
+   * disagree about which values exist.
+   */
+  const CACHED_VALUES = {
+    /** Counter for allocating kernel object IDs */
+    nextObjectId: ['nextObjectId', '1'],
+    /** Counter for allocating kernel promise IDs */
+    nextPromiseId: ['nextPromiseId', '1'],
+    /** Counter for allocating VatIDs */
+    nextVatId: ['nextVatId', '1'],
+    /** Counter for allocating RemoteIDs */
+    nextRemoteId: ['nextRemoteId', '1'],
+    // Garbage collection
+    gcActions: ['gcActions', '[]'],
+    reapQueue: ['reapQueue', '[]'],
+    terminatedVats: ['vats.terminated', '[]'],
+    // Subclusters
+    subclusters: ['subclusters', '[]'],
+    nextSubclusterId: ['nextSubclusterId', '1'],
+    vatToSubclusterMap: ['vatToSubclusterMap', '{}'],
+  } as const satisfies Record<string, readonly [key: string, init: string]>;
+
+  /**
+   * Provide a fresh stored value for each of {@link CACHED_VALUES}.
+   *
+   * @returns The stored values, keyed by the context field that holds each.
+   */
+  function provideCachedValues(): Record<
+    keyof typeof CACHED_VALUES,
+    StoredValue
+  > {
+    return Object.fromEntries(
+      Object.entries(CACHED_VALUES).map(([field, [key, init]]) => [
+        field,
+        provideCachedStoredValue(key, init),
+      ]),
+    ) as Record<keyof typeof CACHED_VALUES, StoredValue>;
+  }
+
   const context: StoreContext = {
     kv,
     /** The kernel's run queue. */
@@ -137,14 +178,16 @@ export function makeKernelStore(kdb: KernelDatabase, logger?: Logger) {
     refreshRunQueue: () => {
       context.runQueue = provideStoredQueue('run', true);
     },
-    /** Counter for allocating kernel object IDs */
-    nextObjectId: provideCachedStoredValue('nextObjectId', '1'),
-    /** Counter for allocating kernel promise IDs */
-    nextPromiseId: provideCachedStoredValue('nextPromiseId', '1'),
-    /** Counter for allocating VatIDs */
-    nextVatId: provideCachedStoredValue('nextVatId', '1'),
-    /** Counter for allocating RemoteIDs */
-    nextRemoteId: provideCachedStoredValue('nextRemoteId', '1'),
+    ...provideCachedValues(),
+    /**
+     * Re-read every cached stored value from the database. Each closes over the
+     * last value written through it (see `provideCachedStoredValue`), so after a
+     * rollback the closure would otherwise still hold the abandoned value and
+     * the next `set` would write it straight back.
+     */
+    refreshCachedValues: () => {
+      Object.assign(context, provideCachedValues());
+    },
     // As refcounts are decremented, we accumulate a set of krefs for which
     // action might need to be taken:
     //   * promises which are now resolved and unreferenced can be deleted
@@ -156,17 +199,9 @@ export function makeKernelStore(kdb: KernelDatabase, logger?: Logger) {
     // the change, else removals might be lost (not performed during the next
     // replay).
     maybeFreeKrefs: new Set<KRef>(),
-    // Garbage collection
-    gcActions: provideCachedStoredValue('gcActions', '[]'),
-    reapQueue: provideCachedStoredValue('reapQueue', '[]'),
-    terminatedVats: provideCachedStoredValue('vats.terminated', '[]'),
     inCrank: false,
     savepoints: [],
     crankBuffer: [],
-    // Subclusters
-    subclusters: provideCachedStoredValue('subclusters', '[]'),
-    nextSubclusterId: provideCachedStoredValue('nextSubclusterId', '1'),
-    vatToSubclusterMap: provideCachedStoredValue('vatToSubclusterMap', '{}'),
     auditRefCounts: false,
     // Logging
     logger: logger?.subLogger({ tags: ['kernel-store'] }),
@@ -226,23 +261,8 @@ export function makeKernelStore(kdb: KernelDatabase, logger?: Logger) {
     }));
     kdb.clear();
     context.maybeFreeKrefs.clear();
-    context.runQueue = provideStoredQueue('run', true);
-    context.gcActions = provideCachedStoredValue('gcActions', '[]');
-    context.reapQueue = provideCachedStoredValue('reapQueue', '[]');
-    context.terminatedVats = provideCachedStoredValue('vats.terminated', '[]');
-    context.nextObjectId = provideCachedStoredValue('nextObjectId', '1');
-    context.nextPromiseId = provideCachedStoredValue('nextPromiseId', '1');
-    context.nextVatId = provideCachedStoredValue('nextVatId', '1');
-    context.nextRemoteId = provideCachedStoredValue('nextRemoteId', '1');
-    context.subclusters = provideCachedStoredValue('subclusters', '[]');
-    context.nextSubclusterId = provideCachedStoredValue(
-      'nextSubclusterId',
-      '1',
-    );
-    context.vatToSubclusterMap = provideCachedStoredValue(
-      'vatToSubclusterMap',
-      '{}',
-    );
+    context.refreshRunQueue();
+    context.refreshCachedValues();
     crank.releaseAllSavepoints();
     context.crankBuffer.length = 0;
     preservedState?.forEach(({ key, value }) => {
@@ -280,9 +300,16 @@ export function makeKernelStore(kdb: KernelDatabase, logger?: Logger) {
   /**
    * Create a savepoint for atomic operations on persistent storage.
    *
+   * These are invisible to `createCrankSavepoint`'s ordinal naming, so one
+   * opened inside a crank would be rolled back by a delivery that has nothing
+   * to do with it — after its owner had already reported success to a peer.
+   * Callers take their turn through `beginOutOfCrank`.
+   *
    * @param name - The savepoint name.
    */
   function createSavepoint(name: string): void {
+    !context.inCrank ||
+      Fail`createSavepoint ${q(name)} inside a crank; use beginOutOfCrank`;
     kdb.createSavepoint(name);
   }
 
@@ -413,9 +440,6 @@ export function makeKernelStore(kdb: KernelDatabase, logger?: Logger) {
       return Number(kv.get(`${OCAP_URL_PREFIX}${kref}`) ?? 0);
     },
     retainForOcapURL(kref: KRef): void {
-      // Refuse to mint a token for something already collected: the URL would
-      // name a capability that can never be delivered to. Refusing here names
-      // what was attempted, and does it before anything has been written.
       this.kernelRefExists(kref) ||
         Fail`cannot issue an ocap URL for deleted kref ${kref}`;
       const issuances = this.getOcapURLIssuanceCount(kref);
@@ -430,16 +454,12 @@ export function makeKernelStore(kdb: KernelDatabase, logger?: Logger) {
         kv.set(`${OCAP_URL_PREFIX}${kref}`, `${issuances - 1}`);
         return;
       }
-      // The last issuance, or none at all: either way, what is left of the
-      // retention is exactly what a release drops.
       this.releaseOcapURLRetentions(kref);
     },
     releaseOcapURLRetentions(kref: KRef): void {
       if (this.getOcapURLIssuanceCount(kref) === 0) {
         return;
       }
-      // Spend the pin before forgetting the retention, so a failure to release
-      // it leaves a ledger that still says the retention is held.
       this.unpinObject(kref);
       kv.delete(`${OCAP_URL_PREFIX}${kref}`);
     },

@@ -59,6 +59,9 @@ describe('getStatusHandler', () => {
       const store = {
         startCrank: vi.fn(),
         endCrank: vi.fn(),
+        beginOutOfCrank: vi.fn().mockResolvedValue(undefined),
+        endOutOfCrank: vi.fn(),
+        outOfCrankWorkPending: vi.fn().mockReturnValue(undefined),
         createCrankSavepoint: vi.fn(),
         rollbackCrank: vi.fn(),
         collectGarbage: vi.fn(),

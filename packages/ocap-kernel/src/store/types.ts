@@ -11,6 +11,7 @@ export type StoreContext = {
   runQueue: StoredQueue; // Holds RunAction[]
   runQueueLengthCache: number; // Holds number
   refreshRunQueue: () => void;
+  refreshCachedValues: () => void;
   nextObjectId: StoredValue; // Holds string
   nextPromiseId: StoredValue; // Holds string
   nextVatId: StoredValue; // Holds string

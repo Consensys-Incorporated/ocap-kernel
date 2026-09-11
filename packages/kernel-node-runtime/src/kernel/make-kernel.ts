@@ -60,7 +60,10 @@ export async function makeKernel({
   });
 
   // Initialize kernel store.
-  const kernelDatabase = await makeSQLKernelDatabase({ dbFilename });
+  const kernelDatabase = await makeSQLKernelDatabase({
+    dbFilename,
+    logger: rootLogger.subLogger({ tags: ['kernel-store'] }),
+  });
 
   // Create and start kernel.
   const kernel = await Kernel.make(platformServicesClient, kernelDatabase, {

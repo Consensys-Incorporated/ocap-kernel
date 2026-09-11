@@ -51,10 +51,20 @@ export async function initDB(
  * Makes a {@link KVStore} on top of a SQLite database
  *
  * @param db - The (open) database to use.
- * @param logger - A logger object for recording activity.
+ * @param options - Options for the store.
+ * @param options.assertWritable - Throws if this connection can no longer
+ * persist anything, which every write here must ask first: one issued into a
+ * transaction nothing can end reports success and is lost with it.
+ * @param options.logger - A logger object for recording activity.
  * @returns A key/value store using the given database.
  */
-function makeKVStore(db: Database, logger?: Logger): KVStore {
+function makeKVStore(
+  db: Database,
+  {
+    assertWritable,
+    logger,
+  }: { assertWritable: () => void; logger?: Logger | undefined },
+): KVStore {
   db.exec(SQL_QUERIES.CREATE_TABLE);
 
   const sqlKVGet = db.prepare(SQL_QUERIES.GET);
@@ -116,6 +126,7 @@ function makeKVStore(db: Database, logger?: Logger): KVStore {
    * @param value - The value to assign to it.
    */
   function kvSet(key: string, value: string): void {
+    assertWritable();
     logger?.debug(`kv set '${key}' to '${value}'`);
     sqlKVSet.bind([key, value]);
     sqlKVSet.step();
@@ -130,6 +141,7 @@ function makeKVStore(db: Database, logger?: Logger): KVStore {
    * @param key - The key to remove.
    */
   function kvDelete(key: string): void {
+    assertWritable();
     logger?.debug(`kv delete '${key}'`);
     sqlKVDelete.bind([key]);
     sqlKVDelete.step();
@@ -165,7 +177,10 @@ export async function makeSQLKernelDatabase({
   const db = await initDB(dbFilename ?? DEFAULT_DB_FILENAME, logger);
 
   logger?.debug('Initializing kernel store');
-  const kvStore = makeKVStore(db, logger?.subLogger({ tags: ['kv'] }));
+  const kvStore = makeKVStore(db, {
+    assertWritable: assertNotAbandoned,
+    logger: logger?.subLogger({ tags: ['kv'] }),
+  });
 
   db.exec(SQL_QUERIES.CREATE_TABLE_VS);
 
@@ -179,12 +194,21 @@ export async function makeSQLKernelDatabase({
   const sqlCommitTransaction = db.prepare(SQL_QUERIES.COMMIT_TRANSACTION);
   const sqlAbortTransaction = db.prepare(SQL_QUERIES.ABORT_TRANSACTION);
 
+  // Set when an abort meant to discard a transaction fails, which leaves SQLite
+  // holding one `_inTx` no longer accounts for: nothing will try to end it
+  // again, and a savepoint taken inside it would be released into it. The
+  // nodejs driver reads `db.inTransaction` instead of caching it and so cannot
+  // wedge the flag, but it has the same unowned-transaction gap; both drivers
+  // close it the same way.
+  let txAbandoned = false;
+
   /**
    * Begin a transaction if not already in one
    *
    * @returns True if a new transaction was started, false if already in one
    */
   function beginIfNeeded(): boolean {
+    assertNotAbandoned();
     if (db._inTx) {
       return false;
     }
@@ -195,14 +219,70 @@ export async function makeSQLKernelDatabase({
   }
 
   /**
+   * Refuse to touch a transaction an earlier abort could not end. A savepoint
+   * created inside one is released into it, committing the crank that abort was
+   * discarding, and a COMMIT makes those writes durable outright. Retried once
+   * first, since the failure may have been transient.
+   *
+   * Checked before `_inTx` rather than after: `abortTransaction` clears the flag
+   * on its way to failing, so the abandoned transaction is exactly the one
+   * `_inTx` no longer admits to.
+   *
+   * @throws If the transaction is still there afterwards, because reporting
+   * that this connection can no longer persist anything is the only honest
+   * answer left — returning normally would tell the caller its write landed.
+   */
+  function assertNotAbandoned(): void {
+    if (!txAbandoned) {
+      return;
+    }
+    discardTransaction('abandonment');
+    if (txAbandoned) {
+      throw new Error(
+        'transaction cannot be ended; refusing further writes on this connection',
+      );
+    }
+  }
+
+  /**
    * Commit a transaction if one is active and no savepoints remain
    */
   function commitIfNeeded(): void {
-    if (db._inTx && db._spStack.length === 0) {
+    assertNotAbandoned();
+    if (!db._inTx || db._spStack.length > 0) {
+      return;
+    }
+    // Cleared first, for the reason `rollbackIfNeeded` gives.
+    db._inTx = false;
+    try {
       sqlCommitTransaction.step();
       sqlCommitTransaction.reset();
-      db._inTx = false;
+    } catch (error) {
+      // A failed COMMIT can leave the transaction open, and `releaseSavepoint`
+      // reaches here outside any try of its own.
+      discardTransaction('commit');
+      throw error;
     }
+  }
+
+  /**
+   * Abort the transaction, whatever `_inTx` currently says — the callers that
+   * most need this have already cleared it.
+   */
+  function abortTransaction(): void {
+    // Cleared before the abort, which can throw: left true, `beginIfNeeded` is
+    // a no-op forever after and writes autocommit one statement at a time (see
+    // `createSavepoint`).
+    db._inTx = false;
+    db._spStack.length = 0;
+    try {
+      sqlAbortTransaction.step();
+      sqlAbortTransaction.reset();
+    } catch (error) {
+      txAbandoned = true;
+      throw error;
+    }
+    txAbandoned = false;
   }
 
   /**
@@ -210,10 +290,22 @@ export async function makeSQLKernelDatabase({
    */
   function rollbackIfNeeded(): void {
     if (db._inTx) {
-      sqlAbortTransaction.step();
-      sqlAbortTransaction.reset();
-      db._inTx = false;
-      db._spStack.length = 0;
+      abortTransaction();
+    }
+  }
+
+  /**
+   * Discard the transaction after a failure that leaves it unowned, keeping the
+   * error that got us here rather than the abort's.
+   *
+   * @param after - What failed, completing "failed to discard transaction after
+   * ...".
+   */
+  function discardTransaction(after: string): void {
+    try {
+      abortTransaction();
+    } catch (error) {
+      logger?.error(`failed to discard transaction after ${after}`, error);
     }
   }
 
@@ -241,6 +333,7 @@ export async function makeSQLKernelDatabase({
    * Delete everything from the database.
    */
   function kvClear(): void {
+    assertNotAbandoned();
     logger?.debug('clearing all kernel state');
     sqlKVClear.step();
     sqlKVClear.reset();
@@ -249,7 +342,10 @@ export async function makeSQLKernelDatabase({
   }
 
   /**
-   * Execute a SQL query.
+   * Execute a SQL query. Unlike the other write paths this one does not consult
+   * `assertNotAbandoned`, whose side effect is a rollback: the debug surfaces
+   * that call it would not expect a query to end a transaction. `step` will run
+   * DML given it, where the nodejs driver's `all` refuses anything but a SELECT.
    *
    * @param sql - The SQL query to execute.
    * @returns An array of results.
@@ -336,6 +432,7 @@ export async function makeSQLKernelDatabase({
    * @param vatId - The vat whose store is to be deleted.
    */
   function deleteVatStore(vatId: string): void {
+    assertNotAbandoned();
     sqlVatstoreDeleteAll.bind([vatId]);
     sqlVatstoreDeleteAll.step();
     sqlVatstoreDeleteAll.reset();
@@ -363,6 +460,7 @@ export async function makeSQLKernelDatabase({
    * @param name - The name of the savepoint.
    */
   function rollbackSavepoint(name: string): void {
+    assertNotAbandoned();
     assertSafeIdentifier(name);
     const idx = db._spStack.lastIndexOf(name);
     if (idx < 0) {
@@ -377,12 +475,7 @@ export async function makeSQLKernelDatabase({
       // connection joins it, reports success, and vanishes on close. Discarding
       // the whole transaction is safe: it begins with the outermost savepoint, so
       // it holds only what this rollback was abandoning anyway.
-      db._spStack.length = 0;
-      try {
-        rollbackIfNeeded();
-      } catch {
-        // The rollback failure below is the one worth reporting.
-      }
+      discardTransaction('rollback');
       throw error;
     }
     db._spStack.splice(idx);
@@ -397,13 +490,21 @@ export async function makeSQLKernelDatabase({
    * @param name - The name of the savepoint.
    */
   function releaseSavepoint(name: string): void {
+    assertNotAbandoned();
     assertSafeIdentifier(name);
     const idx = db._spStack.lastIndexOf(name);
     if (idx < 0) {
       throw new Error(`No such savepoint: ${name}`);
     }
     const query = SQL_QUERIES.RELEASE_SAVEPOINT.replace('%NAME%', name);
-    db.exec(query);
+    try {
+      db.exec(query);
+    } catch (error) {
+      // The hazard `rollbackSavepoint` guards against, by the other door, and
+      // there is no committing this transaction now.
+      discardTransaction('release');
+      throw error;
+    }
     db._spStack.splice(idx);
     if (db._spStack.length === 0) {
       commitIfNeeded();

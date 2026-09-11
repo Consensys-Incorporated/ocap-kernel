@@ -117,6 +117,29 @@ describe('Garbage Collection', () => {
     expect(parseReplyBody(useResult.body)).toBe(objectId);
   });
 
+  /**
+   * Reap the importer vat until the kernel's bookkeeping catches up with the
+   * vat's own garbage collection, or the attempts run out.
+   *
+   * `bringOutYourDead` reports an import as dropped only once the engine has
+   * collected the vat's presence and run its finalizer, which `gcAndFinalize`
+   * does not guarantee on the first attempt. Each attempt needs its own reap —
+   * `nextReapAction` shifts the one scheduled entry off, so cranking again finds
+   * nothing to do — plus a message to wake the run loop and consume it.
+   *
+   * Gives up after five attempts; the caller's assertion reports the failure.
+   *
+   * @param settled - Whether the state under test has arrived yet.
+   */
+  async function reapImporterUntil(settled: () => boolean): Promise<void> {
+    const isImporter = (vatId: VatId): boolean => vatId === importerVatId;
+    for (let attempt = 0; attempt < 5 && !settled(); attempt += 1) {
+      kernel.reapVats(isImporter);
+      await kernel.queueMessage(importerKRef, 'noop', []);
+      await waitUntilQuiescent(500);
+    }
+  }
+
   it('should trigger GC syscalls through bringOutYourDead', async () => {
     // Create an object in the exporter vat with a known ID
     const objectId = 'test-object';
@@ -161,14 +184,10 @@ describe('Garbage Collection', () => {
     await kernel.queueMessage(importerKRef, 'makeWeak', [objectId]);
     await waitUntilQuiescent();
 
-    // Schedule reap to trigger bringOutYourDead on next crank
-    kernel.reapVats((vatId) => vatId === importerVatId);
-
-    // Run 3 cranks to allow bringOutYourDead to be processed
-    for (let i = 0; i < 3; i++) {
-      await kernel.queueMessage(importerKRef, 'noop', []);
-      await waitUntilQuiescent(500);
-    }
+    // Reap until the importer reports the drop
+    await reapImporterUntil(
+      () => kernelStore.getObjectRefCount(createObjectRef).reachable === 1,
+    );
 
     // Check reference counts after dropImports
     const afterWeakRefCounts = kernelStore.getObjectRefCount(createObjectRef);
@@ -180,13 +199,10 @@ describe('Garbage Collection', () => {
     await kernel.queueMessage(importerKRef, 'forgetImport', []);
     await waitUntilQuiescent();
 
-    // Schedule another reap
-    kernel.reapVats((vatId) => vatId === importerVatId);
-
-    for (let i = 0; i < 3; i++) {
-      await kernel.queueMessage(importerKRef, 'noop', []);
-      await waitUntilQuiescent(500);
-    }
+    // Reap until the importer reports the retirement
+    await reapImporterUntil(
+      () => kernelStore.getObjectRefCount(createObjectRef).recognizable === 1,
+    );
 
     // Check reference counts after retireImports
     const afterForgetRefCounts = kernelStore.getObjectRefCount(createObjectRef);
@@ -242,10 +258,18 @@ describe('Garbage Collection', () => {
      *
      * @param vatId - The vat to reap.
      * @param rootKRef - That vat's root, to poke with cranks afterwards.
+     * @param settled - Whether the state under test has arrived yet.
      */
-    async function reapAndSettle(vatId: VatId, rootKRef: KRef): Promise<void> {
-      kernel.reapVats((id) => id === vatId);
-      for (let i = 0; i < 3; i++) {
+    async function reapAndSettle(
+      vatId: VatId,
+      rootKRef: KRef,
+      settled: () => boolean,
+    ): Promise<void> {
+      // Reap until the vat's GC is visible rather than a fixed number of times:
+      // three was enough on an idle machine and not under a loaded one, which
+      // made this the last flake in the file.
+      for (let attempt = 0; attempt < 5 && !settled(); attempt += 1) {
+        kernel.reapVats((id) => id === vatId);
         await kernel.queueMessage(rootKRef, 'noop', []);
         await waitUntilQuiescent(500);
       }
@@ -282,7 +306,11 @@ describe('Garbage Collection', () => {
       await kernel.queueMessage(importerKRef, 'makeWeak', [objectId]);
       await kernel.queueMessage(importerKRef, 'forgetImport', []);
       await waitUntilQuiescent();
-      await reapAndSettle(importerVatId, importerKRef);
+      await reapAndSettle(importerVatId, importerKRef, () =>
+        kernelStore
+          .getImporters(sharedKRef)
+          .every((vatId) => vatId !== importerVatId),
+      );
 
       // The exporter must not have been told to drop it: the second importer
       // legitimately still holds it
@@ -315,7 +343,11 @@ describe('Garbage Collection', () => {
       await kernel.queueMessage(secondImporterKRef, 'makeWeak', [objectId]);
       await kernel.queueMessage(secondImporterKRef, 'forgetImport', []);
       await waitUntilQuiescent();
-      await reapAndSettle(secondImporterVatId, secondImporterKRef);
+      await reapAndSettle(
+        secondImporterVatId,
+        secondImporterKRef,
+        () => kernelStore.getImporters(sharedKRef).length === 0,
+      );
 
       expect(kernelStore.getImporters(sharedKRef)).toStrictEqual([]);
       // Only the createObject result's stored value still names it
