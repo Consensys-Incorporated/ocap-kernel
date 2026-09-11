@@ -54,9 +54,7 @@ const makeNodejsPathCaveat = (rootDir: string): SyncPathCaveat => {
 };
 
 export const { configStruct, capabilityFactory } = makeFsSpecification({
-  promises: {
-    makeReadFile: () => fs.readFile,
-    makeAccess: () => fs.access,
-  },
+  makeReadFile: () => fs.readFile,
+  makeAccess: () => fs.access,
   makePathCaveat: makeNodejsPathCaveat,
 });

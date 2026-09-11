@@ -5,9 +5,7 @@ const notImplemented = (name: string): never => {
 };
 
 export const { configStruct, capabilityFactory } = makeFsSpecification({
-  promises: {
-    makeReadFile: () => notImplemented('readFile'),
-    makeAccess: () => notImplemented('access'),
-  },
+  makeReadFile: () => notImplemented('readFile'),
+  makeAccess: () => notImplemented('access'),
   makePathCaveat: () => () => undefined,
 });

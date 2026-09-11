@@ -1,4 +1,11 @@
-import { exactOptional, object, string, boolean } from '@metamask/superstruct';
+import type { Guarded } from '@endo/exo';
+import {
+  array,
+  enums,
+  exactOptional,
+  object,
+  string,
+} from '@metamask/superstruct';
 import type { Infer } from '@metamask/superstruct';
 import type { PathLike } from 'node:fs';
 import type { readFile, access } from 'node:fs/promises';
@@ -13,21 +20,23 @@ export type SyncPathCaveat = (path: PathLike) => void;
 export type ReadFile = typeof readFile;
 export type Access = typeof access;
 
+export const fsMethodNames = ['readFile', 'access'] as const;
+
+export type FsMethodName = (typeof fsMethodNames)[number];
+
 export const fsConfigStruct = object({
   rootDir: string(),
-  promises: exactOptional(
-    object({
-      readFile: exactOptional(boolean()),
-      access: exactOptional(boolean()),
-    }),
-  ),
+  methods: exactOptional(array(enums(fsMethodNames))),
 });
 
-export type FsCapability = Partial<{
-  promises: Partial<{
-    readFile: ReadFile;
-    access: Access;
-  }>;
-}>;
-
 export type FsConfig = Infer<typeof fsConfigStruct>;
+
+export type FsMethods = {
+  readFile: (
+    path: string,
+    options?: Parameters<ReadFile>[1],
+  ) => ReturnType<ReadFile>;
+  access: (path: string, mode?: Parameters<Access>[1]) => ReturnType<Access>;
+};
+
+export type FsCapability = Guarded<Partial<FsMethods>>;
