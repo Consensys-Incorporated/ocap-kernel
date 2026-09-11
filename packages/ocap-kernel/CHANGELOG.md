@@ -44,7 +44,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add `getOcapURLObjects`, `getOcapURLIssuanceCount`, `retainForOcapURL`, `undoOcapURLRetention` and `releaseOcapURLRetentions` to the kernel store, and `VatManager.releaseVatRootPin` ([#1020](https://github.com/MetaMask/ocap-kernel/pull/1020))
   - `undoOcapURLRetention` unwinds one issuance whose URL was never minted; `releaseOcapURLRetentions` drops a target's whole retention, for disavowing every URL naming it at once
 - Add `getPinCount` to the kernel store, which reports how many pins are held on an object ([#1020](https://github.com/MetaMask/ocap-kernel/pull/1020))
-- Add `orphanKernelObject` to the kernel store, which drops an object's owner mapping and hands it to the collector ([#1022](https://github.com/MetaMask/ocap-kernel/pull/1022))
+- Add `orphanKernelObject` to the kernel store, which drops an object's owner mapping and hands it to the collector ([#1022](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1022))
 
 ### Changed
 
@@ -103,14 +103,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - A root is addressable while its vat lives whether or not anyone imports it; the old `(1, 1)` birth baseline was standing in for this
 - Garbage-collection action delivery now moves the kernel's own c-list: `dropExports` clears the owner's reachable flag and `retireExports`/`retireImports` tear the entry down ([#1020](https://github.com/MetaMask/ocap-kernel/pull/1020))
   - Previously the owner's flag never cleared, so the same action could be re-derived, and retired entries outlived the objects they named
-- Orphan a kernel object when its owner stops naming it (a delivered `retireExport`, or a `retireExports`/`abandonExports` syscall), so its `owner` and `refCount` records no longer outlive the c-list entry they were reachable through ([#1022](https://github.com/MetaMask/ocap-kernel/pull/1022))
+- Orphan a kernel object when its owner stops naming it (a delivered `retireExport`, or a `retireExports`/`abandonExports` syscall), so its `owner` and `refCount` records no longer outlive the c-list entry they were reachable through ([#1022](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1022))
   - They leaked, and the next collection to visit such a kref read a c-list entry that was no longer there and killed the run loop. Reproduces on `main`, so it predates this stack
-- Reject a `retireExports`/`abandonExports` syscall for an object the calling endpoint does not own, instead of letting it erase another endpoint's claim to an object it is still exporting ([#1022](https://github.com/MetaMask/ocap-kernel/pull/1022))
+- Reject a `retireExports`/`abandonExports` syscall for an object the calling endpoint does not own, instead of letting it erase another endpoint's claim to an object it is still exporting ([#1022](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1022))
   - Nothing upstream of `performExportCleanup` checked that the vref it was handed is even an export, and the audit could not see the damage, because an export entry carries no count
-- Garbage-collection action delivery releases the kernel's side even when the endpoint has vanished, and rolls back rather than committing a release the endpoint was never told about ([#1022](https://github.com/MetaMask/ocap-kernel/pull/1022))
+- Garbage-collection action delivery releases the kernel's side even when the endpoint has vanished, and rolls back rather than committing a release the endpoint was never told about ([#1022](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1022))
   - It releases only where the endpoint is genuinely gone: a terminated vat, whose cleanup tears the whole c-list down anyway, or a remote, which reconciles on its next incarnation. A vat that is absent yet not terminated is one `restartVat` has taken out of the kernel's reach while keeping its c-list, so the crank fails there instead of committing a release the returning incarnation would disagree with
-- A failed garbage-collection delivery to a remote is logged and survived rather than escaping the crank and stopping the run loop ([#1022](https://github.com/MetaMask/ocap-kernel/pull/1022))
-- Tear down and mark for cleanup a vat whose worker launched but whose kernel-side registration then failed ([#1022](https://github.com/MetaMask/ocap-kernel/pull/1022))
+- A failed garbage-collection delivery to a remote is logged and survived rather than escaping the crank and stopping the run loop ([#1022](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1022))
+- Tear down and mark for cleanup a vat whose worker launched but whose kernel-side registration then failed ([#1022](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1022))
 - Charge a delivered message's target reference against the run-queue item's own target rather than the routed target, so a message routed through a resolved promise no longer decrements an object nobody charged while leaking the promise ([#1020](https://github.com/MetaMask/ocap-kernel/pull/1020))
 - Release a queued notification's reference before the paths that decide there is nothing to deliver, and stop decrementing references on promises retired alongside it that nobody had taken ([#1020](https://github.com/MetaMask/ocap-kernel/pull/1020))
 - Transfer, rather than duplicate, the references a message carries when it is queued on an unresolved promise and later re-enqueued on resolution ([#1020](https://github.com/MetaMask/ocap-kernel/pull/1020))
