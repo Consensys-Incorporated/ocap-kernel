@@ -4,7 +4,10 @@ import { describe, it, expect } from 'vitest';
 
 import { getInterfaceMethodGuards, getMethodPayload } from './guard-algebra.ts';
 import type { MethodGuardPayload } from './guard-algebra.ts';
-import { narrowInterfaceGuard } from './narrow-interface-guard.ts';
+import {
+  conjoinDeltas,
+  narrowInterfaceGuard,
+} from './narrow-interface-guard.ts';
 import type { NarrowingDelta } from './narrow-interface-guard.ts';
 
 // One fixture reaching all three positional categories.
@@ -135,5 +138,48 @@ describe('narrowInterfaceGuard', () => {
     },
   ])('rejects a delta that $scenario', ({ makeGuard, delta, message }) => {
     expect(() => narrowFrom(makeGuard(), delta)).toThrow(message);
+  });
+});
+
+describe('conjoinDeltas', () => {
+  it('keeps only the methods the incoming delta names', () => {
+    const combined = conjoinDeltas({ read: [], write: [] }, { read: [] });
+
+    expect(combined).toStrictEqual({ read: [] });
+  });
+
+  it('does not reinstate a method the existing delta dropped', () => {
+    expect(() => conjoinDeltas({ read: [] }, { write: [] })).toThrow(
+      'Cannot narrow method "write": the base has no such method.',
+    );
+  });
+
+  it('conjoins both patterns where the two deltas overlap', () => {
+    const combined = conjoinDeltas({ read: [M.lte(10)] }, { read: [M.gte(5)] });
+    const [pattern] = combined.read!;
+
+    expect(matches(7, pattern)).toBe(true);
+    expect(matches(2, pattern)).toBe(false);
+    expect(matches(20, pattern)).toBe(false);
+  });
+
+  it.each([
+    { side: 'the existing delta', existing: [M.lte(10)], incoming: [] },
+    { side: 'the incoming delta', existing: [], incoming: [M.lte(10)] },
+  ])('carries a pattern held only by $side', ({ existing, incoming }) => {
+    const combined = conjoinDeltas({ read: existing }, { read: incoming });
+    const [pattern] = combined.read!;
+
+    expect(matches(7, pattern)).toBe(true);
+    expect(matches(20, pattern)).toBe(false);
+  });
+
+  it('leaves a position both deltas hole as unconstrained', () => {
+    const combined = conjoinDeltas(
+      { read: [undefined, M.lte(10)] },
+      { read: [undefined] },
+    );
+
+    expect(combined.read![0]).toBeUndefined();
   });
 });
