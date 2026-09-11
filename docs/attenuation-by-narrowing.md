@@ -324,9 +324,6 @@ narrowed while keeping them synchronous.
 
 ## The fs capability
 
-> **In progress:** the `fs` capability described in this section has not fully
-> landed.
-
 `@metamask/kernel-platforms` vends `fs` as an exo. This replaces the previous
 `node:fs` lookalike record of caveated functions; there is no compatibility
 shim, and `existsSync` is gone, which the promises-only forwarding requires in
