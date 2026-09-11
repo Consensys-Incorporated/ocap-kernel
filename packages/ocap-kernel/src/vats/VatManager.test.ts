@@ -58,6 +58,12 @@ describe('VatManager', () => {
   beforeEach(() => {
     vatHandles = [];
 
+    // Stateful rather than bare mocks, because the real `deleteVat` refuses a
+    // repeat: against one that shrugs, a caller retiring a vat twice passes
+    // here and throws in production.
+    const terminatedVats = new Set<VatId>();
+    const deletedVats = new Set<VatId>();
+
     mockPlatformServices = {
       launch: vi.fn().mockResolvedValue({
         end: vi.fn(),
@@ -82,8 +88,16 @@ describe('VatManager', () => {
         })(),
       ),
       getVatSubcluster: vi.fn().mockReturnValue('s1'),
-      markVatAsTerminated: vi.fn(),
-      deleteVat: vi.fn(),
+      markVatAsTerminated: vi.fn((vatId: VatId) => {
+        terminatedVats.add(vatId);
+      }),
+      isVatTerminated: vi.fn((vatId: VatId) => terminatedVats.has(vatId)),
+      deleteVat: vi.fn((vatId: VatId) => {
+        if (deletedVats.has(vatId)) {
+          throw new Error(`Vat "${vatId}" has no subcluster`);
+        }
+        deletedVats.add(vatId);
+      }),
       getPromisesByDecider: vi.fn().mockReturnValue([]),
       getRootObject: vi.fn().mockReturnValue('ko1'),
       pinObject: vi.fn(),
@@ -544,6 +558,23 @@ describe('VatManager', () => {
       expect(mockKernelStore.markVatAsTerminated).toHaveBeenCalledWith('v1');
     });
 
+    it('records it once for a vat retired twice', async () => {
+      await vatManager.runVat('v1', createMockVatConfig());
+      (
+        mockKernelStore.getPromisesByDecider as unknown as MockInstance
+      ).mockReturnValueOnce(['kp1']);
+
+      failStream(vatHandles[0] as VatHandle);
+      failStream(vatHandles[0] as VatHandle);
+
+      expect(recorded()).toStrictEqual({
+        rejectedItsPromises: 1,
+        unpinnedItsRoot: 1,
+        deletedItsRecords: 1,
+        marked: 1,
+      });
+    });
+
     it('rejects the delivery in flight when a vat`s stream fails under it', async () => {
       await vatManager.runVat('v1', createMockVatConfig());
 
@@ -681,6 +712,26 @@ describe('VatManager', () => {
       await expect(restarted).rejects.toThrow('worker died');
       // The caller heard about it; the crank did not.
       expect(await vatManager.performVatRestart('v1')).toBeUndefined();
+    });
+
+    it('records a relaunch failure once when the stream dies before the handle exists', async () => {
+      await vatManager.runVat('v1', createMockVatConfig());
+      (
+        mockKernelQueue.enqueueRestartVat as unknown as MockInstance
+      ).mockImplementation(() => undefined);
+      const restarted = vatManager.restartVat('v1');
+      makeVatHandleMock.mockImplementationOnce(
+        async ({ vatId, vatConfig, onCriticalFailure }) => {
+          const handle = createMockVatHandle(vatId, vatConfig);
+          onCriticalFailure(new Error('read error'), handle);
+          return handle;
+        },
+      );
+
+      expect(await vatManager.performVatRestart('v1')).toBeUndefined();
+
+      expect(mockKernelStore.deleteVat).toHaveBeenCalledTimes(1);
+      await expect(restarted).rejects.toThrow('read error');
     });
 
     it('rejects the promises a vat was deciding when its relaunch fails', async () => {
