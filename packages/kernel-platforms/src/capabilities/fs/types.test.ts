@@ -9,10 +9,6 @@ describe('fs types', () => {
     it.each([
       { name: 'minimal config with rootDir', config: { rootDir: '/root' } },
       {
-        name: 'config with rootDir and existsSync enabled',
-        config: { rootDir: '/root', existsSync: true },
-      },
-      {
         name: 'config with rootDir and promises.readFile enabled',
         config: { rootDir: '/root', promises: { readFile: true } },
       },
@@ -24,7 +20,6 @@ describe('fs types', () => {
         name: 'config with all operations enabled',
         config: {
           rootDir: '/root',
-          existsSync: true,
           promises: {
             readFile: true,
             access: true,
@@ -35,7 +30,6 @@ describe('fs types', () => {
         name: 'config with some operations disabled',
         config: {
           rootDir: '/root',
-          existsSync: false,
           promises: {
             readFile: true,
             access: false,
@@ -50,10 +44,6 @@ describe('fs types', () => {
     it.each([
       { name: 'config without rootDir', config: {} },
       { name: 'config with non-string rootDir', config: { rootDir: 123 } },
-      {
-        name: 'config with non-boolean existsSync',
-        config: { rootDir: '/root', existsSync: 'true' },
-      },
       {
         name: 'config with non-boolean promises.readFile',
         config: { rootDir: '/root', promises: { readFile: 'true' } },
@@ -77,15 +67,12 @@ describe('fs types', () => {
       const validated = fsConfigStruct.create(config);
 
       expect(validated.rootDir).toBe('/root');
-      // eslint-disable-next-line n/no-sync
-      expect(validated.existsSync).toBeUndefined();
       expect(validated.promises).toBeUndefined();
     });
 
     it('preserves boolean values', () => {
       const config: FsConfig = {
         rootDir: '/root',
-        existsSync: true,
         promises: {
           readFile: false,
           access: true,
@@ -94,8 +81,6 @@ describe('fs types', () => {
       const validated = fsConfigStruct.create(config);
 
       expect(validated.rootDir).toBe('/root');
-      // eslint-disable-next-line n/no-sync
-      expect(validated.existsSync).toBe(true);
       expect(validated.promises?.readFile).toBe(false);
       expect(validated.promises?.access).toBe(true);
     });

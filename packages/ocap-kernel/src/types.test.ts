@@ -135,7 +135,7 @@ describe('isVatConfig', () => {
         creationOptions: { foo: 'bar' },
         parameters: { baz: 123 },
         platformConfig: {
-          fs: { rootDir: '/tmp', existsSync: true },
+          fs: { rootDir: '/tmp', promises: { readFile: true } },
         },
       },
       expected: true,

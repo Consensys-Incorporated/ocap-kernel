@@ -5,7 +5,6 @@ const notImplemented = (name: string): never => {
 };
 
 export const { configStruct, capabilityFactory } = makeFsSpecification({
-  makeExistsSync: () => () => false,
   promises: {
     makeReadFile: () => notImplemented('readFile'),
     makeAccess: () => notImplemented('access'),
