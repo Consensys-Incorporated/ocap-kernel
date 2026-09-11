@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add `pathUnder(segments)`, which builds an `@endo/patterns` pattern matching segment arrays under a prefix, with `..` excluded past the prefix so that traversal out of it is unrepresentable. Empty `segments` matches every `..`-free segment array ([#1049](https://github.com/MetaMask/ocap-kernel/pull/1049))
+- Add `narrow({ name, base, delta })` and `join({ name, refs })`, plus the `NarrowingDelta`, `NarrowOptions`, and `JoinOptions` types, for deriving a capability that forwards to a base under a narrower interface guard. **Both functions throw for now** — this release fixes their signatures so callers and deltas can be written against them, and the implementations follow ([#1049](https://github.com/MetaMask/ocap-kernel/pull/1049))
 - Add `getInterfaceMethodGuards`, `getMethodPayload`, `getGuardAt`, `buildMethodGuard`, and `asyncifyMethodGuards`, plus the `MethodGuardPayload` type, for reading an `@endo/patterns` interface guard by argument position — required arguments, then optionals, then the rest guard — and reassembling it ([#1048](https://github.com/MetaMask/ocap-kernel/pull/1048))
 - Add `makeGuardedFetch` and the `FetchGuard` type, which wrap a `fetch` so that a guard runs before every request it makes, redirect hops included ([#1026](https://github.com/MetaMask/ocap-kernel/pull/1026))
   - `redirect: 'follow'`, in the caller's `init` or on a `Request`, is overridden so that each hop can be checked; `manual` and `error` are honoured. `baseFetch` is therefore always called with `redirect: 'manual'` and must honour it
