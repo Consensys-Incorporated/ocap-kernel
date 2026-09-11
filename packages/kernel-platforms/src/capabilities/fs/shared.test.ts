@@ -1,7 +1,15 @@
+import { GET_INTERFACE_GUARD } from '@endo/exo';
+import { getInterfaceGuardPayload, M } from '@endo/patterns';
+import type { MethodGuard } from '@endo/patterns';
 import { describe, expect, it, vi } from 'vitest';
 
 import { makeCaveatedFsOperation, makeFsSpecification } from './shared.ts';
-import type { ReadFile, Access, SyncPathCaveat } from './types.ts';
+import type {
+  ReadFile,
+  Access,
+  SyncPathCaveat,
+  FsCapability,
+} from './types.ts';
 
 describe('makeCaveatedFsOperation', () => {
   it('applies caveat before operation', async () => {
@@ -58,20 +66,36 @@ describe('makeFsSpecification', () => {
     const mockReadFile: ReadFile = vi.fn();
     const mockAccess: Access = vi.fn();
     const mockPathCaveat: SyncPathCaveat = vi.fn();
+    const makeReadFile = vi.fn(() => mockReadFile);
+    const makeAccess = vi.fn(() => mockAccess);
 
     return {
       specification: makeFsSpecification({
-        promises: {
-          makeReadFile: () => mockReadFile,
-          makeAccess: () => mockAccess,
-        },
+        makeReadFile,
+        makeAccess,
         makePathCaveat: () => mockPathCaveat,
       }),
       mockReadFile,
       mockAccess,
       mockPathCaveat,
+      makeReadFile,
+      makeAccess,
     };
   };
+
+  const methodGuards = (
+    capability: FsCapability,
+  ): Record<string, MethodGuard> =>
+    (
+      getInterfaceGuardPayload(
+        capability[GET_INTERFACE_GUARD](),
+      ) as unknown as {
+        methodGuards: Record<string, MethodGuard>;
+      }
+    ).methodGuards;
+
+  const guardedMethodNames = (capability: FsCapability): string[] =>
+    Object.keys(methodGuards(capability));
 
   it('creates specification with all capabilities enabled', () => {
     const { specification } = createMockSpecification();
@@ -80,47 +104,96 @@ describe('makeFsSpecification', () => {
     expect(specification).toHaveProperty('capabilityFactory');
   });
 
-  it('creates capability with promises.readFile', () => {
+  it.each([
+    { methods: ['readFile'] as const },
+    { methods: ['access'] as const },
+    { methods: ['readFile', 'access'] as const },
+    { methods: [] as const },
+  ])('exposes exactly the methods named by $methods', ({ methods }) => {
     const { specification } = createMockSpecification();
-    const config = { rootDir: '/root', promises: { readFile: true } };
-    const capability = specification.capabilityFactory(config);
-
-    expect(capability).toHaveProperty('promises');
-    expect(capability.promises).toHaveProperty('readFile');
-    expect(capability.promises).not.toHaveProperty('access');
-  });
-
-  it('creates capability with promises.access', () => {
-    const { specification } = createMockSpecification();
-    const config = { rootDir: '/root', promises: { access: true } };
-    const capability = specification.capabilityFactory(config);
-
-    expect(capability).toHaveProperty('promises');
-    expect(capability.promises).not.toHaveProperty('readFile');
-    expect(capability.promises).toHaveProperty('access');
-  });
-
-  it('creates capability with all operations', () => {
-    const { specification } = createMockSpecification();
-    const config = {
+    const capability = specification.capabilityFactory({
       rootDir: '/root',
-      promises: {
-        readFile: true,
-        access: true,
-      },
-    };
-    const capability = specification.capabilityFactory(config);
+      methods: [...methods],
+    });
 
-    expect(capability).toHaveProperty('promises');
-    expect(capability.promises).toHaveProperty('readFile');
-    expect(capability.promises).toHaveProperty('access');
+    expect(guardedMethodNames(capability).sort()).toStrictEqual(
+      [...methods].sort(),
+    );
   });
 
-  it('creates capability with no operations', () => {
+  it('exposes no methods when the config omits the method list', () => {
     const { specification } = createMockSpecification();
-    const config = { rootDir: '/root' };
-    const capability = specification.capabilityFactory(config);
+    const capability = specification.capabilityFactory({ rootDir: '/root' });
 
-    expect(capability).not.toHaveProperty('promises');
+    expect(guardedMethodNames(capability)).toStrictEqual([]);
+  });
+
+  it('does not build an operation the config omits', () => {
+    const { specification, makeReadFile, makeAccess } =
+      createMockSpecification();
+    specification.capabilityFactory({
+      rootDir: '/root',
+      methods: ['readFile'],
+    });
+
+    expect(makeReadFile).toHaveBeenCalledOnce();
+    expect(makeAccess).not.toHaveBeenCalled();
+  });
+
+  it('forwards a readFile call through the caveat', async () => {
+    const { specification, mockReadFile, mockPathCaveat } =
+      createMockSpecification();
+    vi.mocked(mockReadFile).mockResolvedValue('contents' as never);
+    const capability = specification.capabilityFactory({
+      rootDir: '/root',
+      methods: ['readFile'],
+    });
+
+    expect(await capability.readFile?.('/root/file.txt')).toBe('contents');
+    expect(mockPathCaveat).toHaveBeenCalledWith('/root/file.txt');
+    expect(mockReadFile).toHaveBeenCalledWith('/root/file.txt');
+  });
+
+  // Asserted by the operation not being reached rather than by the rejection
+  // value: `mock-endoify` stubs out `assert`, so a guard violation rejects with
+  // `undefined` and `rejects.toThrow()` would pass vacuously.
+  it('does not forward a readFile path that is not a string', async () => {
+    const { specification, mockReadFile, mockPathCaveat } =
+      createMockSpecification();
+    const capability = specification.capabilityFactory({
+      rootDir: '/root',
+      methods: ['readFile'],
+    });
+
+    await capability.readFile?.(42 as unknown as string).catch(() => undefined);
+
+    expect(mockReadFile).not.toHaveBeenCalled();
+    expect(mockPathCaveat).not.toHaveBeenCalled();
+  });
+
+  it('does not forward an access mode that is not a number', async () => {
+    const { specification, mockAccess } = createMockSpecification();
+    const capability = specification.capabilityFactory({
+      rootDir: '/root',
+      methods: ['access'],
+    });
+
+    await capability
+      .access?.('/root/file.txt', 'r' as unknown as number)
+      .catch(() => undefined);
+
+    expect(mockAccess).not.toHaveBeenCalled();
+  });
+
+  it('guards a readFile path as a string', () => {
+    const { specification } = createMockSpecification();
+    const capability = specification.capabilityFactory({
+      rootDir: '/root',
+      methods: ['readFile'],
+    });
+
+    expect(methodGuards(capability).readFile).toStrictEqual(
+      M.callWhen(M.string()).optional(M.any()).returns(M.any()),
+    );
   });
 });

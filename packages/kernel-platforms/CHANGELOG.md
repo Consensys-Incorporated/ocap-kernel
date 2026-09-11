@@ -9,8 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **BREAKING:** Make the `fs` capability promises-only ([#1055](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1055))
-  - `existsSync` and its config flag are gone, along with every other synchronous operation. A narrowed method forwards through `E()`, so nothing synchronous can survive narrowing.
+- **BREAKING:** Vend the `fs` capability as an exo, replacing the `node:fs` lookalike record of functions ([#1055](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1055), [#1056](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1056))
+  - Call it as `await E(fs).readFile('/srv/data/x')`. Methods share one flat namespace, so `promises.readFile` is now `readFile`.
+  - `existsSync` and every other synchronous operation are gone. A narrowed method forwards through `E()`, so nothing synchronous can survive narrowing.
+  - Config lists methods as `methods: ['readFile']`, replacing `promises: { readFile: true }`.
+  - A trailing argument must now be Passable, so `readFile(path, { signal })` is rejected where the bare `node:fs` function accepted it.
 
 ### Removed
 
