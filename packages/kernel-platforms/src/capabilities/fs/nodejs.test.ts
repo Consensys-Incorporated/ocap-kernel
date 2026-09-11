@@ -2,8 +2,8 @@ import { lstatSync, Stats } from 'node:fs';
 import fs from 'node:fs/promises';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
-import { capabilityFactory } from './nodejs.ts';
-import type { FsConfig } from './types.ts';
+import { makeNoSymlinksCaveat, toPath } from './nodejs.ts';
+import { makeFsBase } from './shared.ts';
 
 /* eslint-disable n/no-sync */
 
@@ -37,19 +37,21 @@ describe('fs nodejs capability', () => {
     createMockLstatSync(false);
   });
 
-  describe('capabilityFactory', () => {
+  describe('fs base', () => {
     describe.each([
       {
         operation: 'readFile',
         mockFn: fs.readFile,
         mockReturn: 'file content',
-        additionalArg: { encoding: 'utf8' },
-        additionalMockReturn: Buffer.from('file content'),
+        requiredArgs: ['utf8'],
+        additionalArg: 'utf8',
+        additionalMockReturn: 'file content',
       },
       {
         operation: 'access',
         mockFn: fs.access,
         mockReturn: undefined,
+        requiredArgs: [] as unknown[],
         additionalArg: 0o644,
         additionalMockReturn: undefined,
       },
@@ -59,43 +61,46 @@ describe('fs nodejs capability', () => {
         operation,
         mockFn,
         mockReturn,
+        requiredArgs,
         additionalArg,
         additionalMockReturn,
       }) => {
         type TestCapability = Record<string, CallableFunction>;
 
-        const makeCapability = (): TestCapability => {
-          const config: FsConfig = {
-            root: ['root'],
-            methods: [operation],
-          };
-          return capabilityFactory(config) as unknown as TestCapability;
-        };
+        // Built from the module's own `toPath` and symlink caveat. The
+        // configured capability narrows this base, and `narrow` forwards over
+        // `E()`, which cannot run under `mock-endoify` — see `shared.test.ts`.
+        const makeCapability = (): TestCapability =>
+          makeFsBase({
+            makeReadFile: () => fs.readFile,
+            makeAccess: () => fs.access,
+            makePathCaveat: makeNoSymlinksCaveat,
+            toPath,
+          }) as unknown as TestCapability;
 
         it('joins segments into a path for the underlying operation', async () => {
           vi.mocked(mockFn).mockResolvedValue(mockReturn as never);
 
-          const result = await makeCapability()[operation]?.([
-            'root',
-            'file.txt',
-          ]);
+          const result = await makeCapability()[operation]?.(
+            ['root', 'file.txt'],
+            ...requiredArgs,
+          );
 
-          expect(mockFn).toHaveBeenCalledWith('/root/file.txt');
+          expect(mockFn).toHaveBeenCalledWith(
+            '/root/file.txt',
+            ...requiredArgs,
+          );
           expect(result).toBe(mockReturn);
-        });
-
-        it('throws error for a path outside the root', async () => {
-          await expect(
-            makeCapability()[operation]?.(['outside', 'file.txt']),
-          ).rejects.toThrow('is outside allowed root');
-          expect(mockFn).not.toHaveBeenCalled();
         });
 
         it('throws error for a symlink', async () => {
           createMockLstatSync(true);
 
           await expect(
-            makeCapability()[operation]?.(['root', 'file.txt']),
+            makeCapability()[operation]?.(
+              ['root', 'file.txt'],
+              ...requiredArgs,
+            ),
           ).rejects.toThrow('Symlinks are prohibited: /root/file.txt');
           expect(mockFn).not.toHaveBeenCalled();
         });
@@ -104,9 +109,9 @@ describe('fs nodejs capability', () => {
           { name: 'parent segments', segments: ['root', '..', '..', 'etc'] },
           { name: 'an embedded traversal', segments: ['root', '../../etc'] },
         ])('throws error for $name', async ({ segments }) => {
-          await expect(makeCapability()[operation]?.(segments)).rejects.toThrow(
-            'contains an invalid segment',
-          );
+          await expect(
+            makeCapability()[operation]?.(segments, ...requiredArgs),
+          ).rejects.toThrow('contains an invalid segment');
           expect(mockFn).not.toHaveBeenCalled();
         });
 

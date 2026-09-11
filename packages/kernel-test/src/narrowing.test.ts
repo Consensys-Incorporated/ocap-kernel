@@ -10,10 +10,9 @@ import { describe, expect, it } from 'vitest';
 import { getBundleSpec, makeKernel, makeTestLogger } from './utils.ts';
 
 /**
- * Every case here is marked `it.fails`, which inverts the verdict: the case is
- * green while it fails and turns red once it passes. It ratchets work that lands
- * across several pull requests, and the comment on each case names the one that
- * removes its marker.
+ * The cases still marked `it.fails` await `join` and default-guarded narrowing.
+ * The marker inverts the verdict: such a case is green while it fails and turns
+ * red once it passes, which ratchets work landing across several pull requests.
  *
  * A green `.fails` proves nothing. It passes if the case fails for any reason at
  * all — a typo, an unrelated throw, a vat that never launched — so what it buys
@@ -42,9 +41,6 @@ const launchNarrowingVat = async (
     parameters: {},
   };
   if (platformConfig) {
-    // The fs cases configure `fs` in shapes `PlatformConfig` does not describe
-    // yet. The cast is what keeps this file typechecking while they are pending,
-    // since `it.fails` cannot absorb a `tsc` failure.
     vat.platformConfig = platformConfig as NonNullable<
       VatConfig['platformConfig']
     >;
@@ -134,19 +130,15 @@ describe('narrowing', () => {
     ).toBe('ok:loose:srv/data/x');
   });
 
-  // Unmarks at PR-9c. The config here is in today's shape, so the vat launches
-  // and the case fails on `fs` having no `readFile` method; 9c changes both the
-  // capability and this config.
-  it.fails('receives fs as an exo', async () => {
-    const { dir, file, size } = await makeTempTree();
+  it('receives fs as an exo', async () => {
+    const { root, file, size } = await makeTempTree();
     const kernel = await launchNarrowingVat({
-      fs: { rootDir: dir, promises: { readFile: true } },
+      fs: { root, methods: ['readFile'] },
     });
     expect(await probe(kernel, 'probeFs', [file])).toBe(`ok:${size}`);
   });
 
-  // Unmarks at PR-10.
-  it.fails('scopes fs by config', async () => {
+  it('scopes fs by config', async () => {
     const { root, file, size } = await makeTempTree();
     const kernel = await launchNarrowingVat({
       fs: { root, methods: ['readFile'] },
@@ -157,8 +149,20 @@ describe('narrowing', () => {
     );
   });
 
-  // Unmarks at PR-10.
-  it.fails('narrows the config-scoped fs further', async () => {
+  // `pathUnder` matches the root's positions and cannot see inside a segment,
+  // so this satisfies the config's pattern and is refused by the capability's
+  // own well-formedness check, which the narrowing inherits by forwarding.
+  it('rejects a separator inside a segment the config pattern admits', async () => {
+    const { root } = await makeTempTree();
+    const kernel = await launchNarrowingVat({
+      fs: { root, methods: ['readFile'] },
+    });
+    expect(
+      await probe(kernel, 'probeFs', [[...root, 'x/../../etc/passwd']]),
+    ).toMatch(/^rejected:.*invalid segment/u);
+  });
+
+  it('narrows the config-scoped fs further', async () => {
     const { root, inner, file, sibling, size } = await makeTempTree();
     const kernel = await launchNarrowingVat({
       fs: { root, methods: ['readFile'] },

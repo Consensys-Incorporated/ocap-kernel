@@ -10,10 +10,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **BREAKING:** Vend the `fs` capability as an exo taking absolute path segments, replacing the `node:fs` lookalike record of functions ([#1057](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1057))
-  - Call it as `await E(fs).readFile(['srv', 'data', 'x'])`. Methods share one flat namespace, so `promises.readFile` is now `readFile`, and a segment may not be empty, `.`, `..`, or contain a path separator.
+
+  - Call it as `await E(fs).readFile(['srv', 'data', 'x'], 'utf8')`. Methods share one flat namespace, so `promises.readFile` is now `readFile`, and a segment may not be empty, `.`, `..`, or contain a path separator.
+  - `readFile` requires an encoding and resolves a string. Without one Node resolves a `Buffer`, and no typed array can cross an exo boundary, so reading raw bytes is not available.
   - `existsSync` and every other synchronous operation are gone. A narrowed method forwards through `E()`, so nothing synchronous can survive narrowing.
   - Config is `{ root: ['srv', 'data'], methods: ['readFile'] }`, replacing `{ rootDir, promises: { readFile } }`. An empty `root` is rejected rather than denoting the whole filesystem, and a platform prefix is a leading segment, so a Windows drive is `['C:', 'srv']`.
-  - A trailing argument must now be Passable, so `readFile(path, { signal })` is rejected where the bare `node:fs` function accepted it.
+  - Every argument must be Passable, so an options record carrying an `AbortSignal` is rejected where the bare `node:fs` function accepted it.
+  - The capability factory is now async.
+
+- Enforce the `fs` config's `root` and method set with a narrowing rather than a hand-rolled caveat, so a holder that narrows the capability further composes with the configured bound instead of stacking a second mechanism on it ([#1058](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1058))
 
 ### Removed
 

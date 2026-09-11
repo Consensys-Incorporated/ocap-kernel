@@ -29,13 +29,17 @@ export const fsConfigStruct = object({
   methods: exactOptional(array(enums(fsMethodNames))),
 });
 
+// Aliased so that declaration emit has a name for it; the structural type
+// resolves into a hoisted `@metamask/superstruct` and is not portable.
+export type FsConfigStruct = typeof fsConfigStruct;
+
 export type FsConfig = Infer<typeof fsConfigStruct>;
 
 export type FsMethods = {
   readFile: (
     segments: PathSegments,
-    options?: Parameters<ReadFile>[1],
-  ) => ReturnType<ReadFile>;
+    encoding: BufferEncoding,
+  ) => Promise<string>;
   access: (
     segments: PathSegments,
     mode?: Parameters<Access>[1],

@@ -104,6 +104,7 @@
   "dependencies": {
     "@endo/exo": "^1.5.12",
     "@endo/patterns": "^1.7.0",
+    "@metamask/kernel-utils": "workspace:^",
     "@metamask/superstruct": "^3.2.1",
     "ses": "^1.14.0"
   },
