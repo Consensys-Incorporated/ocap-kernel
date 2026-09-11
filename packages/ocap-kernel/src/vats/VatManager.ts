@@ -449,6 +449,13 @@ export class VatManager {
    * live vat as a dead one. In a crank of its own there is no window: the run
    * loop is the only thing that delivers, and it is here instead.
    *
+   * One request per vat is queued at a time. A second while the first is still
+   * waiting takes over its item rather than adding one of its own: the item
+   * carries only the vat's ID, so two of them are two restarts, and the crank
+   * that ran the first would already have handed this caller a live handle. The
+   * leftover would then stop that worker and — if the relaunch failed —
+   * terminate the vat its caller was told about.
+   *
    * @param vatId - The ID of the vat.
    * @returns A promise for the restarted vat.
    */
@@ -456,16 +463,22 @@ export class VatManager {
     // Rejects an unknown vat here rather than from inside a crank, where the
     // caller could only be told by way of a dead run loop.
     this.getVat(vatId);
+    // Read before `#awaitRestart` replaces the waiter: an unconsumed waiter is
+    // how an item still queued for this vat makes itself known, since
+    // `performVatRestart` takes the waiter the moment it starts.
+    const alreadyQueued = this.#restartWaiters.has(vatId);
     const restarted = this.#awaitRestart(vatId);
-    try {
-      this.#kernelQueue.enqueueRestartVat(vatId);
-    } catch (error) {
-      // Nothing was queued, so nothing will ever settle the waiter just
-      // registered. Take it back out: left behind, the next request for this vat
-      // would reject it as superseded, and since this caller never got as far as
-      // awaiting it that rejection would go unhandled.
-      this.#restartWaiters.delete(vatId);
-      throw error;
+    if (!alreadyQueued) {
+      try {
+        this.#kernelQueue.enqueueRestartVat(vatId);
+      } catch (error) {
+        // Nothing was queued, so nothing will ever settle the waiter just
+        // registered. Take it back out: left behind, the next request for this
+        // vat would reject it as superseded, and since this caller never got as
+        // far as awaiting it that rejection would go unhandled.
+        this.#restartWaiters.delete(vatId);
+        throw error;
+      }
     }
     await restarted;
     return this.getVat(vatId);
