@@ -323,17 +323,31 @@ export class VatManager {
    * that is gone or going, and a store that says so is worth more than a store
    * still waiting to find out.
    *
+   * Calling it twice records nothing the second time. Two of the writes cannot
+   * be repeated: `deleteVat` fails on a vat whose subcluster mapping the first
+   * call removed, and a second `releaseVatRootPin` would unpin a root this vat
+   * no longer holds.
+   *
    * @param vatId - The vat being retired.
    * @param error - Why, for the rejections its subscribers are owed.
    */
   #retireVat(vatId: VatId, error: Error): void {
+    // Ahead of the guard, and safe there because nothing below reads it: a vat
+    // the store already calls dead must not keep a handle the router would go
+    // on resolving.
+    this.#vats.delete(vatId);
+    // Reached from `performVatRestart` when the relaunch breaks the stream:
+    // `onCriticalFailure` retires the vat and `runVat` rethrows into the catch
+    // that retires it again.
+    if (this.#kernelStore.isVatTerminated(vatId)) {
+      return;
+    }
     const failure = makeKernelError('VAT_TERMINATED', error.message);
     // First, while the c-list this reads through is still there: subscribers are
     // told rather than left waiting on a decider that no longer exists.
     for (const kpid of this.#kernelStore.getPromisesByDecider(vatId)) {
       this.#kernelQueue.resolvePromises(vatId, [[kpid, true, failure]]);
     }
-    this.#vats.delete(vatId);
     // Before `deleteVat`, which is fine either way, but the root is found
     // through the c-list and this keeps the reads ahead of the deletes.
     this.releaseVatRootPin(vatId);
