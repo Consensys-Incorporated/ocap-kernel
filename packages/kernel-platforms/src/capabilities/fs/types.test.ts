@@ -9,32 +9,16 @@ describe('fs types', () => {
     it.each([
       { name: 'minimal config with rootDir', config: { rootDir: '/root' } },
       {
-        name: 'config with rootDir and promises.readFile enabled',
-        config: { rootDir: '/root', promises: { readFile: true } },
+        name: 'config with one method',
+        config: { rootDir: '/root', methods: ['readFile'] },
       },
       {
-        name: 'config with rootDir and promises.access enabled',
-        config: { rootDir: '/root', promises: { access: true } },
+        name: 'config with every method',
+        config: { rootDir: '/root', methods: ['readFile', 'access'] },
       },
       {
-        name: 'config with all operations enabled',
-        config: {
-          rootDir: '/root',
-          promises: {
-            readFile: true,
-            access: true,
-          },
-        },
-      },
-      {
-        name: 'config with some operations disabled',
-        config: {
-          rootDir: '/root',
-          promises: {
-            readFile: true,
-            access: false,
-          },
-        },
+        name: 'config with an empty method list',
+        config: { rootDir: '/root', methods: [] },
       },
       { name: 'config with empty string rootDir', config: { rootDir: '' } },
     ])('validates $name', ({ config }) => {
@@ -45,12 +29,12 @@ describe('fs types', () => {
       { name: 'config without rootDir', config: {} },
       { name: 'config with non-string rootDir', config: { rootDir: 123 } },
       {
-        name: 'config with non-boolean promises.readFile',
-        config: { rootDir: '/root', promises: { readFile: 'true' } },
+        name: 'config with an unknown method',
+        config: { rootDir: '/root', methods: ['writeFile'] },
       },
       {
-        name: 'config with non-boolean promises.access',
-        config: { rootDir: '/root', promises: { access: 'true' } },
+        name: 'config with a non-array methods',
+        config: { rootDir: '/root', methods: 'readFile' },
       },
       {
         name: 'config with additional properties',
@@ -66,23 +50,17 @@ describe('fs types', () => {
       const config: FsConfig = { rootDir: '/root' };
       const validated = fsConfigStruct.create(config);
 
-      expect(validated.rootDir).toBe('/root');
-      expect(validated.promises).toBeUndefined();
+      expect(validated).toStrictEqual({ rootDir: '/root' });
     });
 
-    it('preserves boolean values', () => {
-      const config: FsConfig = {
-        rootDir: '/root',
-        promises: {
-          readFile: false,
-          access: true,
-        },
-      };
+    it('preserves the method list', () => {
+      const config: FsConfig = { rootDir: '/root', methods: ['readFile'] };
       const validated = fsConfigStruct.create(config);
 
-      expect(validated.rootDir).toBe('/root');
-      expect(validated.promises?.readFile).toBe(false);
-      expect(validated.promises?.access).toBe(true);
+      expect(validated).toStrictEqual({
+        rootDir: '/root',
+        methods: ['readFile'],
+      });
     });
   });
 });
