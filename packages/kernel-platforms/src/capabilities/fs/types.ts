@@ -1,6 +1,6 @@
 import { exactOptional, object, string, boolean } from '@metamask/superstruct';
 import type { Infer } from '@metamask/superstruct';
-import type { PathLike, existsSync } from 'node:fs';
+import type { PathLike } from 'node:fs';
 import type { readFile, access } from 'node:fs/promises';
 
 export type { PathLike };
@@ -12,11 +12,9 @@ export type SyncPathCaveat = (path: PathLike) => void;
 
 export type ReadFile = typeof readFile;
 export type Access = typeof access;
-export type ExistsSync = typeof existsSync;
 
 export const fsConfigStruct = object({
   rootDir: string(),
-  existsSync: exactOptional(boolean()),
   promises: exactOptional(
     object({
       readFile: exactOptional(boolean()),
@@ -26,7 +24,6 @@ export const fsConfigStruct = object({
 });
 
 export type FsCapability = Partial<{
-  existsSync: ExistsSync;
   promises: Partial<{
     readFile: ReadFile;
     access: Access;
