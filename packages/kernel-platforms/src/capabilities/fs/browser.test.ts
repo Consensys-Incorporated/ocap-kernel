@@ -5,14 +5,6 @@ import type { FsConfig } from './types.ts';
 
 describe('fs browser capability', () => {
   describe('capabilityFactory', () => {
-    it('existsSync returns false', () => {
-      const config: FsConfig = { rootDir: '/root', existsSync: true };
-      const capability = capabilityFactory(config);
-
-      // eslint-disable-next-line n/no-sync
-      expect(capability.existsSync?.('/path')).toBe(false);
-    });
-
     it.each([
       {
         name: 'promises.readFile',
@@ -26,7 +18,6 @@ describe('fs browser capability', () => {
         name: 'all operations',
         config: {
           rootDir: '/root',
-          existsSync: true,
           promises: {
             readFile: true,
             access: true,
@@ -43,7 +34,6 @@ describe('fs browser capability', () => {
       const config: FsConfig = { rootDir: '/root' };
       const capability = capabilityFactory(config);
 
-      expect(capability).not.toHaveProperty('existsSync');
       expect(capability).not.toHaveProperty('promises');
     });
   });

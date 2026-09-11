@@ -1,4 +1,4 @@
-import { existsSync, lstatSync } from 'node:fs';
+import { lstatSync } from 'node:fs';
 import fs from 'node:fs/promises';
 import { relative } from 'node:path';
 
@@ -54,7 +54,6 @@ const makeNodejsPathCaveat = (rootDir: string): SyncPathCaveat => {
 };
 
 export const { configStruct, capabilityFactory } = makeFsSpecification({
-  makeExistsSync: () => existsSync,
   promises: {
     makeReadFile: () => fs.readFile,
     makeAccess: () => fs.access,
