@@ -154,6 +154,7 @@ describe('kernel store', () => {
         'markVatAsTerminated',
         'nextReapAction',
         'nextTerminatedVatCleanup',
+        'orphanKernelObject',
         'outOfCrankWorkPending',
         'pinObject',
         'provideIncarnationId',

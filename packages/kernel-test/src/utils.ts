@@ -42,6 +42,18 @@ afterEach(assertRunLoopAlive);
 afterAll(assertRunLoopAlive);
 
 /**
+ * Claim a run loop death the running test caused on purpose, so the hooks above
+ * do not report it as the test's own failure.
+ *
+ * @returns The failure, if the loop has died since the last check.
+ */
+export function takeRunLoopFailure(): Error | undefined {
+  const failure = runLoopFailure;
+  runLoopFailure = undefined;
+  return failure;
+}
+
+/**
  * Kernel options under which reference count drift fails the test run.
  *
  * Drift is invisible to ordinary assertions until something gets collected out

@@ -78,11 +78,26 @@ export function performExportCleanup(
         `endpoint ${endpointId} issued invalid ${action}Exports for ${kref}`,
       );
     }
+    // Only an owner may give up an object. Nothing upstream of here checks that
+    // the vref is even an export — `translateSyscallVtoK` maps import and
+    // export directions alike — so without this a vat could disown an object
+    // belonging to a different, live vat. An already-orphaned object is fine:
+    // there is no claim left to erase.
+    const owner = kernelStore.getOwner(kref);
+    if (owner !== undefined && owner !== endpointId) {
+      throw Error(
+        `endpoint ${endpointId} issued ${action}Exports for ${kref}, which is owned by ${owner}`,
+      );
+    }
     if (checkReachable) {
       if (kernelStore.getReachableFlag(endpointId, kref)) {
         throw Error(`${action}Exports but ${kref} is still reachable`);
       }
     }
     kernelStore.forgetKref(endpointId, kref);
+    // The owner no longer names the object, so nothing can reach it through
+    // this endpoint again. Drop the owner mapping too, or the kernel's record
+    // of the object outlives the only c-list entry it was reachable through.
+    kernelStore.orphanKernelObject(kref, endpointId);
   }
 }
