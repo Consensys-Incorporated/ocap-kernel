@@ -64,8 +64,6 @@ another — rather than by anticipation.
 
 ## The library
 
-> **In progress:** the library described in this section has not fully landed.
-
 Exported from `@metamask/kernel-utils`:
 
 ```ts

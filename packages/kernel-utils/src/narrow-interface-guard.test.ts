@@ -132,13 +132,57 @@ describe('narrowInterfaceGuard', () => {
       message: 'the base has arity 1 and no rest guard',
     },
     {
-      scenario: 'narrows a method the base guards by default',
-      makeGuard: () => M.interface('Any', {}, { defaultGuards: 'passable' }),
+      scenario: 'narrows a method the base guards with raw defaults',
+      makeGuard: () => M.interface('Raw', {}, { defaultGuards: 'raw' }),
       delta: { read: [M.eq('a')] },
       message: 'there is no guard to conjoin onto',
     },
   ])('rejects a delta that $scenario', ({ makeGuard, delta, message }) => {
     expect(() => narrowFrom(makeGuard(), delta)).toThrow(message);
+  });
+});
+
+describe('narrowInterfaceGuard, against a default-guarded base', () => {
+  const makePassableGuard = (): InterfaceGuard =>
+    M.interface('Any', {}, { defaultGuards: 'passable' });
+
+  it('synthesizes a guard from the delta alone', () => {
+    const result = narrowFrom(makePassableGuard(), { read: [M.eq('a')] });
+    const { argGuards, restArgGuard } = payloadOf(result, 'read');
+
+    expect(matches('a', argGuards[0])).toBe(true);
+    expect(matches('b', argGuards[0])).toBe(false);
+    expect(matches('anything', restArgGuard)).toBe(true);
+  });
+
+  it('leaves a method unconstrained when its delta is empty', () => {
+    const result = narrowFrom(makePassableGuard(), { read: [] });
+    const { argGuards, optionalArgGuards, restArgGuard } = payloadOf(
+      result,
+      'read',
+    );
+
+    expect(argGuards).toStrictEqual([]);
+    expect(optionalArgGuards ?? []).toStrictEqual([]);
+    expect(matches('anything', restArgGuard)).toBe(true);
+    expect(matches(42, restArgGuard)).toBe(true);
+  });
+
+  it('treats a hole as unconstrained', () => {
+    const result = narrowFrom(makePassableGuard(), {
+      read: [undefined, M.eq('x')],
+    });
+    const { argGuards } = payloadOf(result, 'read');
+
+    expect(matches(42, argGuards[0])).toBe(true);
+    expect(matches('x', argGuards[1])).toBe(true);
+    expect(matches('y', argGuards[1])).toBe(false);
+  });
+
+  it('still drops methods the delta does not name', () => {
+    const result = narrowFrom(makePassableGuard(), {});
+
+    expect(getInterfaceMethodGuards(result)).toStrictEqual({});
   });
 });
 
