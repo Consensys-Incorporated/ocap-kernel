@@ -28,11 +28,9 @@ export type Database = SqliteDatabase & {
 async function initDB(dbFilename: string, logger?: Logger): Promise<Database> {
   const dbPath = await getDBFilename(dbFilename);
   logger?.debug('dbPath:', dbPath);
-  const db = new Sqlite(dbPath, {
-    verbose: (logger ? logger.info.bind(logger) : undefined) as
-      | ((...args: unknown[]) => void)
-      | undefined,
-  }) as Database;
+  // No `verbose`: it fires on every statement with values inlined, and kernel
+  // store rows carry vat state and c-list entries.
+  const db = new Sqlite(dbPath) as Database;
   db._spStack = [];
   return db;
 }
@@ -159,9 +157,7 @@ export async function makeSQLKernelDatabase({
   const sqlCommitTransaction = db.prepare(SQL_QUERIES.COMMIT_TRANSACTION);
   const sqlAbortTransaction = db.prepare(SQL_QUERIES.ABORT_TRANSACTION);
 
-  // Set when an abort meant to discard a transaction fails. Reading
-  // `db.inTransaction` keeps this driver from wedging a flag the way a cached
-  // one can, but it cannot end a transaction nothing owns: the writes of the
+  // Set when an abort meant to discard a transaction fails. The writes of the
   // crank we gave up on are still in it, and a savepoint taken inside it would
   // be released into it.
   let txAbandoned = false;

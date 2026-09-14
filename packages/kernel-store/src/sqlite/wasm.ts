@@ -1,5 +1,8 @@
 import { Logger } from '@metamask/logger';
-import type { Database as SqliteDatabase } from '@sqlite.org/sqlite-wasm';
+import type {
+  Database as SqliteDatabase,
+  Sqlite3Static,
+} from '@sqlite.org/sqlite-wasm';
 import sqlite3InitModule from '@sqlite.org/sqlite-wasm';
 
 import {
@@ -11,10 +14,21 @@ import { getDBFolder } from './env.ts';
 import type { KVStore, VatStore, KernelDatabase } from '../types.ts';
 
 export type Database = SqliteDatabase & {
-  _inTx: boolean;
+  /**
+   * Whether SQLite holds a transaction on this connection, as SQLite reports
+   * it. A cached answer goes stale: SQLite rolls a transaction back on its own
+   * after SQLITE_FULL, SQLITE_IOERR or SQLITE_BUSY, and a driver that trusted
+   * its own bookkeeping would issue a ROLLBACK there, read the resulting
+   * "cannot rollback - no transaction is active" as a transaction it could not
+   * end, and refuse every later write on a healthy database.
+   */
+  readonly inTransaction: boolean;
   // stack of active savepoint names
   _spStack: string[];
 };
+
+/** `sqlite3_get_autocommit` is bound by the wasm build but absent from its types. */
+type AutocommitCapi = { sqlite3_get_autocommit: (pDb: number) => number };
 
 /**
  * Ensure that SQLite is initialized.
@@ -40,8 +54,15 @@ export async function initDB(
     db = new sqlite3.oo1.DB(`:memory:`, 'cw');
   }
 
+  const { sqlite3_get_autocommit: getAutocommit } =
+    sqlite3.capi as Sqlite3Static['capi'] & AutocommitCapi;
+
   const dbWithTx = db as Database;
-  dbWithTx._inTx = false;
+  Object.defineProperty(dbWithTx, 'inTransaction', {
+    configurable: true,
+    get: () =>
+      dbWithTx.pointer !== undefined && getAutocommit(dbWithTx.pointer) === 0,
+  });
   dbWithTx._spStack = [];
 
   return dbWithTx;
@@ -194,12 +215,9 @@ export async function makeSQLKernelDatabase({
   const sqlCommitTransaction = db.prepare(SQL_QUERIES.COMMIT_TRANSACTION);
   const sqlAbortTransaction = db.prepare(SQL_QUERIES.ABORT_TRANSACTION);
 
-  // Set when an abort meant to discard a transaction fails, which leaves SQLite
-  // holding one `_inTx` no longer accounts for: nothing will try to end it
-  // again, and a savepoint taken inside it would be released into it. The
-  // nodejs driver reads `db.inTransaction` instead of caching it and so cannot
-  // wedge the flag, but it has the same unowned-transaction gap; both drivers
-  // close it the same way.
+  // Set when an abort meant to discard a transaction fails. The writes of the
+  // crank we gave up on are still in it, and a savepoint taken inside it would
+  // be released into it.
   let txAbandoned = false;
 
   /**
@@ -209,12 +227,11 @@ export async function makeSQLKernelDatabase({
    */
   function beginIfNeeded(): boolean {
     assertNotAbandoned();
-    if (db._inTx) {
+    if (db.inTransaction) {
       return false;
     }
     sqlBeginTransaction.step();
     sqlBeginTransaction.reset();
-    db._inTx = true;
     return true;
   }
 
@@ -223,10 +240,6 @@ export async function makeSQLKernelDatabase({
    * created inside one is released into it, committing the crank that abort was
    * discarding, and a COMMIT makes those writes durable outright. Retried once
    * first, since the failure may have been transient.
-   *
-   * Checked before `_inTx` rather than after: `abortTransaction` clears the flag
-   * on its way to failing, so the abandoned transaction is exactly the one
-   * `_inTx` no longer admits to.
    *
    * @throws If the transaction is still there afterwards, because reporting
    * that this connection can no longer persist anything is the only honest
@@ -249,11 +262,9 @@ export async function makeSQLKernelDatabase({
    */
   function commitIfNeeded(): void {
     assertNotAbandoned();
-    if (!db._inTx || db._spStack.length > 0) {
+    if (!db.inTransaction || db._spStack.length > 0) {
       return;
     }
-    // Cleared first, for the reason `rollbackIfNeeded` gives.
-    db._inTx = false;
     try {
       sqlCommitTransaction.step();
       sqlCommitTransaction.reset();
@@ -266,15 +277,13 @@ export async function makeSQLKernelDatabase({
   }
 
   /**
-   * Abort the transaction, whatever `_inTx` currently says — the callers that
-   * most need this have already cleared it.
+   * Rollback a transaction
    */
-  function abortTransaction(): void {
-    // Cleared before the abort, which can throw: left true, `beginIfNeeded` is
-    // a no-op forever after and writes autocommit one statement at a time (see
-    // `createSavepoint`).
-    db._inTx = false;
-    db._spStack.length = 0;
+  function rollbackIfNeeded(): void {
+    if (!db.inTransaction) {
+      txAbandoned = false;
+      return;
+    }
     try {
       sqlAbortTransaction.step();
       sqlAbortTransaction.reset();
@@ -282,16 +291,10 @@ export async function makeSQLKernelDatabase({
       txAbandoned = true;
       throw error;
     }
-    txAbandoned = false;
-  }
-
-  /**
-   * Rollback a transaction
-   */
-  function rollbackIfNeeded(): void {
-    if (db._inTx) {
-      abortTransaction();
-    }
+    db._spStack.length = 0;
+    // Normally false now. If SQLite still reports a transaction, it is still
+    // not ours to commit.
+    txAbandoned = db.inTransaction;
   }
 
   /**
@@ -302,8 +305,9 @@ export async function makeSQLKernelDatabase({
    * ...".
    */
   function discardTransaction(after: string): void {
+    db._spStack.length = 0;
     try {
-      abortTransaction();
+      rollbackIfNeeded();
     } catch (error) {
       logger?.error(`failed to discard transaction after ${after}`, error);
     }
@@ -345,7 +349,8 @@ export async function makeSQLKernelDatabase({
    * Execute a SQL query. Unlike the other write paths this one does not consult
    * `assertNotAbandoned`, whose side effect is a rollback: the debug surfaces
    * that call it would not expect a query to end a transaction. `step` will run
-   * DML given it, where the nodejs driver's `all` refuses anything but a SELECT.
+   * DML given it, where the nodejs driver's `all` refuses a statement that
+   * returns no rows.
    *
    * @param sql - The SQL query to execute.
    * @returns An array of results.

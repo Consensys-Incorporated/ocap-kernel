@@ -1,3 +1,4 @@
+import type { Logger } from '@metamask/logger';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 import { SQL_QUERIES } from './common.ts';
@@ -7,15 +8,13 @@ import type { KernelDatabase } from '../types.ts';
 /**
  * Two invariants the crank layer relies on:
  *
- * - a failed `ROLLBACK TO` discards the whole transaction, so truncating
- *   `ctx.savepoints` to zero still matches the database;
+ * - a failed `ROLLBACK TO` discards the whole transaction;
  * - `commitIfNeeded` leaves no transaction behind.
  *
- * Both drivers catch and log an abort that fails while discarding a transaction,
- * so "the whole transaction is discarded" holds only when that abort succeeds.
- * This driver has no `_inTx` flag, reading `db.inTransaction` from SQLite
- * instead, which prevents a wedged flag but does not by itself end an ownerless
- * transaction.
+ * Both hold only while the abort doing the discarding succeeds. When it does
+ * not, the driver logs it and refuses every later write rather than let one
+ * join a transaction nothing will commit; `ctx.savepoints` is truncated to
+ * zero either way, so it no longer matches the database.
  */
 
 /** Every statement and exec call, in order. */
@@ -201,5 +200,48 @@ describe('the nodejs driver after a failure it tolerates', () => {
     // already spliced empty, so nothing else would have ended it.
     expect(issued).toContain('ROLLBACK TRANSACTION');
     expect(mockDb.inTransaction).toBe(false);
+  });
+
+  // SQLite ending the transaction is the only way out of an abort that keeps
+  // failing. Refusing writes past that point refuses them forever.
+  it('writes again once the transaction it could not end is gone', async () => {
+    const kdb = await makeSQLKernelDatabase({});
+    mockDb.inTransaction = true;
+    mockDb._spStack = ['t0', 't1'];
+
+    failOnce.add('ROLLBACK TO SAVEPOINT t1');
+    failOnce.add('ROLLBACK TRANSACTION');
+    expect(() => kdb.rollbackSavepoint('t1')).toThrow('SQLITE_IOERR');
+
+    mockDb.inTransaction = false;
+
+    issued = [];
+    kdb.kernelKVStore.set('k', 'v');
+    expect(issued).toStrictEqual([SQL_QUERIES.SET]);
+  });
+
+  it('reports the abort that failed while discarding the transaction', async () => {
+    const logger = {
+      debug: vi.fn(),
+      warn: vi.fn(),
+      error: vi.fn(),
+      subLogger: vi.fn(() => logger),
+    } as unknown as Logger;
+    const kdb = await makeSQLKernelDatabase({ logger });
+    mockDb.inTransaction = true;
+    mockDb._spStack = ['t0'];
+
+    failOnce.add('COMMIT TRANSACTION');
+    failOnce.add('ROLLBACK TRANSACTION');
+    expect(() => kdb.releaseSavepoint('t0')).toThrow(
+      'SQLITE_IOERR: COMMIT TRANSACTION',
+    );
+
+    expect(logger.error).toHaveBeenCalledWith(
+      'failed to discard transaction after commit',
+      expect.objectContaining({
+        message: 'SQLITE_IOERR: ROLLBACK TRANSACTION',
+      }),
+    );
   });
 });
