@@ -1054,11 +1054,11 @@ export class RemoteHandle implements EndpointHandle {
     // turn taken here, and the rule that everything between the two is
     // synchronous.
     const savepointName = `receive_${this.remoteId}_${seq}`;
-    await this.#kernelStore.beginOutOfCrank();
 
-    let deferredCompletion: DeferredCompletion | undefined;
-
-    try {
+    const deferredCompletion = await this.#kernelStore.withStoreOutOfCrank<
+      DeferredCompletion | undefined
+    >(() => {
+      let completion: DeferredCompletion | undefined;
       this.#kernelStore.createSavepoint(savepointName);
       try {
         switch (method) {
@@ -1066,11 +1066,10 @@ export class RemoteHandle implements EndpointHandle {
             this.#handleRemoteDeliver(params);
             break;
           case 'redeemURL':
-            deferredCompletion =
-              this.#recordRedeemURLRequest(redeemURLResolution);
+            completion = this.#recordRedeemURLRequest(redeemURLResolution);
             break;
           case 'redeemURLReply':
-            deferredCompletion = this.#handleRedeemURLReply(...params);
+            completion = this.#handleRedeemURLReply(...params);
             break;
           default:
             // eslint-disable-next-line @typescript-eslint/restrict-template-expressions
@@ -1087,8 +1086,9 @@ export class RemoteHandle implements EndpointHandle {
         try {
           this.#kernelStore.rollbackSavepoint(savepointName);
         } catch (rollbackError) {
-          // A failed RELEASE above discards the whole savepoint stack, so this
-          // rollback would report a savepoint already gone over the real error.
+          // Only a failed RELEASE discards the savepoint stack, making this
+          // rollback report a savepoint already gone; a throw from the delivery
+          // or the seq write leaves a real rollback failure here.
           this.#logger.error(
             `${this.#peerId.slice(0, 8)}:: rollback of ${savepointName} failed`,
             rollbackError,
@@ -1096,9 +1096,8 @@ export class RemoteHandle implements EndpointHandle {
         }
         throw error;
       }
-    } finally {
-      this.#kernelStore.endOutOfCrank();
-    }
+      return completion;
+    });
 
     // All in-memory state changes happen after commit
 

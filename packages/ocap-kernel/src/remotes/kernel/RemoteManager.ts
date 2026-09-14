@@ -5,7 +5,7 @@ import { RemoteHandle } from './RemoteHandle.ts';
 import type { KernelQueue } from '../../KernelQueue.ts';
 import { makeKernelError } from '../../liveslots/kernel-marshal.ts';
 import type { KernelStore } from '../../store/index.ts';
-import type { PlatformServices, RemoteId } from '../../types.ts';
+import type { KRef, PlatformServices, RemoteId } from '../../types.ts';
 import type {
   RemoteIdentity,
   RemoteComms,
@@ -230,21 +230,22 @@ export class RemoteManager {
     const isRestart = stored !== undefined;
     const remote = isRestart ? this.#remotesByPeer.get(peerId) : undefined;
 
-    // Snapshot the decider list BEFORE any kv mutation so the c-list lookup
-    // can still find the promises through the entries forgetEndpointImports
-    // is about to tear down. We materialize into an array because the
-    // generator iterates over kv state that we'll mutate.
-    const promisesToReject = remote
-      ? Array.from(this.#kernelStore.getPromisesByDecider(remote.remoteId))
-      : [];
-
     // The savepoint is the outermost one on the connection and so its own
-    // commit point, which it can only be while no crank is open. Everything
-    // between here and `endOutOfCrank` is synchronous, for the reason
-    // `beginOutOfCrank` gives.
+    // commit point, which it can only be while no crank is open.
     const savepoint = `peerIncarnation_${peerId}`;
-    await this.#kernelStore.beginOutOfCrank();
-    try {
+    const promisesToReject = await this.#kernelStore.withStoreOutOfCrank<
+      KRef[]
+    >(() => {
+      // Before any kv mutation, so the c-list lookup can still find the
+      // promises through the entries `forgetEndpointImports` is about to tear
+      // down. Inside the turn, because waiting for it spans a whole crank, and
+      // a promise this peer was made decider of during that crank would never
+      // be rejected — hanging the vat that sent it. Materialized because the
+      // generator iterates the kv state we are about to mutate.
+      const deciding = remote
+        ? Array.from(this.#kernelStore.getPromisesByDecider(remote.remoteId))
+        : [];
+
       this.#kernelStore.createSavepoint(savepoint);
       try {
         if (isRestart) {
@@ -275,9 +276,8 @@ export class RemoteManager {
         }
         throw error;
       }
-    } finally {
-      this.#kernelStore.endOutOfCrank();
-    }
+      return deciding;
+    });
 
     // Post-commit fan-out: in-memory state changes and run-queue
     // mutations are not reversible by a savepoint, so they wait until the

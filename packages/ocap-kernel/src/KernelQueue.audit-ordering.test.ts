@@ -11,9 +11,7 @@ vi.mock('./garbage-collection/garbage-collection.ts', () => ({
 
 /**
  * `#processCrankResult` flushes the crank buffer last of the crank's own work,
- * "after the fallible work above, not before it", because the flush settles the
- * promise `enqueueMessage` gave an external caller and a later rollback would
- * discard the state that answer was computed from.
+ * for the reason the comment there gives.
  *
  * `assertRefCountsIfAuditing` has to run after that flush too, because a
  * buffered item's references were counted at enqueue time and so read as a leak

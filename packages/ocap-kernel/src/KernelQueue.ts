@@ -387,7 +387,9 @@ export class KernelQueue {
       // retries. This is probably where we should implement the vat restart logic.
     }
     // This kills the worker, so its writes must outlive the rollback above: a
-    // store that still believed the vat was alive would relaunch it.
+    // store that still believed the vat was alive would relaunch it. They are
+    // still inside the crank's transaction, so a release or commit that fails
+    // in `endCrank` discards them along with the rest of it.
     if (crankResult?.terminate) {
       const { vatId, info } = crankResult.terminate;
       await this.#terminateVat(vatId, info);
@@ -395,8 +397,10 @@ export class KernelQueue {
     this.#kernelStore.collectGarbage();
     if (!crankResult?.abort) {
       // After the fallible work above, not before it: the flush settles the
-      // promise `enqueueMessage` gave an external caller, so a later rollback
-      // would discard the state that answer was computed from.
+      // promise `enqueueMessage` gave an external caller, so a delivery
+      // rollback would otherwise discard the state that answer was computed
+      // from. It closes that window only — a release or commit that fails in
+      // `endCrank` still aborts the crank after the answer has gone out.
       this.#flushCrankBuffer();
     }
   }

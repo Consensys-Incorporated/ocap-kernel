@@ -898,6 +898,38 @@ describe('RemoteManager', () => {
       ]);
     });
 
+    // The turn waits out whatever crank is open, which is long enough for that
+    // crank to make the remote decider of a promise. Nothing else would ever
+    // reject it, so the vat that sent the message waits forever.
+    it('rejects a promise the remote became decider of while it waited for the crank', async () => {
+      const peerId = 'peer-with-late-promise';
+      const remote = remoteManager.establishRemote(peerId);
+      const { remoteId } = remote;
+      kernelStore.setPeerIncarnation(peerId, 'incarnation-A');
+      const resolvePromisesSpy = vi.spyOn(mockKernelQueue, 'resolvePromises');
+
+      kernelStore.startCrank();
+      const handled = getOnIncarnationChange()(peerId, 'incarnation-B');
+      await Promise.resolve();
+
+      const [kpid] = kernelStore.initKernelPromise();
+      kernelStore.setPromiseDecider(kpid, remoteId);
+      kernelStore.addCListEntry(remoteId, kpid, 'rp+1');
+      kernelStore.endCrank();
+
+      await handled;
+
+      expect(resolvePromisesSpy).toHaveBeenCalledWith(remoteId, [
+        [
+          kpid,
+          true,
+          expect.objectContaining({
+            body: expect.stringContaining('[KERNEL:PEER_RESTARTED]'),
+          }),
+        ],
+      ]);
+    });
+
     it('persists the incarnation and reports restart even when no remote handle exists', async () => {
       const peerId = 'unknown-peer';
       const resolvePromisesSpy = vi.spyOn(mockKernelQueue, 'resolvePromises');

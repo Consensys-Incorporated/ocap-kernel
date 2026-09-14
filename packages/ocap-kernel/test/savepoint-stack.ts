@@ -14,8 +14,8 @@ export type FailingReleaseStore = {
 
 /**
  * Wrap a kernel store so that `releaseSavepoint` fails the way a full disk does,
- * modelling the drivers' bookkeeping as of #1012 and verified against both: a
- * failed RELEASE clears the savepoint stack, and rolling back a name that is no
+ * modelling the drivers' bookkeeping as of #1021 and verified against both: a
+ * failed RELEASE clears the savepoint stack, and touching a name that is no
  * longer on it throws `No such savepoint`. What is under test is therefore the
  * caller's error handling, not an expected outcome baked into the mock.
  *
@@ -30,18 +30,26 @@ export function withFailingSavepointRelease(
 ): FailingReleaseStore {
   const savepoints: string[] = [];
   const releaseFailure = new Error('database or disk is full');
-  const rollbackSavepoint = vi.fn((name: string) => {
+  const assertOnStack = (name: string): void => {
     if (!savepoints.includes(name)) {
       throw new Error(`No such savepoint: ${name}`);
     }
-  });
+  };
+  const rollbackSavepoint = vi.fn(assertOnStack);
   return {
     kernelStore: {
       ...kernelStore,
       createSavepoint: (name: string) => {
+        // The refusal `KernelStore.createSavepoint` makes, so a caller that
+        // took its savepoint inside a crank fails here as it would in
+        // production rather than passing against a more permissive model.
+        if (kernelStore.isInCrank()) {
+          throw new Error(`createSavepoint "${name}" inside a crank`);
+        }
         savepoints.push(name);
       },
-      releaseSavepoint: () => {
+      releaseSavepoint: (name: string) => {
+        assertOnStack(name);
         savepoints.length = 0;
         throw releaseFailure;
       },

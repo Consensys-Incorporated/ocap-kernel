@@ -49,7 +49,6 @@ describe('kernel store', () => {
         'allocateErefForKref',
         'assertRefCountsIfAuditing',
         'auditRefCounts',
-        'beginOutOfCrank',
         'bufferCrankOutput',
         'cleanupOrphanMessages',
         'cleanupTerminatedVat',
@@ -78,7 +77,6 @@ describe('kernel store', () => {
         'dequeueRun',
         'detectWake',
         'endCrank',
-        'endOutOfCrank',
         'enqueuePromiseMessage',
         'enqueueRun',
         'erefToKref',
@@ -201,6 +199,7 @@ describe('kernel store', () => {
         'undoOcapURLRetention',
         'unpinObject',
         'waitForCrank',
+        'withStoreOutOfCrank',
       ]);
     });
   });

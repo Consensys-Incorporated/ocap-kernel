@@ -2,7 +2,7 @@ import { Fail, q } from '@endo/errors';
 import { makePromiseKit } from '@endo/promise-kit';
 import type { KernelDatabase } from '@metamask/kernel-store';
 
-import type { CrankBufferItem, StoreContext } from '../types.ts';
+import type { CrankBufferItem, Savepoint, StoreContext } from '../types.ts';
 
 /**
  * Get the crank methods.
@@ -43,14 +43,14 @@ export function getCrankMethods(ctx: StoreContext, kdb: KernelDatabase) {
    * once no crank is open, and holds the run loop off until the matching
    * {@link endOutOfCrank}.
    *
-   * The caller's work must be synchronous. Awaiting while holding this would
-   * park the run loop for the duration, and awaiting between the savepoint and
-   * its release is the interleaving this exists to prevent.
+   * Private to this module; callers take their turn through
+   * {@link withStoreOutOfCrank}.
    */
   async function beginOutOfCrank(): Promise<void> {
     outOfCrankWaiters += 1;
-    // Created before the await below, so a run loop reaching `startCrank`
-    // in the meantime sees the gate rather than racing past it.
+    // Created before the await below, so a run loop that consults
+    // `outOfCrankWorkPending` in the meantime has something to wait on. The
+    // count it increments above is what `startCrank` itself refuses on.
     outOfCrankIdle ??= makePromiseKit<void>();
     try {
       while (ctx.inCrank) {
@@ -85,6 +85,31 @@ export function getCrankMethods(ctx: StoreContext, kdb: KernelDatabase) {
   }
 
   /**
+   * Hold the store outside any crank for the duration of `work`, and give it
+   * back however `work` ends. Paired here rather than by callers because a turn
+   * never given back leaves the run loop waiting on a promise nothing resolves:
+   * no failure, no log, no timeout.
+   *
+   * `work` is typed to return a value rather than a promise because it has to
+   * be synchronous: awaiting here parks the run loop for the duration, and
+   * awaiting between a savepoint and its release is the interleaving the turn
+   * exists to prevent.
+   *
+   * @param work - The synchronous work to do while holding the store.
+   * @returns What `work` returned.
+   */
+  async function withStoreOutOfCrank<Result>(
+    work: () => Result,
+  ): Promise<Result> {
+    await beginOutOfCrank();
+    try {
+      return work();
+    } finally {
+      endOutOfCrank();
+    }
+  }
+
+  /**
    * @returns A promise to await before starting a crank, or undefined if
    * nothing is waiting — undefined rather than a resolved promise so that the
    * run loop's usual path stays synchronous.
@@ -102,7 +127,12 @@ export function getCrankMethods(ctx: StoreContext, kdb: KernelDatabase) {
     ctx.inCrank || Fail`createCrankSavepoint outside of crank`;
     const ordinal = ctx.savepoints.length;
     kdb.createSavepoint(`t${ordinal}`);
-    ctx.savepoints.push(name);
+    // Copied, not referenced: `maybeFreeKrefs` is mutated in place from here on,
+    // and this is the "before" a rollback restores.
+    ctx.savepoints.push({
+      name,
+      maybeFreeKrefs: new Set(ctx.maybeFreeKrefs),
+    });
   }
 
   /**
@@ -114,16 +144,23 @@ export function getCrankMethods(ctx: StoreContext, kdb: KernelDatabase) {
     ctx.inCrank || Fail`rollbackCrank outside of crank`;
     ctx.crankBuffer.length = 0; // Discard buffered outputs
     for (const ordinal of ctx.savepoints.keys()) {
-      if (ctx.savepoints[ordinal] === savepoint) {
+      const restored = ctx.savepoints[ordinal];
+      if (restored?.name === savepoint) {
         try {
           kdb.rollbackSavepoint(`t${ordinal}`);
           ctx.savepoints.length = ordinal;
         } catch (error) {
           ctx.savepoints.length = 0;
-          revertStateBeneathRollback(error);
+          // Before the rethrow, and not only on the path below. A failed
+          // rollback discards the whole transaction, so the database has moved
+          // back at least as far as a successful rollback would have taken it
+          // and these caches are at least as stale. Rethrowing ahead of this
+          // would leave the dying crank holding the GC action it consumed and
+          // the freed krefs it was about to collect.
+          revertStateBeneathRollback(restored, error);
           throw error;
         }
-        revertStateBeneathRollback();
+        revertStateBeneathRollback(restored);
         return;
       }
     }
@@ -134,16 +171,33 @@ export function getCrankMethods(ctx: StoreContext, kdb: KernelDatabase) {
    * Revert what a database rollback cannot reach: the in-memory caches built
    * over the abandoned crank's writes.
    *
-   * @param rollbackError - The error the rollback threw, if it threw.
+   * @param restored - The savepoint being rolled back to, whose snapshot of
+   * `maybeFreeKrefs` is the "before" this restores.
+   * @param rollbackError - The error the rollback threw, if it threw. Kept as
+   * the `cause` should reverting fail too, since it is the root cause an
+   * operator needs.
    */
-  function revertStateBeneathRollback(rollbackError?: unknown): void {
+  function revertStateBeneathRollback(
+    restored: Savepoint,
+    rollbackError?: unknown,
+  ): void {
     try {
       ctx.refreshRunQueue();
       ctx.runQueueLengthCache = -1;
       ctx.refreshCachedValues();
-      // Clearing all of them is correct only while a rollback discards the whole
-      // delivery, which is all any caller asks for.
+      // Nothing rolls back RAM. Krefs this crank added are collection
+      // candidates only because of decrements that were just undone; left in
+      // place, `collectGarbage` throws on a later crank for any promise this one
+      // created, killing the run loop over work that no longer exists.
+      // Restored to the savepoint's snapshot rather than cleared, because the
+      // set is not per-crank: only `collectGarbage` empties it, so a candidate
+      // added while the run loop was idle — `terminateVat` unpinning a root is
+      // the real path — is still owed a collection and must survive an
+      // unrelated crank's rollback.
       ctx.maybeFreeKrefs.clear();
+      for (const kref of restored.maybeFreeKrefs) {
+        ctx.maybeFreeKrefs.add(kref);
+      }
     } catch (revertError) {
       if (rollbackError === undefined) {
         throw revertError;
@@ -230,8 +284,7 @@ export function getCrankMethods(ctx: StoreContext, kdb: KernelDatabase) {
     endCrank,
     releaseAllSavepoints,
     waitForCrank,
-    beginOutOfCrank,
-    endOutOfCrank,
+    withStoreOutOfCrank,
     outOfCrankWorkPending,
     bufferCrankOutput,
     flushCrankBuffer,
