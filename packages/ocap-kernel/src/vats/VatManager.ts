@@ -241,7 +241,17 @@ export class VatManager {
         // client has no timeout.
         this.#logger.error(`Retiring vat ${vatId} after a fatal error:`, error);
         fatalError = error;
-        this.#retireVat(vatId, error);
+        try {
+          this.#retireVat(vatId, error);
+        } catch (retireError) {
+          // Logged rather than thrown: this is a callback off a stream's drain,
+          // with nobody to catch it, and the teardown below still has RPCs to
+          // reject. `fatalError` carries the real diagnosis to `runVat`.
+          this.#logger.error(
+            `Failed to record the death of vat ${vatId}:`,
+            retireError,
+          );
+        }
         this.#startFailedVatTeardown(vatId, failedVat, error);
       },
       logger: vatLogger,
@@ -553,7 +563,15 @@ export class VatManager {
       .get(vatId)
       ?.reject(new Error(`Restart of vat ${vatId} superseded by a later one`));
     this.#restartWaiters.set(vatId, { resolve, reject });
-    return await promise;
+    // The run loop is what carries the request out, and a loop that dies has no
+    // kernel promise for this the way a message result does, so nothing else
+    // would ever settle this caller.
+    const stopWatchingTheRunLoop = this.#kernelQueue.onRunLoopDeath(reject);
+    try {
+      return await promise;
+    } finally {
+      stopWatchingTheRunLoop();
+    }
   }
 
   /**
@@ -561,35 +579,35 @@ export class VatManager {
    * vat as mid-flux for its duration so a delivery arriving meanwhile waits for
    * the outcome instead of reading the vat as gone.
    *
-   * Both steps live here, in this order, because the order is the whole
-   * mechanism and reversing it deadlocks. See the comments inline; a caller
-   * cannot get it wrong because a caller does not sequence it.
-   *
    * @param vatId - The vat being taken out of reach.
-   * @param start - Begins the operation. Called once, after the wait.
+   * @param start - Begins the operation. Called once, while the store is held.
    * @returns The operation's own result, failure included.
    */
   async #trackFlux(vatId: VatId, start: () => Promise<void>): Promise<void> {
-    // First: wait out the crank in flight, so the operation does not pull a
-    // worker out from under a delivery. This has to happen *before* the record
-    // exists. A crank that is already running has not necessarily reached its
-    // endpoint lookup yet, so if the record were there it would find it and wait
-    // for this operation — which is waiting for that crank to end.
-    await this.#kernelQueue.waitForCrank();
-    const flux = start();
-    // Second: record, with neither `start()` nor this function having awaited
-    // since, so no crank can run between the operation's first step and the
-    // record. An await introduced between these two lines reopens the window the
-    // record exists to close.
+    // Held out of crank rather than merely waiting for the crank in flight to
+    // end. The run loop starts its next crank in the same turn it ends the
+    // last, so a caller that only awaited `waitForCrank` resumed with that
+    // crank's savepoints already open: the vat's death written inside its
+    // delivery savepoint, for an unrelated rollback to undo while the handle
+    // stayed deleted, and that crank free to reach the vat before the record
+    // existed and be handed a handle to a worker about to be killed.
     //
-    // Waiters see a plain completion rather than a failure, because the vat ends
-    // up marked terminated either way — `#endVat` marks it in a `finally` — and
-    // "gone" is what they should act on. The caller still gets the failure, from
-    // `flux` itself.
-    this.#vatsInFlux.set(
-      vatId,
-      flux.catch(() => undefined),
-    );
+    // Wrapped in an object because the held section must stay synchronous, and
+    // returning `flux` bare would have the turn await the whole teardown.
+    const { flux } = await this.#kernelStore.withStoreOutOfCrank(() => {
+      const started = start();
+      // Recorded with nothing awaited since `start()`, so no crank can run
+      // between the vat's first step towards death and the record of it.
+      //
+      // Waiters see a plain completion rather than a failure, because the vat
+      // ends up marked terminated either way and "gone" is what they should act
+      // on. The caller still gets the failure, from `flux` itself.
+      this.#vatsInFlux.set(
+        vatId,
+        started.catch(() => undefined),
+      );
+      return { flux: started };
+    });
     try {
       return await flux;
     } finally {

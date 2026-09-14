@@ -49,6 +49,21 @@ const mocks = vi.hoisted(() => {
       this.#deliver?.({ type: 'restartVat', vatId }).catch(() => undefined);
     });
 
+    readonly #pendingWorkWaiters = new Set<(error: Error) => void>();
+
+    onRunLoopDeath = vi.fn((reject: (error: Error) => void) => {
+      if (this.#runLoopFailure) {
+        reject(
+          new Error('Kernel run loop died', {
+            cause: this.#runLoopFailure,
+          }),
+        );
+        return () => undefined;
+      }
+      this.#pendingWorkWaiters.add(reject);
+      return () => this.#pendingWorkWaiters.delete(reject);
+    });
+
     /**
      * Fail the run loop, in the order the real `KernelQueue.run` does: the
      * status flips before the rejection is observable. Does not reproduce
@@ -59,6 +74,11 @@ const mocks = vi.hoisted(() => {
     killRunLoop(error: Error): void {
       this.#runLoopFailure = error;
       this.#rejectRunLoop?.(error);
+      const abandoned = [...this.#pendingWorkWaiters];
+      this.#pendingWorkWaiters.clear();
+      for (const reject of abandoned) {
+        reject(new Error('Kernel run loop died', { cause: error }));
+      }
     }
 
     getRunLoopStatus = vi.fn(() =>

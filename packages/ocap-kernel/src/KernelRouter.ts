@@ -212,6 +212,32 @@ export class KernelRouter {
   }
 
   /**
+   * Reject a message's result promise, unless something has already settled it.
+   *
+   * The delivery that failed may have settled it on its way down: a vat that
+   * resolves the result and then loses its stream, or one whose stream dies
+   * mid-delivery and is retired, which rejects every promise it was deciding —
+   * this one included, its decider having been set just before the delivery.
+   * Resolving a settled promise is a `Fail`, and it would leave `deliverMessage`'s
+   * catch to kill the run loop naming the promise rather than the dead worker.
+   *
+   * @param endpointId - The endpoint that was to have decided it.
+   * @param kpid - The result promise.
+   * @param failure - Why the message could not be delivered.
+   */
+  #rejectResultIfPending(
+    endpointId: EndpointId,
+    kpid: KRef,
+    failure: CapData<KRef>,
+  ): void {
+    const { state } = this.#kernelStore.getKernelPromise(kpid);
+    if (state !== 'unresolved') {
+      return;
+    }
+    this.#kernelQueue.resolvePromises(endpointId, [[kpid, true, failure]]);
+  }
+
+  /**
    * Deliver a 'send' run queue item.
    *
    * @param item - The send item to deliver.
@@ -321,13 +347,11 @@ export class KernelRouter {
           if (message.result) {
             const detail =
               error instanceof Error ? error.message : String(error);
-            this.#kernelQueue.resolvePromises(endpointId, [
-              [
-                message.result,
-                true,
-                makeKernelError('DELIVERY_FAILED', detail),
-              ],
-            ]);
+            this.#rejectResultIfPending(
+              eid,
+              message.result,
+              makeKernelError('DELIVERY_FAILED', detail),
+            );
           }
           // Continue processing other messages - don't let one failure crash the queue
         }
@@ -504,7 +528,18 @@ export class KernelRouter {
     // would lose it and leave the entry behind for good.
     const stillHeld = (): KRef[] =>
       krefs.filter((kref) => this.#kernelStore.hasCListEntry(endpointId, kref));
-    if (stillHeld().length === 0) {
+    const reportCleanedUp = (held: KRef[]): void => {
+      if (held.length < krefs.length) {
+        this.#logger?.error(
+          `${type} for ${endpointId}: ${krefs.length - held.length} of ${krefs.length} kref(s) were cleaned up before delivery`,
+        );
+      }
+    };
+    const heldOnArrival = stillHeld();
+    if (heldOnArrival.length === 0) {
+      // Reported here as well as below: this is the whole of the delivery when
+      // cleanup reached every kref first.
+      reportCleanedUp(heldOnArrival);
       return { didDelivery: endpointId };
     }
     // Resolved before anything is torn down, so a lookup that fails has nothing
@@ -532,11 +567,7 @@ export class KernelRouter {
     // than returning short — killing the run loop over an entry that is
     // already, correctly, released.
     const live = stillHeld();
-    if (live.length < krefs.length) {
-      this.#logger?.error(
-        `${type} for ${endpointId}: ${krefs.length - live.length} of ${krefs.length} kref(s) were cleaned up before delivery`,
-      );
-    }
+    reportCleanedUp(live);
     if (live.length === 0) {
       return { didDelivery: endpointId };
     }

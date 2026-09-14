@@ -50,7 +50,9 @@ describe('KernelRouter', () => {
     kernelStore = {
       getOwner: vi.fn(),
       isRevoked: vi.fn(),
-      getKernelPromise: vi.fn(),
+      // Unresolved by default: the delivery paths ask before settling a
+      // message's result, and a bare `vi.fn()` answers `undefined`.
+      getKernelPromise: vi.fn().mockReturnValue({ state: 'unresolved' }),
       decrementRefCount: vi.fn(),
       setPromiseDecider: vi.fn(),
       translateRefKtoE: vi.fn(

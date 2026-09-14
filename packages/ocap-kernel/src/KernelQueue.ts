@@ -19,6 +19,10 @@ import type {
 } from './types.ts';
 import { Fail } from './utils/assert.ts';
 
+/** What a caller awaiting queued work is told when the run loop dies. */
+const DEAD_RUN_LOOP_WORK =
+  'Kernel run loop died; this work will never be carried out';
+
 type RunLoopState =
   | Exclude<RunLoopStatus, { state: 'failed' }>
   | { state: 'failed'; error: Error };
@@ -50,6 +54,9 @@ export class KernelQueue {
 
   /** Promises resolved during this crank that have kernel subscriptions */
   #resolvedWithKernelSubscription: KRef[] = [];
+
+  /** Callers awaiting work the run loop has been asked for but not yet done. */
+  readonly #pendingWorkWaiters: Set<(error: Error) => void> = new Set();
 
   /** Thunk to signal run queue transition from empty to non-empty */
   #wakeUpTheRunQueue: (() => void) | null;
@@ -240,10 +247,29 @@ export class KernelQueue {
   }
 
   /**
+   * Tell a caller waiting on queued work if the run loop dies before carrying
+   * it out. `subscriptions` covers a message's result; a request with no kernel
+   * promise behind it — a vat restart — has nothing else that would settle it.
+   *
+   * @param reject - How to tell the caller.
+   * @returns A function that unregisters it, for the caller's own `finally`.
+   */
+  onRunLoopDeath(reject: (error: Error) => void): () => void {
+    if (this.#runLoopState.state === 'failed') {
+      reject(this.#makeDeadRunLoopError(DEAD_RUN_LOOP_WORK));
+      return () => undefined;
+    }
+    this.#pendingWorkWaiters.add(reject);
+    return () => {
+      this.#pendingWorkWaiters.delete(reject);
+    };
+  }
+
+  /**
    * Record the death of the run loop and fail the kernel's own message-result
-   * subscriptions, which would otherwise hang forever. Kernel promises in the
-   * store stay unresolved, so vats awaiting a notify the dead loop owed them
-   * are not rescued by this.
+   * subscriptions and anyone waiting on queued work, which would otherwise hang
+   * forever. Kernel promises in the store stay unresolved, so vats awaiting a
+   * notify the dead loop owed them are not rescued by this.
    *
    * @param error - The error that killed the run loop.
    * @returns The failure, as an `Error` whatever was thrown.
@@ -264,6 +290,12 @@ export class KernelQueue {
           'Kernel run loop died; this message result will never be delivered',
         ),
       );
+    }
+
+    const abandoned = [...this.#pendingWorkWaiters];
+    this.#pendingWorkWaiters.clear();
+    for (const reject of abandoned) {
+      reject(this.#makeDeadRunLoopError(DEAD_RUN_LOOP_WORK));
     }
     return failure;
   }

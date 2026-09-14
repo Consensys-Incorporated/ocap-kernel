@@ -469,6 +469,41 @@ describe('KernelQueue', () => {
       expect(kernelQueue.subscriptions.size).toBe(0);
     });
 
+    // A vat restart is the run loop's work, and has no kernel promise behind it
+    // the way a message result does, so this is the only thing that would ever
+    // tell its caller the request will not be carried out.
+    it('tells a caller awaiting queued work that the run loop died', async () => {
+      const told: Error[] = [];
+      kernelQueue.onRunLoopDeath((error) => told.push(error));
+      const failure = new Error('crank exploded');
+
+      await killRunLoop(failure);
+
+      expect(told).toHaveLength(1);
+      expect(told[0]?.message).toBe(
+        'Kernel run loop died; this work will never be carried out',
+      );
+      expect(told[0]?.cause).toBe(failure);
+    });
+
+    it('tells one registering after the fact, immediately', async () => {
+      await killRunLoop(new Error('crank exploded'));
+      const told: Error[] = [];
+
+      kernelQueue.onRunLoopDeath((error) => told.push(error));
+
+      expect(told).toHaveLength(1);
+    });
+
+    it('does not tell one that unregistered first', async () => {
+      const told: Error[] = [];
+      kernelQueue.onRunLoopDeath((error) => told.push(error))();
+
+      await killRunLoop(new Error('crank exploded'));
+
+      expect(told).toStrictEqual([]);
+    });
+
     it('rejects messages queued after the run loop dies', async () => {
       const failure = new Error('crank exploded');
       await killRunLoop(failure);
