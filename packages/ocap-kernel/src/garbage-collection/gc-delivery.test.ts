@@ -52,7 +52,7 @@ async function makeFixture(): Promise<{
   const kernelRouter = new KernelRouter(
     kernelStore,
     kernelQueue,
-    (endpointId) => {
+    async (endpointId) => {
       const endpoint = endpoints.get(endpointId);
       if (!endpoint) {
         throw new Error(`vat ${endpointId} not found`);
@@ -60,6 +60,7 @@ async function makeFixture(): Promise<{
       return endpoint;
     },
     () => undefined,
+    async () => undefined,
   );
 
   const runCrank = async (
@@ -206,22 +207,24 @@ describe('a GC action the kernel issues', () => {
     ]);
   });
 
-  // A vat between incarnations still holds these krefs. Releasing the kernel's
-  // side would leave the two disagreeing; throwing killed the run loop.
-  it('gives the action back when the vat is between incarnations', async () => {
+  // A vat absent from the kernel's tables but not marked terminated still holds
+  // these krefs as far as the c-list is concerned, so the kernel must not
+  // release its side. `provideVat` waits out a vat that is coming back, so one
+  // that reaches here is gone with nothing to wait on.
+  it('releases nothing for a vat that is absent but not terminated', async () => {
     const { kernelStore, runCrank } = await makeFixture();
+    // The config row is what makes the store call the vat active, which is the
+    // half of "absent but not terminated" that distinguishes it from a vat
+    // cleanup has already finished with.
+    kernelStore.setVatConfig('v1', { bundleName: 'vat1' });
     const kref = kernelStore.initKernelObject('v1');
     kernelStore.addCListEntry('v1', kref, 'o+1');
     kernelStore.setObjectRefCount(kref, { reachable: 0, recognizable: 1 });
     kernelStore.addGCActions([`v1 dropExport ${kref}`]);
 
-    const result = await runCrank();
+    await expect(runCrank()).rejects.toThrow('vat v1 not found');
 
-    expect(result).toStrictEqual({ abort: true });
     expect(kernelStore.getReachableFlag('v1', kref)).toBe(true);
     expect(kernelStore.hasCListEntry('v1', kref)).toBe(true);
-    expect([...kernelStore.getGCActions()]).toStrictEqual([
-      `v1 dropExport ${kref}`,
-    ]);
   });
 });

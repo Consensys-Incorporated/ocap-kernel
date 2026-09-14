@@ -1008,13 +1008,14 @@ describe('KernelRouter', () => {
             throw Error('vat v1 not found');
           });
 
-          const result = await kernelRouter.deliver({
-            type: actionType,
-            endpointId: 'v1',
-            krefs: ['ko1'],
-          });
+          await expect(
+            kernelRouter.deliver({
+              type: actionType,
+              endpointId: 'v1',
+              krefs: ['ko1'],
+            }),
+          ).rejects.toThrow('vat v1 not found');
 
-          expect(result).toStrictEqual({ abort: true });
           expect(kernelStore.clearReachableFlag).not.toHaveBeenCalled();
           expect(kernelStore.deleteCListEntry).not.toHaveBeenCalled();
           expect(kernelStore.orphanKernelObject).not.toHaveBeenCalled();
