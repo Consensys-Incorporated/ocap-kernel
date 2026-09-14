@@ -59,7 +59,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **BREAKING:** `incrementRefCount` now throws on a kref the kernel has already deleted, rather than writing a resurrected row ([#1020](https://github.com/MetaMask/ocap-kernel/pull/1020))
   - A missing object row read as `(0, 0)` and was written back as a live-looking object with no owner; a missing promise row read as `NaN`, which no decrement can bring to zero, so the promise could never be collected. `decrementRefCount` still tolerates a missing object row, since releasing a reference to something already gone is ordinary teardown
 - **BREAKING:** `KernelStore`'s `beginOutOfCrank` and `endOutOfCrank` are replaced by `withStoreOutOfCrank(work)`, which takes the turn and gives it back however `work` ends ([#1021](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1021))
-  - A turn that was never given back left the run loop waiting on a promise nothing resolves: no failure, no log, no timeout. `work` must be synchronous, which its type now says
+  - A turn that was never given back left the run loop waiting on a promise nothing resolves: no failure, no log, no timeout. `work` must be synchronous: the type refuses a callback that returns a promise, and one that reaches it through inference anyway is thrown on rather than given the turn back mid-flight
 
 ### Fixed
 

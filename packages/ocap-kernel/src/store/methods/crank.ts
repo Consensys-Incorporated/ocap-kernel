@@ -5,6 +5,16 @@ import type { KernelDatabase } from '@metamask/kernel-store';
 import type { CrankBufferItem, Savepoint, StoreContext } from '../types.ts';
 
 /**
+ * @param value - Anything.
+ * @returns Whether it is a thenable, which is what `await` acts on.
+ */
+function isPromiseLike(value: unknown): boolean {
+  return (
+    typeof (value as PromiseLike<unknown> | undefined)?.then === 'function'
+  );
+}
+
+/**
  * Get the crank methods.
  *
  * @param ctx - The store context.
@@ -90,20 +100,28 @@ export function getCrankMethods(ctx: StoreContext, kdb: KernelDatabase) {
    * never given back leaves the run loop waiting on a promise nothing resolves:
    * no failure, no log, no timeout.
    *
-   * `work` is typed to return a value rather than a promise because it has to
-   * be synchronous: awaiting here parks the run loop for the duration, and
-   * awaiting between a savepoint and its release is the interleaving the turn
-   * exists to prevent.
+   * `work` must be synchronous. The turn is given back the moment it returns,
+   * so work that awaits resumes with the run loop free to start a crank — and
+   * both callers take a savepoint inside it, which would then nest inside that
+   * crank rather than being the commit point it has to be. The type refuses the
+   * plain cases and the check below catches the rest; a caller that needs to
+   * await does it with what `work` hands back.
    *
    * @param work - The synchronous work to do while holding the store.
    * @returns What `work` returned.
    */
   async function withStoreOutOfCrank<Result>(
-    work: () => Result,
+    work: () => Result &
+      (Result extends PromiseLike<unknown> ? never : unknown),
   ): Promise<Result> {
     await beginOutOfCrank();
     try {
-      return work();
+      const result = work();
+      // Thrown from inside the `try`, so the `finally` still gives the turn
+      // back rather than parking the run loop on top of the mistake.
+      !isPromiseLike(result) ||
+        Fail`withStoreOutOfCrank given work that is not synchronous`;
+      return result;
     } finally {
       endOutOfCrank();
     }

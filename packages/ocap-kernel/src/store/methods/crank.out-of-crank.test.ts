@@ -90,6 +90,22 @@ describe('store work outside a crank', () => {
     );
   });
 
+  // The turn is given back the moment the work returns, so work that awaits
+  // resumes with the run loop free to start a crank — and the savepoint both
+  // callers take inside it would nest in that crank rather than being the
+  // commit point. The type refuses this; the check is for what inference lets
+  // through.
+  it('refuses work that is not synchronous', async () => {
+    await expect(
+      kernelStore.withStoreOutOfCrank(
+        (async () => undefined) as unknown as () => undefined,
+      ),
+    ).rejects.toThrow('work that is not synchronous');
+
+    expect(kernelStore.outOfCrankWorkPending()).toBeUndefined();
+    expect(() => kernelStore.startCrank()).not.toThrow();
+  });
+
   // The run loop's protocol: re-check the gate until nothing is waiting, then
   // start the crank with no await in between. Checking once would have it
   // resume into `startCrank` with a caller already holding, which is a refusal
