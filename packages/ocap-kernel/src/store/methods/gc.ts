@@ -140,8 +140,8 @@ export function getGCMethods(ctx: StoreContext) {
     const newActions: GCAction[] = [];
     for (const koid of koids) {
       const importers = getImporters(koid);
-      for (const vatID of importers) {
-        newActions.push(makeGCAction(vatID, 'retireImport', koid));
+      for (const endpointId of importers) {
+        newActions.push(makeGCAction(endpointId, 'retireImport', koid));
       }
       deleteKernelObject(koid);
     }

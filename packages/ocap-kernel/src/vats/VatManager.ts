@@ -251,6 +251,19 @@ export class VatManager {
             `Failed to record the death of vat ${vatId}:`,
             retireError,
           );
+          // The handle is gone either way — `#retireVat` drops it first — so
+          // the mark is the one write that cannot be skipped. Without it the
+          // store goes on calling the vat active while the kernel has no
+          // handle for it, and `#resolveEndpoint` kills the run loop over the
+          // disagreement at the next delivery addressed to it.
+          try {
+            this.#kernelStore.markVatAsTerminated(vatId);
+          } catch (markError) {
+            this.#logger.error(
+              `Vat ${vatId} could not be marked terminated; the store still calls it active and the kernel has no handle for it:`,
+              markError,
+            );
+          }
         }
         this.#startFailedVatTeardown(vatId, failedVat, error);
       },
@@ -482,11 +495,14 @@ export class VatManager {
       try {
         this.#kernelQueue.enqueueRestartVat(vatId);
       } catch (error) {
-        // Nothing was queued, so nothing will ever settle the waiter just
-        // registered. Take it back out: left behind, the next request for this
-        // vat would reject it as superseded, and since this caller never got as
-        // far as awaiting it that rejection would go unhandled.
+        // Nothing was queued, so nothing will carry the request out. Settling
+        // the waiter lets `#awaitRestart` unwind and stop watching the run
+        // loop; awaiting it keeps the rejection from going unhandled, since
+        // `enqueueRestartVat` refuses for the very reason that waiter watches
+        // for and this throw is what the caller sees.
+        this.#restartWaiters.get(vatId)?.reject(error);
         this.#restartWaiters.delete(vatId);
+        await restarted.catch(() => undefined);
         throw error;
       }
     }
@@ -592,16 +608,18 @@ export class VatManager {
     // stayed deleted, and that crank free to reach the vat before the record
     // existed and be handed a handle to a worker about to be killed.
     //
-    // Wrapped in an object because the held section must stay synchronous, and
-    // returning `flux` bare would have the turn await the whole teardown.
+    // Wrapped in an object because a bare promise is what `withStoreOutOfCrank`
+    // refuses: an async function adopts a returned promise, so the result would
+    // collapse to the teardown's own `undefined` and the destructure below
+    // would throw.
     const { flux } = await this.#kernelStore.withStoreOutOfCrank(() => {
       const started = start();
       // Recorded with nothing awaited since `start()`, so no crank can run
       // between the vat's first step towards death and the record of it.
       //
-      // Waiters see a plain completion rather than a failure, because the vat
-      // ends up marked terminated either way and "gone" is what they should act
-      // on. The caller still gets the failure, from `flux` itself.
+      // Waiters see a plain completion rather than a failure, because "gone"
+      // is what they should act on and the handle is dropped before anything
+      // that can fail. The caller still gets the failure, from `flux` itself.
       this.#vatsInFlux.set(
         vatId,
         started.catch(() => undefined),

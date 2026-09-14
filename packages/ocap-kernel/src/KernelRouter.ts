@@ -218,8 +218,9 @@ export class KernelRouter {
    * resolves the result and then loses its stream, or one whose stream dies
    * mid-delivery and is retired, which rejects every promise it was deciding —
    * this one included, its decider having been set just before the delivery.
-   * Resolving a settled promise is a `Fail`, and it would leave `deliverMessage`'s
-   * catch to kill the run loop naming the promise rather than the dead worker.
+   * Resolving a settled promise is a `Fail`, thrown from inside the very catch
+   * that is handling the delivery's failure, so it killed the run loop naming
+   * the promise rather than the dead worker.
    *
    * @param endpointId - The endpoint that was to have decided it.
    * @param kpid - The result promise.
@@ -548,8 +549,8 @@ export class KernelRouter {
     // the action is already spent from the durable set, and for a terminated vat
     // cleanup would take the entries anyway.
     //
-    // The throw `#resolveEndpoint` reserves for a vat that is absent without
-    // being terminated is, here, the least bad of three. Committing the release
+    // The throw `#resolveEndpoint` reserves for a vat the store still calls
+    // active and has not marked terminated is, here, the least bad of three. Committing the release
     // corrupts silently — the vat's own tables still name every one of these
     // krefs, which is the disagreement the failed delivery below rolls back to
     // avoid. Aborting spins: it does keep the action, since `rollbackCrank`

@@ -317,6 +317,10 @@ describe('the wasm driver after a failure it tolerates', () => {
           message: 'SQLITE_IOERR: ROLLBACK TRANSACTION',
         }),
       );
+      // A stack left populated makes `commitIfNeeded`'s "savepoints remain"
+      // early return permanent: the driver goes on accepting writes, begins a
+      // transaction for them, and never commits.
+      expect(mockDb._spStack).toStrictEqual([]);
     },
   );
 });

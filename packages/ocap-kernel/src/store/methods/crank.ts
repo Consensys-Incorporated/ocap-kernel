@@ -119,7 +119,8 @@ export function getCrankMethods(ctx: StoreContext, kdb: KernelDatabase) {
    * so work that awaits resumes with the run loop free to start a crank — and
    * both callers take a savepoint inside it, which would then nest inside that
    * crank rather than being the commit point it has to be. A caller that needs
-   * to await does it with what `work` hands back.
+   * to await does it with what `work` hands back, as `VatManager.#trackFlux`
+   * does.
    *
    * {@link Synchronous} cannot refuse an explicit
    * `withStoreOutOfCrank<void>`, since a `Promise<void>` is assignable to a
@@ -229,10 +230,10 @@ export function getCrankMethods(ctx: StoreContext, kdb: KernelDatabase) {
       // place, `collectGarbage` throws on a later crank for any promise this one
       // created, killing the run loop over work that no longer exists.
       // Restored to the savepoint's snapshot rather than cleared, because the
-      // set is not per-crank: only `collectGarbage` empties it, so a candidate
-      // added while the run loop was idle — `terminateVat` unpinning a root is
-      // the real path — is still owed a collection and must survive an
-      // unrelated crank's rollback.
+      // set is not per-crank: nothing empties it between cranks, so a candidate
+      // added while no crank was open — `terminateVat` unpinning a root is the
+      // real path — is still owed a collection and must survive an unrelated
+      // crank's rollback.
       ctx.maybeFreeKrefs.clear();
       for (const kref of restored.maybeFreeKrefs) {
         ctx.maybeFreeKrefs.add(kref);

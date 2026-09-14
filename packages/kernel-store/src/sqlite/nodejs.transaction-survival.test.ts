@@ -13,8 +13,8 @@ import type { KernelDatabase } from '../types.ts';
  *
  * Both hold only while the abort doing the discarding succeeds. When it does
  * not, the driver logs it and refuses every later write rather than let one
- * join a transaction nothing will commit; `ctx.savepoints` is truncated to
- * zero either way, so it no longer matches the database.
+ * join a transaction nothing will commit; `_spStack` is emptied either way, so
+ * it no longer matches the database.
  */
 
 /** Every statement and exec call, in order. */

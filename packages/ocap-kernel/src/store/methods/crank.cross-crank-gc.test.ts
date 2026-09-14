@@ -9,7 +9,7 @@ import { makeKernelStore } from '../index.ts';
  * candidate added while no crank was open is still owed a collection and has to
  * survive an unrelated crank's rollback.
  *
- * `RemoteManager.#handlePeerIncarnation` is one such producer. It runs from a
+ * `RemoteManager.#handleIncarnationChange` is one such producer. It runs from a
  * network callback with no crank open, under its own `peerIncarnation_<peerId>`
  * savepoint, and `persistPeerRestart` -> `forgetEndpointImports` adds every
  * export the restarting peer abandoned. It calls no `collectGarbage` of its own,
@@ -30,7 +30,7 @@ describe('a GC candidate produced outside a crank', () => {
   function orphanARemoteExport(): string {
     const kref = kernelStore.initKernelObject('r1');
     kernelStore.addCListEntry('r1', kref, 'o+1');
-    // RemoteManager.#handlePeerIncarnation, inside its own savepoint, no crank.
+    // RemoteManager.#handleIncarnationChange, in its own savepoint, no crank.
     kernelStore.forgetEndpointImports('r1');
     return kref;
   }

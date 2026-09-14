@@ -124,8 +124,8 @@ describe('VatManager', () => {
       enqueueRestartVat: vi.fn((vatId: VatId) => {
         vatManager.performVatRestart(vatId).catch(() => undefined);
       }),
-      // The real one hands back an unregister and calls every rejecter it holds
-      // when the loop dies. `killTheRunLoop` below is the test's way in.
+      // The real one hands back an unregister and calls every rejecter it
+      // holds when the loop dies; the tests below reach into the set directly.
       onRunLoopDeath: vi.fn((reject: (error: Error) => void) => {
         runLoopDeathWaiters.add(reject);
         return () => runLoopDeathWaiters.delete(reject);
@@ -599,6 +599,27 @@ describe('VatManager', () => {
       expect(mockKernelStore.markVatAsTerminated).toHaveBeenCalledWith('v1');
     });
 
+    // A write failing partway leaves the handle already dropped. The mark is
+    // what stops the store from going on calling the vat active, which is the
+    // disagreement the endpoint lookup kills the run loop over.
+    it('marks the vat terminated even when the rest of the record fails', async () => {
+      await vatManager.runVat('v1', createMockVatConfig());
+      mockKernelStore.deleteVat.mockImplementationOnce(() => {
+        throw new Error('no subcluster');
+      });
+
+      failStream(vatHandles[0] as VatHandle);
+
+      expect(vatManager.hasVat('v1')).toBe(false);
+      expect(mockKernelStore.markVatAsTerminated).toHaveBeenCalledWith('v1');
+      // And the worker is still torn down, rather than the teardown being lost
+      // with the throw.
+      expect(mockPlatformServices.terminate).toHaveBeenCalledWith(
+        'v1',
+        expect.any(Error),
+      );
+    });
+
     it('records it once for a vat retired twice', async () => {
       await vatManager.runVat('v1', createMockVatConfig());
       (
@@ -712,11 +733,58 @@ describe('VatManager', () => {
       await expect(restarted).rejects.toThrow('Kernel run loop died');
     });
 
-    it('stops watching the run loop once the restart settles', async () => {
+    // Both outcomes, because only the resolving one unregisters on its own
+    // path: a rejecter left behind is called later against a promise nobody is
+    // awaiting.
+    it.each([
+      { outcome: 'succeeds', arrange: () => undefined },
+      {
+        outcome: 'fails',
+        arrange: () => {
+          (
+            mockPlatformServices.launch as unknown as MockInstance
+          ).mockRejectedValueOnce(new Error('no worker'));
+        },
+      },
+    ])(
+      'stops watching the run loop once the restart $outcome',
+      async ({ arrange }) => {
+        await vatManager.runVat('v1', createMockVatConfig());
+        arrange();
+
+        await vatManager.restartVat('v1').catch(() => undefined);
+
+        expect(runLoopDeathWaiters.size).toBe(0);
+      },
+    );
+
+    // `enqueueRestartVat` refuses because the run loop is dead, which is the
+    // same thing the waiter registered for — so it has already been rejected,
+    // and this throw is what the caller sees instead. Nothing else is awaiting
+    // it.
+    it('leaves no unhandled rejection when the request cannot be queued', async () => {
       await vatManager.runVat('v1', createMockVatConfig());
+      const unhandled: unknown[] = [];
+      const onUnhandled = (reason: unknown): void => {
+        unhandled.push(reason);
+      };
+      process.on('unhandledRejection', onUnhandled);
+      (
+        mockKernelQueue.enqueueRestartVat as unknown as MockInstance
+      ).mockImplementationOnce((vatId: VatId) => {
+        for (const reject of runLoopDeathWaiters) {
+          reject(new Error('Kernel run loop died'));
+        }
+        throw new Error(`Kernel run loop died; cannot restart a vat ${vatId}`);
+      });
 
-      await vatManager.restartVat('v1');
+      await expect(vatManager.restartVat('v1')).rejects.toThrow(
+        'cannot restart a vat',
+      );
+      await drainMicrotasks();
+      process.off('unhandledRejection', onUnhandled);
 
+      expect(unhandled).toStrictEqual([]);
       expect(runLoopDeathWaiters.size).toBe(0);
     });
 

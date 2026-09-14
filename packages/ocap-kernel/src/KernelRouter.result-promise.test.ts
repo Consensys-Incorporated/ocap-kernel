@@ -3,7 +3,7 @@ import { describe, it, expect, vi } from 'vitest';
 
 import { KernelQueue } from './KernelQueue.ts';
 import { KernelRouter } from './KernelRouter.ts';
-import { makeKernelError, kser } from './liveslots/kernel-marshal.ts';
+import { kser } from './liveslots/kernel-marshal.ts';
 import { makeKernelStore } from './store/index.ts';
 import type { EndpointHandle, KRef, RunQueueItem } from './types.ts';
 
@@ -97,29 +97,36 @@ describe('a result promise whose delivery fails', () => {
     expect(kernelStore.getKernelPromise(result).state).toBe('rejected');
   });
 
-  // The vat resolving the result and then losing its stream is one way in; a
+  // A vat that resolves the result and then loses its stream is one way in; a
   // stream that dies mid-delivery is the other, since retiring the vat rejects
   // every promise it was deciding and this one's decider was just set.
-  it('leaves a result the endpoint already settled alone', async () => {
-    // Held in an object so the endpoint can reach it before the queue that
-    // settles the promise exists.
-    const endpointDoes = { settleTheResult: (): void => undefined };
-    const { kernelStore, kernelQueue, runCrank } = await makeFixture(
-      async () => {
-        endpointDoes.settleTheResult();
-        throw new Error('stream closed');
-      },
-    );
-    const result = queueSendWithResult(kernelStore, kernelQueue);
-    // The endpoint settles the result on its way down, as a vat that resolves
-    // and then loses its stream does.
-    endpointDoes.settleTheResult = () =>
-      kernelQueue.resolvePromises('v1', [
-        [result, true, makeKernelError('VAT_TERMINATED', 'worker died')],
-      ]);
+  it.each([
+    { how: 'fulfilled', rejected: false, state: 'fulfilled' },
+    { how: 'rejected', rejected: true, state: 'rejected' },
+  ])(
+    'leaves a result the endpoint already $how alone',
+    async ({ rejected, state }) => {
+      // Held in an object so the endpoint can reach it before the queue that
+      // settles the promise exists.
+      const endpointDoes = { settleTheResult: (): void => undefined };
+      const { kernelStore, kernelQueue, runCrank } = await makeFixture(
+        async () => {
+          endpointDoes.settleTheResult();
+          throw new Error('stream closed');
+        },
+      );
+      const result = queueSendWithResult(kernelStore, kernelQueue);
+      endpointDoes.settleTheResult = () =>
+        kernelQueue.resolvePromises('v1', [
+          [result, rejected, kser('settled by the endpoint')],
+        ]);
 
-    expect(await runCrank()).toBeUndefined();
+      expect(await runCrank()).toBeUndefined();
 
-    expect(kernelStore.getKernelPromise(result).state).toBe('rejected');
-  });
+      const settled = kernelStore.getKernelPromise(result);
+      expect(settled.state).toBe(state);
+      // The endpoint's own settlement, not the delivery's `DELIVERY_FAILED`.
+      expect(settled.value?.body).toContain('settled by the endpoint');
+    },
+  );
 });

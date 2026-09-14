@@ -1,4 +1,5 @@
 import { makeSQLKernelDatabase } from '@metamask/kernel-store/sqlite/nodejs';
+import type { Logger } from '@metamask/logger';
 import { describe, it, expect, vi } from 'vitest';
 
 import { processGCActionSet } from './garbage-collection.ts';
@@ -19,12 +20,13 @@ import type {
  * Selection has its own real-store coverage next door and delivery has unit
  * coverage over a mocked store, but the two halves have never met: the mock
  * answers `hasCListEntry` and `krefsToErefs` from `vi.fn()`s, so nothing there
- * pins what the kernel actually releases, and nothing pins that a crank the
- * delivery aborts gives the action back.
+ * pins what the kernel actually releases.
  *
  * The crank is driven here rather than by `KernelQueue.run`, which never
- * resolves and, for the abort below, would reselect the same action every crank
- * (see #1061). `runCrank` is the shape `#runLoop` gives a delivery.
+ * resolves. `runCrank` mirrors the shape `#runLoop` gives a delivery, rollback
+ * on a throw included — without that the action `processGCActionSet` has
+ * already spent is committed away rather than restored, and the last test
+ * below would be asserting against a store the run loop would never produce.
  */
 
 type Delivered = { method: string; erefs: ERef[] };
@@ -43,16 +45,28 @@ async function makeFixture(): Promise<{
   ) => Promise<CrankResult | undefined>;
   delivered: Delivered[];
   endpoints: Map<EndpointId, EndpointHandle>;
+  duringEndpointLookup: { run: () => void };
+  logged: unknown[][];
 }> {
   const kdb = await makeSQLKernelDatabase({ dbFilename: ':memory:' });
   const kernelStore = makeKernelStore(kdb);
   const kernelQueue = new KernelQueue(kernelStore, async () => undefined);
   const endpoints = new Map<EndpointId, EndpointHandle>();
   const delivered: Delivered[] = [];
+  // Stands in for whatever else runs while the lookup is awaited.
+  const duringEndpointLookup = { run: (): void => undefined };
+  const logged: unknown[][] = [];
+  const logger = {
+    log: vi.fn(),
+    error: vi.fn((...args: unknown[]) => {
+      logged.push(args);
+    }),
+  } as unknown as Logger;
   const kernelRouter = new KernelRouter(
     kernelStore,
     kernelQueue,
     async (endpointId) => {
+      duringEndpointLookup.run();
       const endpoint = endpoints.get(endpointId);
       if (!endpoint) {
         throw new Error(`vat ${endpointId} not found`);
@@ -61,6 +75,7 @@ async function makeFixture(): Promise<{
     },
     () => undefined,
     async () => undefined,
+    logger,
   );
 
   const runCrank = async (
@@ -75,9 +90,12 @@ async function makeFixture(): Promise<{
         return undefined;
       }
       beforeDeliver?.(item);
-      const result = await kernelRouter.deliver(item);
-      if (result?.abort) {
+      let result: CrankResult | undefined;
+      try {
+        result = await kernelRouter.deliver(item);
+      } catch (error) {
         kernelStore.rollbackCrank('delivery');
+        throw error;
       }
       kernelStore.collectGarbage();
       return result;
@@ -86,7 +104,14 @@ async function makeFixture(): Promise<{
     }
   };
 
-  return { kernelStore, runCrank, delivered, endpoints };
+  return {
+    kernelStore,
+    runCrank,
+    delivered,
+    endpoints,
+    duringEndpointLookup,
+    logged,
+  };
 }
 
 /**
@@ -226,5 +251,68 @@ describe('a GC action the kernel issues', () => {
 
     expect(kernelStore.getReachableFlag('v1', kref)).toBe(true);
     expect(kernelStore.hasCListEntry('v1', kref)).toBe(true);
+    // Selection spends the action from the durable set before delivery, so the
+    // rollback is the only thing that gives it back.
+    expect([...kernelStore.getGCActions()]).toStrictEqual([
+      `v1 dropExport ${kref}`,
+    ]);
+  });
+
+  // `nextTerminatedVatCleanup` and a remote's incarnation change both tear
+  // c-list entries down without waiting for the crank, and resolving the
+  // endpoint yields to them. Reusing the answer from before that yield hands
+  // `krefsToErefs` a kref whose entry has gone, and it throws rather than
+  // returning short.
+  it('re-reads the c-list after resolving the endpoint', async () => {
+    const {
+      kernelStore,
+      runCrank,
+      delivered,
+      endpoints,
+      duringEndpointLookup,
+    } = await makeFixture();
+    registerEndpoint(endpoints, delivered, 'v1');
+    const gone = kernelStore.initKernelObject('v1');
+    const kept = kernelStore.initKernelObject('v1');
+    kernelStore.addCListEntry('v1', gone, 'o+1');
+    kernelStore.addCListEntry('v1', kept, 'o+2');
+    kernelStore.setObjectRefCount(gone, { reachable: 0, recognizable: 1 });
+    kernelStore.setObjectRefCount(kept, { reachable: 0, recognizable: 1 });
+    kernelStore.addGCActions([
+      `v1 dropExport ${gone}`,
+      `v1 dropExport ${kept}`,
+    ]);
+    duringEndpointLookup.run = () => {
+      kernelStore.deleteCListEntry('v1', gone, 'o+1');
+    };
+
+    await runCrank();
+
+    expect(delivered).toStrictEqual([
+      { method: 'dropExports', erefs: ['o+2'] },
+    ]);
+  });
+
+  // The kref going before delivery is ordinary, but it is the one thing an
+  // operator has to go on when a GC action produces nothing, and this is the
+  // whole of the delivery when cleanup reached every kref.
+  it('reports krefs that cleanup reached first, even when none survive', async () => {
+    const { kernelStore, runCrank, delivered, endpoints, logged } =
+      await makeFixture();
+    registerEndpoint(endpoints, delivered, 'v1');
+    const kref = kernelStore.initKernelObject('v1');
+    kernelStore.addCListEntry('v1', kref, 'o+1');
+    kernelStore.setObjectRefCount(kref, { reachable: 0, recognizable: 1 });
+    kernelStore.addGCActions([`v1 dropExport ${kref}`]);
+
+    // After selection, as `nextTerminatedVatCleanup` does.
+    await runCrank(() => {
+      kernelStore.deleteCListEntry('v1', kref, 'o+1');
+    });
+
+    expect(delivered).toStrictEqual([]);
+    expect(logged.flat()).toContainEqual(
+      expect.stringContaining('1 of 1 kref(s) were cleaned up before delivery'),
+    );
   });
 });
