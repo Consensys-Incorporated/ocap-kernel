@@ -36,6 +36,7 @@ async function makeFixture(): Promise<{
   vatManager: VatManager;
   deliveries: ((result: CrankResult) => void)[];
   deliver: (item: RunQueueItem) => Promise<CrankResult>;
+  streamDeaths: ((error: Error, vat: VatHandle) => void)[];
 }> {
   const kdb = await makeSQLKernelDatabase({ dbFilename: ':memory:' });
   const kernelStore = makeKernelStore(kdb);
@@ -47,14 +48,19 @@ async function makeFixture(): Promise<{
     terminateAll: vi.fn().mockResolvedValue(undefined),
   } as unknown as PlatformServices;
 
+  // Captured per fixture rather than read off the shared spy's `mock.calls`,
+  // which accumulate across tests.
+  const streamDeaths: ((error: Error, vat: VatHandle) => void)[] = [];
   vi.spyOn(VatHandle, 'make').mockImplementation(
-    async ({ vatId, vatConfig }) =>
-      ({
+    async ({ vatId, vatConfig, onCriticalFailure }) => {
+      streamDeaths.push(onCriticalFailure);
+      return {
         vatId,
         config: vatConfig,
-        terminate: vi.fn(),
+        terminate: vi.fn().mockResolvedValue(undefined),
         ping: vi.fn(),
-      }) as unknown as VatHandle,
+      } as unknown as VatHandle;
+    },
   );
 
   // eslint-disable-next-line prefer-const
@@ -77,7 +83,14 @@ async function makeFixture(): Promise<{
       deliveries.push(resolve);
     });
 
-  return { kernelStore, kernelQueue, vatManager, deliveries, deliver };
+  return {
+    kernelStore,
+    kernelQueue,
+    vatManager,
+    deliveries,
+    deliver,
+    streamDeaths,
+  };
 }
 
 /**
@@ -162,6 +175,58 @@ describe("a vat's death while the run loop is running", () => {
       hasVat: vatManager.hasVat('v1' as VatId),
     }).toStrictEqual({
       where: 'after the unrelated crank aborted',
+      active: false,
+      hasVat: false,
+    });
+  });
+
+  // `terminateVat` above records the death out of crank. A broken stream does
+  // not: `onCriticalFailure` writes into whichever crank is open, and an abort
+  // rolls those writes back while the handle it deleted stays deleted.
+  it('survives the crank it died in being rolled back', async () => {
+    const {
+      kernelStore,
+      kernelQueue,
+      vatManager,
+      deliveries,
+      deliver,
+      streamDeaths,
+    } = await makeFixture();
+    const subclusterId = kernelStore.addSubcluster({
+      bootstrap: 'bob',
+      vats: { bob: { sourceSpec: 'test.js' } },
+    });
+    await vatManager.launchVat(config, 'bob', subclusterId);
+    const vat = vatManager.getVat('v1' as VatId);
+    const streamDied = streamDeaths[0] as (
+      error: Error,
+      vat: VatHandle,
+    ) => void;
+
+    kernelStore.enqueueRun({
+      type: 'send',
+      target: 'ko1',
+      message: { methargs: { body: '#[]', slots: [] } },
+    } as unknown as RunQueueItem);
+
+    const loop = kernelQueue.run(deliver);
+    loop.catch(() => undefined);
+    await deliveriesReach(deliveries, 1);
+
+    // The drain catch fires in whatever turn the read error lands in, which is
+    // routinely one with a crank open.
+    streamDied(new Error('the worker went away'), vat);
+    // Aborting for a reason of its own, so nothing re-records the death the way
+    // a `terminate` result would.
+    deliveries[0]?.({ abort: true });
+    await settle();
+
+    expect({
+      where: 'after the crank it died in aborted',
+      active: kernelStore.isVatActive('v1' as VatId),
+      hasVat: vatManager.hasVat('v1' as VatId),
+    }).toStrictEqual({
+      where: 'after the crank it died in aborted',
       active: false,
       hasVat: false,
     });

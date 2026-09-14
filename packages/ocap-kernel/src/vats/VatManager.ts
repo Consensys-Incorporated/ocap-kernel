@@ -409,8 +409,15 @@ export class VatManager {
    * earlier. `terminate` rejects them, and the worker is stopped because
    * nothing else will now that the handle is off the books.
    *
-   * Never rejects: both steps are best-effort against a vat that is already
-   * gone, and there is nobody left to report to.
+   * It also re-asserts the death, because the stream can break at any point in
+   * a crank and {@link #retireVat} writes into whichever one is open. A crank
+   * that aborts rolls those writes back — and the run loop carries on, since an
+   * abort is an outcome rather than a failure — while the handle this already
+   * deleted stays gone. That is the store-says-live, kernel-says-dead
+   * disagreement, reached by a route `#trackFlux` does not cover.
+   *
+   * Best-effort throughout: both steps work against a vat that is already gone,
+   * and there is nobody left to report to.
    *
    * @param vatId - The vat that failed.
    * @param vat - Its handle, whose pending RPCs are owed a rejection.
@@ -421,6 +428,13 @@ export class VatManager {
     vat: VatHandle,
     error: Error,
   ): Promise<void> {
+    // Started in this turn rather than after the kill below, because
+    // `beginOutOfCrank` takes the gate synchronously: from here the run loop
+    // cannot open a crank once the one in flight ends, so there is no window
+    // for a delivery to find the disagreement. It cannot be awaited before the
+    // rejections either — the crank in flight may be parked on one of them, and
+    // the gate waits for that crank.
+    const reasserted = this.#reassertDeathOutOfCrank(vatId, error);
     await Promise.all([
       // `terminate` rejects the vat's pending RPCs before it awaits anything,
       // so starting it first frees the parked delivery in this turn rather than
@@ -440,6 +454,45 @@ export class VatManager {
           );
         }),
     ]);
+    await reasserted;
+  }
+
+  /**
+   * Write a failed vat's death again if the crank it was first written in
+   * rolled it back. Held out of crank, so the store's answer is final rather
+   * than one an abort can still undo.
+   *
+   * `isVatActive` reads the config row {@link #retireVat} deletes, so a death
+   * that committed is not rewritten, and neither is a vat whose cleanup has
+   * since run.
+   *
+   * @param vatId - The vat that failed.
+   * @param error - What broke, for the rejections a redo owes its subscribers.
+   */
+  async #reassertDeathOutOfCrank(vatId: VatId, error: Error): Promise<void> {
+    try {
+      await this.#kernelStore.withStoreOutOfCrank(() => {
+        if (this.#kernelStore.isVatActive(vatId)) {
+          this.#retireVat(vatId, error);
+        }
+      });
+    } catch (reassertError) {
+      this.#logger.error(
+        `Failed to record the death of vat ${vatId} again after its crank:`,
+        reassertError,
+      );
+      // As in `onCriticalFailure`: the mark is the one write that cannot be
+      // skipped, since without it the store goes on calling the vat active
+      // while the kernel has no handle for it.
+      try {
+        this.#kernelStore.markVatAsTerminated(vatId);
+      } catch (markError) {
+        this.#logger.error(
+          `Vat ${vatId} could not be marked terminated; the store still calls it active and the kernel has no handle for it:`,
+          markError,
+        );
+      }
+    }
   }
 
   /**
@@ -472,20 +525,27 @@ export class VatManager {
    * live vat as a dead one. In a crank of its own there is no window: the run
    * loop is the only thing that delivers, and it is here instead.
    *
-   * One request per vat is queued at a time. A second while the first is still
-   * waiting takes over its item rather than adding one of its own: the item
-   * carries only the vat's ID, so two of them are two restarts, and the crank
-   * that ran the first would already have handed this caller a live handle. The
-   * leftover would then stop that worker and — if the relaunch failed —
-   * terminate the vat its caller was told about.
+   * A request that arrives while one is still *queued* takes over its item
+   * rather than adding one of its own: the item carries only the vat's ID, so
+   * two of them are two restarts, and the crank that ran the first would
+   * already have handed this caller a live handle. The leftover would then stop
+   * that worker and — if the relaunch failed — terminate the vat its caller was
+   * told about. A request that arrives while one is being *carried out* does
+   * queue an item of its own, which runs after the crank in flight: it has its
+   * own caller to answer, so it is not the leftover that hazard is about.
    *
    * @param vatId - The ID of the vat.
    * @returns A promise for the restarted vat.
    */
   async restartVat(vatId: VatId): Promise<VatHandle> {
-    // Rejects an unknown vat here rather than from inside a crank, where the
-    // caller could only be told by way of a dead run loop.
-    this.getVat(vatId);
+    // The store, not the handle: `performVatRestart` holds the vat between
+    // workers with no handle on the books for as long as launching one takes,
+    // and a request landing in that window is for a vat that is coming back.
+    // Rejected here rather than from inside a crank where it can be, so that
+    // the caller is not told by way of a dead run loop.
+    if (!this.#vats.has(vatId) && !this.#kernelStore.isVatActive(vatId)) {
+      throw new VatNotFoundError(vatId);
+    }
     // Read before `#awaitRestart` replaces the waiter: an unconsumed waiter is
     // how an item still queued for this vat makes itself known, since
     // `performVatRestart` takes the waiter the moment it starts.

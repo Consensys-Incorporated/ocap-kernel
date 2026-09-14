@@ -94,6 +94,9 @@ describe('VatManager', () => {
         terminatedVats.add(vatId);
       }),
       isVatTerminated: vi.fn((vatId: VatId) => terminatedVats.has(vatId)),
+      // These tests reach the store through `runVat`, which writes no config
+      // row, so the store knows of no vat unless a test says otherwise.
+      isVatActive: vi.fn().mockReturnValue(false),
       deleteVat: vi.fn((vatId: VatId) => {
         if (deletedVats.has(vatId)) {
           throw new Error(`Vat "${vatId}" has no subcluster`);
@@ -996,6 +999,42 @@ describe('VatManager', () => {
       // The waiter is taken when the crank starts, so a request arriving after
       // that has no item to join and needs one of its own.
       expect(mockKernelQueue.enqueueRestartVat).toHaveBeenCalledTimes(2);
+      expect(await second).toBe(vatHandles[2]);
+    });
+
+    it('queues a request that arrives while the vat is between workers', async () => {
+      await vatManager.runVat('v1', createMockVatConfig());
+      (
+        mockKernelQueue.enqueueRestartVat as unknown as MockInstance
+      ).mockImplementation(() => undefined);
+      // Between workers is not gone: the store still lists the vat.
+      (mockKernelStore.isVatActive as unknown as MockInstance) = vi
+        .fn()
+        .mockReturnValue(true);
+      // Parks the worker kill, which holds `performVatRestart` after it has
+      // dropped the handle and before `runVat` puts the next one on the books.
+      let releaseWorkerKill = (): void => undefined;
+      mockPlatformServices.terminate.mockImplementationOnce(
+        async () =>
+          new Promise<void>((resolve) => {
+            releaseWorkerKill = resolve;
+          }),
+      );
+
+      const first = vatManager.restartVat('v1');
+      const carriedOut = vatManager.performVatRestart('v1');
+      await drainMicrotasks();
+      expect(vatManager.hasVat('v1')).toBe(false);
+
+      const second = vatManager.restartVat('v1');
+      releaseWorkerKill();
+      await carriedOut;
+      expect(await first).toBe(vatHandles[1]);
+
+      // The second request could not join an item already taken, so it has one
+      // of its own, which the run loop reaches after this crank.
+      expect(mockKernelQueue.enqueueRestartVat).toHaveBeenCalledTimes(2);
+      await vatManager.performVatRestart('v1');
       expect(await second).toBe(vatHandles[2]);
     });
   });
