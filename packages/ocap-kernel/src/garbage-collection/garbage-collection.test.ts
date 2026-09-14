@@ -84,6 +84,25 @@ describe('garbage-collection', () => {
       expect(kernelStore.getGCActions().size).toBe(0);
     });
 
+    it('groups two actions of one type for one vat into a single item', () => {
+      const ko1 = kernelStore.initKernelObject('v1');
+      const ko2 = kernelStore.initKernelObject('v1');
+      kernelStore.addCListEntry('v1', ko1, 'o+1');
+      kernelStore.addCListEntry('v1', ko2, 'o+2');
+      kernelStore.setObjectRefCount(ko1, { reachable: 0, recognizable: 1 });
+      kernelStore.setObjectRefCount(ko2, { reachable: 0, recognizable: 1 });
+      kernelStore.addGCActions([
+        `v1 dropExport ${ko2}`,
+        `v1 dropExport ${ko1}`,
+      ]);
+
+      expect(processGCActionSet(kernelStore)).toStrictEqual({
+        type: 'dropExports',
+        endpointId: 'v1',
+        krefs: [ko1, ko2],
+      });
+    });
+
     it('processes actions in priority order', () => {
       // Setup: Create objects and add multiple GC actions
       const ko1 = kernelStore.initKernelObject('v1');

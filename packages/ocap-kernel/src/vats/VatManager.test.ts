@@ -311,6 +311,33 @@ describe('VatManager', () => {
       expect(mockKernelStore.unpinObject).toHaveBeenCalledWith('ko1');
     });
 
+    it.each([
+      {
+        step: 'unpinning the root',
+        arrange: () => {
+          mockKernelStore.unpinObject.mockImplementationOnce(() => {
+            throw new Error('unpin failed');
+          });
+        },
+      },
+      {
+        step: 'terminating the handle',
+        arrange: () => {
+          vatHandles[0]?.terminate.mockRejectedValueOnce(
+            new Error('terminate failed'),
+          );
+        },
+      },
+    ])('forgets the vat when $step throws', async ({ arrange }) => {
+      await vatManager.runVat('v1', createMockVatConfig());
+      arrange();
+
+      await expect(vatManager.stopVat('v1', true)).rejects.toThrow('failed');
+
+      expect(vatManager.hasVat('v1')).toBe(false);
+      expect(vatManager.getVatIds()).toStrictEqual([]);
+    });
+
     it('stops a vat for termination with reason', async () => {
       const config = createMockVatConfig();
       await vatManager.runVat('v1', config);

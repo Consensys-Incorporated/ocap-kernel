@@ -106,6 +106,11 @@ function filterActionsForProcessing(
     actionSetUpdated = true;
   }
 
+  // Sorted before hardening, not by the caller afterwards: `harden` freezes the
+  // array, and `sort` writes back into it even when it is already in order, so
+  // any endpoint with two actions of one type threw out of here and killed the
+  // run loop. One vat dropping two exports in a crank is enough.
+  krefs.sort();
   return harden({ krefs, actionSetUpdated });
 }
 
@@ -174,9 +179,6 @@ export function processGCActionSet(
         actionSetUpdated = actionSetUpdated || updated;
 
         if (krefs.length > 0) {
-          // We found actions to process
-          krefs.sort();
-
           // Update the durable set before returning
           storage.setGCActions(allActionsSet);
 

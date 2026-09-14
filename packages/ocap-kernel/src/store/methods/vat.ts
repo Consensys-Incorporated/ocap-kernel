@@ -5,6 +5,7 @@ import { getCListMethods } from './clist.ts';
 import { getObjectMethods } from './object.ts';
 import { getPromiseMethods } from './promise.ts';
 import { getReachableMethods } from './reachable.ts';
+import { getRemoteMethods } from './remote.ts';
 import type {
   EndpointId,
   KRef,
@@ -42,6 +43,7 @@ export function getVatMethods(ctx: StoreContext) {
     getPromiseMethods(ctx);
   const { initKernelObject } = getObjectMethods(ctx);
   const { addCListEntry } = getCListMethods(ctx);
+  const { getRemoteIDs } = getRemoteMethods(ctx);
 
   /**
    * Delete all persistent state associated with an endpoint.
@@ -143,14 +145,17 @@ export function getVatMethods(ctx: StoreContext) {
   }
 
   /**
-   * Checks if a vat imports the specified kernel slot.
+   * Checks if an endpoint imports the specified kernel slot.
    *
-   * @param vatID - The ID of the vat to check.
+   * @param endpointId - The ID of the endpoint to check.
    * @param kernelSlot - The kernel slot reference.
-   * @returns True if the vat imports the kernel slot, false otherwise.
+   * @returns True if the endpoint imports the kernel slot, false otherwise.
    */
-  function importsKernelSlot(vatID: VatId, kernelSlot: KRef): boolean {
-    const data = ctx.kv.get(getSlotKey(vatID, kernelSlot));
+  function importsKernelSlot(
+    endpointId: EndpointId,
+    kernelSlot: KRef,
+  ): boolean {
+    const data = ctx.kv.get(getSlotKey(endpointId, kernelSlot));
     if (data) {
       const { vatSlot } = parseReachableAndVatSlot(data);
       const { direction } = parseRef(vatSlot);
@@ -162,15 +167,19 @@ export function getVatMethods(ctx: StoreContext) {
   }
 
   /**
-   * Gets all vats that import a specific kernel object.
+   * Gets all endpoints that import a specific kernel object.
+   *
+   * Remotes as well as vats: `retireKernelObjects` deletes the object once it
+   * has told the importers, so one missed here keeps a c-list entry naming a
+   * kref that no longer exists — which the reference count audit reports as
+   * dangling, killing the run loop.
    *
    * @param koid - The kernel object ID.
-   * @returns An array of vat IDs that import the kernel object.
+   * @returns An array of endpoint IDs that import the kernel object.
    */
-  function getImporters(koid: KRef): VatId[] {
-    const importers = [];
-    importers.push(
-      ...getVatIDs().filter((vatID) => importsKernelSlot(vatID, koid)),
+  function getImporters(koid: KRef): EndpointId[] {
+    const importers: EndpointId[] = [...getVatIDs(), ...getRemoteIDs()].filter(
+      (endpointId) => importsKernelSlot(endpointId, koid),
     );
     importers.sort();
     return importers;

@@ -215,15 +215,22 @@ export class VatManager {
     } else if (terminating) {
       terminationError = new VatDeletedError(vatId);
     }
-    if (terminating) {
-      // A restart keeps the pin: the same root comes back.
-      this.releaseVatRootPin(vatId);
+    try {
+      if (terminating) {
+        // A restart keeps the pin: the same root comes back.
+        this.releaseVatRootPin(vatId);
+      }
+      await this.#platformServices
+        .terminate(vatId, terminationError)
+        .catch(this.#logger.error);
+      await vat.terminate(terminating, terminationError);
+    } finally {
+      // A handle left behind outlives the store state the terminated-vat
+      // cleanup wipes, so `hasVat`, `getVatIds` and `#getEndpoint` go on
+      // reporting a vat with no c-list, and the next `bringOutYourDead`
+      // selected for it kills the run loop.
+      this.#vats.delete(vatId);
     }
-    await this.#platformServices
-      .terminate(vatId, terminationError)
-      .catch(this.#logger.error);
-    await vat.terminate(terminating, terminationError);
-    this.#vats.delete(vatId);
   }
 
   /**

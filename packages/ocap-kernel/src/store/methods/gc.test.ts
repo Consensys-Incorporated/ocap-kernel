@@ -201,6 +201,25 @@ describe('GC methods', () => {
       expect(kernelStore.getObjectRefCount(ko2)).toBeDefined();
     });
 
+    // The object is deleted once the importers have been told, so a remote
+    // left out keeps a c-list entry naming a kref that no longer exists — which
+    // the audit reports as dangling, killing the run loop.
+    it('tells a remote importer too', () => {
+      kernelStore.setVatConfig('v1', { bundleName: 'vat1' });
+      kernelStore.setRemoteInfo('r1', {
+        peerId: 'peer-1',
+      } as unknown as Parameters<typeof kernelStore.setRemoteInfo>[1]);
+      const kref = kernelStore.initKernelObject('v1');
+      kernelStore.addCListEntry('r1', kref, 'ro-1');
+      kernelStore.setGCActions(new Set());
+
+      kernelStore.retireKernelObjects([kref]);
+
+      expect([...kernelStore.getGCActions()]).toStrictEqual([
+        `r1 retireImport ${kref}`,
+      ]);
+    });
+
     it('throws for non-array input', () => {
       expect(() => {
         kernelStore.retireKernelObjects('not-an-array' as unknown as KRef[]);

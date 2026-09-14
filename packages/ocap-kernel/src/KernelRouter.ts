@@ -461,15 +461,23 @@ export class KernelRouter {
       // negotiating with it takes, so this is reachable, and releasing the
       // kernel's side would commit exactly the disagreement the failed delivery
       // below rolls back to avoid — the vat would mint fresh krefs for objects
-      // the kernel thinks it let go of. Fail the crank rather than commit that.
-      // Nothing here can make the restart safe: the action is already spent from
-      // the durable set, and a crank that neither delivers nor releases would
-      // simply be handed the same action again on the next one.
+      // the kernel thinks it let go of.
+      //
+      // Abort rather than throw. A throw here leaves `deliver` by the run loop's
+      // catch and kills the run loop for good over a vat that is about to come
+      // back. The rollback restores the c-list and the action, so the returning
+      // incarnation is handed it instead. Until it returns the action is
+      // reselected every crank, since GC actions are chosen ahead of all other
+      // work — a spin, where this used to be a death. See #1061.
       if (
         isVatId(endpointId) &&
         !this.#kernelStore.isVatTerminated(endpointId)
       ) {
-        throw error;
+        this.#logger?.error(
+          `Endpoint ${endpointId} is between incarnations; deferring ${type} of ${JSON.stringify(live)}:`,
+          error,
+        );
+        return { abort: true };
       }
       // A terminated vat's cleanup tears its c-list down wholesale, and a remote
       // reconciles on its next incarnation, so for those the release below is
@@ -515,11 +523,16 @@ export class KernelRouter {
     } catch (error) {
       if (!isVatId(endpointId)) {
         // A remote is a separate kernel across a link that can drop messages,
-        // so its protocol already has to tolerate one going missing — it
-        // reconciles on the next incarnation change. Retrying instead would
-        // starve the kernel: GC actions are selected ahead of all other work,
-        // so a remote that keeps refusing (a full send queue, say) would be
-        // handed the same item every crank and nothing else would ever run.
+        // so its protocol already has to tolerate one going missing. Retrying
+        // instead would starve the kernel: GC actions are selected ahead of all
+        // other work, so a remote that keeps refusing (a full send queue, say)
+        // would be handed the same item every crank and nothing else would ever
+        // run.
+        //
+        // The next incarnation change reconciles a dropped or retired export,
+        // but not a `retireImports`: `forgetEndpointImports` keeps only entries
+        // whose direction is `export`. Those stay on the peer's side until it
+        // drops them itself.
         this.#logger?.error(
           `Delivery of ${type} to remote ${endpointId} failed; the kernel has released ${JSON.stringify(live)} regardless:`,
           error,
