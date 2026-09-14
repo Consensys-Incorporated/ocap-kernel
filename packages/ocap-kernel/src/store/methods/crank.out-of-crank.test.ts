@@ -31,6 +31,18 @@ describe('store work outside a crank', () => {
     );
   });
 
+  // The other half: a caller can be outside a crank when it opens its
+  // savepoint and inside one by the time it releases, and that release takes
+  // the crank's savepoints with it.
+  it('refuses a savepoint released inside a crank', () => {
+    kernelStore.createSavepoint('receive_r1_7');
+    kernelStore.startCrank();
+
+    expect(() => kernelStore.releaseSavepoint('receive_r1_7')).toThrow(
+      'releaseSavepoint "receive_r1_7" inside a crank',
+    );
+  });
+
   it('refuses a crank started while a caller holds the store', async () => {
     await kernelStore.withStoreOutOfCrank(() => {
       expect(() => kernelStore.startCrank()).toThrow(

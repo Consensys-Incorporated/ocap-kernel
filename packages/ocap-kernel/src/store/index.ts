@@ -316,9 +316,18 @@ export function makeKernelStore(kdb: KernelDatabase, logger?: Logger) {
   /**
    * Release (commit) a savepoint.
    *
+   * Refused inside a crank for the reason `createSavepoint` gives, and because
+   * a caller that got here anyway would find its savepoint below the crank's
+   * on the stack: releasing it takes the crank's two with it and commits a
+   * delivery still in flight. This is the half `createSavepoint`'s guard
+   * cannot cover, since a caller can be inside a crank by the time it releases
+   * without having been inside one when it opened.
+   *
    * @param name - The savepoint name.
    */
   function releaseSavepoint(name: string): void {
+    !context.inCrank ||
+      Fail`releaseSavepoint ${q(name)} inside a crank; use withStoreOutOfCrank`;
     kdb.releaseSavepoint(name);
   }
 
