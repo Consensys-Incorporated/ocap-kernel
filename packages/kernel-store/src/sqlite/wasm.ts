@@ -70,10 +70,20 @@ export async function initDB(
  * Makes a {@link KVStore} on top of a SQLite database
  *
  * @param db - The (open) database to use.
- * @param logger - A logger object for recording activity.
+ * @param options - Options for the store.
+ * @param options.assertWritable - Throws if this connection can no longer
+ * persist anything, which every write here must ask first: one issued into a
+ * transaction nothing can end reports success and is lost with it.
+ * @param options.logger - A logger object for recording activity.
  * @returns A key/value store using the given database.
  */
-function makeKVStore(db: Database, logger?: Logger): KVStore {
+function makeKVStore(
+  db: Database,
+  {
+    assertWritable,
+    logger,
+  }: { assertWritable: () => void; logger?: Logger | undefined },
+): KVStore {
   db.exec(SQL_QUERIES.CREATE_TABLE);
 
   const sqlKVGet = db.prepare(SQL_QUERIES.GET);
@@ -135,6 +145,7 @@ function makeKVStore(db: Database, logger?: Logger): KVStore {
    * @param value - The value to assign to it.
    */
   function kvSet(key: string, value: string): void {
+    assertWritable();
     logger?.debug(`kv set '${key}' to '${value}'`);
     sqlKVSet.bind([key, value]);
     sqlKVSet.step();
@@ -149,6 +160,7 @@ function makeKVStore(db: Database, logger?: Logger): KVStore {
    * @param key - The key to remove.
    */
   function kvDelete(key: string): void {
+    assertWritable();
     logger?.debug(`kv delete '${key}'`);
     sqlKVDelete.bind([key]);
     sqlKVDelete.step();
@@ -184,16 +196,7 @@ export async function makeSQLKernelDatabase({
   const db = await initDB(dbFilename ?? DEFAULT_DB_FILENAME, logger);
 
   logger?.debug('Initializing kernel store');
-  const kvStore = makeKVStore(db, logger?.subLogger({ tags: ['kv'] }));
 
-  db.exec(SQL_QUERIES.CREATE_TABLE_VS);
-
-  const sqlKVClear = db.prepare(SQL_QUERIES.CLEAR);
-  const sqlKVClearVS = db.prepare(SQL_QUERIES.CLEAR_VS);
-  const sqlVatstoreGetAll = db.prepare(SQL_QUERIES.GET_ALL_VS);
-  const sqlVatstoreSet = db.prepare(SQL_QUERIES.SET_VS);
-  const sqlVatstoreDelete = db.prepare(SQL_QUERIES.DELETE_VS);
-  const sqlVatstoreDeleteAll = db.prepare(SQL_QUERIES.DELETE_VS_ALL);
   const sqlBeginTransaction = db.prepare(SQL_QUERIES.BEGIN_TRANSACTION);
   const sqlCommitTransaction = db.prepare(SQL_QUERIES.COMMIT_TRANSACTION);
   const sqlAbortTransaction = db.prepare(SQL_QUERIES.ABORT_TRANSACTION);
@@ -209,6 +212,7 @@ export async function makeSQLKernelDatabase({
   }
 
   const {
+    assertNotAbandoned,
     beginIfNeeded,
     commitIfNeeded,
     rollbackIfNeeded,
@@ -220,7 +224,22 @@ export async function makeSQLKernelDatabase({
     begin: () => runStatement(sqlBeginTransaction),
     commit: () => runStatement(sqlCommitTransaction),
     abort: () => runStatement(sqlAbortTransaction),
+    logger,
   });
+
+  const kvStore = makeKVStore(db, {
+    assertWritable: assertNotAbandoned,
+    logger: logger?.subLogger({ tags: ['kv'] }),
+  });
+
+  db.exec(SQL_QUERIES.CREATE_TABLE_VS);
+
+  const sqlKVClear = db.prepare(SQL_QUERIES.CLEAR);
+  const sqlKVClearVS = db.prepare(SQL_QUERIES.CLEAR_VS);
+  const sqlVatstoreGetAll = db.prepare(SQL_QUERIES.GET_ALL_VS);
+  const sqlVatstoreSet = db.prepare(SQL_QUERIES.SET_VS);
+  const sqlVatstoreDelete = db.prepare(SQL_QUERIES.DELETE_VS);
+  const sqlVatstoreDeleteAll = db.prepare(SQL_QUERIES.DELETE_VS_ALL);
 
   /**
    * Safely mutate the database with proper transaction management
@@ -246,6 +265,7 @@ export async function makeSQLKernelDatabase({
    * Delete everything from the database.
    */
   function kvClear(): void {
+    assertNotAbandoned();
     logger?.debug('clearing all kernel state');
     sqlKVClear.step();
     sqlKVClear.reset();
@@ -341,6 +361,7 @@ export async function makeSQLKernelDatabase({
    * @param vatId - The vat whose store is to be deleted.
    */
   function deleteVatStore(vatId: string): void {
+    assertNotAbandoned();
     sqlVatstoreDeleteAll.bind([vatId]);
     sqlVatstoreDeleteAll.step();
     sqlVatstoreDeleteAll.reset();

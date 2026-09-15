@@ -1,3 +1,5 @@
+import type { Logger } from '@metamask/logger';
+
 import { SQL_QUERIES, assertSafeIdentifier } from './common.ts';
 
 /**
@@ -13,6 +15,7 @@ export type TransactionalDatabase = {
 };
 
 export type TransactionMethods = {
+  assertNotAbandoned: () => void;
   beginIfNeeded: () => boolean;
   commitIfNeeded: () => void;
   rollbackIfNeeded: () => void;
@@ -29,6 +32,7 @@ export type TransactionMethods = {
  * @param options.begin - Runs the driver's prepared `BEGIN TRANSACTION`.
  * @param options.commit - Runs the driver's prepared `COMMIT TRANSACTION`.
  * @param options.abort - Runs the driver's prepared `ROLLBACK TRANSACTION`.
+ * @param options.logger - A logger, for an abort that fails.
  * @returns The transaction and savepoint methods.
  */
 export function makeTransactionMethods({
@@ -36,18 +40,63 @@ export function makeTransactionMethods({
   begin,
   commit,
   abort,
+  logger,
 }: {
   db: TransactionalDatabase;
   begin: () => void;
   commit: () => void;
   abort: () => void;
+  logger?: Logger | undefined;
 }): TransactionMethods {
+  // Set when an abort meant to discard a transaction fails. The writes of the
+  // crank we gave up on are still in it, and a savepoint taken inside it would
+  // be released into it.
+  let txAbandoned = false;
+
+  /**
+   * Refuse to touch a transaction an earlier abort could not end. A savepoint
+   * created inside one is released into it, committing the crank that abort was
+   * discarding, and a COMMIT makes those writes durable outright. Retried once
+   * first, since the failure may have been transient.
+   *
+   * @throws If the transaction is still there afterwards. Returning normally
+   * would tell the caller its write landed.
+   */
+  function assertNotAbandoned(): void {
+    if (!txAbandoned) {
+      return;
+    }
+    discardTransaction('abandonment');
+    if (txAbandoned) {
+      throw new Error(
+        'transaction cannot be ended; refusing further writes on this connection',
+      );
+    }
+  }
+
+  /**
+   * Discard the transaction after a failure that leaves it unowned, keeping the
+   * error that got us here rather than the abort's.
+   *
+   * @param after - What failed, completing "failed to discard transaction
+   * after ...".
+   */
+  function discardTransaction(after: string): void {
+    db._spStack.length = 0;
+    try {
+      rollbackIfNeeded();
+    } catch (error) {
+      logger?.error(`failed to discard transaction after ${after}`, error);
+    }
+  }
+
   /**
    * Begin a transaction if not already in one.
    *
    * @returns True if a new transaction was started, false if already in one.
    */
   function beginIfNeeded(): boolean {
+    assertNotAbandoned();
     if (db.inTransaction) {
       return false;
     }
@@ -63,8 +112,18 @@ export function makeTransactionMethods({
    * Commit a transaction if one is active and no savepoints remain.
    */
   function commitIfNeeded(): void {
-    if (db.inTransaction && db._spStack.length === 0) {
+    assertNotAbandoned();
+    if (!db.inTransaction || db._spStack.length > 0) {
+      return;
+    }
+    try {
       commit();
+    } catch (error) {
+      // A failed COMMIT can leave the transaction open, and `releaseSavepoint`
+      // reaches here outside any try of its own — the same hazard the savepoint
+      // paths below discard the transaction to avoid, by a third door.
+      discardTransaction('commit');
+      throw error;
     }
   }
 
@@ -72,10 +131,20 @@ export function makeTransactionMethods({
    * Abort a transaction if one is active.
    */
   function rollbackIfNeeded(): void {
-    if (db.inTransaction) {
-      abort();
-      db._spStack.length = 0;
+    if (!db.inTransaction) {
+      txAbandoned = false;
+      return;
     }
+    try {
+      abort();
+    } catch (error) {
+      txAbandoned = true;
+      throw error;
+    }
+    db._spStack.length = 0;
+    // Normally false now. If SQLite still reports a transaction, it is still
+    // not ours to commit.
+    txAbandoned = db.inTransaction;
   }
 
   /**
@@ -99,12 +168,24 @@ export function makeTransactionMethods({
    * @param name - The name of the savepoint.
    */
   function createSavepoint(name: string): void {
+    // Ahead of the BEGIN, so a name this refuses leaves no transaction behind.
+    assertSafeIdentifier(name);
     // We must be in a transaction when creating the savepoint or releasing it
     // later will cause an autocommit.
     // See https://github.com/Agoric/agoric-sdk/issues/8423
-    beginIfNeeded();
-    assertSafeIdentifier(name);
-    db.exec(SQL_QUERIES.CREATE_SAVEPOINT.replace('%NAME%', name));
+    const startedTransaction = beginIfNeeded();
+    try {
+      db.exec(SQL_QUERIES.CREATE_SAVEPOINT.replace('%NAME%', name));
+    } catch (error) {
+      // Nothing was pushed, so no savepoint path would reach this transaction
+      // and `txAbandoned` is unset: left open, it would take every later write
+      // and be committed by some unrelated release. One we merely found open is
+      // the caller's to discard, not ours.
+      if (startedTransaction) {
+        discardTransaction('savepoint creation');
+      }
+      throw error;
+    }
     db._spStack.push(name);
   }
 
@@ -114,6 +195,7 @@ export function makeTransactionMethods({
    * @param name - The name of the savepoint.
    */
   function rollbackSavepoint(name: string): void {
+    assertNotAbandoned();
     const idx = requireSavepoint(name);
     try {
       db.exec(SQL_QUERIES.ROLLBACK_SAVEPOINT.replace('%NAME%', name));
@@ -123,12 +205,7 @@ export function makeTransactionMethods({
       // connection joins it, reports success, and vanishes on close. Discarding
       // the whole transaction is safe: it begins with the outermost savepoint, so
       // it holds only what this rollback was abandoning anyway.
-      db._spStack.length = 0;
-      try {
-        rollbackIfNeeded();
-      } catch {
-        // The rollback failure below is the one worth reporting.
-      }
+      discardTransaction('rollback');
       throw error;
     }
     db._spStack.splice(idx);
@@ -143,8 +220,16 @@ export function makeTransactionMethods({
    * @param name - The name of the savepoint.
    */
   function releaseSavepoint(name: string): void {
+    assertNotAbandoned();
     const idx = requireSavepoint(name);
-    db.exec(SQL_QUERIES.RELEASE_SAVEPOINT.replace('%NAME%', name));
+    try {
+      db.exec(SQL_QUERIES.RELEASE_SAVEPOINT.replace('%NAME%', name));
+    } catch (error) {
+      // The hazard `rollbackSavepoint` guards against, by the other door, and
+      // there is no committing this transaction now.
+      discardTransaction('release');
+      throw error;
+    }
     db._spStack.splice(idx);
     if (db._spStack.length === 0) {
       commitIfNeeded();
@@ -152,6 +237,7 @@ export function makeTransactionMethods({
   }
 
   return {
+    assertNotAbandoned,
     beginIfNeeded,
     commitIfNeeded,
     rollbackIfNeeded,

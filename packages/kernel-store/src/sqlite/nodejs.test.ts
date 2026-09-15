@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import { SQL_QUERIES } from './common.ts';
 import { makeSQLKernelDatabase, getDBFilename } from './nodejs.ts';
+import type { KernelDatabase } from '../types.ts';
 
 const mockKVData = [
   { key: 'key1', value: 'value1' },
@@ -263,6 +264,60 @@ describe('makeSQLKernelDatabase', () => {
       db.rollbackSavepoint('t1');
       expect(mockDb.exec).toHaveBeenCalledWith('ROLLBACK TO SAVEPOINT t1');
       expect(mockAbort.run).toHaveBeenCalledOnce();
+    });
+  });
+
+  // The store's write doors all have to ask, because teardown after the run
+  // loop dies reaches most of them without going near `beginIfNeeded`.
+  describe('a transaction no abort can end', () => {
+    const abandon = async (): Promise<KernelDatabase> => {
+      const kdb = await makeSQLKernelDatabase({});
+      kdb.createSavepoint('t0');
+      mockDb.exec.mockImplementationOnce(() => {
+        throw new Error('SQLITE_IOERR');
+      });
+      mockAbort.run.mockImplementation(() => {
+        throw new Error('SQLITE_IOERR');
+      });
+      expect(() => kdb.rollbackSavepoint('t0')).toThrow('SQLITE_IOERR');
+      return kdb;
+    };
+
+    it.each([
+      {
+        what: 'a kv write',
+        write: (kdb: KernelDatabase) => kdb.kernelKVStore.set('k', 'v'),
+        statement: SQL_QUERIES.SET,
+      },
+      {
+        what: 'a kv delete',
+        write: (kdb: KernelDatabase) => kdb.kernelKVStore.delete('k'),
+        statement: SQL_QUERIES.DELETE,
+      },
+      {
+        what: 'a clear',
+        write: (kdb: KernelDatabase) => kdb.clear(),
+        statement: SQL_QUERIES.CLEAR,
+      },
+      {
+        what: 'a vatstore delete',
+        write: (kdb: KernelDatabase) => kdb.deleteVatStore('v1'),
+        statement: SQL_QUERIES.DELETE_VS_ALL,
+      },
+      {
+        what: 'a vatstore update',
+        write: (kdb: KernelDatabase) =>
+          kdb.makeVatStore('v1').updateKVData([['k', 'v']], []),
+        statement: SQL_QUERIES.SET_VS,
+      },
+    ])('refuses $what', async ({ write, statement }) => {
+      const kdb = await abandon();
+      mockDb.prepare.mockClear();
+      mockStatement.run.mockClear();
+
+      expect(() => write(kdb)).toThrow('refusing further writes');
+      expect(mockStatement.run).not.toHaveBeenCalled();
+      expect(mockDb.prepare).not.toHaveBeenCalledWith(statement);
     });
   });
 

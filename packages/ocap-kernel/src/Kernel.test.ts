@@ -787,6 +787,25 @@ describe('Kernel', () => {
       expect(timestamp).toBeGreaterThanOrEqual(before);
       expect(timestamp).toBeLessThanOrEqual(after);
     });
+
+    it('releases everything even if the timestamp cannot be written', async () => {
+      const workerTerminateAllMock = vi
+        .spyOn(mockPlatformServices, 'terminateAll')
+        .mockResolvedValue(undefined);
+      const kernel = await Kernel.make(
+        mockPlatformServices,
+        mockKernelDatabase,
+      );
+      vi.spyOn(mockKernelDatabase.kernelKVStore, 'set').mockImplementation(
+        () => {
+          throw new Error('refusing further writes on this connection');
+        },
+      );
+
+      expect(await kernel.stop()).toBeUndefined();
+
+      expect(workerTerminateAllMock).toHaveBeenCalledOnce();
+    });
   });
 
   describe('restartVat()', () => {
