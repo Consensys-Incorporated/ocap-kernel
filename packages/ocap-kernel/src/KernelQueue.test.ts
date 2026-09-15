@@ -630,6 +630,62 @@ describe('KernelQueue', () => {
     });
   });
 
+  describe('enqueueRestartVat', () => {
+    it('enqueues a restart request', () => {
+      kernelQueue.enqueueRestartVat('v1');
+
+      expect(kernelStore.enqueueRun).toHaveBeenCalledWith({
+        type: 'restartVat',
+        vatId: 'v1',
+      });
+    });
+
+    it('refuses once the run loop is dead', async () => {
+      await killRunLoop(new Error('crank exploded'));
+
+      expect(() => kernelQueue.enqueueRestartVat('v1')).toThrow(
+        'Kernel run loop died; cannot restart a vat',
+      );
+      expect(kernelStore.enqueueRun).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('onRunLoopDeath', () => {
+    it('tells a waiter the work will never be done', async () => {
+      const reject = vi.fn();
+      kernelQueue.onRunLoopDeath(reject);
+      const failure = new Error('crank exploded');
+
+      await killRunLoop(failure);
+
+      expect(reject).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: 'Kernel run loop died; this work will never be carried out',
+          cause: failure,
+        }),
+      );
+    });
+
+    it('tells a waiter that arrives after the death', async () => {
+      await killRunLoop(new Error('crank exploded'));
+      const reject = vi.fn();
+
+      kernelQueue.onRunLoopDeath(reject);
+
+      expect(reject).toHaveBeenCalledOnce();
+    });
+
+    it('leaves an unregistered waiter alone', async () => {
+      const reject = vi.fn();
+      const stopWatching = kernelQueue.onRunLoopDeath(reject);
+      stopWatching();
+
+      await killRunLoop(new Error('crank exploded'));
+
+      expect(reject).not.toHaveBeenCalled();
+    });
+  });
+
   describe('resolvePromises', () => {
     it('resolves kernel promises and buffers notifications for subscribers', () => {
       const endpointId = 'v1';
