@@ -546,15 +546,6 @@ export class RemoteHandle implements EndpointHandle {
   // --- Message sending ---
 
   /**
-   * Transmit a message to the remote end of the connection.
-   * Adds seq and ack fields, queues for ACK tracking, and sends.
-   *
-   * @param messageBase - The base message to send (without seq/ack).
-   * @param exemptFromCapacityLimit - If true, bypass the pending queue capacity
-   *   check. Used for kernel initiated messages that must be sent to avoid
-   *   leaving the remote hanging.
-   */
-  /**
    * Hand a delivery to the peer, as the outcome of the crank making it. The
    * message is written down now, inside that crank's transaction, and sent once
    * it commits: a crank that goes on to fail must not leave the peer holding a
@@ -572,7 +563,11 @@ export class RemoteHandle implements EndpointHandle {
   }
 
   /**
-   * Write an outgoing message down and send it, for callers outside a crank.
+   * Write an outgoing message down and send it in one step.
+   *
+   * Still the path for a request that awaits the peer's reply, which cannot
+   * wait for a commit to go out. Those remain exposed to the rollback a
+   * delivery no longer is; see {@link #deliverToPeer}.
    *
    * @param messageBase - The message, before its sequence number and ack.
    * @param exemptFromCapacityLimit - Whether the pending queue's capacity limit
@@ -597,16 +592,13 @@ export class RemoteHandle implements EndpointHandle {
    * @param options - Options bag.
    * @param options.exemptFromCapacityLimit - Whether the pending queue's
    * capacity limit does not apply, for a reply that must not fail.
-   * @param options.ack - The receipt to piggyback, when this crank is recording
-   * one the handle has not caught up to yet.
    * @returns What transmitting it needs.
    */
   #persistRemoteCommand(
     messageBase: Delivery | RedeemURLRequest | RedeemURLReply,
     {
       exemptFromCapacityLimit = false,
-      ack = this.#getAckValue(),
-    }: { exemptFromCapacityLimit?: boolean; ack?: number | undefined } = {},
+    }: { exemptFromCapacityLimit?: boolean } = {},
   ): PersistedCommand {
     // Check queue capacity before consuming any resources (seq number, ACK timer).
     if (
@@ -623,6 +615,7 @@ export class RemoteHandle implements EndpointHandle {
 
     // Build full message with seq and optional piggyback ack
     const seq = this.#getNextSeq();
+    const ack = this.#getAckValue();
     const remoteCommand: RemoteCommand =
       ack === undefined
         ? { seq, ...messageBase }
@@ -647,7 +640,9 @@ export class RemoteHandle implements EndpointHandle {
 
   /**
    * Send a message {@link #persistRemoteCommand} has already written down.
-   * Touches no kernel state, so it is safe after the crank has committed.
+   * Writes no kernel state itself, so it is safe after the crank has committed.
+   * The transport's own failure handling, which does write, runs detached from
+   * this call and lands wherever it lands — see {@link #rejectAllPending}.
    *
    * @param persisted - What that call returned.
    */
