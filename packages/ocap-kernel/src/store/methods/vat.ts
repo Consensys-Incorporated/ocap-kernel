@@ -180,8 +180,7 @@ export function getVatMethods(ctx: StoreContext) {
    * @returns An array of endpoint IDs that import the kernel object.
    */
   function getImporters(koid: KRef): EndpointId[] {
-    // A vat marked terminated whose config survives appears in both lists, and
-    // a repeated importer would be a second `retireImport` for one entry.
+    // A vat marked terminated whose config survives appears in both lists.
     const endpointIds = new Set<EndpointId>([
       ...getVatIDs(),
       ...getTerminatedVats(),

@@ -206,17 +206,20 @@ describe('GC methods', () => {
     // nothing tears down and the audit reports as dangling.
     it('tells a remote importer too', () => {
       kernelStore.setVatConfig('v1', { bundleName: 'vat1' });
-      kernelStore.setRemoteInfo('r1', {
-        peerId: 'peer-1',
-      } as unknown as Parameters<typeof kernelStore.setRemoteInfo>[1]);
+      kernelStore.setVatConfig('v2', { bundleName: 'vat2' });
+      kernelStore.setRemoteInfo('r1', { peerId: 'peer-1' });
       const kref = kernelStore.initKernelObject('v1');
       kernelStore.addCListEntry('r1', kref, 'ro-1');
+      kernelStore.addCListEntry('v2', kref, 'o-1');
       kernelStore.setGCActions(new Set());
+
+      expect(kernelStore.getImporters(kref)).toStrictEqual(['r1', 'v2']);
 
       kernelStore.retireKernelObjects([kref]);
 
       expect([...kernelStore.getGCActions()]).toStrictEqual([
         `r1 retireImport ${kref}`,
+        `v2 retireImport ${kref}`,
       ]);
     });
 
