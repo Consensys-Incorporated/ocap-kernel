@@ -1,5 +1,6 @@
 import type { VatOneResolution } from '@agoric/swingset-liveslots';
 import type { CapData } from '@endo/marshal';
+import { VatNotFoundError } from '@metamask/kernel-errors';
 import { Logger } from '@metamask/logger';
 
 import { KernelQueue } from './KernelQueue.ts';
@@ -23,7 +24,7 @@ import type {
   GCRunQueueType,
   VatId,
 } from './types.ts';
-import { isRemoteId, isVatId } from './types.ts';
+import { isRemoteId } from './types.ts';
 import { assert, Fail } from './utils/assert.ts';
 
 /**
@@ -410,23 +411,33 @@ export class KernelRouter {
    *
    * @param endpointId - The endpoint the item is addressed to.
    * @param what - What was being delivered, for the log.
+   * @param options - Options bag.
+   * @param options.discardable - Whether the delivery loses nothing by being
+   * dropped, and so may skip a remote that is merely out of reach.
    * @returns The endpoint's handle, or undefined if it is not running.
    */
   #lookupEndpoint(
     endpointId: EndpointId,
     what: string,
+    { discardable = false }: { discardable?: boolean } = {},
   ): EndpointHandle | undefined {
     try {
       return this.#getEndpoint(endpointId);
     } catch (error) {
-      // An id naming neither a vat nor a remote is not an endpoint that has
-      // gone away; it is corrupt state or a kernel bug.
-      if (!isVatId(endpointId) && !isRemoteId(endpointId)) {
+      // A vat with no handle is a vat that is gone: a restart and a termination
+      // each happen inside a crank of their own, so no crank can see a live vat
+      // between workers. A remote with no handle is only out of reach — the
+      // kernel holds none at all until the embedder calls `initRemoteComms`,
+      // which is after the run loop has started — so only a delivery with
+      // nothing to lose may skip one. Anything else, including an id that names
+      // no endpoint at all, is a kernel fault and still throws.
+      const gone = error instanceof VatNotFoundError;
+      if (!gone && !(discardable && isRemoteId(endpointId))) {
         throw error;
       }
       // Above the per-delivery trace channel: a delivery dropped on the floor
       // is the only trace of an endpoint that has quietly stopped listening.
-      this.#logger?.error(
+      this.#logger?.warn(
         `Skipped ${what} for ${endpointId}, which is not running:`,
         error,
       );
@@ -509,9 +520,6 @@ export class KernelRouter {
       `@@@@ deliver ${endpointId} ${type} ${JSON.stringify(krefs)}`,
     );
     const endpoint = this.#lookupEndpoint(endpointId, type);
-    if (!endpoint) {
-      this.#reportUnheardRelease(endpointId, type);
-    }
     // `processGCActionSet` selected this action while the endpoint held a
     // c-list entry for each kref, but `nextTerminatedVatCleanup` runs between
     // that selection and here and takes a whole c-list at a time. Whatever it
@@ -555,27 +563,6 @@ export class KernelRouter {
   }
 
   /**
-   * Say what a skipped GC delivery leaves behind.
-   *
-   * For an endpoint that is gone, nothing: the kernel's half is the whole of
-   * it. A remote the kernel still has a record for is only unreachable, and it
-   * keeps the eref — its next message naming that eref mints a second kref for
-   * the same object, reconciled only by an incarnation change. Keeping the
-   * action instead is what this becomes once remote GC actions can leave the
-   * front of the run queue.
-   *
-   * @param endpointId - The endpoint that could not be told.
-   * @param type - The GC action that was skipped.
-   */
-  #reportUnheardRelease(endpointId: EndpointId, type: GCRunQueueType): void {
-    if (isRemoteId(endpointId) && this.#kernelStore.hasRemoteInfo(endpointId)) {
-      this.#logger?.error(
-        `Released ${type} for remote ${endpointId} without telling it; the peer still holds those references`,
-      );
-    }
-  }
-
-  /**
    * Deliver a 'bringOutYourDead' run queue item.
    *
    * @param item - The bringOutYourDead item to deliver.
@@ -586,7 +573,10 @@ export class KernelRouter {
   ): Promise<CrankResult | undefined> {
     const { endpointId } = item;
     this.#logger?.log(`@@@@ deliver ${endpointId} bringOutYourDead`);
-    const endpoint = this.#lookupEndpoint(endpointId, 'bringOutYourDead');
+    const endpoint = this.#lookupEndpoint(endpointId, 'bringOutYourDead', {
+      // A reap is a hint. A remote that is out of reach will be asked again.
+      discardable: true,
+    });
     if (!endpoint) {
       return { didDelivery: endpointId };
     }
