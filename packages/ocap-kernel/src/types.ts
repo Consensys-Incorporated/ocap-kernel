@@ -916,6 +916,18 @@ export type CrankResult = {
   didDelivery?: EndpointId | 'kernel'; // the endpoint to which we made a delivery
   abort?: boolean; // changes should be discarded, not committed
   terminate?: { vatId: VatId; reject: boolean; info: CapData<KRef> };
+  /**
+   * Work the run loop runs once the crank has committed, skipped if it aborts.
+   * For what a rollback could not undo anyway, and what must not be observable
+   * before the writes it reports on are durable: in-memory state, and sending
+   * a message the crank has already written down.
+   *
+   * It must not write the kernel store. The crank's transaction is released by
+   * then, so a write here would commit on its own, outside the crank whose
+   * outcome it belongs to. A throw from it kills the run loop, after the crank
+   * it follows has committed.
+   */
+  afterCommit?: () => Promise<void>;
 };
 
 export type VatDeliveryResult = [VatCheckpoint, string | null];
