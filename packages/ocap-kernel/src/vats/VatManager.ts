@@ -111,15 +111,31 @@ export class VatManager {
   async initializeAllVats(): Promise<void> {
     const starts: Promise<void>[] = [];
     for (const { vatID, vatConfig } of this.#kernelStore.getAllVatRecords()) {
-      // Per vat, so one whose bundle has moved since it was launched costs the
-      // kernel that vat rather than its whole startup.
-      starts.push(
-        this.runVat(vatID, vatConfig).catch((error: unknown) => {
-          this.#logger.error(`Failed to start vat ${vatID}:`, error);
-        }),
-      );
+      starts.push(this.#startVatAtBoot(vatID, vatConfig));
     }
     await Promise.all(starts);
+  }
+
+  /**
+   * Start one vat during kernel startup, absorbing its failure.
+   *
+   * Per vat, so one whose bundle has moved since it was launched costs the
+   * kernel that vat rather than its whole startup. Whatever worker the launch
+   * got as far as spawning is stopped, or it outlives every reference to it and
+   * the vat can never be relaunched. The vat's records are left alone: a bundle
+   * unreachable now may not be at the next boot, and marking it terminated
+   * would take that away.
+   *
+   * @param vatId - The vat to start.
+   * @param vatConfig - Its configuration.
+   */
+  async #startVatAtBoot(vatId: VatId, vatConfig: VatConfig): Promise<void> {
+    try {
+      await this.runVat(vatId, vatConfig);
+    } catch (error) {
+      this.#logger.error(`Failed to start vat ${vatId}:`, error);
+      await this.#platformServices.terminate(vatId).catch(() => undefined);
+    }
   }
 
   /**
@@ -258,14 +274,31 @@ export class VatManager {
     failedVat: VatHandle,
     error: Error,
   ): void {
-    if (this.#vats.get(vatId) !== failedVat) {
-      // A restart has already replaced this handle, or a termination has
-      // already taken it. Either way the vat on the books is not the one that
-      // failed, and ending it would be ending the wrong incarnation.
+    const registered = this.#vats.get(vatId);
+    if (registered !== undefined && registered !== failedVat) {
+      // A restart has already replaced this handle. The vat on the books is not
+      // the one that failed, and ending it would end the wrong incarnation.
       this.#logger.debug(
         `Ignoring a fatal error from a superseded handle for vat ${vatId}:`,
         error,
       );
+      return;
+    }
+    if (registered === undefined) {
+      // Not on the books yet, so this is a launch still in flight — the window
+      // the handle argument exists for. Rejecting the pending `initVat` is all
+      // that is wanted: `runVat` then fails, and its caller stops the worker
+      // and records the death. Retiring the vat here would be retiring one the
+      // store has no record of.
+      this.#logger.error(`Vat ${vatId} failed before it was running:`, error);
+      failedVat
+        .terminate(true, error)
+        .catch((terminateError: unknown) =>
+          this.#logger.error(
+            `Failed to close the channel of vat ${vatId} after a fatal error:`,
+            terminateError,
+          ),
+        );
       return;
     }
     this.#logger.error(`Retiring vat ${vatId} after a fatal error:`, error);

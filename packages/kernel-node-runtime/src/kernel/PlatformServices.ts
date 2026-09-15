@@ -17,7 +17,6 @@ import type {
 import { initTransport } from '@metamask/ocap-kernel';
 import { NodeWorkerDuplexStream } from '@metamask/streams';
 import type { DuplexStream } from '@metamask/streams';
-import { strict as assert } from 'node:assert';
 import { Worker as NodeWorker } from 'node:worker_threads';
 
 // Worker file loads from the built dist directory, requires rebuild after change
@@ -132,12 +131,25 @@ export class NodejsPlatformServices implements PlatformServices {
       worker.removeAllListeners('error');
       worker.removeAllListeners('exit');
       worker.once('exit', (code) => {
-        // Guarded by identity: a restart puts a new worker under this vat id,
-        // and this listener outlives the one it belongs to.
-        if (this.workers.get(vatId)?.worker === worker) {
+        // An orderly `terminate` removes this listener before killing the
+        // worker, so reaching it here means the worker went away on its own.
+        // The identity check is belt and braces: it would matter if a
+        // replacement were ever registered without the old one's listeners
+        // being removed.
+        const entry = this.workers.get(vatId);
+        if (entry?.worker === worker) {
           this.workers.delete(vatId);
+          this.#logger.error(`Worker ${vatId} exited with code ${code}`);
+          // A worker thread that dies emits no port event, so this is the only
+          // thing that tells the kernel. Without it the stream stays open, the
+          // vat keeps its handle, and the next delivery to it never returns.
+          entry.stream.return().catch((error: unknown) => {
+            this.#logger.error(
+              `Failed to close the channel of exited worker ${vatId}:`,
+              error,
+            );
+          });
         }
-        this.#logger.error(`Worker ${vatId} exited with code ${code}`);
       });
 
       const stream = new NodeWorkerDuplexStream<JsonRpcMessage, JsonRpcMessage>(
@@ -179,7 +191,13 @@ export class NodejsPlatformServices implements PlatformServices {
    */
   async terminate(vatId: VatId): Promise<undefined> {
     const workerEntry = this.workers.get(vatId);
-    assert(workerEntry, `No worker found for vatId ${vatId}`);
+    if (!workerEntry) {
+      // A worker that exited on its own took its own entry, and its vat is
+      // being torn down on the strength of that: there is nothing left to stop
+      // and saying so would report every crash as a failure to clean up.
+      this.#logger.debug(`No worker to terminate for vat ${vatId}`);
+      return undefined;
+    }
     const { worker, stream } = workerEntry;
     await stream.return();
     worker.removeAllListeners();

@@ -23,7 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- A vat worker that exits after coming online is noticed: the startup `exit` listener is replaced rather than dropped, so the worker is forgotten and its exit code logged, instead of the death being visible only as a broken stream ([#1099](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1099))
+- A vat worker that dies is reported to the kernel. The startup `exit` listener was dropped once the worker came online, and a worker thread that exits emits no port event, so its channel stayed open: the vat kept its handle, the store kept calling it active, and the next delivery to it never returned — taking the run loop, and so every other vat, with it. The listener is now replaced rather than dropped, and closes the channel, which is what the kernel notices ([#1099](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1099))
+- `terminate` no longer reports a vat whose worker has already exited as a failure to stop it ([#1099](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1099))
 - The RPC socket server refuses to bind a Unix socket that has a live listener, rather than unlinking it and orphaning the previous owner; stale socket files with no listener are still cleaned up automatically ([#952](https://github.com/MetaMask/ocap-kernel/pull/952))
 
 ## [0.1.0]

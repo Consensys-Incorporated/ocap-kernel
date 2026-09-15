@@ -80,6 +80,9 @@ export class VatHandle implements EndpointHandle {
   /** Tells the manager this vat cannot be delivered to again */
   readonly #onCriticalFailure: (error: Error, vat: VatHandle) => void;
 
+  /** Whether the channel is being closed on purpose */
+  #closing: boolean = false;
+
   readonly #rpcClient: RpcClient<typeof vatMethodSpecs>;
 
   readonly #rpcService: RpcService<typeof vatSyscallHandlers>;
@@ -166,19 +169,20 @@ export class VatHandle implements EndpointHandle {
    * @returns A promise for the vat's initial delivery result.
    */
   async #init(): Promise<VatDeliveryResult> {
-    Promise.all([this.#vatStream.drain(this.#handleMessage.bind(this))]).catch(
-      (error) => {
-        this.#logger?.error(`Unexpected read error`, error);
-        // Handed to the manager rather than torn down here. A handle that
-        // retires itself leaves the manager still holding it and the store
-        // still calling the vat live, so the next delivery is handed to a
-        // worker that cannot answer and its crank never completes.
-        this.#onCriticalFailure(
-          new StreamReadError({ vatId: this.vatId }, error),
-          this,
-        );
-      },
-    );
+    this.#vatStream
+      .drain(this.#handleMessage.bind(this))
+      .then(() => {
+        // A worker that exits closes the channel rather than erroring on it,
+        // so the drain resolves. Silence from a vat nobody asked to close is
+        // the vat going away, not the vat behaving.
+        if (!this.#closing) {
+          this.#reportCriticalFailure(Error('vat channel closed'));
+        }
+        return undefined;
+      })
+      .catch((error: Error) => {
+        this.#reportCriticalFailure(error);
+      });
 
     return await this.sendVatCommand({
       method: 'initVat',
@@ -312,6 +316,24 @@ export class VatHandle implements EndpointHandle {
   }
 
   /**
+   * Tell the manager this vat cannot be delivered to again.
+   *
+   * Handed over rather than torn down here: a handle that retires itself leaves
+   * the manager still holding it and the store still calling the vat live, so
+   * the next delivery goes to a worker that cannot answer and its crank never
+   * completes.
+   *
+   * @param cause - What broke.
+   */
+  #reportCriticalFailure(cause: Error): void {
+    this.#logger?.error(`Unexpected read error`, cause);
+    this.#onCriticalFailure(
+      new StreamReadError({ vatId: this.vatId }, { cause }),
+      this,
+    );
+  }
+
+  /**
    * Closes this handle's channel to the vat worker.
    *
    * Only the handle's own business: the store side of a vat's death belongs to
@@ -325,6 +347,9 @@ export class VatHandle implements EndpointHandle {
    * @param error - The error to terminate the vat with.
    */
   async terminate(terminating: boolean, error?: Error): Promise<void> {
+    // Read by the drain below, so an ordinary close is not mistaken for the vat
+    // going away.
+    this.#closing = true;
     if (terminating) {
       // Ahead of the stream, so a stream that refuses to close does not leave
       // these callers waiting on a worker that is already dead.

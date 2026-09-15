@@ -1,3 +1,4 @@
+import { NodejsPlatformServices } from '@metamask/kernel-node-runtime';
 import { makeSQLKernelDatabase } from '@metamask/kernel-store/sqlite/nodejs';
 import { waitUntilQuiescent } from '@metamask/kernel-utils';
 import { makeKernelStore } from '@metamask/ocap-kernel';
@@ -184,6 +185,51 @@ describe('Vat Lifecycle', { timeout: 30_000 }, () => {
     await waitUntilQuiescent(1000);
 
     expect(extractTestLogs(entries, 'v1')).toContain('Alice: start count: 3');
+  });
+
+  it('retires a vat whose worker dies, and keeps serving the rest', async () => {
+    const kernelDatabase = await makeSQLKernelDatabase({
+      dbFilename: ':memory:',
+    });
+    const platformServices = new NodejsPlatformServices({
+      logger: logger.logger.subLogger({ tags: ['vat-worker-manager'] }),
+    });
+    const kernel = await makeKernel(
+      kernelDatabase,
+      true,
+      logger.logger.subLogger({ tags: ['test'] }),
+      undefined,
+      platformServices,
+    );
+    const kernelStore = makeKernelStore(kernelDatabase);
+
+    await runTestVats(kernel, {
+      bootstrap: 'main',
+      vats: {
+        main: {
+          bundleSpec: getBundleSpec('persistence-counter-vat'),
+          parameters: { name: 'Doomed' },
+        },
+        survivor: {
+          bundleSpec: getBundleSpec('persistence-counter-vat'),
+          parameters: { name: 'Survivor' },
+        },
+      },
+    });
+    await waitUntilQuiescent();
+    const survivorRoot = kernelStore.getRootObject('v2') as string;
+
+    // A worker that dies closes its channel rather than erroring on it, which
+    // is the shape the kernel has to notice.
+    await platformServices.workers.get('v1')?.worker.terminate();
+    await waitUntilQuiescent(2000);
+
+    expect(kernel.getVatIds()).not.toContain('v1');
+    // The kernel keeps working: before, the dead vat's handle stayed on the
+    // books and the first delivery to it hung the run loop for everyone.
+    expect(await runResume(kernel, survivorRoot)).toBe(
+      'Counter incremented to: 2',
+    );
   });
 
   it('leaves no record of a terminated vat for the next boot to restore', async () => {

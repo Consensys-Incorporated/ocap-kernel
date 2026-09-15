@@ -107,16 +107,45 @@ describe('VatHandle', () => {
     it('hands a broken channel to the manager rather than ending itself', async () => {
       const onCriticalFailure = vi.fn();
       const { vat, stream } = await makeVat({ onCriticalFailure });
+      const settled = vi.fn();
+      // eslint-disable-next-line promise/catch-or-return
+      vat
+        .sendVatCommand({ method: 'ping' as const, params: [] })
+        .then(settled, settled);
 
       await stream.receiveInput(NaN);
       await delay(10);
 
-      // A handle that retires itself leaves the manager still holding it and
-      // the store still calling the vat live.
       expect(onCriticalFailure).toHaveBeenCalledWith(
         expect.objectContaining({ name: 'StreamReadError' }),
         vat,
       );
+      // Ending itself would reject these, leaving the manager still holding
+      // the handle and the store still calling the vat live. Only the manager
+      // may decide that.
+      expect(settled).not.toHaveBeenCalled();
+    });
+
+    it('reports a channel that closes with no error', async () => {
+      const onCriticalFailure = vi.fn();
+      const { stream } = await makeVat({ onCriticalFailure });
+
+      await stream.return();
+      await delay(10);
+
+      // A worker that exits closes the channel rather than erroring on it, so
+      // the drain resolves and the vat's death would otherwise go unreported.
+      expect(onCriticalFailure).toHaveBeenCalledOnce();
+    });
+
+    it('says nothing when the channel is closed on purpose', async () => {
+      const onCriticalFailure = vi.fn();
+      const { vat } = await makeVat({ onCriticalFailure });
+
+      await vat.terminate(true);
+      await delay(10);
+
+      expect(onCriticalFailure).not.toHaveBeenCalled();
     });
 
     it('throws if handleMessage throws', async () => {
