@@ -54,4 +54,21 @@ describe('Garbage Collection', () => {
     await gcAndFinalize();
     expect(weakRef.deref()).toBeUndefined();
   });
+
+  it('drains pending work before the first collection', async () => {
+    const order: string[] = [];
+    vi.stubGlobal('gc', () => order.push('collect'));
+    try {
+      const gcAndFinalizeWithStub = makeGCAndFinalize();
+      setTimeout(() => {
+        order.push('pending');
+        setTimeout(() => order.push('chained'), 0);
+      }, 0);
+      await gcAndFinalizeWithStub();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+
+    expect(order).toStrictEqual(['pending', 'chained', 'collect', 'collect']);
+  });
 });
