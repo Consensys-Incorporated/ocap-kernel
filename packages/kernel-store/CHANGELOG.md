@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Neither SQLite driver logs the contents of the store any more: the Node driver opens the database without `verbose`, and the wasm driver no longer logs kv keys and values. Both wrote vat state in plain text to whatever logger the embedder supplied ([#1084](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1084))
+- Neither SQLite driver logs the contents of the store any more: the Node driver opens the database without `verbose`, and the wasm driver no longer logs kv keys and values. Both wrote vat state in plain text to whatever logger the embedder supplied ([#1086](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1086))
 - `rollbackSavepoint` discards the enclosing transaction when `ROLLBACK TO` itself fails, instead of leaving the savepoint on its stack and the transaction open ([#1005](https://github.com/MetaMask/ocap-kernel/pull/1005))
   - Nothing would ever commit or abort that transaction, so every later write on the connection silently joined it, reported success, and vanished on close. Discarding it is no wider than the caller asked for: the transaction begins with the outermost savepoint, so it holds only the work the rollback was abandoning
   - The rollback failure is still what gets thrown, even if aborting the transaction fails too
