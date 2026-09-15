@@ -424,13 +424,19 @@ export class KernelRouter {
     try {
       return this.#getEndpoint(endpointId);
     } catch (error) {
-      // A vat with no handle is a vat that is gone: a restart and a termination
-      // each happen inside a crank of their own, so no crank can see a live vat
-      // between workers. A remote with no handle is only out of reach — the
-      // kernel holds none at all until the embedder calls `initRemoteComms`,
-      // which is after the run loop has started — so only a delivery with
-      // nothing to lose may skip one. Anything else, including an id that names
-      // no endpoint at all, is a kernel fault and still throws.
+      // A vat with no handle is one this incarnation will not deliver to
+      // again — ended, or being torn down after its stream died, or launched
+      // unsuccessfully at startup. Not "between incarnations": a restart and a
+      // termination each happen inside a crank of their own, so no crank can
+      // see a vat between workers. Keyed on the missing handle rather than on
+      // the store calling the vat terminated, because the first two of those
+      // are not, and may never be.
+      //
+      // A remote with no handle is only out of reach — the kernel holds none at
+      // all until the embedder calls `initRemoteComms`, which is after the run
+      // loop has started — so only a delivery with nothing to lose may skip
+      // one. Anything else, including an id that names no endpoint at all, is a
+      // kernel fault and still throws.
       const gone = error instanceof VatNotFoundError;
       if (!gone && !(discardable && isRemoteId(endpointId))) {
         throw error;
