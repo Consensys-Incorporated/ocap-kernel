@@ -953,12 +953,15 @@ describe('RemoteManager', () => {
 
     it('does not reject promises when there are none', async () => {
       const peerId = 'peer-without-promises';
-      remoteManager.establishRemote(peerId);
+      const remote = remoteManager.establishRemote(peerId);
+      const persistSpy = vi.spyOn(remote, 'persistPeerRestart');
       kernelStore.setPeerIncarnation(peerId, 'incarnation-A');
       const resolvePromisesSpy = vi.spyOn(mockKernelQueue, 'resolvePromises');
 
       await handshakeAndRunCrank(peerId, 'incarnation-B');
 
+      // The restart has to have happened, or this asserts nothing.
+      expect(persistSpy).toHaveBeenCalledOnce();
       expect(resolvePromisesSpy).not.toHaveBeenCalled();
     });
 
