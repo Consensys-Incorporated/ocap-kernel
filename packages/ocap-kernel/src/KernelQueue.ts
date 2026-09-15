@@ -14,6 +14,7 @@ import type {
   RemoteId,
   RunLoopStatus,
   RunQueueItem,
+  RunQueueItemRemoteInbound,
   RunQueueItemNotify,
   RunQueueItemSend,
   VatId,
@@ -84,6 +85,9 @@ export class KernelQueue {
    * compile until `getRunLoopStatus` produces it.
    */
   #runLoopState: RunLoopState = { state: 'idle' };
+
+  /** Messages from peers, waiting for a crank to take delivery of them. */
+  #arrivedFromRemotes: RunQueueItemRemoteInbound[] = [];
 
   /**
    * Construct a new KernelQueue instance.
@@ -306,6 +310,11 @@ export class KernelQueue {
       return reapAction;
     }
 
+    const arrival = this.#arrivedFromRemotes.shift();
+    if (arrival) {
+      return arrival;
+    }
+
     if (this.#kernelStore.runQueueLength() > 0) {
       const item = this.#kernelStore.dequeueRun();
       if (item) {
@@ -423,11 +432,21 @@ export class KernelQueue {
    */
   #enqueueRun(item: RunQueueItem): void {
     this.#kernelStore.enqueueRun(item);
-    // Wake on any non-empty queue rather than only on the empty->1
-    // transition. A sleeping run loop plus a non-empty queue is a
-    // permanent wedge, so err towards a spurious wake: the resolver is
-    // cleared as it fires, and the loop re-checks the queue on waking.
-    if (this.#kernelStore.runQueueLength() > 0 && this.#wakeUpTheRunQueue) {
+    if (this.#kernelStore.runQueueLength() > 0) {
+      this.#wakeTheRunLoop();
+    }
+  }
+
+  /**
+   * Wake a sleeping run loop, if one is sleeping.
+   *
+   * Woken on any work at all rather than only on the empty-to-one transition.
+   * A sleeping run loop with work waiting is a permanent wedge, so err towards
+   * a spurious wake: the resolver is cleared as it fires, and the loop
+   * re-checks for work on waking.
+   */
+  #wakeTheRunLoop(): void {
+    if (this.#wakeUpTheRunQueue) {
       const wakeUpTheRunQueue = this.#wakeUpTheRunQueue;
       this.#wakeUpTheRunQueue = null;
       wakeUpTheRunQueue();
@@ -545,14 +564,44 @@ export class KernelQueue {
   }
 
   /**
-   * Enqueue a message from a remote peer, to be taken delivery of in a crank
-   * of its own.
+   * Accept a message from a remote peer, for the run loop to take delivery of
+   * in a crank of its own.
+   *
+   * Held in memory rather than written to the run queue: a message arrives
+   * whenever the transport says so, which is usually while a crank is open,
+   * and writing it there would put it inside that crank's transaction — an
+   * abort would swallow it, which is the defect this whole shape exists to
+   * remove. Nothing is lost by not persisting it, because the peer is not
+   * acknowledged until the crank that takes it commits, so an arrival this
+   * kernel forgets is one the peer sends again.
    *
    * @param remoteId - The remote the message came from.
    * @param message - The message, as it arrived.
    */
-  enqueueRemoteInbound(remoteId: RemoteId, message: string): void {
-    this.#enqueueRun({ type: 'remoteInbound', remoteId, message });
+  acceptRemoteInbound(remoteId: RemoteId, message: string): void {
+    this.assertRunLoopAlive('accept a remote message');
+    this.#arrivedFromRemotes.push({
+      type: 'remoteInbound',
+      remoteId,
+      message,
+    });
+    this.#wakeTheRunLoop();
+  }
+
+  /**
+   * Forget what a remote sent before an incarnation change, none of which the
+   * peer that sent it is still waiting on.
+   *
+   * Left queued, a message from the old incarnation would record its sequence
+   * number against the new one, and the new incarnation's first message would
+   * then be discarded as a duplicate.
+   *
+   * @param remoteId - The remote whose arrivals to discard.
+   */
+  discardRemoteInbound(remoteId: RemoteId): void {
+    this.#arrivedFromRemotes = this.#arrivedFromRemotes.filter(
+      (item) => item.remoteId !== remoteId,
+    );
   }
 
   /**
