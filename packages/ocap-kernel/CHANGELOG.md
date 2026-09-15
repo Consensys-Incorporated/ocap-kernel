@@ -48,6 +48,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **BREAKING:** `KernelRouter`'s constructor takes a function that restarts a vat, before its optional logger ([#1096](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1096))
 - **BREAKING:** `Kernel.make`'s `ioChannelFactory` option is now `ioListenerFactory`, and the exported `IOChannelFactory` type is replaced by `IOListener` and `IOListenerFactory`. A cluster config's `io` entries now create listeners; vats call `accept()` to obtain a channel instead of reading and writing the endowment directly ([#1007](https://github.com/MetaMask/ocap-kernel/pull/1007))
 - Attribute a failed subcluster vat launch to the specific vat by kernel id and `ClusterConfig` name (e.g. `Failed to launch vat v3 (bob)`), preserving the original error as the `cause` ([#975](https://github.com/MetaMask/ocap-kernel/pull/975))
 - **BREAKING:** Remove `VatConfig.platformConfig.fetch` — migrate to `globals: ['fetch', ...]` + `network.allowedHosts` ([#942](https://github.com/MetaMask/ocap-kernel/pull/942))
@@ -62,6 +63,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `restartVat` is carried out by the run loop, as a run queue item, rather than where it is asked for. A restart takes a vat out of the kernel's reach for as long as launching a worker and negotiating with it takes, and a crank landing in that window read a live vat as a dead one; in a crank of its own there is no such window. A relaunch that fails now retires the vat and kills the worker it left behind, instead of leaving a vat that could not be terminated ([#1096](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1096))
 - A vat's death is recorded in one synchronous step, so a failure part-way through terminating it can no longer leave the store half-told. Marked terminated while its `vatConfig` row survived, a vat read as active again the moment the deferred cleanup dropped the mark ([#1093](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1093))
 - `terminateVat` retires a vat that is persisted but not running instead of throwing `VatNotFoundError`. A failed relaunch leaves one in that state, and it could then only be removed by discarding the whole store; `terminateSubcluster`, which walks persisted membership, gave up part-way through on reaching one ([#1093](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1093))
 - A vat whose worker launched but whose kernel-side setup then failed has that worker stopped, rather than left running with no record — whether the failure came from the handshake with the worker or from registering the vat afterwards ([#1093](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1093))

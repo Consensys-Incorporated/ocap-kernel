@@ -145,6 +145,43 @@ describe('Vat Lifecycle', { timeout: 30_000 }, () => {
     expect(kernelStore.getRootObject(deadVatId)).toBeUndefined();
   });
 
+  it('restarts a vat through the run loop', async () => {
+    const kernelDatabase = await makeSQLKernelDatabase({
+      dbFilename: ':memory:',
+    });
+    const kernel = await makeKernel(
+      kernelDatabase,
+      true,
+      logger.logger.subLogger({ tags: ['test'] }),
+    );
+    const kernelStore = makeKernelStore(kernelDatabase);
+
+    expect(
+      await runTestVats(kernel, {
+        bootstrap: 'main',
+        vats: {
+          main: {
+            bundleSpec: getBundleSpec('persistence-counter-vat'),
+            parameters: { name: 'CounterVat' },
+          },
+        },
+      }),
+    ).toBe('Counter initialized with count: 1');
+    await waitUntilQuiescent();
+    const vatId = kernel.getVats()[0]?.id as string;
+    const rootObject = kernelStore.getRootObject(vatId) as string;
+
+    // The request is a run-queue item, so this resolves only once the run loop
+    // has taken it and the new worker has answered.
+    await kernel.restartVat(vatId);
+
+    expect(kernel.getVatIds()).toStrictEqual([vatId]);
+    expect(kernelStore.getRootObject(vatId)).toBe(rootObject);
+    expect(await runResume(kernel, rootObject)).toBe(
+      'Counter incremented to: 2',
+    );
+  });
+
   it('leaves no record of a terminated vat for the next boot to restore', async () => {
     const kernelDatabase = await makeSQLKernelDatabase({
       dbFilename: ':memory:',
