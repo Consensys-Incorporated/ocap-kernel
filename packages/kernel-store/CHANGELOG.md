@@ -9,8 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- An error SQLite recovers from on its own — a full disk, an I/O error, a busy database — no longer leaves the browser kernel store refusing every later write ([#1087](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1087))
-- A write made after SQLite has ended a transaction itself is committed rather than left in a transaction nothing will close. Both drivers were affected; on a closed transaction each went on believing a savepoint inside it was still someone else's to commit ([#1087](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1087))
+- An error SQLite recovers from on its own — a full disk, an I/O error, a busy database — no longer leaves the browser kernel store refusing every later write ([#1089](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1089))
+- A write made after SQLite has ended a transaction itself is committed rather than left in a transaction nothing will close. Both drivers were affected; on a closed transaction each went on believing a savepoint inside it was still someone else's to commit ([#1089](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1089))
 - `rollbackSavepoint` discards the enclosing transaction when `ROLLBACK TO` itself fails, instead of leaving the savepoint on its stack and the transaction open ([#1005](https://github.com/MetaMask/ocap-kernel/pull/1005))
   - Nothing would ever commit or abort that transaction, so every later write on the connection silently joined it, reported success, and vanished on close. Discarding it is no wider than the caller asked for: the transaction begins with the outermost savepoint, so it holds only the work the rollback was abandoning
   - The rollback failure is still what gets thrown, even if aborting the transaction fails too
