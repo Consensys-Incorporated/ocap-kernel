@@ -48,7 +48,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **BREAKING:** `RunLoopStatus` gains a `stopped` state, reported while the control plane holds the loop still to write the store directly. A consumer matching exhaustively on `runLoop.state` has a new case ([#1104](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1104))
+- **BREAKING:** `RunLoopStatus` gains a `stopped` state, reported while the control plane holds the loop still to write the store directly. A consumer matching exhaustively on `runLoop.state` has a new case ([#1105](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1105))
 - **BREAKING:** A peer's incarnation change is carried out by the run loop, in a crank of its own, instead of in a `peerIncarnation_*` savepoint nested inside whichever crank was open. The handshake is still answered immediately, from what the store already says, because the transport cannot wait for a crank to finish; only the writes it implies are queued ([#1104](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1104))
   - Queued behind anything that peer has already sent, so a message from the incarnation that is ending is recorded against it and one from the incarnation that is starting is not. Ordering is what keeps them apart, which is why nothing has to be discarded
   - Rejecting the promises the restarted remote was deciding, and resetting its in-memory state, wait for that crank to commit — neither is reversible by a rollback
@@ -71,7 +71,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- `clearStorage`, `reset` and `stop` bring the run loop to rest before writing the store, instead of waiting out the crank in flight and writing into the next one. The loop is synchronous from `endCrank` to the next `startCrank`, so it won the race by construction: the write landed inside a crank's `delivery` savepoint, for an ordinary abort to undo after the caller had been told it succeeded ([#1104](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1104))
+- `clearStorage`, `reset` and `stop` bring the run loop to rest before writing the store, instead of waiting out the crank in flight and writing into the next one. The loop is synchronous from `endCrank` to the next `startCrank`, so it won the race by construction: the write landed inside a crank's `delivery` savepoint, for an ordinary abort to undo after the caller had been told it succeeded ([#1105](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1105))
   - `reset` and `clearStorage` start the loop again afterwards; `stop` does not, being the end of the kernel
   - All three now reject the message results they destroy. A `queueMessage` awaiting a kernel promise that `reset` deleted used to hang forever
 - A delivery to a remote peer is written down inside the crank making it and sent once that crank commits, instead of going out mid-crank. A crank that then failed took the kernel's record of the message back while the peer already had it, leaving the kernel's next send sequence behind what the peer had seen ([#1101](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1101))
