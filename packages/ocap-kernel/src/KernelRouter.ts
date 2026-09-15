@@ -22,6 +22,7 @@ import type {
   RunQueueItemGCAction,
   CrankResult,
   GCRunQueueType,
+  RemoteId,
   VatId,
 } from './types.ts';
 import { isRemoteId } from './types.ts';
@@ -525,6 +526,10 @@ export class KernelRouter {
     this.#logger?.log(
       `@@@@ deliver ${endpointId} ${type} ${JSON.stringify(krefs)}`,
     );
+    const remote = isRemoteId(endpointId) ? endpointId : undefined;
+    if (remote && !this.#canReachRemote(remote)) {
+      return this.#keepForLater(remote, type);
+    }
     const endpoint = this.#lookupEndpoint(endpointId, type);
     // `processGCActionSet` selected this action while the endpoint held a
     // c-list entry for each kref, but `nextTerminatedVatCleanup` runs between
@@ -564,8 +569,55 @@ export class KernelRouter {
     if (!endpoint) {
       return { didDelivery: endpointId };
     }
-    const crankResult = await endpoint[GC_DELIVERY[type]](erefs);
-    return crankResult;
+    try {
+      return await endpoint[GC_DELIVERY[type]](erefs);
+    } catch (error) {
+      // The kernel's half is done above, so committing here would leave the
+      // peer holding references this kernel has let go — and its next message
+      // naming one of them mints a second kref for the same object, reconciled
+      // only by an incarnation change. The abort puts both halves back.
+      this.#logger?.warn(
+        `Remote ${endpointId} refused ${type}; keeping the action:`,
+        error,
+      );
+      // Only a remote gets here: a vat that refuses a GC delivery is broken,
+      // and its crank aborts and terminates it as it always has.
+      if (!remote) {
+        throw error;
+      }
+      return this.#keepForLater(remote, type);
+    }
+  }
+
+  /**
+   * Whether the kernel has a handle for a remote at all. It holds none until
+   * the embedder calls `initRemoteComms`, which is after the run loop starts.
+   *
+   * @param remoteId - The remote in question.
+   * @returns Whether it can be reached.
+   */
+  #canReachRemote(remoteId: RemoteId): boolean {
+    try {
+      this.#getEndpoint(remoteId);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Abort the crank, which restores the GC action this one spent, and hold that
+   * remote's actions back so the retry does not starve every other kind of
+   * work.
+   *
+   * @param remoteId - The remote that could not be told.
+   * @param type - The GC action being kept.
+   * @returns The crank outcome.
+   */
+  #keepForLater(remoteId: RemoteId, type: GCRunQueueType): CrankResult {
+    this.#kernelQueue.holdBackRemoteGC(remoteId);
+    this.#logger?.log(`@@@@ holding ${type} for ${remoteId}`);
+    return { abort: true };
   }
 
   /**
