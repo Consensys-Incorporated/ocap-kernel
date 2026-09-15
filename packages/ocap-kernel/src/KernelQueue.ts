@@ -11,6 +11,7 @@ import type {
   KRef,
   KernelMessage,
   KernelOneResolution,
+  RemoteId,
   RunLoopStatus,
   RunQueueItem,
   RunQueueItemNotify,
@@ -60,6 +61,18 @@ export class KernelQueue {
 
   /** Thunk to signal run queue transition from empty to non-empty */
   #wakeUpTheRunQueue: (() => void) | null;
+
+  /**
+   * Remotes whose GC actions are held back until the run loop next has nothing
+   * else to do.
+   *
+   * A remote that cannot take a GC delivery keeps the action — the crank aborts
+   * and the rollback restores it — but GC actions are selected ahead of every
+   * other kind of work, so re-selecting it every crank would starve the kernel
+   * to serve one unreachable peer. Cleared when the loop wakes from an empty
+   * queue, which is both a bound and the moment retrying costs nothing.
+   */
+  readonly #remotesHeldBack: Set<EndpointId> = new Set();
 
   /**
    * Whether this crank's savepoint has already been handed to `rollbackCrank`.
@@ -181,6 +194,9 @@ export class KernelQueue {
         this.#kernelStore.endCrank();
         if (wakeUpPromise) {
           await wakeUpPromise;
+          // Nothing else was left to do, so a held-back remote costs nobody
+          // anything now.
+          this.#remotesHeldBack.clear();
         }
       }
     }
@@ -302,7 +318,9 @@ export class KernelQueue {
    * @returns The next item in the run queue, or undefined if the queue is empty.
    */
   #getNextRunQueueItem(): RunQueueItem | undefined {
-    const gcAction = processGCActionSet(this.#kernelStore);
+    const gcAction = processGCActionSet(this.#kernelStore, {
+      isHeldBack: (endpointId) => this.#remotesHeldBack.has(endpointId),
+    });
     if (gcAction) {
       return gcAction;
     }
@@ -377,6 +395,16 @@ export class KernelQueue {
     }
     this.#kernelStore.collectGarbage();
     this.#kernelStore.assertRefCountsIfAuditing();
+  }
+
+  /**
+   * Hold a remote's GC actions back until the run loop next has nothing else to
+   * do. Called for a remote that could not be told about a release.
+   *
+   * @param remoteId - The remote to hold back.
+   */
+  holdBackRemoteGC(remoteId: RemoteId): void {
+    this.#remotesHeldBack.add(remoteId);
   }
 
   /**
