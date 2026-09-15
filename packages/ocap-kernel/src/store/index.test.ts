@@ -185,6 +185,7 @@ describe('kernel store', () => {
         'setRemoteNextSendSeq',
         'setRemoteStartSeq',
         'setRevoked',
+        'setRunLoopRunning',
         'setSystemSubclusterMapping',
         'setVatConfig',
         'startCrank',
