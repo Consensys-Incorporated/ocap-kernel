@@ -89,6 +89,13 @@ type DeferredRedeemURLReply =
 
 type DeferredCompletion = DeferredRedeemURLRequest | DeferredRedeemURLReply;
 
+/** An outgoing message written to the store but not yet sent. */
+type PersistedCommand = {
+  seq: number;
+  messageString: string;
+  wasEmpty: boolean;
+};
+
 type RemoteCommand = {
   seq: number;
   ack?: number;
@@ -539,38 +546,60 @@ export class RemoteHandle implements EndpointHandle {
   // --- Message sending ---
 
   /**
-   * Transmit a message to the remote end of the connection.
-   * Adds seq and ack fields, queues for ACK tracking, and sends.
+   * Hand a delivery to the peer, as the outcome of the crank making it. The
+   * message is written down now, inside that crank's transaction, and sent once
+   * it commits: a crank that goes on to fail must not leave the peer holding a
+   * message the kernel has rolled back and will never account for again.
    *
-   * @param messageBase - The base message to send (without seq/ack).
-   * @param exemptFromCapacityLimit - If true, bypass the pending queue capacity
-   *   check. Used for kernel initiated messages that must be sent to avoid
-   *   leaving the remote hanging.
+   * @param messageBase - The delivery to make.
+   * @returns This handle's crank result, carrying the send.
+   */
+  #deliverToPeer(messageBase: Delivery): CrankResult {
+    const persisted = this.#persistRemoteCommand(messageBase);
+    return {
+      ...this.#myCrankResult,
+      afterCommit: async () => this.#transmitRemoteCommand(persisted),
+    };
+  }
+
+  /**
+   * Write an outgoing message down and send it in one step.
+   *
+   * Still the path for a request that awaits the peer's reply, which cannot
+   * wait for a commit to go out. Those remain exposed to the rollback a
+   * delivery no longer is; see {@link #deliverToPeer}.
+   *
+   * @param messageBase - The message, before its sequence number and ack.
+   * @param exemptFromCapacityLimit - Whether the pending queue's capacity limit
+   * does not apply, for a reply that must not fail.
    */
   async #sendRemoteCommand(
     messageBase: Delivery | RedeemURLRequest | RedeemURLReply,
     exemptFromCapacityLimit = false,
   ): Promise<void> {
-    if (this.#needsHinting) {
-      // Hints are registered lazily because (a) transmitting to the platform
-      // services process has to be done asynchronously, which is very painful
-      // to do at construction time, and (b) after a kernel restart (when we
-      // might have a lot of known peers with hint information) connection
-      // re-establishment will also be lazy, with a reasonable chance of never
-      // even happening if we never talk to a particular peer again. Instead, we
-      // wait until we know a given peer needs to be communicated with before
-      // bothering to send its hint info.
-      //
-      // Fire-and-forget: Don't await this call to avoid RPC deadlock when
-      // this method is called inside an RPC handler (e.g., during remoteDeliver).
-      this.#remoteComms
-        .registerLocationHints(this.#peerId, this.#locationHints)
-        .catch((error) => {
-          this.#logger.error('Error registering location hints:', error);
-        });
-      this.#needsHinting = false;
-    }
+    this.#transmitRemoteCommand(
+      this.#persistRemoteCommand(messageBase, { exemptFromCapacityLimit }),
+    );
+  }
 
+  /**
+   * Write an outgoing message to the store, so that a crash between here and
+   * the peer's acknowledgement does not lose it. Separate from transmitting it
+   * because a message prepared inside a crank must be persisted in that
+   * crank's transaction, while sending it has to wait for the commit.
+   *
+   * @param messageBase - The message, before its sequence number and ack.
+   * @param options - Options bag.
+   * @param options.exemptFromCapacityLimit - Whether the pending queue's
+   * capacity limit does not apply, for a reply that must not fail.
+   * @returns What transmitting it needs.
+   */
+  #persistRemoteCommand(
+    messageBase: Delivery | RedeemURLRequest | RedeemURLReply,
+    {
+      exemptFromCapacityLimit = false,
+    }: { exemptFromCapacityLimit?: boolean } = {},
+  ): PersistedCommand {
     // Check queue capacity before consuming any resources (seq number, ACK timer).
     if (
       !exemptFromCapacityLimit &&
@@ -593,9 +622,6 @@ export class RemoteHandle implements EndpointHandle {
         : { seq, ack, ...messageBase };
     const messageString = JSON.stringify(remoteCommand);
 
-    // Clear delayed ACK timer - we're piggybacking the ACK on this message
-    this.#clearDelayedAck();
-
     // Crash-safe enqueue order:
     // 1. Persist message first
     // 2. If first message, persist startSeq (so recovery knows where queue begins)
@@ -608,6 +634,42 @@ export class RemoteHandle implements EndpointHandle {
     }
 
     this.#kernelStore.setRemoteNextSendSeq(this.remoteId, this.#nextSendSeq);
+
+    return { seq, messageString, wasEmpty };
+  }
+
+  /**
+   * Send a message {@link #persistRemoteCommand} has already written down.
+   * Writes no kernel state itself, so it is safe after the crank has committed.
+   * The transport's own failure handling, which does write, runs detached from
+   * this call and lands wherever it lands — see {@link #rejectAllPending}.
+   *
+   * @param persisted - What that call returned.
+   */
+  #transmitRemoteCommand(persisted: PersistedCommand): void {
+    const { seq, messageString, wasEmpty } = persisted;
+    if (this.#needsHinting) {
+      // Hints are registered lazily because (a) transmitting to the platform
+      // services process has to be done asynchronously, which is very painful
+      // to do at construction time, and (b) after a kernel restart (when we
+      // might have a lot of known peers with hint information) connection
+      // re-establishment will also be lazy, with a reasonable chance of never
+      // even happening if we never talk to a particular peer again. Instead, we
+      // wait until we know a given peer needs to be communicated with before
+      // bothering to send its hint info.
+      //
+      // Fire-and-forget: Don't await this call to avoid RPC deadlock when
+      // this method is called inside an RPC handler (e.g., during remoteDeliver).
+      this.#remoteComms
+        .registerLocationHints(this.#peerId, this.#locationHints)
+        .catch((error) => {
+          this.#logger.error('Error registering location hints:', error);
+        });
+      this.#needsHinting = false;
+    }
+
+    // Clear delayed ACK timer - we're piggybacking the ACK on this message
+    this.#clearDelayedAck();
 
     // Start ACK timeout if this is the first pending message
     if (wasEmpty) {
@@ -656,11 +718,10 @@ export class RemoteHandle implements EndpointHandle {
     target: ERef,
     message: EndpointMessage,
   ): Promise<CrankResult> {
-    await this.#sendRemoteCommand({
+    return this.#deliverToPeer({
       method: 'deliver',
       params: ['message', target, message],
     });
-    return this.#myCrankResult;
   }
 
   /**
@@ -670,11 +731,10 @@ export class RemoteHandle implements EndpointHandle {
    * @returns the crank result.
    */
   async deliverNotify(resolutions: VatOneResolution[]): Promise<CrankResult> {
-    await this.#sendRemoteCommand({
+    return this.#deliverToPeer({
       method: 'deliver',
       params: ['notify', resolutions],
     });
-    return this.#myCrankResult;
   }
 
   /**
@@ -684,11 +744,10 @@ export class RemoteHandle implements EndpointHandle {
    * @returns the crank result.
    */
   async deliverDropExports(erefs: ERef[]): Promise<CrankResult> {
-    await this.#sendRemoteCommand({
+    return this.#deliverToPeer({
       method: 'deliver',
       params: ['dropExports', erefs],
     });
-    return this.#myCrankResult;
   }
 
   /**
@@ -698,11 +757,10 @@ export class RemoteHandle implements EndpointHandle {
    * @returns the crank result.
    */
   async deliverRetireExports(erefs: ERef[]): Promise<CrankResult> {
-    await this.#sendRemoteCommand({
+    return this.#deliverToPeer({
       method: 'deliver',
       params: ['retireExports', erefs],
     });
-    return this.#myCrankResult;
   }
 
   /**
@@ -712,11 +770,10 @@ export class RemoteHandle implements EndpointHandle {
    * @returns the crank result.
    */
   async deliverRetireImports(erefs: ERef[]): Promise<CrankResult> {
-    await this.#sendRemoteCommand({
+    return this.#deliverToPeer({
       method: 'deliver',
       params: ['retireImports', erefs],
     });
-    return this.#myCrankResult;
   }
 
   /**
@@ -731,11 +788,10 @@ export class RemoteHandle implements EndpointHandle {
       this.#remoteGcRequested = false;
       return this.#myCrankResult;
     }
-    await this.#sendRemoteCommand({
+    return this.#deliverToPeer({
       method: 'deliver',
       params: ['bringOutYourDead'],
     });
-    return this.#myCrankResult;
   }
 
   // Warning: The handling of the GC deliveries ('dropExports', 'retireExports',
