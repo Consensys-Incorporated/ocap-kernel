@@ -1130,11 +1130,6 @@ export class RemoteHandle implements EndpointHandle {
     const [method] = params;
     switch (method) {
       case 'message': {
-        // Refuse rather than queue work for a loop that will never drain it.
-        // The caller rolls this delivery back without advancing the received
-        // sequence number, so the peer retries and then gives up instead of
-        // believing a black hole accepted its message.
-        this.#kernelQueue.assertRunLoopAlive('accept a remote message');
         const [, target, message] = params;
         this.#kernelQueue.enqueueSend(
           this.#kernelStore.translateRefEtoK(this.remoteId, target),
@@ -1143,7 +1138,6 @@ export class RemoteHandle implements EndpointHandle {
         break;
       }
       case 'notify': {
-        this.#kernelQueue.assertRunLoopAlive('accept a remote notify');
         const [, resolutions] = params;
         const kResolutions: KernelOneResolution[] = resolutions.map(
           (resolution) => {
@@ -1181,7 +1175,6 @@ export class RemoteHandle implements EndpointHandle {
         // Queue work like the arms above: `scheduleReap` is consumed only by the
         // run loop, via `nextReapAction`. The other GC arms need no guard — they
         // only touch refcounts, which the caller's crank commits by itself.
-        this.#kernelQueue.assertRunLoopAlive('accept a remote reap request');
         this.#kernelStore.scheduleReap(this.remoteId);
         break;
       }
@@ -1332,7 +1325,7 @@ export class RemoteHandle implements EndpointHandle {
       throw Error(`invalid message seq: ${seq}`);
     }
 
-    this.#kernelQueue.enqueueRemoteInbound(this.remoteId, message);
+    this.#kernelQueue.acceptRemoteInbound(this.remoteId, message);
   }
 
   /**
@@ -1542,6 +1535,8 @@ export class RemoteHandle implements EndpointHandle {
    * leave the in-memory view inconsistent with the persisted view.
    */
   handlePeerRestart(): void {
+    // Anything still waiting its turn belongs to the incarnation that is gone.
+    this.#kernelQueue.discardRemoteInbound(this.remoteId);
     this.persistPeerRestart();
     this.finalizePeerRestart();
   }

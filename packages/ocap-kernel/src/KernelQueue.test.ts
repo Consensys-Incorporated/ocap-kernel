@@ -765,6 +765,63 @@ describe('KernelQueue', () => {
     });
   });
 
+  describe('remote arrivals', () => {
+    // Written to the run queue instead, the arrival would land in whatever
+    // crank happens to be open and be swallowed whole by an abort.
+    it('holds an arrival out of the run queue and hands it to a crank', async () => {
+      kernelQueue.acceptRemoteInbound('r1' as RemoteId, '{"seq":1}');
+      expect(kernelStore.enqueueRun).not.toHaveBeenCalled();
+
+      const deliver = vi.fn().mockImplementation(() => {
+        throw new Error(STOP_RUN_LOOP);
+      });
+      await expect(kernelQueue.run(deliver)).rejects.toThrow(STOP_RUN_LOOP);
+
+      expect(deliver).toHaveBeenCalledWith({
+        type: 'remoteInbound',
+        remoteId: 'r1',
+        message: '{"seq":1}',
+      });
+    });
+
+    it('refuses an arrival once the run loop has died', async () => {
+      const deliver = vi.fn().mockRejectedValue(new Error('dead'));
+      (
+        kernelStore.runQueueLength as unknown as MockInstance
+      ).mockReturnValueOnce(1);
+      (kernelStore.dequeueRun as unknown as MockInstance).mockReturnValue({
+        type: 'send',
+        target: 'ko1',
+        message: {} as KernelMessage,
+      });
+      await expect(kernelQueue.run(deliver)).rejects.toThrow('dead');
+
+      expect(() =>
+        kernelQueue.acceptRemoteInbound('r1' as RemoteId, '{"seq":1}'),
+      ).toThrow('Kernel run loop died');
+    });
+
+    it('discards what a remote sent before its incarnation changed', async () => {
+      kernelQueue.acceptRemoteInbound('r1' as RemoteId, '{"seq":47}');
+      kernelQueue.acceptRemoteInbound('r2' as RemoteId, '{"seq":3}');
+
+      kernelQueue.discardRemoteInbound('r1' as RemoteId);
+
+      const delivered: RunQueueItem[] = [];
+      const deliver = vi.fn().mockImplementation((item: RunQueueItem) => {
+        delivered.push(item);
+        throw new Error(STOP_RUN_LOOP);
+      });
+      await expect(kernelQueue.run(deliver)).rejects.toThrow(STOP_RUN_LOOP);
+
+      // Kept, the old incarnation's seq would be recorded against the new one
+      // and the new one's first message discarded as a duplicate.
+      expect(delivered).toStrictEqual([
+        { type: 'remoteInbound', remoteId: 'r2', message: '{"seq":3}' },
+      ]);
+    });
+  });
+
   describe('resolvePromises', () => {
     it('resolves kernel promises and buffers notifications for subscribers', () => {
       const endpointId = 'v1';
