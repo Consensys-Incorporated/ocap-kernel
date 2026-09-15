@@ -46,7 +46,9 @@ describe('KernelRouter', () => {
     kernelStore = {
       getOwner: vi.fn(),
       isRevoked: vi.fn(),
-      getKernelPromise: vi.fn(),
+      // Unresolved is the default so that reading a promise's state is never
+      // a `TypeError` in a test that does not care about it.
+      getKernelPromise: vi.fn().mockReturnValue({ state: 'unresolved' }),
       decrementRefCount: vi.fn(),
       setPromiseDecider: vi.fn(),
       translateRefKtoE: vi.fn(
@@ -490,7 +492,6 @@ describe('KernelRouter', () => {
         (
           endpointHandle.deliverMessage as unknown as MockInstance
         ).mockRejectedValueOnce(new Error('queue full'));
-
         const message: Message = {
           methargs: { body: 'method args', slots: [] },
           result: 'kp1',

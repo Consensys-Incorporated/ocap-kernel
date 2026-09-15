@@ -195,6 +195,34 @@ export class KernelRouter {
   }
 
   /**
+   * Reject a message's result promise, unless it is already settled.
+   *
+   * A failed delivery may have settled the result on its way down: the vat
+   * resolved it and then lost its stream. Resolving a settled promise is a
+   * `Fail`, thrown from inside the catch that is handling the failure.
+   *
+   * @param endpointId - The endpoint that was to have decided it.
+   * @param kpid - The result promise.
+   * @param failure - Why the message could not be delivered.
+   */
+  #rejectResultIfPending(
+    endpointId: EndpointId,
+    kpid: KRef,
+    failure: CapData<KRef>,
+  ): void {
+    const { state } = this.#kernelStore.getKernelPromise(kpid);
+    if (state !== 'unresolved') {
+      // The caller gets the endpoint's answer, not the delivery's failure, and
+      // the `error` above is the only other trace of either.
+      this.#logger?.error(
+        `Result ${kpid} of the failed delivery to ${endpointId} is already ${state}; leaving it alone`,
+      );
+      return;
+    }
+    this.#kernelQueue.resolvePromises(endpointId, [[kpid, true, failure]]);
+  }
+
+  /**
    * Deliver a 'send' run queue item.
    *
    * @param item - The send item to deliver.
@@ -303,13 +331,11 @@ export class KernelRouter {
           if (message.result) {
             const detail =
               error instanceof Error ? error.message : String(error);
-            this.#kernelQueue.resolvePromises(endpointId, [
-              [
-                message.result,
-                true,
-                makeKernelError('DELIVERY_FAILED', detail),
-              ],
-            ]);
+            this.#rejectResultIfPending(
+              eid,
+              message.result,
+              makeKernelError('DELIVERY_FAILED', detail),
+            );
           }
           // Continue processing other messages - don't let one failure crash the queue
         }
