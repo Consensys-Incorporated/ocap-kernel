@@ -1,5 +1,5 @@
 import { delay } from '@metamask/kernel-utils';
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, onTestFinished, vi } from 'vitest';
 
 import { makeGCAndFinalize } from './gc-finalize.ts';
 
@@ -53,5 +53,28 @@ describe('Garbage Collection', () => {
     expect(weakRef.deref()).toBeDefined();
     await gcAndFinalize();
     expect(weakRef.deref()).toBeUndefined();
+  });
+
+  it('drains pending work before the first collection', async () => {
+    const order: string[] = [];
+    // `gc-engine.ts` leaves `--expose_gc` on process-wide, so a worker thread
+    // started after any test that reaches it has a `gc` global, which is
+    // writable but not configurable: `vi.stubGlobal` would throw on it.
+    const realGC = globalThis.gc;
+    onTestFinished(() => {
+      globalThis.gc = realGC;
+    });
+    globalThis.gc = (() => {
+      order.push('collect');
+    }) as typeof globalThis.gc;
+
+    const gcAndFinalizeWithStub = makeGCAndFinalize();
+    setTimeout(() => {
+      order.push('pending');
+      setTimeout(() => order.push('chained'), 0);
+    }, 0);
+    await gcAndFinalizeWithStub();
+
+    expect(order).toStrictEqual(['pending', 'chained', 'collect', 'collect']);
   });
 });
