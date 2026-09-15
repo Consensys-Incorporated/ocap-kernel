@@ -9,9 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- A `RELEASE`, `COMMIT` or `SAVEPOINT` that fails now discards the transaction it was in, rather than leaving one open that nothing will ever end — every later write would have joined it, reported success, and vanished on close ([#1093](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1093))
-- Once even the abort that discards such a transaction fails, both drivers refuse every write — kv, vat store, `clear`, `deleteVatStore` — instead of reporting success for one that cannot land. The abort is retried on each attempt, so a connection SQLite recovers starts writing again ([#1093](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1093))
-- A savepoint name the driver rejects no longer leaves a transaction open behind it ([#1093](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1093))
+- A `RELEASE`, `COMMIT` or `SAVEPOINT` that fails now discards the transaction it was in, rather than leaving one open that nothing will ever end — every later write would have joined it, reported success, and vanished on close ([#1094](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1094))
+- Once even the abort that discards such a transaction fails, both drivers refuse every write — kv, vat store, `clear`, `deleteVatStore` — instead of reporting success for one that cannot land. The abort is retried on each attempt, so a connection SQLite recovers starts writing again ([#1094](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1094))
+- A savepoint name the driver rejects no longer leaves a transaction open behind it ([#1094](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1094))
 - An error SQLite recovers from on its own — a full disk, an I/O error, a busy database — no longer leaves the browser kernel store refusing every later write ([#1089](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1089))
 - A write made after SQLite has ended a transaction itself is committed rather than left in a transaction nothing will close. Both drivers were affected; on a closed transaction each went on believing a savepoint inside it was still someone else's to commit ([#1089](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1089))
 - `rollbackSavepoint` discards the enclosing transaction when `ROLLBACK TO` itself fails, instead of leaving the savepoint on its stack and the transaction open ([#1005](https://github.com/MetaMask/ocap-kernel/pull/1005))
