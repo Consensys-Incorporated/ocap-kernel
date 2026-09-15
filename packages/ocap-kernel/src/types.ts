@@ -800,6 +800,10 @@ const RemoteCommsConnectedStruct = object({
 export const RunLoopStatusStruct = union([
   type({ state: literal('idle') }),
   type({ state: literal('running') }),
+  // Deliberately stopped between cranks, so that the control plane can write
+  // the store directly. A kernel is only briefly in this state, and only
+  // because something asked.
+  type({ state: literal('stopped') }),
   // Two strings because one cannot be both: `error` is the message, `detail` the
   // cause chain. When a crank dies and its rollback then fails, the message names
   // the rollback and only the chain names what killed the kernel.

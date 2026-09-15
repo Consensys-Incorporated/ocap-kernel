@@ -365,7 +365,6 @@ export class VatManager {
    * This is for debugging purposes only.
    */
   async terminateAllVats(): Promise<void> {
-    await this.#kernelQueue.waitForCrank();
     for (const id of this.getVatIds().reverse()) {
       await this.terminateVat(id);
       this.collectGarbage();

@@ -342,6 +342,17 @@ export class Kernel {
 
     // Start the kernel queue processing (non-blocking)
     // This runs for the entire lifetime of the kernel
+    this.#startRunLoop();
+
+    // Launch new system subclusters (requires queue to be running)
+    await this.#subclusterManager.launchNewSystemSubclusters(configs);
+  }
+
+  /**
+   * Start the run loop, or start it again after it was stopped for a direct
+   * write. Deliberately not awaited: it runs for as long as the kernel does.
+   */
+  #startRunLoop(): void {
     this.#kernelQueue
       .run(async (item) => {
         // Not a delivery to an endpoint, so not the router's to route: a peer
@@ -365,9 +376,40 @@ export class Kernel {
         }
       })
       .catch((error) => this.#handleRunLoopFailure(error));
+  }
 
-    // Launch new system subclusters (requires queue to be running)
-    await this.#subclusterManager.launchNewSystemSubclusters(configs);
+  /**
+   * Bring the run loop to rest, do something to the store directly, and start
+   * it again.
+   *
+   * The control plane used to wait out the crank in flight and then write,
+   * which does not work: the loop is synchronous from `endCrank` to the next
+   * `startCrank`, so it wins that race by construction and the write lands in
+   * the next crank's `delivery` savepoint, for an ordinary abort to undo after
+   * the caller was told it had succeeded. Between cranks there is no
+   * transaction to land in.
+   *
+   * @param work - What to do while the loop is stopped.
+   * @param options - Options bag.
+   * @param options.thenRestart - Whether to run the loop again afterwards.
+   * False for teardown, which is the end of the kernel.
+   * @returns What `work` returned.
+   */
+  async #withRunLoopStopped<Result>(
+    work: () => Promise<Result> | Result,
+    { thenRestart = true }: { thenRestart?: boolean } = {},
+  ): Promise<Result> {
+    const wasRunning = await this.#kernelQueue.stopRunLoop();
+    try {
+      return await work();
+    } finally {
+      // Only if it was ours to stop, and only if the kernel goes on: starting
+      // a loop the caller never had running would be a surprise, and `run`
+      // refuses one that died.
+      if (wasRunning && thenRestart) {
+        this.#startRunLoop();
+      }
+    }
   }
 
   /**
@@ -660,8 +702,12 @@ export class Kernel {
    * Clear the database.
    */
   async clearStorage(): Promise<void> {
-    await this.#kernelQueue.waitForCrank();
-    this.#kernelStore.clear();
+    await this.#withRunLoopStopped(() => {
+      this.#kernelStore.clear();
+      this.#kernelQueue.discardQueuedWork(
+        'this message result will never be delivered',
+      );
+    });
   }
 
   /**
@@ -855,18 +901,22 @@ export class Kernel {
    * the queue still refuses new work.
    */
   async reset(): Promise<void> {
-    await this.#kernelQueue.waitForCrank();
-    try {
-      if (this.#ioManager) {
-        await this.#ioManager.destroyAllChannels();
+    await this.#withRunLoopStopped(async () => {
+      try {
+        if (this.#ioManager) {
+          await this.#ioManager.destroyAllChannels();
+        }
+        await this.terminateAllVats();
+        this.#subclusterManager.clearSystemSubclusters();
+        this.#resetKernelState();
+        this.#kernelQueue.discardQueuedWork(
+          'this message result will never be delivered',
+        );
+      } catch (error) {
+        this.#logger.error('Error resetting kernel:', error);
+        throw error;
       }
-      await this.terminateAllVats();
-      this.#subclusterManager.clearSystemSubclusters();
-      this.#resetKernelState();
-    } catch (error) {
-      this.#logger.error('Error resetting kernel:', error);
-      throw error;
-    }
+    });
   }
 
   /**
@@ -881,12 +931,19 @@ export class Kernel {
    * Gracefully stop the kernel without deleting vats.
    */
   async stop(): Promise<void> {
-    await this.#kernelQueue.waitForCrank();
-    this.#kernelStore.recordLastActiveTime();
-    await this.#platformServices.stopRemoteComms();
-    this.#remoteManager.cleanup();
-    await this.#platformServices.terminateAll();
-    this.#kernelDatabase.close();
+    await this.#withRunLoopStopped(
+      async () => {
+        this.#kernelStore.recordLastActiveTime();
+        await this.#platformServices.stopRemoteComms();
+        this.#remoteManager.cleanup();
+        await this.#platformServices.terminateAll();
+        this.#kernelDatabase.close();
+        this.#kernelQueue.discardQueuedWork(
+          'the kernel was stopped before this message result was delivered',
+        );
+      },
+      { thenRestart: false },
+    );
   }
 
   /**
