@@ -350,13 +350,15 @@ export class VatManager {
     if (!this.#vats.has(vatId) && !this.#kernelStore.isVatActive(vatId)) {
       throw new VatNotFoundError(vatId);
     }
-    // A restart still queued for this vat is overtaken by the termination, and
-    // the crank that reaches it will find nothing to restart. Tell whoever
-    // asked for it now rather than leaving them waiting on it.
-    VatManager.#takeWaiters(
+    // A restart outstanding when the termination is asked for is overtaken by
+    // it, so its caller is told now rather than left waiting on a crank that
+    // will find nothing to restart. A restart asked for after this cannot be
+    // ordered against the termination at all, and is not covered.
+    const supersedeRestart = VatManager.#takeWaiters(
       this.#restartWaiters,
       vatId,
-    )(new VatDeletedError(vatId));
+    );
+    supersedeRestart(new VatDeletedError(vatId));
     await this.#awaitQueuedWork(this.#terminationWaiters, vatId, () =>
       this.#kernelQueue.enqueueTerminateVat(vatId, reason),
     );
@@ -378,6 +380,17 @@ export class VatManager {
     reason?: CapData<KRef>,
   ): Promise<void> {
     const settle = VatManager.#takeWaiters(this.#terminationWaiters, vatId);
+    if (!this.#vats.has(vatId) && !this.#kernelStore.isVatActive(vatId)) {
+      // Already dead: the in-crank termination path or `terminateAllVats` got
+      // here first, and this vat is exactly what the caller asked for.
+      settle();
+      return;
+    }
+    if (settle.count === 0) {
+      this.#logger.debug(
+        `Carrying out a termination of vat ${vatId} nobody is waiting for`,
+      );
+    }
     try {
       await this.stopVat(vatId, true, reason);
     } catch (error) {
@@ -485,9 +498,10 @@ export class VatManager {
       return;
     }
     if (!this.#vats.has(vatId) && !this.#kernelStore.isVatActive(vatId)) {
-      // `terminateVat` does not go through the run queue, so it can land
-      // between the request and this crank. Dropped rather than thrown: the
-      // alternative is a dead run loop over work that is merely obsolete.
+      // A termination queued after this request runs before it if the queue
+      // was already busy, so the vat can be gone by the time this crank comes
+      // round. Dropped rather than thrown: the alternative is a dead run loop
+      // over work that is merely obsolete.
       const error = new VatNotFoundError(vatId);
       this.#logger.error(
         `Restart of vat ${vatId} dropped; the vat is gone:`,

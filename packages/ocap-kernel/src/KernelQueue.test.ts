@@ -666,10 +666,11 @@ describe('KernelQueue', () => {
     it('leaves the reason out when there is none', () => {
       kernelQueue.enqueueTerminateVat('v1');
 
-      expect(kernelStore.enqueueRun).toHaveBeenCalledWith({
-        type: 'terminateVat',
-        vatId: 'v1',
-      });
+      // `toHaveBeenCalledWith` ignores an `undefined`-valued key, and the item
+      // struct's `reason` is `exactOptional`, so the key has to be absent.
+      expect(
+        (kernelStore.enqueueRun as unknown as MockInstance).mock.calls,
+      ).toStrictEqual([[{ type: 'terminateVat', vatId: 'v1' }]]);
     });
 
     it('refuses once the run loop is dead', async () => {

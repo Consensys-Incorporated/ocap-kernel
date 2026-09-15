@@ -601,6 +601,22 @@ describe('VatManager', () => {
         expect(mockKernelStore.markVatAsTerminated).toHaveBeenCalledWith('v1');
       });
 
+      it('answers a caller whose vat something else already killed', async () => {
+        await vatManager.runVat('v1', createMockVatConfig());
+        mockKernelQueue.enqueueTerminateVat.mockImplementationOnce(
+          () => undefined,
+        );
+        const terminating = vatManager.terminateVat('v1');
+        // The in-crank termination path, or `terminateAllVats`, gets there
+        // first — which is exactly what this caller asked for.
+        await vatManager.stopVat('v1', true);
+        mockKernelStore.isVatActive.mockReturnValue(false);
+
+        await vatManager.performVatTermination('v1');
+
+        expect(await terminating).toBeUndefined();
+      });
+
       it('settles without rejecting when the teardown fails', async () => {
         await vatManager.runVat('v1', createMockVatConfig());
         mockKernelQueue.enqueueTerminateVat.mockImplementationOnce(
@@ -1077,6 +1093,17 @@ describe('VatManager', () => {
   });
 
   describe('terminateAllVats', () => {
+    it('writes directly rather than queuing', async () => {
+      await vatManager.runVat('v1', createMockVatConfig());
+
+      await vatManager.terminateAllVats();
+
+      // Part of tearing the kernel down: `reset` has to work on a kernel whose
+      // run loop has died, and a queued request never would be.
+      expect(mockKernelQueue.enqueueTerminateVat).not.toHaveBeenCalled();
+      expect(mockKernelStore.markVatAsTerminated).toHaveBeenCalledWith('v1');
+    });
+
     it('terminates all vats in reverse order', async () => {
       await vatManager.runVat('v1', createMockVatConfig());
       await vatManager.runVat('v2', createMockVatConfig());

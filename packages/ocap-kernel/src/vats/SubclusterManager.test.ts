@@ -611,6 +611,7 @@ describe('SubclusterManager', () => {
         'v1',
         'v2',
       ] as VatId[]);
+      mockVatManager.hasVat.mockReturnValue(true);
 
       await subclusterManager.terminateSubcluster('s1');
 
@@ -634,7 +635,7 @@ describe('SubclusterManager', () => {
       expect(mockKernelStore.deleteSubcluster).toHaveBeenCalledWith('s1');
     });
 
-    it('keeps going when one member will not die', async () => {
+    it('tries every member even when one will not die, then refuses', async () => {
       const subcluster = createMockSubcluster('s1', createMockClusterConfig());
       mockKernelStore.getSubcluster.mockReturnValue(subcluster);
       mockKernelStore.getSubclusterVats.mockReturnValue([
@@ -645,10 +646,28 @@ describe('SubclusterManager', () => {
         new Error('vat will not die'),
       );
 
-      await subclusterManager.terminateSubcluster('s1');
+      await expect(subclusterManager.terminateSubcluster('s1')).rejects.toThrow(
+        'subcluster s1 still has running vats: v2',
+      );
 
+      // One member that will not die must not strand the others, and must not
+      // let the record go: `deleteSubcluster` drops every member's
+      // vat-to-subcluster mapping, and `getVatSubcluster` is a `Fail`.
       expect(mockVatManager.terminateVat).toHaveBeenCalledWith('v1');
-      expect(mockKernelStore.deleteSubcluster).toHaveBeenCalledWith('s1');
+      expect(mockKernelStore.deleteSubcluster).not.toHaveBeenCalled();
+    });
+
+    it('refuses once the run loop is dead', async () => {
+      const subcluster = createMockSubcluster('s1', createMockClusterConfig());
+      mockKernelStore.getSubcluster.mockReturnValue(subcluster);
+      mockKernelQueue.assertRunLoopAlive.mockImplementationOnce(() => {
+        throw new Error('Kernel run loop died; cannot terminate a subcluster');
+      });
+
+      await expect(subclusterManager.terminateSubcluster('s1')).rejects.toThrow(
+        'cannot terminate a subcluster',
+      );
+      expect(mockKernelStore.deleteSubcluster).not.toHaveBeenCalled();
     });
 
     it('throws when subcluster not found', async () => {
