@@ -83,6 +83,7 @@ describe('KernelRouter', () => {
     // Mock KernelQueue
     kernelQueue = {
       resolvePromises: vi.fn(),
+      holdBackRemoteGC: vi.fn(),
     } as unknown as KernelQueue;
 
     const mockInvokeKernelService = vi.fn();
@@ -1109,21 +1110,67 @@ describe('KernelRouter', () => {
       });
 
       it.each(['dropExports', 'retireExports', 'retireImports'] as const)(
-        'keeps a %s addressed to it loud',
+        'keeps a %s addressed to it instead of releasing it unheard',
         async (type) => {
           // Releasing the kernel's side without telling the peer leaves it
-          // holding references to an object this kernel has let go. Deferring
-          // the action instead needs a lane of its own, which is a change on
-          // top of this one.
-          await expect(
-            kernelRouter.deliver({
-              type,
-              endpointId: remoteId,
-              krefs: ['ko1'],
-            }),
-          ).rejects.toThrow('Remote not found');
+          // holding references to an object this kernel has let go, and its
+          // next message naming one mints a second kref for the same object.
+          const result = await kernelRouter.deliver({
+            type,
+            endpointId: remoteId,
+            krefs: ['ko1'],
+          });
+
+          expect(result).toStrictEqual({ abort: true });
+          expect(kernelStore.clearReachableFlag).not.toHaveBeenCalled();
+          expect(kernelStore.deleteCListEntry).not.toHaveBeenCalled();
         },
       );
+
+      it('holds its GC actions back so they leave the front of the queue', async () => {
+        // GC actions are selected ahead of every other kind of work, so an
+        // action that fails every crank would starve the kernel for one peer.
+        await kernelRouter.deliver({
+          type: 'retireImports',
+          endpointId: remoteId,
+          krefs: ['ko1'],
+        });
+
+        expect(kernelQueue.holdBackRemoteGC).toHaveBeenCalledWith(remoteId);
+      });
+    });
+
+    describe('a remote that refuses a GC delivery', () => {
+      const remoteId = 'r1' as EndpointId;
+
+      beforeEach(() => {
+        (
+          endpointHandle.deliverRetireImports as unknown as MockInstance
+        ).mockRejectedValue(new Error('send queue full'));
+      });
+
+      it('aborts the crank so the action and the entries both come back', async () => {
+        const result = await kernelRouter.deliver({
+          type: 'retireImports',
+          endpointId: remoteId,
+          krefs: ['ko1'],
+        });
+
+        expect(result).toStrictEqual({ abort: true });
+        expect(kernelQueue.holdBackRemoteGC).toHaveBeenCalledWith(remoteId);
+      });
+
+      it('lets a vat that refuses one through', async () => {
+        // A local vat that cannot take a GC delivery is broken, and the crank
+        // that aborts terminates it, as it always has.
+        await expect(
+          kernelRouter.deliver({
+            type: 'retireImports',
+            endpointId: 'v1',
+            krefs: ['ko1'],
+          }),
+        ).rejects.toThrow('send queue full');
+      });
     });
 
     it('throws on unknown run queue item type', async () => {

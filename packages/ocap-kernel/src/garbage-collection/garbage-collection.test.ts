@@ -12,6 +12,72 @@ describe('garbage-collection', () => {
       kernelStore = makeKernelStore(makeMapKernelDatabase());
     });
 
+    describe('an endpoint held back', () => {
+      /**
+       * Give two endpoints a droppable export each.
+       *
+       * @returns Their krefs, by endpoint.
+       */
+      function givenAnActionEach(): Record<string, string> {
+        const krefs: Record<string, string> = {};
+        for (const endpointId of ['r1', 'v1']) {
+          const kref = kernelStore.initKernelObject(endpointId);
+          kernelStore.addCListEntry(endpointId, kref, 'o+1');
+          kernelStore.setObjectRefCount(kref, {
+            reachable: 0,
+            recognizable: 1,
+          });
+          kernelStore.addGCActions([`${endpointId} dropExport ${kref}`]);
+          krefs[endpointId] = kref;
+        }
+        return krefs;
+      }
+
+      it('gives the work of the others instead', () => {
+        const krefs = givenAnActionEach();
+
+        const result = processGCActionSet(kernelStore, {
+          isHeldBack: (endpointId) => endpointId === 'r1',
+        });
+
+        expect(result).toStrictEqual({
+          type: 'dropExports',
+          endpointId: 'v1',
+          krefs: [krefs.v1],
+        });
+      });
+
+      it('leaves its actions in the durable set', () => {
+        const krefs = givenAnActionEach();
+        const isHeldBack = (endpointId: string): boolean => endpointId === 'r1';
+
+        // Twice, because the first call is what spends `v1`'s action: an action
+        // merely examined is deleted from the set whether or not it is chosen.
+        processGCActionSet(kernelStore, { isHeldBack });
+        const result = processGCActionSet(kernelStore, { isHeldBack });
+
+        expect(result).toBeUndefined();
+        expect([...kernelStore.getGCActions()]).toStrictEqual([
+          `r1 dropExport ${krefs.r1}`,
+        ]);
+      });
+
+      it('gets its turn once nothing holds it back', () => {
+        const krefs = givenAnActionEach();
+
+        processGCActionSet(kernelStore, {
+          isHeldBack: (endpointId) => endpointId === 'r1',
+        });
+        const result = processGCActionSet(kernelStore);
+
+        expect(result).toStrictEqual({
+          type: 'dropExports',
+          endpointId: 'r1',
+          krefs: [krefs.r1],
+        });
+      });
+    });
+
     it('processes dropExport actions', () => {
       // Setup: Create object and add GC action
       const ko1 = kernelStore.initKernelObject('v1');

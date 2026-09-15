@@ -8,7 +8,7 @@ import * as gc from './garbage-collection/garbage-collection.ts';
 import { KernelQueue } from './KernelQueue.ts';
 import type { KernelStore } from './store/index.ts';
 import * as types from './types.ts';
-import type { KRef, KernelMessage, RunQueueItem } from './types.ts';
+import type { KRef, KernelMessage, RemoteId, RunQueueItem } from './types.ts';
 
 vi.mock('./garbage-collection/garbage-collection.ts', () => ({
   processGCActionSet: vi.fn().mockReturnValue(null),
@@ -1084,6 +1084,34 @@ describe('KernelQueue', () => {
       await expect(kernelQueue.run(deliver)).rejects.toThrow(STOP_RUN_LOOP);
       expect(resolveSpy).toHaveBeenCalledWith(fulfilledValue);
       expect(rejectSpy).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("holding a remote's GC actions back", () => {
+    it('skips them until the run loop has nothing else to do', async () => {
+      const heldBack: boolean[] = [];
+      (gc.processGCActionSet as unknown as MockInstance).mockImplementation(
+        (
+          _store: KernelStore,
+          { isHeldBack }: { isHeldBack: (id: string) => boolean },
+        ) => {
+          heldBack.push(isHeldBack('r1'));
+          if (heldBack.length === 2) {
+            throw new Error(STOP_RUN_LOOP);
+          }
+          return null;
+        },
+      );
+      (kernelStore.runQueueLength as unknown as MockInstance).mockReturnValue(
+        0,
+      );
+      kernelQueue.holdBackRemoteGC('r1' as RemoteId);
+
+      // The first crank finds nothing to do and parks; the mocked wake resolves
+      // at once, so the second crank is the one after the park.
+      await expect(kernelQueue.run(vi.fn())).rejects.toThrow(STOP_RUN_LOOP);
+
+      expect(heldBack).toStrictEqual([true, false]);
     });
   });
 

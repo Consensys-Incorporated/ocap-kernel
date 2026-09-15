@@ -62,6 +62,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A remote that cannot take a GC delivery — refused, or simply not connected yet — keeps the action instead of having the release committed without it. The crank aborts, which restores both the action and the c-list entries, so the peer is never left holding references this kernel has let go ([#1099](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1099))
+  - That remote's GC actions are then held back until the run loop next has nothing else to do. GC actions are selected ahead of every other kind of work, so without this one unreachable peer would starve the kernel by being retried every crank
 - A notify, GC action or reap addressed to a vat that is gone is skipped rather than throwing out of the crank, which killed the run loop and, because the crank was rolled back, every boot after it. A vat's c-lists outlive it until cleanup reaches them, one vat per crank; a reap outlives it altogether, and a peer can schedule one against a remote, so a single `bringOutYourDead` from a peer was enough to stop a kernel ever booting again ([#1098](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1098))
   - A remote with no handle has not gone anywhere — the kernel holds none at all until `initRemoteComms` runs — so only a reap, which is a hint, is dropped for one. A notify or a GC action addressed to a remote still fails loudly rather than losing what it carries
   - The kernel's own half of a GC action is still performed for a vat it cannot tell, since the action is already spent and leaving the entry would have it re-derived forever
