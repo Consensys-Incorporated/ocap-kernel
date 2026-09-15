@@ -1344,6 +1344,108 @@ describe('KernelQueue', () => {
     });
   });
 
+  describe('stopping the run loop', () => {
+    it('reports that an idle loop needed no stopping', async () => {
+      expect(await kernelQueue.stopRunLoop()).toBe(false);
+      expect(kernelQueue.getRunLoopStatus()).toStrictEqual({ state: 'idle' });
+    });
+
+    it('comes to rest between cranks and says so', async () => {
+      (kernelStore.runQueueLength as unknown as MockInstance)
+        .mockReturnValueOnce(1)
+        .mockReturnValue(0);
+      (kernelStore.dequeueRun as unknown as MockInstance).mockReturnValueOnce({
+        type: 'send',
+        target: 'ko1',
+        message: {} as KernelMessage,
+      });
+      let stopped: Promise<boolean> | undefined;
+      // From inside the delivery, which is the hard case: a crank is open, and
+      // the loop must finish it before reporting itself stopped.
+      const deliver = vi.fn().mockImplementation(async () => {
+        stopped = kernelQueue.stopRunLoop();
+        return undefined;
+      });
+
+      await kernelQueue.run(deliver);
+
+      expect(await stopped).toBe(true);
+      expect(kernelStore.endCrank).toHaveBeenCalledOnce();
+      expect(kernelQueue.getRunLoopStatus()).toStrictEqual({
+        state: 'stopped',
+      });
+    });
+
+    it('wakes a parked loop rather than waiting for work that will not come', async () => {
+      // A promise kit that really suspends: the module-level mock resolves at
+      // once, which would let the loop reach the stop check without ever being
+      // woken, and this test is about the waking.
+      const parked = makeRealPromiseKit();
+      (makePromiseKit as unknown as MockInstance).mockReturnValueOnce({
+        promise: parked.promise,
+        resolve: parked.resolve,
+        reject: parked.reject,
+      });
+      (kernelStore.runQueueLength as unknown as MockInstance).mockReturnValue(
+        0,
+      );
+      const running = kernelQueue.run(vi.fn());
+      // Let the loop reach the park before asking it to stop.
+      await Promise.resolve();
+
+      expect(await kernelQueue.stopRunLoop()).toBe(true);
+      await running;
+
+      expect(kernelQueue.getRunLoopStatus()).toStrictEqual({
+        state: 'stopped',
+      });
+    });
+
+    it('runs again after a stop', async () => {
+      (kernelStore.runQueueLength as unknown as MockInstance).mockReturnValue(
+        0,
+      );
+      const running = kernelQueue.run(vi.fn());
+      await kernelQueue.stopRunLoop();
+      await running;
+
+      // `reset` and `clearStorage` hand the kernel back working, so the loop
+      // has to be startable again; only a loop that died may not be.
+      const secondRun = kernelQueue.run(vi.fn());
+      expect(kernelQueue.getRunLoopStatus()).toStrictEqual({
+        state: 'running',
+      });
+      await kernelQueue.stopRunLoop();
+      await secondRun;
+    });
+
+    it('refuses to run a loop that died', async () => {
+      await killRunLoop(new Error('crank exploded'));
+
+      await expect(kernelQueue.run(vi.fn())).rejects.toThrow(
+        'run loop died and cannot be run again',
+      );
+    });
+  });
+
+  describe('discarding the queue', () => {
+    it('tells a waiting caller its result is never coming', async () => {
+      const reject = vi.fn();
+      kernelQueue.subscriptions.set('kp1', { resolve: vi.fn(), reject });
+
+      kernelQueue.discardQueuedWork('this message result will never arrive');
+
+      // `reset` destroys the run queue and the kernel promise behind it, so
+      // nothing else would ever settle this.
+      expect(reject).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: expect.stringContaining('never arrive'),
+        }),
+      );
+      expect(kernelQueue.subscriptions.size).toBe(0);
+    });
+  });
+
   describe('waitForCrank', () => {
     it('handles when waitForCrank returns a delayed promise', async () => {
       let resolvePromise: ((value: void) => void) | undefined;
