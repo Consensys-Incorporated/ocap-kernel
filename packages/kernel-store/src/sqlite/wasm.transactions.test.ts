@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 
-import { makeSQLKernelDatabase } from './wasm.ts';
+import { initDB, makeSQLKernelDatabase } from './wasm.ts';
 import type { KernelDatabase } from '../types.ts';
 
 /**
@@ -69,6 +69,16 @@ describe('the wasm driver on real SQLite', () => {
 
     kdb.kernelKVStore.set('after', 'value');
     expect(kdb.kernelKVStore.get('after')).toBe('value');
+  });
+
+  it('reports no transaction once the database is closed', async () => {
+    const db = await initDB(':memory:');
+    db.exec('BEGIN TRANSACTION');
+    expect(db.inTransaction).toBe(true);
+
+    db.close();
+
+    expect(db.inTransaction).toBe(false);
   });
 
   it('takes the next crank in a transaction of its own', async () => {
