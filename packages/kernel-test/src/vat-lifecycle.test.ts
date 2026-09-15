@@ -4,6 +4,7 @@ import { makeKernelStore } from '@metamask/ocap-kernel';
 import { describe, expect, it, beforeEach } from 'vitest';
 
 import {
+  extractTestLogs,
   getBundleSpec,
   makeKernel,
   makeTestLogger,
@@ -145,41 +146,44 @@ describe('Vat Lifecycle', { timeout: 30_000 }, () => {
     expect(kernelStore.getRootObject(deadVatId)).toBeUndefined();
   });
 
-  it('restarts a vat through the run loop', async () => {
+  it('restarts one vat twice through the run loop', async () => {
     const kernelDatabase = await makeSQLKernelDatabase({
       dbFilename: ':memory:',
     });
-    const kernel = await makeKernel(
-      kernelDatabase,
-      true,
-      logger.logger.subLogger({ tags: ['test'] }),
-    );
-    const kernelStore = makeKernelStore(kernelDatabase);
+    const { logger: restartLogger, entries } = makeTestLogger();
+    const kernel = await makeKernel(kernelDatabase, true, restartLogger);
 
-    expect(
-      await runTestVats(kernel, {
-        bootstrap: 'main',
-        vats: {
-          main: {
-            bundleSpec: getBundleSpec('persistence-counter-vat'),
-            parameters: { name: 'CounterVat' },
-          },
+    await kernel.launchSubcluster({
+      bootstrap: 'alice',
+      forceReset: true,
+      vats: {
+        alice: {
+          bundleSpec: getBundleSpec('resume-vat'),
+          parameters: { name: 'Alice' },
         },
-      }),
-    ).toBe('Counter initialized with count: 1');
+        // `resume-vat`'s bootstrap introduces its peers to each other, so the
+        // subcluster needs all three.
+        bob: {
+          bundleSpec: getBundleSpec('resume-vat'),
+          parameters: { name: 'Bob' },
+        },
+        carol: {
+          bundleSpec: getBundleSpec('resume-vat'),
+          parameters: { name: 'Carol' },
+        },
+      },
+    });
     await waitUntilQuiescent();
-    const vatId = kernel.getVats()[0]?.id as string;
-    const rootObject = kernelStore.getRootObject(vatId) as string;
 
-    // The request is a run-queue item, so this resolves only once the run loop
-    // has taken it and the new worker has answered.
-    await kernel.restartVat(vatId);
+    // The request is a run queue item, so each of these resolves only once the
+    // run loop has taken it and the new worker has answered. `start count`
+    // comes from the vat's own baggage, so it counts incarnations: a restart
+    // that settled its caller without replacing the worker would not move it.
+    await kernel.restartVat('v1');
+    await kernel.restartVat('v1');
+    await waitUntilQuiescent(1000);
 
-    expect(kernel.getVatIds()).toStrictEqual([vatId]);
-    expect(kernelStore.getRootObject(vatId)).toBe(rootObject);
-    expect(await runResume(kernel, rootObject)).toBe(
-      'Counter incremented to: 2',
-    );
+    expect(extractTestLogs(entries, 'v1')).toContain('Alice: start count: 3');
   });
 
   it('leaves no record of a terminated vat for the next boot to restore', async () => {

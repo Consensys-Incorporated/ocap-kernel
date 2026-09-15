@@ -42,10 +42,11 @@ export class VatManager {
    * Callers awaiting a queued restart, by vat.
    *
    * An array, because two requests for one vat are one restart: the second
-   * caller wants a fresh worker and the first one's crank gives it one. The
-   * first request to find the list empty queues the item; the rest simply wait
-   * on it, and the crank settles all of them at once. A request arriving after
-   * that crank has taken the list finds it empty again and queues its own.
+   * caller wants a fresh worker and the first one's crank gives it one. Every
+   * request queues an item all the same — a request that skipped the queue on
+   * the strength of someone else's would wait forever if that item were rolled
+   * away by an aborting crank — and the crank that arrives first settles the
+   * whole list, leaving later items with nothing to do.
    */
   readonly #restartWaiters: Map<
     VatId,
@@ -362,6 +363,9 @@ export class VatManager {
     if (!this.#vats.has(vatId) && !this.#kernelStore.isVatActive(vatId)) {
       throw new VatNotFoundError(vatId);
     }
+    // Ahead of the waiter, so a refusal is this call's own rejection rather
+    // than an unhandled one from a waiter nothing will ever await.
+    this.#kernelQueue.enqueueRestartVat(vatId);
     const { promise, resolve, reject } = makePromiseKit<void>();
     const waiters = this.#restartWaiters.get(vatId) ?? [];
     this.#restartWaiters.set(vatId, [...waiters, { resolve, reject }]);
@@ -370,9 +374,6 @@ export class VatManager {
     // ever settle this caller.
     const stopWatchingTheRunLoop = this.#kernelQueue.onRunLoopDeath(reject);
     try {
-      if (waiters.length === 0) {
-        this.#kernelQueue.enqueueRestartVat(vatId);
-      }
       await promise;
     } finally {
       stopWatchingTheRunLoop();
@@ -423,7 +424,15 @@ export class VatManager {
       const config =
         this.#vats.get(vatId)?.config ?? this.#kernelStore.getVatConfig(vatId);
       if (this.#vats.has(vatId)) {
-        await this.stopVat(vatId, false);
+        // A channel that will not close does not stop the new worker coming:
+        // the handle is off the books and the old worker has been killed either
+        // way, so failing here would retire a vat that is merely untidy.
+        await this.stopVat(vatId, false).catch((stopError: unknown) =>
+          this.#logger.error(
+            `Old worker for vat ${vatId} would not shut down cleanly:`,
+            stopError,
+          ),
+        );
       }
       await this.runVat(vatId, config);
     } catch (error) {
@@ -437,7 +446,7 @@ export class VatManager {
       // the queue, so every later start would replay the same failing restart.
       await this.stopVat(vatId, true).catch((retireError: unknown) =>
         this.#logger.error(
-          `Could not retire vat ${vatId} after a failed restart:`,
+          `Vat ${vatId} could not be retired after its restart failed; the store still calls it active:`,
           retireError,
         ),
       );

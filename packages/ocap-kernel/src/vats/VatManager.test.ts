@@ -88,8 +88,14 @@ describe('VatManager', () => {
       resolvePromises: vi.fn(),
       // Stands in for the run loop taking the item in a crank of its own.
       enqueueRestartVat: vi.fn((vatId: VatId) => {
+        // No `catch`: the run loop has none either, and a rejection there
+        // rolls the crank back and kills it.
         queueMicrotask(() => {
-          vatManager.performVatRestart(vatId).catch(() => undefined);
+          vatManager.performVatRestart(vatId).catch((error: unknown) => {
+            // The run loop has no catch: a rejection there rolls the crank
+            // back and kills it, so surfacing it here is the point.
+            throw error;
+          });
         });
       }),
       onRunLoopDeath: vi.fn(() => () => undefined),
@@ -661,7 +667,7 @@ describe('VatManager', () => {
       expect(vatManager.hasVat('v1')).toBe(true);
     });
 
-    it('queues one request for two callers waiting on the same vat', async () => {
+    it('gives two callers waiting on one vat the same restart', async () => {
       await vatManager.runVat('v1', createMockVatConfig());
 
       const [first, second] = await Promise.all([
@@ -669,11 +675,48 @@ describe('VatManager', () => {
         vatManager.restartVat('v1'),
       ]);
 
-      // One fresh worker answers both: the second caller wants what the first
-      // one's crank already produced.
-      expect(mockKernelQueue.enqueueRestartVat).toHaveBeenCalledTimes(1);
+      // Both queue an item, but the first crank settles the whole list, so the
+      // second finds nothing to do: one fresh worker answers both.
+      expect(mockKernelQueue.enqueueRestartVat).toHaveBeenCalledTimes(2);
       expect(mockPlatformServices.launch).toHaveBeenCalledTimes(2);
       expect(first).toBe(second);
+    });
+
+    it('restarts the same vat twice in a row', async () => {
+      await vatManager.runVat('v1', createMockVatConfig());
+
+      const first = await vatManager.restartVat('v1');
+      const second = await vatManager.restartVat('v1');
+
+      // The crank has to give the waiter list up, or the second request finds a
+      // stale entry and is answered by nothing.
+      expect(first).not.toBe(second);
+      expect(mockPlatformServices.launch).toHaveBeenCalledTimes(3);
+    });
+
+    it('rejects its caller rather than the waiter when the queue refuses', async () => {
+      await vatManager.runVat('v1', createMockVatConfig());
+      const unhandled = vi.fn();
+      process.on('unhandledRejection', unhandled);
+      // The shape this guards against: a run loop already dead rejects the
+      // waiter the moment it is registered, and the refused enqueue then leaves
+      // by the throw, so nothing ever awaits that rejected promise.
+      mockKernelQueue.onRunLoopDeath.mockImplementationOnce(
+        (reject: (error: Error) => void) => {
+          reject(new Error('run loop died'));
+          return () => undefined;
+        },
+      );
+      mockKernelQueue.enqueueRestartVat.mockImplementationOnce(() => {
+        throw new Error('Kernel run loop died; cannot restart a vat');
+      });
+
+      await expect(vatManager.restartVat('v1')).rejects.toThrow(
+        'cannot restart a vat',
+      );
+      await new Promise((resolve) => setImmediate(resolve));
+      process.off('unhandledRejection', unhandled);
+      expect(unhandled).not.toHaveBeenCalled();
     });
 
     it('rejects its caller when the run loop dies', async () => {
@@ -706,6 +749,18 @@ describe('VatManager', () => {
       expect(mockPlatformServices.launch).toHaveBeenCalledTimes(1);
     });
 
+    it('drops an item left over from a restart that is already done', async () => {
+      await vatManager.runVat('v1', createMockVatConfig());
+      await vatManager.restartVat('v1');
+      const launches = mockPlatformServices.launch.mock.calls.length;
+
+      // Two callers queue two items and the first crank answers both, so the
+      // second must find the list given up and nothing left to do.
+      await vatManager.performVatRestart('v1');
+
+      expect(mockPlatformServices.launch).toHaveBeenCalledTimes(launches);
+    });
+
     it('rejects its caller when the vat went away first', async () => {
       await vatManager.runVat('v1', createMockVatConfig());
       mockKernelQueue.enqueueRestartVat.mockImplementationOnce(
@@ -725,6 +780,34 @@ describe('VatManager', () => {
       await expect(vatManager.restartVat('v1')).rejects.toThrow(
         VatNotFoundError,
       );
+    });
+
+    it('relaunches even when the old worker will not shut down cleanly', async () => {
+      await vatManager.runVat('v1', createMockVatConfig());
+      vatHandles[0]?.terminate.mockRejectedValueOnce(
+        new Error('stream will not end'),
+      );
+
+      await vatManager.restartVat('v1');
+
+      // The handle is off the books and the worker killed either way, so an
+      // untidy shutdown must not cost the vat its new incarnation.
+      expect(mockPlatformServices.launch).toHaveBeenCalledTimes(2);
+      expect(mockKernelStore.markVatAsTerminated).not.toHaveBeenCalled();
+    });
+
+    it('settles without rejecting when the relaunch fails', async () => {
+      await vatManager.runVat('v1', createMockVatConfig());
+      mockKernelQueue.enqueueRestartVat.mockImplementationOnce(() => undefined);
+      const restarting = vatManager.restartVat('v1');
+      mockPlatformServices.launch.mockRejectedValueOnce(
+        new Error('ENOENT: no such file or directory'),
+      );
+
+      // The run loop has no catch: a rejection here rolls the crank back,
+      // undoing the retirement and restoring the request.
+      expect(await vatManager.performVatRestart('v1')).toBeUndefined();
+      await expect(restarting).rejects.toThrow('ENOENT');
     });
 
     it('retires a vat whose relaunch fails, without throwing', async () => {
