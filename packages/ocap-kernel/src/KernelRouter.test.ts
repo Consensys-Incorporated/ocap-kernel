@@ -65,6 +65,7 @@ describe('KernelRouter', () => {
       ) as unknown as MockInstance,
       clearReachableFlag: vi.fn(),
       deleteCListEntry: vi.fn(),
+      orphanKernelObject: vi.fn(),
       forgetKref: vi.fn(),
       createCrankSavepoint: vi.fn(),
     } as unknown as KernelStore;
@@ -780,6 +781,35 @@ describe('KernelRouter', () => {
             ['v1', 'ko1', 'translated-ko1'],
             ['v1', 'ko2', 'translated-ko2'],
           ]);
+        },
+      );
+
+      it('orphans the object when delivering retireExports', async () => {
+        await kernelRouter.deliver({
+          type: 'retireExports',
+          endpointId: 'v1',
+          krefs: ['ko1', 'ko2'],
+        });
+
+        expect(
+          (kernelStore.orphanKernelObject as unknown as MockInstance).mock
+            .calls,
+        ).toStrictEqual([
+          ['ko1', 'v1'],
+          ['ko2', 'v1'],
+        ]);
+      });
+
+      it.each(['dropExports', 'retireImports'] as const)(
+        'leaves the owner mapping alone when delivering %s',
+        async (actionType) => {
+          await kernelRouter.deliver({
+            type: actionType,
+            endpointId: 'v1',
+            krefs: ['ko1', 'ko2'],
+          });
+
+          expect(kernelStore.orphanKernelObject).not.toHaveBeenCalled();
         },
       );
     });
