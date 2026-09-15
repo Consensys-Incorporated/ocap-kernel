@@ -218,17 +218,19 @@ export class Kernel {
       logger: this.#logger.subLogger({ tags: ['SubclusterManager'] }),
     });
 
-    this.#kernelRouter = new KernelRouter(
-      this.#kernelStore,
-      this.#kernelQueue,
-      this.#getEndpoint.bind(this),
-      this.#kernelServiceManager.invokeKernelService.bind(
+    this.#kernelRouter = new KernelRouter({
+      kernelStore: this.#kernelStore,
+      kernelQueue: this.#kernelQueue,
+      getEndpoint: this.#getEndpoint.bind(this),
+      invokeKernelService: this.#kernelServiceManager.invokeKernelService.bind(
         this.#kernelServiceManager,
       ),
-      this.#vatManager.performVatRestart.bind(this.#vatManager),
-      this.#vatManager.performVatTermination.bind(this.#vatManager),
-      this.#logger,
-    );
+      restartVat: this.#vatManager.performVatRestart.bind(this.#vatManager),
+      terminateVat: this.#vatManager.performVatTermination.bind(
+        this.#vatManager,
+      ),
+      logger: this.#logger,
+    });
 
     // Register OCAP URL services
     const { issuerService, redemptionService } =
