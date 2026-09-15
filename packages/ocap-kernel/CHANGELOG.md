@@ -66,8 +66,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- A crank rollback reverts the in-memory caches built over the writes it discards, so an abandoned crank no longer leaves the kernel reading its own undone state: a vat it marked terminated, a GC action it queued, or a collection candidate whose promise the rollback deleted — the last of which killed the run loop on the next crank ([#1086](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1087))
-- `clearStorage` re-reads the caches it emptied the database under, so the next crank no longer dies dequeueing a run queue row that is gone ([#1086](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1087))
+- A crank rollback reverts the in-memory caches built over the writes it discards, so an abandoned crank no longer leaves the kernel reading its own undone state: a vat it marked terminated, a GC action it queued, or a collection candidate whose promise the rollback deleted — the last of which killed the run loop on the next crank ([#1087](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1087))
+- `clearStorage` re-reads the caches it emptied the database under, so the next crank no longer dies dequeueing a run queue row that is gone ([#1087](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1087))
 - A delivery failure no longer re-rejects a result promise the endpoint had already settled, which threw from the delivery's own catch and killed the run loop ([#1084](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1084))
 - Two pending garbage-collection actions of one type for one endpoint no longer kill the run loop: `processGCActionSet` sorted the kref list after hardening it, and sorting a frozen array throws ([#1082](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1082))
 - `makeGCAndFinalize` drains pending work before collecting, so a vat reports the imports it has already let go of on the `bringOutYourDead` that asks rather than on a later one ([#1083](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1083))
