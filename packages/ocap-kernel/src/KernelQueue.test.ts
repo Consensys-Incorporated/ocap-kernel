@@ -194,6 +194,79 @@ describe('KernelQueue', () => {
       expect(order).toStrictEqual(['endCrank', 'afterCommit']);
     });
 
+    it('withholds afterCommit when the delivery threw', async () => {
+      const mockItem: RunQueueItem = {
+        type: 'send',
+        target: 'ko123',
+        message: {} as KernelMessage,
+      };
+      (
+        kernelStore.runQueueLength as unknown as MockInstance
+      ).mockReturnValueOnce(1);
+      (kernelStore.dequeueRun as unknown as MockInstance).mockReturnValue(
+        mockItem,
+      );
+      const deliver = vi.fn().mockRejectedValue(new Error(STOP_RUN_LOOP));
+
+      await expect(kernelQueue.run(deliver)).rejects.toThrow(STOP_RUN_LOOP);
+
+      expect(kernelStore.rollbackCrank).toHaveBeenCalledWith('delivery');
+    });
+
+    it('withholds afterCommit when ending the crank threw', async () => {
+      const mockItem: RunQueueItem = {
+        type: 'send',
+        target: 'ko123',
+        message: {} as KernelMessage,
+      };
+      (
+        kernelStore.runQueueLength as unknown as MockInstance
+      ).mockReturnValueOnce(1);
+      (kernelStore.dequeueRun as unknown as MockInstance).mockReturnValue(
+        mockItem,
+      );
+      (kernelStore.endCrank as unknown as MockInstance).mockImplementation(
+        () => {
+          throw new Error(STOP_RUN_LOOP);
+        },
+      );
+      const afterCommit = vi.fn();
+      const deliver = vi.fn().mockResolvedValue({ afterCommit });
+
+      await expect(kernelQueue.run(deliver)).rejects.toThrow(STOP_RUN_LOOP);
+
+      // The commit is what `afterCommit` reports on, and it did not happen.
+      expect(afterCommit).not.toHaveBeenCalled();
+    });
+
+    it("runs each crank's afterCommit once, not every later crank's", async () => {
+      const mockItem: RunQueueItem = {
+        type: 'send',
+        target: 'ko123',
+        message: {} as KernelMessage,
+      };
+      (kernelStore.runQueueLength as unknown as MockInstance).mockReturnValue(
+        1,
+      );
+      (kernelStore.dequeueRun as unknown as MockInstance).mockReturnValue(
+        mockItem,
+      );
+      const afterCommit = vi.fn();
+      let cranks = 0;
+      const deliver = vi.fn(async () => {
+        cranks += 1;
+        if (cranks > 3) {
+          throw new Error(STOP_RUN_LOOP);
+        }
+        // Only the first crank has post-commit work.
+        return cranks === 1 ? { afterCommit } : {};
+      });
+
+      await expect(kernelQueue.run(deliver)).rejects.toThrow(STOP_RUN_LOOP);
+
+      expect(afterCommit).toHaveBeenCalledOnce();
+    });
+
     it('withholds afterCommit from a crank that aborted', async () => {
       const mockItem: RunQueueItem = {
         type: 'send',

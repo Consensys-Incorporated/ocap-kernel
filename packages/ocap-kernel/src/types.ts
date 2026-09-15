@@ -922,10 +922,13 @@ export type CrankResult = {
    * before the writes it reports on are durable: in-memory state, and sending
    * a message the crank has already written down.
    *
-   * It must not write the kernel store. The crank's transaction is released by
-   * then, so a write here would commit on its own, outside the crank whose
-   * outcome it belongs to. A throw from it kills the run loop, after the crank
-   * it follows has committed.
+   * While it runs it must not write the kernel store: the crank's transaction
+   * is released by then, so a write would commit on its own, outside the crank
+   * whose outcome it belongs to. That bounds what this hook promises, not what
+   * the kernel needs — work it starts and does not wait for, such as a
+   * transport's failure handling, lands outside every crank too, and is not
+   * fixed by this. A throw from it kills the run loop, after the crank it
+   * follows has committed.
    */
   afterCommit?: () => Promise<void>;
 };
