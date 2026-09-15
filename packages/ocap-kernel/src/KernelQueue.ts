@@ -94,6 +94,14 @@ export class KernelQueue {
   )[] = [];
 
   /**
+   * Set while a caller is waiting for the loop to come out of its current
+   * crank, and cleared as the loop leaves. The loop reads it between cranks
+   * only, which is what makes the window it opens a safe one to write in: no
+   * crank is open, and none will start until the loop is run again.
+   */
+  #stopRequested: (() => void) | undefined;
+
+  /**
    * Construct a new KernelQueue instance.
    *
    * @param kernelStore - The kernel's persistent state store.
@@ -119,8 +127,10 @@ export class KernelQueue {
    */
   async run(
     deliver: (item: RunQueueItem) => Promise<CrankResult | undefined>,
-  ): Promise<never> {
-    this.#runLoopState.state === 'idle' || Fail`run loop already started`;
+  ): Promise<void> {
+    this.#runLoopState.state === 'running' && Fail`run loop already started`;
+    this.#runLoopState.state === 'failed' &&
+      Fail`run loop died and cannot be run again`;
     this.#runLoopState = { state: 'running' };
     try {
       return await this.#runLoop(deliver);
@@ -138,8 +148,18 @@ export class KernelQueue {
    */
   async #runLoop(
     deliver: (item: RunQueueItem) => Promise<CrankResult | undefined>,
-  ): Promise<never> {
+  ): Promise<void> {
     for (;;) {
+      // Between cranks, never inside one: whoever asked gets the store with no
+      // transaction open and none about to be, which is the whole of what
+      // makes their writes safe.
+      if (this.#stopRequested) {
+        const stopped = this.#stopRequested;
+        this.#stopRequested = undefined;
+        this.#runLoopState = { state: 'stopped' };
+        stopped();
+        return;
+      }
       let wakeUpPromise: Promise<void> | undefined;
       let afterCommit: (() => Promise<void>) | undefined;
       // Boxed, so a crank that threw `undefined` stays distinguishable from one
@@ -214,6 +234,65 @@ export class KernelQueue {
   }
 
   /**
+   * Bring the run loop to rest between cranks, so a caller may write the store
+   * directly. Resolves once the loop has stopped; a loop that is idle, already
+   * stopped or dead is already at rest.
+   *
+   * A crank in flight is waited out rather than interrupted. Nothing refuses
+   * work queued in the meantime — it simply waits for the loop to be run
+   * again, which is the caller's job.
+   *
+   * @returns Whether the loop had to be stopped, so the caller knows whether
+   * to start it again.
+   */
+  async stopRunLoop(): Promise<boolean> {
+    if (this.#runLoopState.state !== 'running') {
+      return false;
+    }
+    const { promise, resolve } = makePromiseKit<void>();
+    this.#stopRequested = resolve;
+    // A parked loop is not going to reach the check on its own.
+    this.#wakeTheRunLoop();
+    await promise;
+    return true;
+  }
+
+  /**
+   * Whether a crank could start at any moment. False means the store may be
+   * written directly.
+   *
+   * @returns Whether the run loop is running.
+   */
+  isRunning(): boolean {
+    return this.#runLoopState.state === 'running';
+  }
+
+  /**
+   * Tell everyone waiting on queued work that it will not be carried out,
+   * because the queue holding it has been destroyed. Kernel promises in the
+   * store go with it, so nothing else would ever settle these.
+   *
+   * @param why - What became of the work, completing "this message result ...".
+   */
+  discardQueuedWork(why: string): void {
+    this.#abandonSubscriptions(new Error(`Kernel state was discarded; ${why}`));
+  }
+
+  /**
+   * Fail every message-result subscription the kernel is holding.
+   *
+   * @param error - What to tell them.
+   */
+  #abandonSubscriptions(error: Error): void {
+    const orphaned = [...this.subscriptions.values()];
+    this.subscriptions.clear();
+    this.#resolvedWithKernelSubscription = [];
+    for (const { reject } of orphaned) {
+      reject(error);
+    }
+  }
+
+  /**
    * Record the death of the run loop and fail the kernel's own message-result
    * subscriptions, which would otherwise hang forever. Kernel promises in the
    * store stay unresolved, so vats awaiting a notify the dead loop owed them
@@ -228,17 +307,11 @@ export class KernelQueue {
         ? error
         : new Error(String(error), { cause: error });
     this.#runLoopState = { state: 'failed', error: failure };
-
-    const orphaned = [...this.subscriptions.values()];
-    this.subscriptions.clear();
-    this.#resolvedWithKernelSubscription = [];
-    for (const { reject } of orphaned) {
-      reject(
-        this.#makeDeadRunLoopError(
-          'Kernel run loop died; this message result will never be delivered',
-        ),
-      );
-    }
+    this.#abandonSubscriptions(
+      this.#makeDeadRunLoopError(
+        'Kernel run loop died; this message result will never be delivered',
+      ),
+    );
     return failure;
   }
 

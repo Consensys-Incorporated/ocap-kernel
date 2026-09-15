@@ -81,6 +81,10 @@ const mocks = vi.hoisted(() => {
 
     waitForCrank = vi.fn().mockResolvedValue(undefined);
 
+    stopRunLoop = vi.fn().mockResolvedValue(true);
+
+    discardQueuedWork = vi.fn();
+
     resolvePromises = vi.fn();
   }
 
@@ -795,24 +799,43 @@ describe('Kernel', () => {
       expect(vatHandles[0]?.terminate).not.toHaveBeenCalled();
 
       // Verify stop sequence
-      expect(queueInstance.waitForCrank).toHaveBeenCalledOnce();
+      expect(queueInstance.stopRunLoop).toHaveBeenCalledOnce();
       expect(stopRemoteCommsMock).toHaveBeenCalledOnce();
       expect(remoteManagerInstance.cleanup).toHaveBeenCalledOnce();
       expect(workerTerminateAllMock).toHaveBeenCalledOnce();
     });
 
-    it('waits for crank before stopping', async () => {
+    it('stops the run loop before tearing anything down', async () => {
       const kernel = await Kernel.make(
         mockPlatformServices,
         mockKernelDatabase,
       );
       const queueInstance = mocks.KernelQueue.lastInstance;
-      const waitForCrankSpy = vi.spyOn(queueInstance, 'waitForCrank');
+      const closeSpy = vi.spyOn(mockKernelDatabase, 'close');
 
       await kernel.stop();
 
-      // Verify waitForCrank is called before other operations
-      expect(waitForCrankSpy).toHaveBeenCalledOnce();
+      // Waiting out the crank in flight is not enough: the loop wins the race
+      // to the next one by construction, so these writes would land in it.
+      expect(
+        (queueInstance.stopRunLoop as unknown as MockInstance).mock
+          .invocationCallOrder[0] as number,
+      ).toBeLessThan(closeSpy.mock.invocationCallOrder[0] as number);
+    });
+
+    it('leaves the run loop stopped', async () => {
+      const kernel = await Kernel.make(
+        mockPlatformServices,
+        mockKernelDatabase,
+      );
+      const queueInstance = mocks.KernelQueue.lastInstance;
+      queueInstance.run.mockClear();
+
+      await kernel.stop();
+
+      // The kernel is over; there is nothing left for a loop to do, and the
+      // database it would read is closed.
+      expect(queueInstance.run).not.toHaveBeenCalled();
     });
 
     it('saves lastActiveTime to KV store', async () => {
