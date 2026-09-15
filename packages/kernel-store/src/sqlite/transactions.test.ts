@@ -23,6 +23,8 @@ const makeFakeDriver = () => {
   const issued: string[] = [];
   const failOnce = new Set<string>();
 
+  let abortLeavesItOpen = false;
+
   const run = (sql: string): void => {
     issued.push(sql);
     if (failOnce.delete(sql)) {
@@ -30,8 +32,10 @@ const makeFakeDriver = () => {
     }
     if (sql === BEGIN_TRANSACTION) {
       inTransaction = true;
-    } else if (sql === COMMIT_TRANSACTION || sql === ABORT_TRANSACTION) {
+    } else if (sql === COMMIT_TRANSACTION) {
       inTransaction = false;
+    } else if (sql === ABORT_TRANSACTION) {
+      inTransaction = abortLeavesItOpen;
     }
   };
 
@@ -58,9 +62,14 @@ const makeFakeDriver = () => {
     endTransactionBehindOurBack: () => {
       inTransaction = false;
     },
+    keepTransactionOpenPastTheAbort: () => {
+      abortLeavesItOpen = true;
+    },
     ...makeTransactionMethods({ db, begin, commit, abort, logger }),
   };
 };
+
+type FakeDriver = ReturnType<typeof makeFakeDriver>;
 
 describe('makeTransactionMethods', () => {
   it('opens a transaction for the outermost savepoint', () => {
@@ -287,7 +296,14 @@ describe('makeTransactionMethods', () => {
         const driver = abandon();
         driver.failOnce.add(ABORT_TRANSACTION);
 
-        expect(() => driver[write](name)).toThrow('refusing further writes');
+        expect(() => driver[write](name)).toThrow(
+          expect.objectContaining({
+            message: expect.stringContaining('refusing further writes'),
+            cause: expect.objectContaining({
+              message: `SQLITE_IOERR: ${ABORT_TRANSACTION}`,
+            }),
+          }),
+        );
         expect(driver.issued).toStrictEqual([ABORT_TRANSACTION]);
       },
     );
@@ -303,6 +319,28 @@ describe('makeTransactionMethods', () => {
       expect(issued).toStrictEqual([]);
     });
 
+    // An abort that returns without ending the transaction leaves one that is
+    // still not ours to commit, and reports nothing for the catch to notice.
+    it('stays abandoned when the abort returns but the transaction does not end', () => {
+      const {
+        db,
+        failOnce,
+        keepTransactionOpenPastTheAbort,
+        createSavepoint,
+        rollbackSavepoint,
+      } = makeFakeDriver();
+      keepTransactionOpenPastTheAbort();
+      createSavepoint('t0');
+      createSavepoint('t1');
+      failOnce.add('ROLLBACK TO SAVEPOINT t1');
+      expect(() => rollbackSavepoint('t1')).toThrow('SQLITE_IOERR');
+
+      expect(db.inTransaction).toBe(true);
+      expect(() => createSavepoint('teardown')).toThrow(
+        'refusing further writes',
+      );
+    });
+
     it('reports the abort that failed while discarding it', () => {
       const { logger } = abandon();
 
@@ -313,6 +351,52 @@ describe('makeTransactionMethods', () => {
         }),
       );
     });
+  });
+
+  it.each([
+    {
+      after: 'rollback',
+      arrange: (driver: FakeDriver) => {
+        driver.createSavepoint('t0');
+        driver.failOnce.add('ROLLBACK TO SAVEPOINT t0');
+        return () => driver.rollbackSavepoint('t0');
+      },
+    },
+    {
+      after: 'release',
+      arrange: (driver: FakeDriver) => {
+        driver.createSavepoint('t0');
+        driver.createSavepoint('t1');
+        driver.failOnce.add('RELEASE SAVEPOINT t1');
+        return () => driver.releaseSavepoint('t1');
+      },
+    },
+    {
+      after: 'commit',
+      arrange: (driver: FakeDriver) => {
+        driver.createSavepoint('t0');
+        driver.failOnce.add(COMMIT_TRANSACTION);
+        return () => driver.releaseSavepoint('t0');
+      },
+    },
+    {
+      after: 'savepoint creation',
+      arrange: (driver: FakeDriver) => {
+        driver.failOnce.add('SAVEPOINT t0');
+        return () => driver.createSavepoint('t0');
+      },
+    },
+  ])('names the $after it was discarding after', ({ after, arrange }) => {
+    const driver = makeFakeDriver();
+    const act = arrange(driver);
+    driver.failOnce.add(ABORT_TRANSACTION);
+
+    expect(act).toThrow('SQLITE_IOERR');
+
+    expect(driver.logger.error).toHaveBeenCalledWith(
+      `failed to discard transaction after ${after}`,
+      expect.any(Error),
+    );
   });
 
   it('discards the transaction when the release fails', () => {

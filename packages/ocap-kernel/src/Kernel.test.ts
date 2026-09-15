@@ -792,19 +792,27 @@ describe('Kernel', () => {
       const workerTerminateAllMock = vi
         .spyOn(mockPlatformServices, 'terminateAll')
         .mockResolvedValue(undefined);
+      const logger = new Logger('test');
+      const logErrorSpy = vi.spyOn(logger, 'error');
       const kernel = await Kernel.make(
         mockPlatformServices,
         mockKernelDatabase,
+        { logger },
       );
+      const refusal = new Error('refusing further writes on this connection');
       vi.spyOn(mockKernelDatabase.kernelKVStore, 'set').mockImplementation(
         () => {
-          throw new Error('refusing further writes on this connection');
+          throw refusal;
         },
       );
 
-      expect(await kernel.stop()).toBeUndefined();
+      await kernel.stop();
 
       expect(workerTerminateAllMock).toHaveBeenCalledOnce();
+      expect(logErrorSpy).toHaveBeenCalledWith(
+        'could not record last active time',
+        refusal,
+      );
     });
   });
 

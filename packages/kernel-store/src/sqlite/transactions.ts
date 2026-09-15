@@ -52,6 +52,9 @@ export function makeTransactionMethods({
   // crank we gave up on are still in it, and a savepoint taken inside it would
   // be released into it.
   let txAbandoned = false;
+  // Why, for whoever catches the refusal: the logger is the embedder's to pass
+  // and may not be there.
+  let abortFailure: unknown;
 
   /**
    * Refuse to touch a transaction an earlier abort could not end. A savepoint
@@ -70,6 +73,7 @@ export function makeTransactionMethods({
     if (txAbandoned) {
       throw new Error(
         'transaction cannot be ended; refusing further writes on this connection',
+        { cause: abortFailure },
       );
     }
   }
@@ -139,6 +143,7 @@ export function makeTransactionMethods({
       abort();
     } catch (error) {
       txAbandoned = true;
+      abortFailure = error;
       throw error;
     }
     db._spStack.length = 0;
