@@ -102,6 +102,13 @@ import type { StoreContext, StoredValue } from './types.ts';
  */
 const OCAP_URL_PREFIX = 'ocapURLObjects.';
 
+/** The context fields holding a cached stored value. */
+type CachedValueField = {
+  [Field in keyof StoreContext]-?: StoreContext[Field] extends StoredValue
+    ? Field
+    : never;
+}[keyof StoreContext];
+
 /**
  * Create a new KernelStore object wrapped around a raw kernel database. The
  * resulting object provides a variety of operations for accessing various
@@ -130,7 +137,8 @@ export function makeKernelStore(kdb: KernelDatabase, logger?: Logger) {
   /**
    * Every cached stored value the context holds, as `field: [key, initial]`.
    * Declared once so that initialization and `refreshCachedValues` cannot
-   * disagree about which values exist.
+   * disagree about which values exist; keyed by {@link CachedValueField} so
+   * that a value added to the context and not to this table does not compile.
    */
   const CACHED_VALUES = {
     /** Counter for allocating kernel object IDs */
@@ -149,23 +157,23 @@ export function makeKernelStore(kdb: KernelDatabase, logger?: Logger) {
     subclusters: ['subclusters', '[]'],
     nextSubclusterId: ['nextSubclusterId', '1'],
     vatToSubclusterMap: ['vatToSubclusterMap', '{}'],
-  } as const satisfies Record<string, readonly [key: string, init: string]>;
+  } as const satisfies Record<
+    CachedValueField,
+    readonly [key: string, init: string]
+  >;
 
   /**
    * Provide a fresh stored value for each of {@link CACHED_VALUES}.
    *
    * @returns The stored values, keyed by the context field that holds each.
    */
-  function provideCachedValues(): Record<
-    keyof typeof CACHED_VALUES,
-    StoredValue
-  > {
+  function provideCachedValues(): Record<CachedValueField, StoredValue> {
     return Object.fromEntries(
       Object.entries(CACHED_VALUES).map(([field, [key, init]]) => [
         field,
         provideCachedStoredValue(key, init),
       ]),
-    ) as Record<keyof typeof CACHED_VALUES, StoredValue>;
+    ) as Record<CachedValueField, StoredValue>;
   }
 
   const context: StoreContext = {
@@ -249,6 +257,19 @@ export function makeKernelStore(kdb: KernelDatabase, logger?: Logger) {
   }
 
   /**
+   * Forget everything held in memory over the database, for when the database
+   * has been emptied out from under it. A cached run queue head names a row
+   * that is gone, and the next crank dies dequeueing it.
+   */
+  function discardCachedState(): void {
+    context.maybeFreeKrefs.clear();
+    context.crankBuffer.length = 0;
+    context.refreshRunQueue();
+    context.runQueueLengthCache = -1;
+    context.refreshCachedValues();
+  }
+
+  /**
    * Reset the kernel's persistent state and reset all counters.
    *
    * @param options - Options for the reset.
@@ -260,11 +281,8 @@ export function makeKernelStore(kdb: KernelDatabase, logger?: Logger) {
       value: context.kv.get(key),
     }));
     kdb.clear();
-    context.maybeFreeKrefs.clear();
-    context.refreshRunQueue();
-    context.refreshCachedValues();
+    discardCachedState();
     crank.releaseAllSavepoints();
-    context.crankBuffer.length = 0;
     preservedState?.forEach(({ key, value }) => {
       if (value) {
         context.kv.set(key, value);
@@ -277,6 +295,7 @@ export function makeKernelStore(kdb: KernelDatabase, logger?: Logger) {
    */
   function clear(): void {
     kdb.clear();
+    discardCachedState();
   }
 
   /**
