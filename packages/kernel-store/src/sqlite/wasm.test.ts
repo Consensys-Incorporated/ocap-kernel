@@ -1,4 +1,5 @@
-import type { Logger } from '@metamask/logger';
+import { Logger, makeArrayTransport } from '@metamask/logger';
+import type { LogEntry } from '@metamask/logger';
 import type { Sqlite3Static } from '@sqlite.org/sqlite-wasm';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -321,21 +322,25 @@ describe('makeSQLKernelDatabase', () => {
       expect(logger.debug).toHaveBeenCalledWith('Initializing kernel store');
     });
 
-    it('keeps kv keys and values out of the log', async () => {
-      const logger = {
-        debug: vi.fn(),
-        subLogger: vi.fn(() => logger),
-      } as unknown as Logger;
+    it('keeps store contents out of the log', async () => {
+      const entries: LogEntry[] = [];
+      const logger = new Logger({ transports: [makeArrayTransport(entries)] });
+      const db = await makeSQLKernelDatabase({ logger });
       mockStatement.step.mockReturnValue(true);
       mockStatement.getString.mockReturnValue('value1');
-      const store = (await makeSQLKernelDatabase({ logger })).kernelKVStore;
 
+      const store = db.kernelKVStore;
       store.set('key1', 'value1');
       store.get('key1');
       store.getNextKey('key1');
       store.delete('key1');
+      const vatStore = db.makeVatStore('v1');
+      vatStore.updateKVData([['key1', 'value1']], ['key1']);
+      // `getKVData` loops on `step()`, so it has to report no more rows.
+      mockStatement.step.mockReturnValue(false);
+      vatStore.getKVData();
 
-      const logged = vi.mocked(logger.debug).mock.calls.flat().join(' ');
+      const logged = JSON.stringify(entries);
       expect(logged).not.toContain('key1');
       expect(logged).not.toContain('value1');
     });

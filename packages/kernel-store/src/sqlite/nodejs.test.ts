@@ -1,4 +1,5 @@
-import type { Logger } from '@metamask/logger';
+import { Logger, makeArrayTransport } from '@metamask/logger';
+import type { LogEntry } from '@metamask/logger';
 import Sqlite from 'better-sqlite3';
 import { mkdir } from 'node:fs/promises';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -62,11 +63,40 @@ describe('makeSQLKernelDatabase', () => {
   });
 
   it('opens the database without statement logging', async () => {
-    const logger = { debug: vi.fn(), info: vi.fn() } as unknown as Logger;
+    const entries: LogEntry[] = [];
+    const logger = new Logger({ transports: [makeArrayTransport(entries)] });
+
     await makeSQLKernelDatabase({ dbFilename: 'test.db', logger });
-    expect(vi.mocked(Sqlite)).toHaveBeenCalledWith(
-      '/mock-tmpdir/ocap-sqlite/test.db',
+
+    const [, options] = vi.mocked(Sqlite).mock.calls[0] ?? [];
+    expect(options?.verbose).toBeUndefined();
+    expect(entries).toContainEqual(
+      expect.objectContaining({
+        message: 'dbPath:',
+        data: ['/mock-tmpdir/ocap-sqlite/test.db'],
+      }),
     );
+  });
+
+  it('keeps store contents out of the log', async () => {
+    const entries: LogEntry[] = [];
+    const logger = new Logger({ transports: [makeArrayTransport(entries)] });
+    mockStatement.get.mockReturnValue('value1');
+    mockStatement.iterate.mockReturnValue([{ key: 'key1', value: 'value1' }]);
+
+    const db = await makeSQLKernelDatabase({ logger });
+    const store = db.kernelKVStore;
+    store.set('key1', 'value1');
+    store.get('key1');
+    store.getNextKey('key1');
+    store.delete('key1');
+    const vatStore = db.makeVatStore('v1');
+    vatStore.updateKVData([['key1', 'value1']], ['key1']);
+    vatStore.getKVData();
+
+    const logged = JSON.stringify(entries);
+    expect(logged).not.toContain('key1');
+    expect(logged).not.toContain('value1');
   });
 
   it('get retrieves a value by key', async () => {

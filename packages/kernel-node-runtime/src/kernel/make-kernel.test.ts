@@ -1,5 +1,6 @@
 import { makeSQLKernelDatabase } from '@metamask/kernel-store/sqlite/nodejs';
-import { Logger } from '@metamask/logger';
+import { Logger, makeArrayTransport } from '@metamask/logger';
+import type { LogEntry } from '@metamask/logger';
 import { Kernel } from '@metamask/ocap-kernel';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -21,11 +22,18 @@ describe('makeKernel', () => {
     expect(kernel).toBeInstanceOf(Kernel);
   });
 
-  it('gives the kernel store a logger', async () => {
-    await makeKernel({});
+  it('gives the kernel store a tagged sub-logger', async () => {
+    const entries: LogEntry[] = [];
+    const logger = new Logger({ transports: [makeArrayTransport(entries)] });
 
-    expect(vi.mocked(makeSQLKernelDatabase)).toHaveBeenCalledWith(
-      expect.objectContaining({ logger: expect.any(Logger) }),
-    );
+    await makeKernel({ logger });
+
+    const storeLogger = vi.mocked(makeSQLKernelDatabase).mock.calls[0]?.[0]
+      .logger;
+    storeLogger?.debug('diagnostic');
+    expect(entries.at(-1)).toMatchObject({
+      tags: ['kernel-store'],
+      message: 'diagnostic',
+    });
   });
 });

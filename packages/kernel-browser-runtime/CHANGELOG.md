@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- The kernel worker passes the kernel store a logger, so the SQLite driver's diagnostics reach the log ([#1084](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1084))
+- The kernel worker gives the kernel store a `kernel-store`-tagged sub-logger, and installs console forwarding before opening the database, so the driver's warning that OPFS is unavailable — and that the store is therefore in-memory — reaches the background console instead of dying in the worker ([#1084](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1084))
 
 ### Fixed
 
