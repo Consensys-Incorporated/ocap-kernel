@@ -862,7 +862,14 @@ export class Kernel {
    */
   async stop(): Promise<void> {
     await this.#kernelQueue.waitForCrank();
-    this.#kernelStore.recordLastActiveTime();
+    try {
+      this.#kernelStore.recordLastActiveTime();
+    } catch (error) {
+      // A store that can no longer persist anything refuses this write, and
+      // everything below it releases something: remote comms, the vat workers,
+      // the database handle. A timestamp is not worth leaking those over.
+      this.#logger.error('could not record last active time', error);
+    }
     await this.#platformServices.stopRemoteComms();
     this.#remoteManager.cleanup();
     await this.#platformServices.terminateAll();

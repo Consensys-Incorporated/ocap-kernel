@@ -5,6 +5,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { SQL_QUERIES } from './common.ts';
 import { getDBFolder } from './env.ts';
 import { makeSQLKernelDatabase } from './wasm.ts';
+import type { KernelDatabase } from '../types.ts';
 
 const mockKVData = [
   { key: 'key1', value: 'value1' },
@@ -566,6 +567,50 @@ describe('transaction management', () => {
     vatStore.updateKVData([['key', 'value']], []);
     expect(mockBegin.step).not.toHaveBeenCalled();
     expect(mockCommit.step).not.toHaveBeenCalled();
+  });
+
+  // The store's write doors all have to ask, because teardown after the run
+  // loop dies reaches most of them without going near `beginIfNeeded`.
+  describe('a transaction no abort can end', () => {
+    const abandon = async (): Promise<KernelDatabase> => {
+      const kdb = await makeSQLKernelDatabase({});
+      kdb.createSavepoint('t0');
+      mockDb.exec.mockImplementationOnce(() => {
+        throw new Error('SQLITE_IOERR');
+      });
+      mockAbort.step.mockImplementation(() => {
+        throw new Error('SQLITE_IOERR');
+      });
+      expect(() => kdb.rollbackSavepoint('t0')).toThrow('SQLITE_IOERR');
+      return kdb;
+    };
+
+    it.each([
+      {
+        what: 'a kv write',
+        write: (kdb: KernelDatabase) => kdb.kernelKVStore.set('k', 'v'),
+      },
+      {
+        what: 'a kv delete',
+        write: (kdb: KernelDatabase) => kdb.kernelKVStore.delete('k'),
+      },
+      { what: 'a clear', write: (kdb: KernelDatabase) => kdb.clear() },
+      {
+        what: 'a vatstore delete',
+        write: (kdb: KernelDatabase) => kdb.deleteVatStore('v1'),
+      },
+      {
+        what: 'a vatstore update',
+        write: (kdb: KernelDatabase) =>
+          kdb.makeVatStore('v1').updateKVData([['k', 'v']], []),
+      },
+    ])('refuses $what', async ({ write }) => {
+      const kdb = await abandon();
+      mockStatement.step.mockClear();
+
+      expect(() => write(kdb)).toThrow('refusing further writes');
+      expect(mockStatement.step).not.toHaveBeenCalled();
+    });
   });
 
   describe('close functionality', () => {

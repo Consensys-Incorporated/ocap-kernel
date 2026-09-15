@@ -174,6 +174,22 @@ describe('crank methods', () => {
       expect(context.savepoints).toStrictEqual([]);
     });
 
+    it('forgets the savepoints even if the database release fails', () => {
+      context.inCrank = true;
+      context.savepoints = ['start'];
+      vi.mocked(kdb.releaseSavepoint).mockImplementationOnce(() => {
+        throw new Error('database is gone');
+      });
+
+      expect(() => crankMethods.releaseAllSavepoints()).toThrow(
+        'database is gone',
+      );
+
+      // A failed release discards the transaction and every savepoint in it,
+      // so the next crank would release a `t0` the store no longer has.
+      expect(context.savepoints).toStrictEqual([]);
+    });
+
     it('should not call releaseSavepoint if no savepoints exist', () => {
       context.inCrank = true;
       crankMethods.endCrank();
