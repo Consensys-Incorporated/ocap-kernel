@@ -1037,14 +1037,20 @@ describe('KernelQueue', () => {
   });
 
   describe('audit ordering', () => {
-    it('audits before the flush answers anyone', async () => {
+    /**
+     * Deliver one item, then stop the loop from the second crank so the first
+     * runs all the way through its flush.
+     *
+     * @param crankResult - What the delivery reports.
+     */
+    async function deliverOneItem(crankResult?: object): Promise<void> {
       (kernelStore.runQueueLength as unknown as MockInstance)
         .mockReturnValueOnce(1)
         .mockReturnValue(0);
       (kernelStore.dequeueRun as unknown as MockInstance).mockReturnValueOnce({
         type: 'send',
         target: 'ko123',
-        message: {} as KernelMessage,
+        message: { result: 'kp99' } as KernelMessage,
       });
       (kernelStore.startCrank as unknown as MockInstance)
         .mockImplementationOnce(() => undefined)
@@ -1052,15 +1058,65 @@ describe('KernelQueue', () => {
           throw new Error(STOP_RUN_LOOP);
         });
 
-      await expect(kernelQueue.run(vi.fn())).rejects.toThrow(STOP_RUN_LOOP);
+      await expect(
+        kernelQueue.run(vi.fn().mockResolvedValue(crankResult)),
+      ).rejects.toThrow(STOP_RUN_LOOP);
+    }
 
-      const auditedAt = (
+    /**
+     * @param method - A store method the crank calls.
+     * @returns When it was first called, in mock invocation order.
+     */
+    function firstCallTo(method: unknown): number {
+      return (method as MockInstance).mock.invocationCallOrder[0] as number;
+    }
+
+    it('audits before the flush answers anyone', async () => {
+      await deliverOneItem();
+
+      expect(firstCallTo(kernelStore.assertRefCountsIfAuditing)).toBeLessThan(
+        firstCallTo(kernelStore.flushCrankBuffer),
+      );
+    });
+
+    it('leaves an external caller unanswered when the audit fires', async () => {
+      const resolveSpy = vi.fn();
+      kernelQueue.subscriptions.set('kp1', {
+        resolve: resolveSpy,
+        reject: vi.fn(),
+      });
+      (kernelStore.flushCrankBuffer as unknown as MockInstance).mockReturnValue(
+        [{ type: 'notify', endpointId: 'v1', kpid: 'kp1' }],
+      );
+      (
         kernelStore.assertRefCountsIfAuditing as unknown as MockInstance
-      ).mock.invocationCallOrder[0] as number;
-      const flushedAt = (
-        kernelStore.flushCrankBuffer as unknown as MockInstance
-      ).mock.invocationCallOrder[0] as number;
-      expect(auditedAt).toBeLessThan(flushedAt);
+      ).mockImplementation(() => {
+        throw new Error('reference count invariant violated');
+      });
+      (
+        kernelStore.runQueueLength as unknown as MockInstance
+      ).mockReturnValueOnce(1);
+      (kernelStore.dequeueRun as unknown as MockInstance).mockReturnValueOnce({
+        type: 'send',
+        target: 'ko123',
+        message: {} as KernelMessage,
+      });
+
+      await expect(kernelQueue.run(vi.fn())).rejects.toThrow(
+        'reference count invariant violated',
+      );
+
+      expect(resolveSpy).not.toHaveBeenCalled();
+    });
+
+    it('flushes before it audits once a vat death has committed the crank', async () => {
+      // Nothing can undo the crank now, so a queue row held back from the run
+      // queue would keep the charge it was given with nothing to spend it on.
+      await deliverOneItem({ terminate: { vatId: 'v1', info: {} } });
+
+      expect(firstCallTo(kernelStore.flushCrankBuffer)).toBeLessThan(
+        firstCallTo(kernelStore.assertRefCountsIfAuditing),
+      );
     });
   });
 

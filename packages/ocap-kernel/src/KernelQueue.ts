@@ -381,14 +381,22 @@ export class KernelQueue {
       }
     }
     this.#kernelStore.collectGarbage();
-    this.#kernelStore.assertRefCountsIfAuditing();
+    // While a violation can still undo this crank, the audit goes first, so the
+    // flush does not settle the promise `enqueueMessage` gave an external
+    // caller out of state that is about to be rolled back. It can see the
+    // buffered items at all because `computeExpectedRefCounts` credits the
+    // crank buffer. Once a vat's death has committed the crank there is nothing
+    // left to undo, and flushing first is instead what keeps each queue row
+    // with the reference count charge it was given.
+    const auditBeforeFlush = this.#deliveryRollbackAllowed;
+    if (auditBeforeFlush) {
+      this.#kernelStore.assertRefCountsIfAuditing();
+    }
     if (!crankResult?.abort) {
-      // After the audit, because the flush settles the promise `enqueueMessage`
-      // gave an external caller: a violation found afterwards could only kill
-      // the run loop over an answer that had already gone out. The audit can
-      // see a buffered item's references because `computeExpectedRefCounts`
-      // credits the crank buffer.
       this.#flushCrankBuffer();
+    }
+    if (!auditBeforeFlush) {
+      this.#kernelStore.assertRefCountsIfAuditing();
     }
   }
 
