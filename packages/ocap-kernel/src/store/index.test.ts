@@ -130,7 +130,6 @@ describe('kernel store', () => {
         'getVatIDs',
         'getVatSubcluster',
         'hasCListEntry',
-        'hasRemoteInfo',
         'importsKernelSlot',
         'incRefCount',
         'incrementRefCount',
