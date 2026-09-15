@@ -132,6 +132,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- An endpoint can no longer retire or abandon a kernel object it does not own, nor one it names only as an import: `abandonExports` on an import ref tore that import down unchecked ([#1084](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1084))
 - A vat's `fetch` can no longer reach a host outside its `network.allowedHosts`. The allowlist was checked against one resolution of the vat's input while `fetch` resolved it again (CWE-367), and a redirect from an allowed host to a forbidden one was followed unchecked ([#1026](https://github.com/MetaMask/ocap-kernel/pull/1026))
   - A vat's `redirect: 'follow'`, in `init` or on a `Request`, no longer reaches the hop unchecked; `manual` and `error` behave as asked. A `dispatcher` in `init` is rejected
   - A redirect that keeps the request body now fails when that body cannot be sent again, which includes any `Request` carrying one — pass the body via `init` instead
