@@ -3,11 +3,9 @@ import { describe, it, expect } from 'vitest';
 import { initDB, makeSQLKernelDatabase } from './wasm.ts';
 import type { KernelDatabase } from '../types.ts';
 
-/**
- * The wasm driver against the real SQLite build. Its siblings mock the database
- * to inject I/O failures; this file exists for the savepoint and transaction
- * semantics only SQLite itself can state.
- */
+// The wasm driver against the real SQLite build. Its siblings mock the database
+// to inject I/O failures; this file exists for the savepoint and transaction
+// semantics only SQLite itself can state.
 
 const makeDb = async (): Promise<KernelDatabase> =>
   makeSQLKernelDatabase({ dbFilename: ':memory:' });
@@ -79,6 +77,18 @@ describe('the wasm driver on real SQLite', () => {
     db.close();
 
     expect(db.inTransaction).toBe(false);
+  });
+
+  it('commits a write made after SQLite ends the transaction itself', async () => {
+    const kdb = await makeDb();
+    kdb.createSavepoint('t0');
+    kdb.executeQuery('ROLLBACK TRANSACTION');
+
+    kdb.makeVatStore('v1').updateKVData([['key', 'value']], []);
+
+    expect(() => kdb.executeQuery('COMMIT TRANSACTION')).toThrow(
+      'cannot commit - no transaction is active',
+    );
   });
 
   it('takes the next crank in a transaction of its own', async () => {

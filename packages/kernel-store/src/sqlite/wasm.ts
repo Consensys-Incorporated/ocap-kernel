@@ -39,6 +39,12 @@ export async function initDB(
   logger?: Logger,
 ): Promise<Database> {
   const sqlite3 = await sqlite3InitModule();
+  const { sqlite3_get_autocommit: getAutocommit } =
+    sqlite3.capi as Sqlite3Static['capi'] & AutocommitCapi;
+  if (typeof getAutocommit !== 'function') {
+    throw Error('sqlite3 capi lacks sqlite3_get_autocommit');
+  }
+
   let db: SqliteDatabase;
 
   if (sqlite3.oo1.OpfsDb) {
@@ -51,15 +57,8 @@ export async function initDB(
     db = new sqlite3.oo1.DB(`:memory:`, 'cw');
   }
 
-  const { sqlite3_get_autocommit: getAutocommit } =
-    sqlite3.capi as Sqlite3Static['capi'] & AutocommitCapi;
-  if (typeof getAutocommit !== 'function') {
-    throw Error('sqlite3 capi lacks sqlite3_get_autocommit');
-  }
-
   const dbWithTx = db as Database;
   Object.defineProperty(dbWithTx, 'inTransaction', {
-    configurable: true,
     get: () =>
       dbWithTx.pointer !== undefined && getAutocommit(dbWithTx.pointer) === 0,
   });
@@ -211,6 +210,10 @@ export async function makeSQLKernelDatabase({
     }
     sqlBeginTransaction.step();
     sqlBeginTransaction.reset();
+    // A savepoint named on the stack belonged to the transaction SQLite ended,
+    // and is gone with it. Left there, it makes `commitIfNeeded` defer to an
+    // owner that no longer exists, and nothing ever commits this one.
+    db._spStack.length = 0;
     return true;
   }
 

@@ -59,7 +59,9 @@ const resetStatements = (): void => {
 };
 resetStatements();
 
-const mockDb = {
+// `initDB` installs `inTransaction` with `Object.defineProperty`, so each call
+// needs a database it has not defined it on yet.
+const makeMockDb = () => ({
   exec: vi.fn(),
   prepare: vi.fn((sql: string) => {
     switch (sql) {
@@ -78,6 +80,14 @@ const mockDb = {
 
   _spStack: [] as string[],
   close: vi.fn(),
+});
+
+let mockDb = makeMockDb();
+
+const resetMocks = (): void => {
+  mockDb = makeMockDb();
+  txOpen = false;
+  resetStatements();
 };
 const OpfsDbMock = vi.fn(function () {
   return mockDb;
@@ -101,10 +111,7 @@ vi.mock('./env.ts', () => ({
 }));
 
 describe('makeSQLKernelDatabase', () => {
-  beforeEach(() => {
-    resetStatements();
-    txOpen = false;
-  });
+  beforeEach(resetMocks);
 
   it('initializes with OPFS when available', async () => {
     await makeSQLKernelDatabase({});
@@ -428,11 +435,7 @@ describe('makeSQLKernelDatabase', () => {
   });
 
   describe('savepoint functionality', () => {
-    beforeEach(() => {
-      mockDb.exec.mockClear();
-      txOpen = false;
-      mockDb._spStack = [];
-    });
+    beforeEach(resetMocks);
 
     it('creates a savepoint using sanitized name', async () => {
       const db = await makeSQLKernelDatabase({});
@@ -663,12 +666,7 @@ describe('makeSQLKernelDatabase', () => {
 });
 
 describe('transaction management', () => {
-  beforeEach(() => {
-    resetStatements();
-    mockDb.exec.mockReset();
-    txOpen = false;
-    mockDb._spStack = [];
-  });
+  beforeEach(resetMocks);
 
   it('safeMutate rollbacks transaction on error', async () => {
     const db = await makeSQLKernelDatabase({});
@@ -683,6 +681,22 @@ describe('transaction management', () => {
     );
     expect(mockAbort.step).toHaveBeenCalled();
     expect(txOpen).toBe(false);
+  });
+
+  it('reports the write failure, not a rollback with nothing to undo', async () => {
+    const db = await makeSQLKernelDatabase({});
+    mockStatement.step.mockImplementationOnce(() => {
+      // SQLite ends the transaction as it fails the write.
+      txOpen = false;
+      throw new Error('database or disk is full');
+    });
+    mockAbort.step.mockImplementation(() => {
+      throw new Error('cannot rollback - no transaction is active');
+    });
+
+    expect(() =>
+      db.makeVatStore('test-vat').updateKVData([['key', 'value']], []),
+    ).toThrowError('database or disk is full');
   });
 
   it('safeMutate does not commit if already in transaction', async () => {
