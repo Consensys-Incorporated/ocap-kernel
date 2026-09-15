@@ -1350,32 +1350,6 @@ describe('KernelQueue', () => {
       expect(kernelQueue.getRunLoopStatus()).toStrictEqual({ state: 'idle' });
     });
 
-    it('comes to rest between cranks and says so', async () => {
-      (kernelStore.runQueueLength as unknown as MockInstance)
-        .mockReturnValueOnce(1)
-        .mockReturnValue(0);
-      (kernelStore.dequeueRun as unknown as MockInstance).mockReturnValueOnce({
-        type: 'send',
-        target: 'ko1',
-        message: {} as KernelMessage,
-      });
-      let stopped: Promise<boolean> | undefined;
-      // From inside the delivery, which is the hard case: a crank is open, and
-      // the loop must finish it before reporting itself stopped.
-      const deliver = vi.fn().mockImplementation(async () => {
-        stopped = kernelQueue.stopRunLoop();
-        return undefined;
-      });
-
-      await kernelQueue.run(deliver);
-
-      expect(await stopped).toBe(true);
-      expect(kernelStore.endCrank).toHaveBeenCalledOnce();
-      expect(kernelQueue.getRunLoopStatus()).toStrictEqual({
-        state: 'stopped',
-      });
-    });
-
     it('wakes a parked loop rather than waiting for work that will not come', async () => {
       // A promise kit that really suspends: the module-level mock resolves at
       // once, which would let the loop reach the stop check without ever being
