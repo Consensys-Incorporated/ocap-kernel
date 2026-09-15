@@ -343,7 +343,14 @@ export class Kernel {
     // Start the kernel queue processing (non-blocking)
     // This runs for the entire lifetime of the kernel
     this.#kernelQueue
-      .run(this.#kernelRouter.deliver.bind(this.#kernelRouter))
+      .run(async (item) =>
+        // Not a delivery to an endpoint, so not the router's to route: a peer
+        // restarting is the kernel's own bookkeeping, and for a peer with no
+        // live remote there is no endpoint to route it to at all.
+        item.type === 'peerIncarnation'
+          ? await this.#remoteManager.applyIncarnationChange(item)
+          : await this.#kernelRouter.deliver(item),
+      )
       .catch((error) => this.#handleRunLoopFailure(error));
 
     // Launch new system subclusters (requires queue to be running)

@@ -1587,16 +1587,14 @@ export class RemoteHandle implements EndpointHandle {
   }
 
   /**
-   * Apply the in-memory side of a peer restart: discard arrivals from the
-   * incarnation that is gone, cancel timers, reject in-flight URL redemption
-   * promises, and reset sequence counters. Must be called after
-   * {@link persistPeerRestart} and after the caller's savepoint has been
-   * released, with nothing awaited in between: a send whose turn comes there
-   * finds the queue emptied in the store but not yet retired here, and writes
-   * a message of the incarnation that has ended.
+   * Apply the in-memory side of a peer restart: cancel timers, reject
+   * in-flight URL redemption promises, and reset sequence counters. Must be
+   * called after {@link persistPeerRestart} and after the caller's savepoint
+   * has been released, with nothing awaited in between: a send whose turn
+   * comes there finds the queue emptied in the store but not yet retired
+   * here, and writes a message of the incarnation that has ended.
    */
   finalizePeerRestart(): void {
-    this.#kernelQueue.discardRemoteInbound(this.remoteId);
     const pendingCount = this.#getPendingCount();
     if (this.#hasPendingMessages()) {
       this.#logger.log(

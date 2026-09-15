@@ -801,23 +801,28 @@ describe('KernelQueue', () => {
       ).toThrow('Kernel run loop died');
     });
 
-    it('discards what a remote sent before its incarnation changed', async () => {
+    it("keeps a peer's messages and its incarnation change in the order they arrived", async () => {
       kernelQueue.acceptRemoteInbound('r1' as RemoteId, '{"seq":47}');
-      kernelQueue.acceptRemoteInbound('r2' as RemoteId, '{"seq":3}');
-
-      kernelQueue.discardRemoteInbound('r1' as RemoteId);
+      kernelQueue.acceptPeerIncarnation('peer-1', 'incarnation-B');
+      kernelQueue.acceptRemoteInbound('r1' as RemoteId, '{"seq":1}');
 
       const delivered: RunQueueItem[] = [];
       const deliver = vi.fn().mockImplementation((item: RunQueueItem) => {
         delivered.push(item);
-        throw new Error(STOP_RUN_LOOP);
+        if (delivered.length === 3) {
+          throw new Error(STOP_RUN_LOOP);
+        }
+        return {};
       });
       await expect(kernelQueue.run(deliver)).rejects.toThrow(STOP_RUN_LOOP);
 
-      // Kept, the old incarnation's seq would be recorded against the new one
-      // and the new one's first message discarded as a duplicate.
-      expect(delivered).toStrictEqual([
-        { type: 'remoteInbound', remoteId: 'r2', message: '{"seq":3}' },
+      // Order is what keeps the incarnations apart: the message ahead of the
+      // change belongs to the incarnation that ended and is recorded against
+      // it, the one behind it to the incarnation that started.
+      expect(delivered.map((item) => item.type)).toStrictEqual([
+        'remoteInbound',
+        'peerIncarnation',
+        'remoteInbound',
       ]);
     });
   });
