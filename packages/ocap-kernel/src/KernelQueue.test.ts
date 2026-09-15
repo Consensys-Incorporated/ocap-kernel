@@ -1097,22 +1097,29 @@ describe('KernelQueue', () => {
           { isHeldBack }: { isHeldBack: (id: string) => boolean },
         ) => {
           heldBack.push(isHeldBack('r1'));
-          if (heldBack.length === 2) {
+          if (heldBack.length === 3) {
             throw new Error(STOP_RUN_LOOP);
           }
           return null;
         },
       );
-      (kernelStore.runQueueLength as unknown as MockInstance).mockReturnValue(
-        0,
-      );
+      // One crank of ordinary work before the queue empties, so that clearing
+      // after every crank and clearing only after a park differ.
+      (kernelStore.runQueueLength as unknown as MockInstance)
+        .mockReturnValueOnce(1)
+        .mockReturnValue(0);
+      (kernelStore.dequeueRun as unknown as MockInstance).mockReturnValueOnce({
+        type: 'send',
+        target: 'ko1',
+        message: {} as KernelMessage,
+      });
       kernelQueue.holdBackRemoteGC('r1' as RemoteId);
 
-      // The first crank finds nothing to do and parks; the mocked wake resolves
-      // at once, so the second crank is the one after the park.
+      // Crank 1 delivers; crank 2 finds nothing and parks, and the mocked wake
+      // resolves at once, so crank 3 is the first one after the park.
       await expect(kernelQueue.run(vi.fn())).rejects.toThrow(STOP_RUN_LOOP);
 
-      expect(heldBack).toStrictEqual([true, false]);
+      expect(heldBack).toStrictEqual([true, true, false]);
     });
   });
 

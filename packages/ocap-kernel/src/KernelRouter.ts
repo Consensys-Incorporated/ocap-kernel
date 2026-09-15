@@ -527,10 +527,14 @@ export class KernelRouter {
       `@@@@ deliver ${endpointId} ${type} ${JSON.stringify(krefs)}`,
     );
     const remote = isRemoteId(endpointId) ? endpointId : undefined;
-    if (remote && !this.#canReachRemote(remote)) {
+    // A remote out of reach may be skipped here only because the action is kept
+    // rather than dropped; a vat with no handle is gone and keeps nothing.
+    const endpoint = this.#lookupEndpoint(endpointId, type, {
+      discardable: Boolean(remote),
+    });
+    if (!endpoint && remote) {
       return this.#keepForLater(remote, type);
     }
-    const endpoint = this.#lookupEndpoint(endpointId, type);
     // `processGCActionSet` selected this action while the endpoint held a
     // c-list entry for each kref, but `nextTerminatedVatCleanup` runs between
     // that selection and here and takes a whole c-list at a time. Whatever it
@@ -572,6 +576,11 @@ export class KernelRouter {
     try {
       return await endpoint[GC_DELIVERY[type]](erefs);
     } catch (error) {
+      // A vat that refuses a GC delivery is broken, and the crank that aborts
+      // terminates it, as it always has.
+      if (!remote) {
+        throw error;
+      }
       // The kernel's half is done above, so committing here would leave the
       // peer holding references this kernel has let go — and its next message
       // naming one of them mints a second kref for the same object, reconciled
@@ -580,28 +589,7 @@ export class KernelRouter {
         `Remote ${endpointId} refused ${type}; keeping the action:`,
         error,
       );
-      // Only a remote gets here: a vat that refuses a GC delivery is broken,
-      // and its crank aborts and terminates it as it always has.
-      if (!remote) {
-        throw error;
-      }
       return this.#keepForLater(remote, type);
-    }
-  }
-
-  /**
-   * Whether the kernel has a handle for a remote at all. It holds none until
-   * the embedder calls `initRemoteComms`, which is after the run loop starts.
-   *
-   * @param remoteId - The remote in question.
-   * @returns Whether it can be reached.
-   */
-  #canReachRemote(remoteId: RemoteId): boolean {
-    try {
-      this.#getEndpoint(remoteId);
-      return true;
-    } catch {
-      return false;
     }
   }
 
