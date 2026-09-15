@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Log a fatal message when the kernel's run loop dies, since the worker outlives the kernel and has no exit to take ([#1005](https://github.com/MetaMask/ocap-kernel/pull/1005))
 
+### Changed
+
+- The kernel worker passes the kernel store a logger, so the SQLite driver's diagnostics reach the log ([#1084](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1084))
+
 ### Fixed
 
 - Process platform-services RPC request handlers in the background so a request handler that fires a reentrant outbound RPC (e.g. transport handshake calling back into the kernel) cannot deadlock waiting for its response ([#948](https://github.com/MetaMask/ocap-kernel/pull/948))

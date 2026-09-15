@@ -320,6 +320,25 @@ describe('makeSQLKernelDatabase', () => {
       await makeSQLKernelDatabase({ logger });
       expect(logger.debug).toHaveBeenCalledWith('Initializing kernel store');
     });
+
+    it('keeps kv keys and values out of the log', async () => {
+      const logger = {
+        debug: vi.fn(),
+        subLogger: vi.fn(() => logger),
+      } as unknown as Logger;
+      mockStatement.step.mockReturnValue(true);
+      mockStatement.getString.mockReturnValue('value1');
+      const store = (await makeSQLKernelDatabase({ logger })).kernelKVStore;
+
+      store.set('key1', 'value1');
+      store.get('key1');
+      store.getNextKey('key1');
+      store.delete('key1');
+
+      const logged = vi.mocked(logger.debug).mock.calls.flat().join(' ');
+      expect(logged).not.toContain('key1');
+      expect(logged).not.toContain('value1');
+    });
   });
 
   describe('database path construction', () => {

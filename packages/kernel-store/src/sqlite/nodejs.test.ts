@@ -1,3 +1,5 @@
+import type { Logger } from '@metamask/logger';
+import Sqlite from 'better-sqlite3';
 import { mkdir } from 'node:fs/promises';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -57,6 +59,14 @@ describe('makeSQLKernelDatabase', () => {
     await makeSQLKernelDatabase({});
     expect(mockDb.prepare).toHaveBeenCalledWith(SQL_QUERIES.CREATE_TABLE);
     expect(mockDb.prepare).toHaveBeenCalledWith(SQL_QUERIES.CREATE_TABLE_VS);
+  });
+
+  it('opens the database without statement logging', async () => {
+    const logger = { debug: vi.fn(), info: vi.fn() } as unknown as Logger;
+    await makeSQLKernelDatabase({ dbFilename: 'test.db', logger });
+    expect(vi.mocked(Sqlite)).toHaveBeenCalledWith(
+      '/mock-tmpdir/ocap-sqlite/test.db',
+    );
   });
 
   it('get retrieves a value by key', async () => {
