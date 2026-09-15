@@ -212,6 +212,11 @@ export class KernelRouter {
   ): void {
     const { state } = this.#kernelStore.getKernelPromise(kpid);
     if (state !== 'unresolved') {
+      // The caller gets the endpoint's answer, not the delivery's failure, and
+      // the `error` above is the only other trace of either.
+      this.#logger?.error(
+        `Result ${kpid} of the failed delivery to ${endpointId} is already ${state}; leaving it alone`,
+      );
       return;
     }
     this.#kernelQueue.resolvePromises(endpointId, [[kpid, true, failure]]);
