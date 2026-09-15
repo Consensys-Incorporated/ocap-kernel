@@ -11,6 +11,7 @@ export type StoreContext = {
   runQueue: StoredQueue; // Holds RunAction[]
   runQueueLengthCache: number; // Holds number
   refreshRunQueue: () => void;
+  refreshCachedValues: () => void;
   nextObjectId: StoredValue; // Holds string
   nextPromiseId: StoredValue; // Holds string
   nextVatId: StoredValue; // Holds string
@@ -22,13 +23,24 @@ export type StoreContext = {
   inCrank: boolean;
   crankSettled?: Promise<void>;
   resolveCrank?: (() => void) | undefined;
-  savepoints: string[];
+  savepoints: Savepoint[];
   crankBuffer: CrankBufferItem[]; // Buffer for sends and notifications during crank
   subclusters: StoredValue; // Holds Subcluster[]
   nextSubclusterId: StoredValue; // Holds string
   vatToSubclusterMap: StoredValue; // Holds Record<VatId, SubclusterId>
   auditRefCounts: boolean; // If set, verify refcounts against ground truth every crank
   logger?: Logger | undefined;
+};
+
+/**
+ * A database savepoint, paired with the RAM state a database rollback cannot
+ * reach. `maybeFreeKrefs` is the collection-candidate set as it stood when the
+ * savepoint was taken, so a rollback can put back exactly what the abandoned
+ * work added and no more.
+ */
+export type Savepoint = {
+  name: string;
+  maybeFreeKrefs: Set<KRef>;
 };
 
 export type StoredValue = {
