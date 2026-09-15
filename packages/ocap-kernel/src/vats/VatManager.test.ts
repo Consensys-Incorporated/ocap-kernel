@@ -7,6 +7,7 @@ import {
 import type { JsonRpcMessage } from '@metamask/kernel-utils';
 import { Logger } from '@metamask/logger';
 import type { DuplexStream } from '@metamask/streams';
+import { delay } from '@ocap/repo-tools/test-utils';
 import type { Mocked, MockInstance } from 'vitest';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -36,12 +37,26 @@ describe('VatManager', () => {
     const handle = {
       vatId,
       config,
-      terminate: vi.fn(),
+      terminate: vi.fn().mockResolvedValue(undefined),
       ping: vi.fn().mockResolvedValue({ pong: true }),
     } as unknown as Mocked<VatHandle>;
     vatHandles.push(handle);
     return handle;
   };
+
+  /**
+   * Fire the fatal-error callback the manager gave a vat's handle, as its
+   * stream's drain does when the channel breaks.
+   *
+   * @param index - Which handle, in creation order.
+   * @param error - What broke.
+   */
+  function givenTheChannelBreaks(index: number, error: Error): void {
+    const { onCriticalFailure } = makeVatHandleMock.mock.calls[index]?.[0] as {
+      onCriticalFailure: (error: Error, vat: VatHandle) => void;
+    };
+    onCriticalFailure(error, vatHandles[index] as VatHandle);
+  }
 
   beforeEach(() => {
     vatHandles = [];
@@ -160,6 +175,27 @@ describe('VatManager', () => {
       expect(mockPlatformServices.launch).toHaveBeenCalledTimes(2);
       expect(makeVatHandleMock).toHaveBeenCalledTimes(2);
       expect(vatManager.getVatIds()).toStrictEqual(['v1', 'v2']);
+    });
+
+    it('starts the rest when one vat will not start', async () => {
+      mockKernelStore.getAllVatRecords.mockReturnValue(
+        (function* () {
+          yield { vatID: 'v1' as VatId, vatConfig: createMockVatConfig('a') };
+          yield { vatID: 'v2' as VatId, vatConfig: createMockVatConfig('b') };
+        })(),
+      );
+      mockPlatformServices.launch.mockRejectedValueOnce(
+        new Error('ENOENT: no such file or directory'),
+      );
+
+      await vatManager.initializeAllVats();
+
+      // One vat whose bundle has moved must cost the kernel that vat, not its
+      // whole startup — and must not leave a worker nothing can reach.
+      expect(vatManager.getVatIds()).toStrictEqual(['v2']);
+      expect(mockPlatformServices.terminate).toHaveBeenCalledWith('v1');
+      // Its records stay: a bundle unreachable now may not be at the next boot.
+      expect(mockKernelStore.markVatAsTerminated).not.toHaveBeenCalled();
     });
 
     it('handles empty vat records', async () => {
@@ -293,6 +329,105 @@ describe('VatManager', () => {
       // The launch failure, not the cleanup failure, is what the caller needs.
       expect((error as Error).cause).toBe(cause);
       expect(mockKernelStore.markVatAsTerminated).toHaveBeenCalledWith('v1');
+    });
+  });
+
+  describe('a vat whose channel breaks', () => {
+    it('takes the handle off the books at once', async () => {
+      await vatManager.runVat('v1', createMockVatConfig());
+
+      givenTheChannelBreaks(0, new Error('stream read error'));
+
+      // A router that goes on resolving it hands the next delivery to a worker
+      // that cannot answer, and the RPC client has no timeout.
+      expect(vatManager.hasVat('v1')).toBe(false);
+    });
+
+    it('rejects its pending commands and stops its worker', async () => {
+      await vatManager.runVat('v1', createMockVatConfig());
+      const error = new Error('stream read error');
+
+      givenTheChannelBreaks(0, error);
+      await vi.waitFor(() =>
+        expect(vatHandles[0]?.terminate).toHaveBeenCalled(),
+      );
+
+      expect(vatHandles[0]?.terminate).toHaveBeenCalledWith(true, error);
+      expect(mockPlatformServices.terminate).toHaveBeenCalledWith('v1', error);
+    });
+
+    it('asks the run loop to record the death', async () => {
+      await vatManager.runVat('v1', createMockVatConfig());
+
+      givenTheChannelBreaks(0, new Error('stream read error'));
+      await vi.waitFor(() =>
+        expect(mockKernelQueue.enqueueTerminateVat).toHaveBeenCalled(),
+      );
+
+      // In a crank of its own, rather than in whichever one the stream happened
+      // to break during, where an unrelated abort would roll it back.
+      expect(mockKernelStore.markVatAsTerminated).toHaveBeenCalledWith('v1');
+    });
+
+    it('records the death directly when the run loop cannot', async () => {
+      await vatManager.runVat('v1', createMockVatConfig());
+      mockKernelQueue.enqueueTerminateVat.mockImplementationOnce(() => {
+        throw new Error('Kernel run loop died; cannot terminate a vat');
+      });
+
+      givenTheChannelBreaks(0, new Error('stream read error'));
+      await vi.waitFor(() =>
+        expect(mockKernelStore.deleteVat).toHaveBeenCalledWith('v1'),
+      );
+
+      // `deleteVat` and not just the mark: the store would otherwise keep the
+      // `vatConfig` row the next boot relaunches from.
+      expect(mockKernelStore.markVatAsTerminated).toHaveBeenCalledWith('v1');
+    });
+
+    it('ignores a failure from a handle that has been replaced', async () => {
+      await vatManager.runVat('v1', createMockVatConfig());
+      const supersededHandle = vatHandles[0] as VatHandle;
+      await vatManager.restartVat('v1');
+      mockKernelStore.markVatAsTerminated.mockClear();
+      mockPlatformServices.terminate.mockClear();
+
+      givenTheChannelBreaks(0, new Error('stream read error'));
+      await delay(10);
+
+      // The old worker's stream breaks as it is killed, and ending the vat then
+      // would end the incarnation that replaced it.
+      expect(vatManager.getVat('v1')).toBe(vatHandles[1]);
+      expect(supersededHandle).not.toBe(vatHandles[1]);
+      expect(mockPlatformServices.terminate).not.toHaveBeenCalled();
+      expect(mockKernelStore.markVatAsTerminated).not.toHaveBeenCalled();
+    });
+
+    it('rejects the pending initVat of a launch still in flight', async () => {
+      // The handle is not on the books until `VatHandle.make` resolves, and the
+      // channel can break before then — the window the handle argument exists
+      // for. Nothing else settles the `initVat`: the RPC client has no timeout.
+      const error = new Error('stream read error');
+      const handle = { terminate: vi.fn().mockResolvedValue(undefined) };
+      makeVatHandleMock.mockImplementationOnce(
+        async ({
+          onCriticalFailure,
+        }: {
+          onCriticalFailure: (error: Error, vat: VatHandle) => void;
+        }) => {
+          onCriticalFailure(error, handle as unknown as VatHandle);
+          throw error;
+        },
+      );
+
+      await expect(
+        vatManager.runVat('v1', createMockVatConfig()),
+      ).rejects.toThrow('stream read error');
+
+      expect(handle.terminate).toHaveBeenCalledWith(true, error);
+      // Its caller stops the worker and records the death; retiring a vat the
+      // store has no record of would not be either.
+      expect(mockKernelStore.markVatAsTerminated).not.toHaveBeenCalled();
     });
   });
 

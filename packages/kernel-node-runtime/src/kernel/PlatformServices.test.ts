@@ -175,6 +175,24 @@ describe('NodejsPlatformServices', () => {
       expect(worker.terminate).toHaveBeenCalled();
     });
 
+    it('forgets a worker that exits after coming online', async () => {
+      const service = new NodejsPlatformServices({ workerFilePath });
+      const testVatId: VatId = getTestVatId();
+      const worker = mocks.createMockWorker();
+      vi.mocked(NodeWorker).mockImplementationOnce(function () {
+        return worker;
+      });
+
+      await service.launch(testVatId);
+      expect(service.workers.has(testVatId)).toBe(true);
+      worker.emit('exit', 1);
+
+      // The startup listeners are replaced rather than dropped: a worker that
+      // dies later is otherwise noticed only through the stream, and its exit
+      // code appears nowhere.
+      expect(service.workers.has(testVatId)).toBe(false);
+    });
+
     it('rejects if worker exits during startup', async () => {
       const service = new NodejsPlatformServices({ workerFilePath });
       const testVatId: VatId = getTestVatId();
@@ -214,15 +232,16 @@ describe('NodejsPlatformServices', () => {
       expect(service.workers.has(testVatId)).toBe(false);
     });
 
-    it('throws when terminating an unknown vat', async () => {
+    it('tolerates terminating a vat with no worker', async () => {
       const service = new NodejsPlatformServices({
         workerFilePath,
       });
       const testVatId: VatId = getTestVatId();
 
-      await expect(service.terminate(testVatId)).rejects.toThrowError(
-        /No worker found/u,
-      );
+      // A worker that exited on its own took its own entry, and its vat is
+      // torn down on the strength of that: reporting it would make every
+      // crash look like a failure to clean up.
+      expect(await service.terminate(testVatId)).toBeUndefined();
     });
   });
 

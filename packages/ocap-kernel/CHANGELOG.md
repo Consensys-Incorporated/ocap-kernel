@@ -62,6 +62,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A vat whose channel to its worker goes away is ended by the vat manager rather than by the handle itself. The handle used to retire itself, leaving the manager still holding it and the store still calling the vat live, so the next delivery went to a worker that could not answer and its crank never finished ([#1100](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1100))
+  - A channel that closes without erroring counts too, which is what a worker that exits produces; before, only a read error did
+- One vat that will not start no longer fails the whole kernel's startup ([#1100](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1100))
 - Control-plane `terminateVat` is carried out by the run loop, as a run queue item. A vat's death is a set of store writes, and made from outside the run loop they landed in whichever crank happened to be open, for an unrelated rollback to undo after the caller had been told they succeeded ([#1097](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1097))
 - `terminateSubcluster` retires a member the kernel has no handle for, and keeps going when one member will not die, instead of stranding the rest of the subcluster ([#1097](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1097))
 - `restartVat` is carried out by the run loop, as a run queue item, rather than where it is asked for. A restart takes a vat out of the kernel's reach for as long as launching a worker and negotiating with it takes, and a crank landing in that window read a live vat as a dead one; in a crank of its own there is no such window. A relaunch that fails now retires the vat and kills the worker it left behind, instead of leaving a vat that could not be terminated ([#1096](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1096))

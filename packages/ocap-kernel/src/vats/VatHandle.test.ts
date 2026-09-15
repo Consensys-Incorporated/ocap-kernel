@@ -33,9 +33,11 @@ let mockKernelStore: KernelStore;
 const makeVat = async ({
   logger,
   dispatch,
+  onCriticalFailure = () => undefined,
 }: {
   logger?: Logger;
   dispatch?: (input: unknown) => void | Promise<void>;
+  onCriticalFailure?: (error: Error, vat: VatHandle) => void;
 } = {}): Promise<{
   vat: VatHandle;
   stream: TestDuplexStream<JsonRpcMessage, JsonRpcMessage>;
@@ -53,6 +55,7 @@ const makeVat = async ({
       vatId: 'v0',
       vatConfig: { sourceSpec: 'not-really-there.js' },
       vatStream,
+      onCriticalFailure,
       logger,
     }),
     stream: vatStream,
@@ -99,6 +102,50 @@ describe('VatHandle', () => {
           message: expect.stringMatching(/Message failed type validation/u),
         }),
       );
+    });
+
+    it('hands a broken channel to the manager rather than ending itself', async () => {
+      const onCriticalFailure = vi.fn();
+      const { vat, stream } = await makeVat({ onCriticalFailure });
+      const settled = vi.fn();
+      // eslint-disable-next-line promise/catch-or-return
+      vat
+        .sendVatCommand({ method: 'ping' as const, params: [] })
+        .then(settled, settled);
+
+      await stream.receiveInput(NaN);
+      await delay(10);
+
+      expect(onCriticalFailure).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'StreamReadError' }),
+        vat,
+      );
+      // Ending itself would reject these, leaving the manager still holding
+      // the handle and the store still calling the vat live. Only the manager
+      // may decide that.
+      expect(settled).not.toHaveBeenCalled();
+    });
+
+    it('reports a channel that closes with no error', async () => {
+      const onCriticalFailure = vi.fn();
+      const { stream } = await makeVat({ onCriticalFailure });
+
+      await stream.return();
+      await delay(10);
+
+      // A worker that exits closes the channel rather than erroring on it, so
+      // the drain resolves and the vat's death would otherwise go unreported.
+      expect(onCriticalFailure).toHaveBeenCalledOnce();
+    });
+
+    it('says nothing when the channel is closed on purpose', async () => {
+      const onCriticalFailure = vi.fn();
+      const { vat } = await makeVat({ onCriticalFailure });
+
+      await vat.terminate(true);
+      await delay(10);
+
+      expect(onCriticalFailure).not.toHaveBeenCalled();
     });
 
     it('throws if handleMessage throws', async () => {
@@ -308,6 +355,7 @@ describe('VatHandle', () => {
       const vat = await VatHandle.make({
         kernelQueue: null as unknown as KernelQueue,
         kernelStore: mockKernelStore,
+        onCriticalFailure: () => undefined,
         vatId: 'v0',
         vatConfig: { sourceSpec: 'not-really-there.js' },
         // `end` never settles until released, so a rejection that arrives
