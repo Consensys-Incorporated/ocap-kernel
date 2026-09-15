@@ -784,6 +784,43 @@ describe('KernelQueue', () => {
       });
     });
 
+    // A parked run loop with work waiting is a permanent wedge, and an arrival
+    // is the one kind of work that does not go through `#enqueueRun`.
+    it.each([
+      {
+        what: 'a message arrives',
+        accept: (queue: KernelQueue) =>
+          queue.acceptRemoteInbound('r1' as RemoteId, '{"seq":1}'),
+      },
+      {
+        what: 'a peer restarts',
+        accept: (queue: KernelQueue) =>
+          queue.acceptPeerIncarnation('peer-1', 'incarnation-B'),
+      },
+    ])('wakes a parked run loop when $what', async ({ accept }) => {
+      (kernelStore.runQueueLength as unknown as MockInstance).mockReturnValue(
+        0,
+      );
+      let turns = 0;
+      (kernelStore.endCrank as unknown as MockInstance).mockImplementation(
+        () => {
+          turns += 1;
+          if (turns === 1) {
+            // The loop found nothing and has armed its wake.
+            accept(kernelQueue);
+          } else if (turns > 2) {
+            throw new Error(STOP_RUN_LOOP);
+          }
+        },
+      );
+      const deliver = vi.fn().mockResolvedValue({});
+
+      await expect(kernelQueue.run(deliver)).rejects.toThrow(STOP_RUN_LOOP);
+
+      expect(mockPromiseKit.resolve).toHaveBeenCalled();
+      expect(deliver).toHaveBeenCalledOnce();
+    });
+
     it('refuses an incarnation change once the run loop has died', async () => {
       const deliver = vi.fn().mockRejectedValue(new Error('dead'));
       (
