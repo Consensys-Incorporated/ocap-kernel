@@ -917,15 +917,21 @@ describe('RemoteManager', () => {
 
       await handshakeAndRunCrank(peerId, 'incarnation-B');
 
-      expect(resolvePromisesSpy).toHaveBeenCalledWith(remoteId, [
+      expect(resolvePromisesSpy).toHaveBeenCalledWith(
+        remoteId,
         [
-          kpid,
-          true,
-          expect.objectContaining({
-            body: expect.stringContaining('[KERNEL:PEER_RESTARTED]'),
-          }),
+          [
+            kpid,
+            true,
+            expect.objectContaining({
+              body: expect.stringContaining('[KERNEL:PEER_RESTARTED]'),
+            }),
+          ],
         ],
-      ]);
+        // Buffered: resolving writes, so it belongs in the crank, and the
+        // notifies it produces must not go out before that crank commits.
+        false,
+      );
     });
 
     it('persists the incarnation and reports restart even when no remote handle exists', async () => {
@@ -995,6 +1001,29 @@ describe('RemoteManager', () => {
       expect(kernelStore.getPeerIncarnation(peerId)).toBe('incarnation-B');
       await result.afterCommit?.();
       expect(finalizeSpy).toHaveBeenCalledOnce();
+    });
+
+    it('records a change once however many handshakes queued it', async () => {
+      const peerId = 'peer-reconnecting';
+      const remote = remoteManager.establishRemote(peerId);
+      const persistSpy = vi.spyOn(remote, 'persistPeerRestart');
+      kernelStore.setPeerIncarnation(peerId, 'incarnation-A');
+      // Two handshakes before either crank runs — a peer re-dialling while
+      // the first change is still waiting its turn.
+      await getOnIncarnationChange()(peerId, 'incarnation-B');
+      await getOnIncarnationChange()(peerId, 'incarnation-B');
+
+      const item = {
+        type: 'peerIncarnation' as const,
+        peerId,
+        incarnation: 'incarnation-B',
+      };
+      await remoteManager.applyIncarnationChange(item);
+      await remoteManager.applyIncarnationChange(item);
+
+      // Tearing the c-list down twice would take the new incarnation's own
+      // state with it the second time.
+      expect(persistSpy).toHaveBeenCalledOnce();
     });
 
     it('leaves the incarnation unadvanced when persistPeerRestart throws', async () => {

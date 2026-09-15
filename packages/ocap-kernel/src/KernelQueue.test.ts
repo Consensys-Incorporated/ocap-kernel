@@ -784,6 +784,23 @@ describe('KernelQueue', () => {
       });
     });
 
+    it('refuses an incarnation change once the run loop has died', async () => {
+      const deliver = vi.fn().mockRejectedValue(new Error('dead'));
+      (
+        kernelStore.runQueueLength as unknown as MockInstance
+      ).mockReturnValueOnce(1);
+      (kernelStore.dequeueRun as unknown as MockInstance).mockReturnValue({
+        type: 'send',
+        target: 'ko1',
+        message: {} as KernelMessage,
+      });
+      await expect(kernelQueue.run(deliver)).rejects.toThrow('dead');
+
+      expect(() =>
+        kernelQueue.acceptPeerIncarnation('peer-1', 'incarnation-B'),
+      ).toThrow('Kernel run loop died');
+    });
+
     it('refuses an arrival once the run loop has died', async () => {
       const deliver = vi.fn().mockRejectedValue(new Error('dead'));
       (

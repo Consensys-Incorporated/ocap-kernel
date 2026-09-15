@@ -285,23 +285,33 @@ export class RemoteManager {
     if (!isRestart || !remote) {
       return {};
     }
+
+    // Rejected here, inside the crank, because resolving a promise writes:
+    // its state, its reference counts, and a notify for every subscriber.
+    // `immediate: false` buffers those notifies until the crank commits, the
+    // way a vat's own syscalls are buffered, so nothing is delivered on the
+    // strength of writes that may yet roll back. Doing it post-commit instead
+    // would put the writes outside every transaction, and would race the
+    // transport's own give-up handling, which rejects the same promises from
+    // a send continuation — the second rejection `Fail`s.
+    if (promisesToReject.length > 0) {
+      const failure = makeKernelError(
+        'PEER_RESTARTED',
+        'Remote peer restarted (incarnation changed)',
+      );
+      for (const kpid of promisesToReject) {
+        this.#kernelQueue.resolvePromises(
+          remote.remoteId,
+          [[kpid, true, failure]],
+          false,
+        );
+      }
+    }
+
     return {
-      afterCommit: async () => {
-        // In-memory state changes and run-queue mutations are not reversible
-        // by a rollback, so they wait until the kv layer is durable.
-        remote.finalizePeerRestart();
-        if (promisesToReject.length > 0) {
-          const failure = makeKernelError(
-            'PEER_RESTARTED',
-            'Remote peer restarted (incarnation changed)',
-          );
-          for (const kpid of promisesToReject) {
-            this.#kernelQueue.resolvePromises(remote.remoteId, [
-              [kpid, true, failure],
-            ]);
-          }
-        }
-      },
+      // The in-memory counters only, which no rollback could put back and
+      // which must not be visible before the writes above are durable.
+      afterCommit: async () => remote.finalizePeerRestart(),
     };
   }
 
