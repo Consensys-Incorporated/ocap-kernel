@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- `makeKernel` gives the kernel store a `kernel-store`-tagged sub-logger. The SQLite driver's only diagnostic is the database path, at `debug`, so a daemon has to be run at that level to see it ([#1084](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1084))
+- `makeKernel` gives the kernel store a `kernel-store`-tagged sub-logger. The SQLite driver's only diagnostic is the database path, at `debug`, so a daemon has to be run at that level to see it ([#1086](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1086))
 - **BREAKING:** `startRpcSocketServer` and `startDaemon` no longer serve `executeDBQuery`, `clearState`, or `terminateAllVats` by default; pass `devMode: true` to restore them ([#1034](https://github.com/MetaMask/ocap-kernel/pull/1034))
   - In default mode the handlers are withheld rather than merely refused by name, so the `executeDBQuery` hook is never constructed and no handler can reach `kernelDatabase.executeQuery`. The exported `DEV_ONLY_METHODS` names the withheld set.
   - This is not a security boundary on its own: `launchSubcluster` and `queueMessage` remain reachable and either suffices to drive the kernel arbitrarily. Anyone able to open the socket controls the kernel — see the trust model in `@metamask/kernel-cli`'s README.
