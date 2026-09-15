@@ -470,8 +470,8 @@ export class RemoteManager {
     from: string,
     message: string,
   ): Promise<string | null> {
-    const remote = this.remoteFor(from);
-    return await remote.handleRemoteMessage(message);
+    this.remoteFor(from).receiveFromPeer(message);
+    return null;
   }
 
   /**

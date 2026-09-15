@@ -11,6 +11,7 @@ import type {
   KRef,
   KernelMessage,
   KernelOneResolution,
+  RemoteId,
   RunLoopStatus,
   RunQueueItem,
   RunQueueItemNotify,
@@ -541,6 +542,17 @@ export class KernelQueue {
     } else {
       this.#kernelStore.bufferCrankOutput(item);
     }
+  }
+
+  /**
+   * Enqueue a message from a remote peer, to be taken delivery of in a crank
+   * of its own.
+   *
+   * @param remoteId - The remote the message came from.
+   * @param message - The message, as it arrived.
+   */
+  enqueueRemoteInbound(remoteId: RemoteId, message: string): void {
+    this.#enqueueRun({ type: 'remoteInbound', remoteId, message });
   }
 
   /**
