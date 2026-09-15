@@ -34,9 +34,7 @@ export type StoreContext = {
 
 /**
  * A database savepoint, paired with the RAM state a database rollback cannot
- * reach. `maybeFreeKrefs` is the collection-candidate set as it stood when the
- * savepoint was taken, so a rollback can put back exactly what the abandoned
- * work added and no more.
+ * reach: the collection-candidate set as it stood when the savepoint was taken.
  */
 export type Savepoint = {
   name: string;
