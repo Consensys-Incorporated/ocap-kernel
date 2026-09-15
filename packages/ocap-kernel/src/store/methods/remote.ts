@@ -61,6 +61,17 @@ export function getRemoteMethods(ctx: StoreContext) {
   }
 
   /**
+   * Whether the kernel knows the remote at all. A remote with no live handle
+   * may only be disconnected; one with no record is gone.
+   *
+   * @param remoteId - The remote in question.
+   * @returns Whether there is a record for it.
+   */
+  function hasRemoteInfo(remoteId: RemoteId): boolean {
+    return kv.get(`${REMOTE_INFO_BASE}${remoteId}`) !== undefined;
+  }
+
+  /**
    * Store the info for a remote.
    *
    * @param remoteID - The remote whose info is to be set.
@@ -300,6 +311,7 @@ export function getRemoteMethods(ctx: StoreContext) {
   return {
     getAllRemoteRecords,
     getRemoteInfo,
+    hasRemoteInfo,
     setRemoteInfo,
     deleteRemoteInfo,
     // Sequence/ACK persistence
