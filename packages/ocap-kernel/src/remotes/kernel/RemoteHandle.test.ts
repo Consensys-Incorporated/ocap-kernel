@@ -120,7 +120,10 @@ describe('RemoteHandle', () => {
 
   // `afterCommit` runs after the crank's transaction has been released, so a
   // write from it would autocommit on its own. Enforced rather than asserted
-  // in prose.
+  // in prose. The send is made to fail, because the transport's failure
+  // handling is the one part of transmitting that writes — the guard is armed
+  // only for `afterCommit`'s own execution, which is the extent the contract
+  // covers, and that handling runs detached from it.
   it('writes nothing to the store from afterCommit', async () => {
     const database = makeMapKernelDatabase();
     const underlying = database.kernelKVStore;
@@ -152,11 +155,15 @@ describe('RemoteHandle', () => {
       remoteComms: mockRemoteComms,
     });
     kernelStore.initEndpoint(remote.remoteId);
+    vi.spyOn(mockRemoteComms, 'sendRemoteMessage').mockRejectedValue(
+      new Error('network is down'),
+    );
 
     const { afterCommit } = await remote.deliverBringOutYourDead();
     refuseWrites = true;
 
     await afterCommit?.();
+    refuseWrites = false;
 
     expect(mockRemoteComms.sendRemoteMessage).toHaveBeenCalledOnce();
   });
