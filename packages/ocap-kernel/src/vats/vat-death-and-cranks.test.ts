@@ -231,4 +231,53 @@ describe("a vat's death while the run loop is running", () => {
       hasVat: false,
     });
   });
+
+  it('keeps a restart requested mid-crank when that crank is rolled back', async () => {
+    const { kernelStore, kernelQueue, vatManager, deliveries } =
+      await makeFixture();
+    const subclusterId = kernelStore.addSubcluster({
+      bootstrap: 'bob',
+      vats: { bob: { sourceSpec: 'test.js' } },
+    });
+    await vatManager.launchVat(config, 'bob', subclusterId);
+
+    kernelStore.enqueueRun({
+      type: 'send',
+      target: 'ko1',
+      message: { methargs: { body: '#[]', slots: [] } },
+    } as unknown as RunQueueItem);
+
+    // The fixture's `deliver` discards the item; this one keeps it, since which
+    // item reaches the second crank is the whole assertion.
+    const delivered: RunQueueItem[] = [];
+    const loop = kernelQueue.run(async (item: RunQueueItem) => {
+      delivered.push(item);
+      return new Promise<CrankResult>((resolve) => {
+        deliveries.push(resolve);
+      });
+    });
+    loop.catch(() => undefined);
+    await deliveriesReach(deliveries, 1);
+
+    // Asked for while the crank is open. Nothing is awaited here: the request
+    // is carried out by the run loop, which this test never lets get that far.
+    const restarted = vatManager.restartVat('v1' as VatId);
+    restarted.catch(() => undefined);
+    await settle();
+
+    // Still nothing queued, because the enqueue is waiting for the crank to
+    // end. Written inside it, the rollback below would take it.
+    expect(kernelStore.runQueueLength()).toBe(0);
+
+    deliveries[0]?.({ abort: true });
+
+    // The abort restores the delivery it rolled back, so the send is retried
+    // ahead of the request that was queued behind it.
+    await deliveriesReach(deliveries, 2);
+    expect(delivered[1]).toStrictEqual(delivered[0]);
+    deliveries[1]?.({ didDelivery: 'v1' });
+
+    await deliveriesReach(deliveries, 3);
+    expect(delivered[2]).toStrictEqual({ type: 'restartVat', vatId: 'v1' });
+  });
 });

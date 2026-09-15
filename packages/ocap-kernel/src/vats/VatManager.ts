@@ -553,7 +553,16 @@ export class VatManager {
     const restarted = this.#awaitRestart(vatId);
     if (!alreadyQueued) {
       try {
-        this.#kernelQueue.enqueueRestartVat(vatId);
+        // Held out of crank for the write, as `terminateVat` is: the run loop
+        // starts its next crank in the same turn it ends the last, so an
+        // unguarded enqueue lands in whichever crank is open and an ordinary
+        // `{ abort: true }` delivery rolls the request away with it. The waiter
+        // would then be left with nothing queued to consume it — the caller
+        // never answered, and `alreadyQueued` true for the rest of the process,
+        // so no later request for this vat would enqueue either.
+        await this.#kernelStore.withStoreOutOfCrank(() =>
+          this.#kernelQueue.enqueueRestartVat(vatId),
+        );
       } catch (error) {
         // Nothing was queued, so nothing will carry the request out. Settling
         // the waiter lets `#awaitRestart` unwind and stop watching the run
