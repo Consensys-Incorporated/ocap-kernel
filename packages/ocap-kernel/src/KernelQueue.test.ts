@@ -650,6 +650,38 @@ describe('KernelQueue', () => {
     });
   });
 
+  describe('enqueueTerminateVat', () => {
+    it('enqueues a termination request with its reason', () => {
+      const reason = { body: 'because', slots: [] } as CapData<KRef>;
+
+      kernelQueue.enqueueTerminateVat('v1', reason);
+
+      expect(kernelStore.enqueueRun).toHaveBeenCalledWith({
+        type: 'terminateVat',
+        vatId: 'v1',
+        reason,
+      });
+    });
+
+    it('leaves the reason out when there is none', () => {
+      kernelQueue.enqueueTerminateVat('v1');
+
+      expect(kernelStore.enqueueRun).toHaveBeenCalledWith({
+        type: 'terminateVat',
+        vatId: 'v1',
+      });
+    });
+
+    it('refuses once the run loop is dead', async () => {
+      await killRunLoop(new Error('crank exploded'));
+
+      expect(() => kernelQueue.enqueueTerminateVat('v1')).toThrow(
+        'Kernel run loop died; cannot terminate a vat',
+      );
+      expect(kernelStore.enqueueRun).not.toHaveBeenCalled();
+    });
+  });
+
   describe('onRunLoopDeath', () => {
     it('tells a waiter the work will never be done', async () => {
       const reject = vi.fn();

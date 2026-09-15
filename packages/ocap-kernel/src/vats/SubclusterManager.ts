@@ -180,13 +180,17 @@ export class SubclusterManager {
    * the failure rather than propagating it over whatever error prompted the
    * cleanup in the first place.
    *
-   * A vat that never reached `#vats` is skipped. That covers a vat whose
-   * launch failed before it was registered, whose worker this cannot reach.
+   * A vat with neither a handle nor a record is skipped. That covers a vat
+   * whose launch failed before either existed; one the store still lists is
+   * retired on its records alone.
    *
    * @param vatId - The id of the vat to terminate.
    */
   async #terminateVatQuietly(vatId: VatId): Promise<void> {
-    if (!this.#vatManager.hasVat(vatId)) {
+    if (
+      !this.#vatManager.hasVat(vatId) &&
+      !this.#kernelStore.isVatActive(vatId)
+    ) {
       return;
     }
     try {
@@ -207,7 +211,6 @@ export class SubclusterManager {
    * @returns A promise that resolves when termination is complete.
    */
   async terminateSubcluster(subclusterId: SubclusterId): Promise<void> {
-    await this.#kernelQueue.waitForCrank();
     if (!this.#kernelStore.getSubcluster(subclusterId)) {
       throw new SubclusterNotFoundError(subclusterId);
     }
@@ -223,10 +226,11 @@ export class SubclusterManager {
       }
     }
 
+    // Persisted membership, so a vat the kernel has no handle for is still
+    // retired rather than stranding the rest of the subcluster.
     const vatIdsToTerminate = this.#kernelStore.getSubclusterVats(subclusterId);
     for (const vatId of vatIdsToTerminate.reverse()) {
-      await this.#vatManager.terminateVat(vatId);
-      this.#vatManager.collectGarbage();
+      await this.#terminateVatQuietly(vatId);
     }
 
     // Destroy IO channels after terminating vats so that any queued

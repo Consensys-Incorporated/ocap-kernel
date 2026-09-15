@@ -54,6 +54,15 @@ export class KernelRouter {
    */
   readonly #restartVat: (vatId: VatId) => Promise<void>;
 
+  /**
+   * A function that ends a vat, for the crank that carries out a queued
+   * termination request.
+   */
+  readonly #terminateVat: (
+    vatId: VatId,
+    reason?: CapData<KRef>,
+  ) => Promise<void>;
+
   /** The logger, if any. */
   readonly #logger: Logger | undefined;
 
@@ -65,6 +74,7 @@ export class KernelRouter {
    * @param getEndpoint - A function that returns an endpoint handle for a given endpoint id.
    * @param invokeKernelService - A function that calls a method on a kernel service object.
    * @param restartVat - A function that replaces a vat's worker.
+   * @param terminateVat - A function that ends a vat.
    * @param logger - The logger. If not provided, no logging will be done.
    */
   constructor(
@@ -73,6 +83,7 @@ export class KernelRouter {
     getEndpoint: (endpointId: EndpointId) => EndpointHandle,
     invokeKernelService: (target: KRef, message: KernelMessage) => void,
     restartVat: (vatId: VatId) => Promise<void>,
+    terminateVat: (vatId: VatId, reason?: CapData<KRef>) => Promise<void>,
     logger?: Logger,
   ) {
     this.#kernelStore = kernelStore;
@@ -80,6 +91,7 @@ export class KernelRouter {
     this.#getEndpoint = getEndpoint;
     this.#invokeKernelService = invokeKernelService;
     this.#restartVat = restartVat;
+    this.#terminateVat = terminateVat;
     this.#logger = logger;
   }
 
@@ -115,6 +127,9 @@ export class KernelRouter {
         return await this.#deliverBringOutYourDead(item);
       case 'restartVat':
         await this.#restartVat(item.vatId);
+        return undefined;
+      case 'terminateVat':
+        await this.#terminateVat(item.vatId, item.reason);
         return undefined;
       default:
         // @ts-expect-error Runtime does not respect "never".

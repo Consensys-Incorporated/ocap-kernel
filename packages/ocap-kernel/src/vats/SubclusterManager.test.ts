@@ -57,6 +57,7 @@ describe('SubclusterManager', () => {
       getSubcluster: vi.fn(),
       getSubclusters: vi.fn().mockReturnValue([]),
       getSubclusterVats: vi.fn().mockReturnValue([]),
+      isVatActive: vi.fn().mockReturnValue(true),
       deleteSubcluster: vi.fn(),
       getVatSubcluster: vi.fn().mockReturnValue('s1'),
       getAllSystemSubclusterMappings: vi.fn().mockReturnValue(new Map()),
@@ -613,10 +614,40 @@ describe('SubclusterManager', () => {
 
       await subclusterManager.terminateSubcluster('s1');
 
-      expect(mockKernelQueue.waitForCrank).toHaveBeenCalled();
       expect(mockVatManager.terminateVat).toHaveBeenCalledWith('v2');
       expect(mockVatManager.terminateVat).toHaveBeenCalledWith('v1');
       expect(mockVatManager.collectGarbage).toHaveBeenCalledTimes(2);
+      expect(mockKernelStore.deleteSubcluster).toHaveBeenCalledWith('s1');
+    });
+
+    it('retires a member the kernel has no handle for', async () => {
+      const subcluster = createMockSubcluster('s1', createMockClusterConfig());
+      mockKernelStore.getSubcluster.mockReturnValue(subcluster);
+      mockKernelStore.getSubclusterVats.mockReturnValue(['v1'] as VatId[]);
+      mockVatManager.hasVat.mockReturnValue(false);
+
+      await subclusterManager.terminateSubcluster('s1');
+
+      // Membership is persisted, so a vat left behind by a failed relaunch
+      // would otherwise strand the rest of the subcluster.
+      expect(mockVatManager.terminateVat).toHaveBeenCalledWith('v1');
+      expect(mockKernelStore.deleteSubcluster).toHaveBeenCalledWith('s1');
+    });
+
+    it('keeps going when one member will not die', async () => {
+      const subcluster = createMockSubcluster('s1', createMockClusterConfig());
+      mockKernelStore.getSubcluster.mockReturnValue(subcluster);
+      mockKernelStore.getSubclusterVats.mockReturnValue([
+        'v1',
+        'v2',
+      ] as VatId[]);
+      mockVatManager.terminateVat.mockRejectedValueOnce(
+        new Error('vat will not die'),
+      );
+
+      await subclusterManager.terminateSubcluster('s1');
+
+      expect(mockVatManager.terminateVat).toHaveBeenCalledWith('v1');
       expect(mockKernelStore.deleteSubcluster).toHaveBeenCalledWith('s1');
     });
 

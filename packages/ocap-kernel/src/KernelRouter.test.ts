@@ -1,3 +1,4 @@
+import type { CapData } from '@endo/marshal';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { MockInstance } from 'vitest';
 
@@ -17,6 +18,7 @@ import type {
   CrankResult,
   EndpointHandle,
   VatId,
+  KRef,
 } from './types.ts';
 
 describe('KernelRouter', () => {
@@ -27,6 +29,9 @@ describe('KernelRouter', () => {
   let endpointHandle: EndpointHandle;
   let kernelRouter: KernelRouter;
   let mockRestartVat: MockInstance<(vatId: VatId) => Promise<void>>;
+  let mockTerminateVat: MockInstance<
+    (vatId: VatId, reason?: CapData<KRef>) => Promise<void>
+  >;
 
   beforeEach(() => {
     // Mock EndpointHandle with more detailed return values
@@ -79,6 +84,7 @@ describe('KernelRouter', () => {
 
     const mockInvokeKernelService = vi.fn();
     mockRestartVat = vi.fn(async () => undefined);
+    mockTerminateVat = vi.fn(async () => undefined);
 
     // Create the router to test
     kernelRouter = new KernelRouter(
@@ -87,6 +93,7 @@ describe('KernelRouter', () => {
       getEndpoint,
       mockInvokeKernelService,
       mockRestartVat,
+      mockTerminateVat,
     );
   });
 
@@ -100,6 +107,27 @@ describe('KernelRouter', () => {
       expect(mockRestartVat).toHaveBeenCalledWith('v1');
       // Nothing for the crank to do with it: the manager answers its caller.
       expect(result).toBeUndefined();
+    });
+  });
+
+  describe('terminateVat', () => {
+    it('hands a queued termination request to the vat manager', async () => {
+      const reason = kser('because');
+
+      const result = await kernelRouter.deliver({
+        type: 'terminateVat',
+        vatId: 'v1',
+        reason,
+      });
+
+      expect(mockTerminateVat).toHaveBeenCalledWith('v1', reason);
+      expect(result).toBeUndefined();
+    });
+
+    it('passes no reason on when the request carried none', async () => {
+      await kernelRouter.deliver({ type: 'terminateVat', vatId: 'v1' });
+
+      expect(mockTerminateVat).toHaveBeenCalledWith('v1', undefined);
     });
   });
 

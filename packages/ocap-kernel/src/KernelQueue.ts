@@ -506,6 +506,25 @@ export class KernelQueue {
   }
 
   /**
+   * Enqueue a request to terminate a vat.
+   *
+   * The work belongs to the run loop, so that a vat's death is written inside
+   * the crank that performs it rather than in whichever crank happens to be
+   * open when the control plane asks.
+   *
+   * @param vatId - The vat to terminate.
+   * @param reason - Why, if there is a reason to pass on.
+   */
+  enqueueTerminateVat(vatId: VatId, reason?: CapData<KRef>): void {
+    this.assertRunLoopAlive('terminate a vat');
+    this.#enqueueRun({
+      type: 'terminateVat',
+      vatId,
+      ...(reason && { reason }),
+    });
+  }
+
+  /**
    * Enqueue a notification of promise resolution to an endpoint.
    *
    * @param endpointId - The endpoint that will be notified.
