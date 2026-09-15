@@ -125,9 +125,20 @@ export class NodejsPlatformServices implements PlatformServices {
     });
 
     worker.once('online', () => {
-      // Remove error and exit listeners now that worker is online
+      // The startup listeners reject the launch, which is no longer what an
+      // error or exit means; they are replaced rather than simply dropped,
+      // because a worker that dies later is otherwise noticed only through the
+      // stream, and the exit code is the only place the reason appears.
       worker.removeAllListeners('error');
       worker.removeAllListeners('exit');
+      worker.once('exit', (code) => {
+        // Guarded by identity: a restart puts a new worker under this vat id,
+        // and this listener outlives the one it belongs to.
+        if (this.workers.get(vatId)?.worker === worker) {
+          this.workers.delete(vatId);
+        }
+        this.#logger.error(`Worker ${vatId} exited with code ${code}`);
+      });
 
       const stream = new NodeWorkerDuplexStream<JsonRpcMessage, JsonRpcMessage>(
         worker,

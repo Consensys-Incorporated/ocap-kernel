@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A vat worker that exits after coming online is noticed: the startup `exit` listener is replaced rather than dropped, so the worker is forgotten and its exit code logged, instead of the death being visible only as a broken stream ([#1099](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1099))
 - The RPC socket server refuses to bind a Unix socket that has a live listener, rather than unlinking it and orphaning the previous owner; stale socket files with no listener are still cleaned up automatically ([#952](https://github.com/MetaMask/ocap-kernel/pull/952))
 
 ## [0.1.0]

@@ -175,6 +175,47 @@ describe('NodejsPlatformServices', () => {
       expect(worker.terminate).toHaveBeenCalled();
     });
 
+    it('forgets a worker that exits after coming online', async () => {
+      const service = new NodejsPlatformServices({ workerFilePath });
+      const testVatId: VatId = getTestVatId();
+      const worker = mocks.createMockWorker();
+      vi.mocked(NodeWorker).mockImplementationOnce(function () {
+        return worker;
+      });
+
+      await service.launch(testVatId);
+      expect(service.workers.has(testVatId)).toBe(true);
+      worker.emit('exit', 1);
+
+      // The startup listeners are replaced rather than dropped: a worker that
+      // dies later is otherwise noticed only through the stream, and its exit
+      // code appears nowhere.
+      expect(service.workers.has(testVatId)).toBe(false);
+    });
+
+    it('leaves a replacement worker alone when the old one exits', async () => {
+      const service = new NodejsPlatformServices({ workerFilePath });
+      const testVatId: VatId = getTestVatId();
+      const firstWorker = mocks.createMockWorker();
+      const secondWorker = mocks.createMockWorker();
+      vi.mocked(NodeWorker)
+        .mockImplementationOnce(function () {
+          return firstWorker;
+        })
+        .mockImplementationOnce(function () {
+          return secondWorker;
+        });
+
+      await service.launch(testVatId);
+      await service.terminate(testVatId);
+      await service.launch(testVatId);
+      firstWorker.emit('exit', 1);
+
+      // A restart puts a new worker under this vat id, and the old listener
+      // outlives the worker it belongs to.
+      expect(service.workers.has(testVatId)).toBe(true);
+    });
+
     it('rejects if worker exits during startup', async () => {
       const service = new NodejsPlatformServices({ workerFilePath });
       const testVatId: VatId = getTestVatId();

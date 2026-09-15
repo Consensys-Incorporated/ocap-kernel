@@ -33,9 +33,11 @@ let mockKernelStore: KernelStore;
 const makeVat = async ({
   logger,
   dispatch,
+  onCriticalFailure = () => undefined,
 }: {
   logger?: Logger;
   dispatch?: (input: unknown) => void | Promise<void>;
+  onCriticalFailure?: (error: Error, vat: VatHandle) => void;
 } = {}): Promise<{
   vat: VatHandle;
   stream: TestDuplexStream<JsonRpcMessage, JsonRpcMessage>;
@@ -53,6 +55,7 @@ const makeVat = async ({
       vatId: 'v0',
       vatConfig: { sourceSpec: 'not-really-there.js' },
       vatStream,
+      onCriticalFailure,
       logger,
     }),
     stream: vatStream,
@@ -98,6 +101,21 @@ describe('VatHandle', () => {
         expect.objectContaining({
           message: expect.stringMatching(/Message failed type validation/u),
         }),
+      );
+    });
+
+    it('hands a broken channel to the manager rather than ending itself', async () => {
+      const onCriticalFailure = vi.fn();
+      const { vat, stream } = await makeVat({ onCriticalFailure });
+
+      await stream.receiveInput(NaN);
+      await delay(10);
+
+      // A handle that retires itself leaves the manager still holding it and
+      // the store still calling the vat live.
+      expect(onCriticalFailure).toHaveBeenCalledWith(
+        expect.objectContaining({ name: 'StreamReadError' }),
+        vat,
       );
     });
 
@@ -308,6 +326,7 @@ describe('VatHandle', () => {
       const vat = await VatHandle.make({
         kernelQueue: null as unknown as KernelQueue,
         kernelStore: mockKernelStore,
+        onCriticalFailure: () => undefined,
         vatId: 'v0',
         vatConfig: { sourceSpec: 'not-really-there.js' },
         // `end` never settles until released, so a rejection that arrives
