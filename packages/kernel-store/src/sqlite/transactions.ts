@@ -79,12 +79,12 @@ export function makeTransactionMethods({
   }
 
   /**
-   * Find a savepoint on the stack.
+   * Find a savepoint on the stack, or throw.
    *
    * @param name - The name of the savepoint.
    * @returns Its index on the stack.
    */
-  function findSavepoint(name: string): number {
+  function requireSavepoint(name: string): number {
     assertSafeIdentifier(name);
     const idx = db._spStack.lastIndexOf(name);
     if (idx < 0) {
@@ -114,7 +114,7 @@ export function makeTransactionMethods({
    * @param name - The name of the savepoint.
    */
   function rollbackSavepoint(name: string): void {
-    const idx = findSavepoint(name);
+    const idx = requireSavepoint(name);
     try {
       db.exec(SQL_QUERIES.ROLLBACK_SAVEPOINT.replace('%NAME%', name));
     } catch (error) {
@@ -143,7 +143,7 @@ export function makeTransactionMethods({
    * @param name - The name of the savepoint.
    */
   function releaseSavepoint(name: string): void {
-    const idx = findSavepoint(name);
+    const idx = requireSavepoint(name);
     db.exec(SQL_QUERIES.RELEASE_SAVEPOINT.replace('%NAME%', name));
     db._spStack.splice(idx);
     if (db._spStack.length === 0) {

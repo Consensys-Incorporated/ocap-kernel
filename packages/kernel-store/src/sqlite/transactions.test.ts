@@ -9,7 +9,7 @@ import { makeTransactionMethods } from './transactions.ts';
  *
  * @returns The fake database and the methods built over it.
  */
-const setup = () => {
+const makeFakeDriver = () => {
   let inTransaction = false;
   const db = {
     get inTransaction() {
@@ -39,7 +39,7 @@ const setup = () => {
 
 describe('makeTransactionMethods', () => {
   it('opens a transaction for the outermost savepoint', () => {
-    const { db, begin, createSavepoint } = setup();
+    const { db, begin, createSavepoint } = makeFakeDriver();
 
     createSavepoint('t0');
 
@@ -49,7 +49,8 @@ describe('makeTransactionMethods', () => {
   });
 
   it('nests a savepoint in the transaction the outer one opened', () => {
-    const { db, begin, commit, createSavepoint, releaseSavepoint } = setup();
+    const { db, begin, commit, createSavepoint, releaseSavepoint } =
+      makeFakeDriver();
 
     createSavepoint('t0');
     createSavepoint('t1');
@@ -69,7 +70,7 @@ describe('makeTransactionMethods', () => {
     'spaces not allowed',
     "point'; DROP TABLE kv--",
   ])('rejects the savepoint name %j', (name) => {
-    const { db, createSavepoint } = setup();
+    const { db, createSavepoint } = makeFakeDriver();
 
     expect(() => createSavepoint(name)).toThrow('Invalid identifier');
     expect(db.exec).not.toHaveBeenCalled();
@@ -78,7 +79,7 @@ describe('makeTransactionMethods', () => {
   it.each(['rollbackSavepoint', 'releaseSavepoint'] as const)(
     '%s refuses a savepoint that is not on the stack',
     (method) => {
-      const methods = setup();
+      const methods = makeFakeDriver();
       methods.createSavepoint('t0');
 
       expect(() => methods[method]('t1')).toThrow('No such savepoint: t1');
@@ -86,7 +87,7 @@ describe('makeTransactionMethods', () => {
   );
 
   it('rolls back to a savepoint and drops the ones above it', () => {
-    const { db, abort, createSavepoint, rollbackSavepoint } = setup();
+    const { db, abort, createSavepoint, rollbackSavepoint } = makeFakeDriver();
     createSavepoint('t0');
     createSavepoint('t1');
     createSavepoint('t2');
@@ -99,7 +100,7 @@ describe('makeTransactionMethods', () => {
   });
 
   it('aborts the transaction when the last savepoint rolls back', () => {
-    const { db, abort, createSavepoint, rollbackSavepoint } = setup();
+    const { db, abort, createSavepoint, rollbackSavepoint } = makeFakeDriver();
     createSavepoint('t0');
 
     rollbackSavepoint('t0');
@@ -108,8 +109,21 @@ describe('makeTransactionMethods', () => {
     expect(db._spStack).toStrictEqual([]);
   });
 
+  it('releases a savepoint and drops the ones above it', () => {
+    const { db, commit, createSavepoint, releaseSavepoint } = makeFakeDriver();
+    createSavepoint('t0');
+    createSavepoint('t1');
+    createSavepoint('t2');
+
+    releaseSavepoint('t1');
+
+    expect(db.exec).toHaveBeenCalledWith('RELEASE SAVEPOINT t1');
+    expect(db._spStack).toStrictEqual(['t0']);
+    expect(commit).not.toHaveBeenCalled();
+  });
+
   it('commits the transaction when the last savepoint is released', () => {
-    const { db, commit, createSavepoint, releaseSavepoint } = setup();
+    const { db, commit, createSavepoint, releaseSavepoint } = makeFakeDriver();
     createSavepoint('t0');
 
     releaseSavepoint('t0');
@@ -120,7 +134,7 @@ describe('makeTransactionMethods', () => {
   });
 
   it('discards the transaction when the rollback itself fails', () => {
-    const { db, abort, createSavepoint, rollbackSavepoint } = setup();
+    const { db, abort, createSavepoint, rollbackSavepoint } = makeFakeDriver();
     createSavepoint('t0');
     db.exec.mockImplementationOnce(() => {
       throw new Error('disk I/O error');
@@ -133,7 +147,7 @@ describe('makeTransactionMethods', () => {
   });
 
   it('reports the rollback failure even if the abort fails too', () => {
-    const { db, abort, createSavepoint, rollbackSavepoint } = setup();
+    const { db, abort, createSavepoint, rollbackSavepoint } = makeFakeDriver();
     createSavepoint('t0');
     db.exec.mockImplementationOnce(() => {
       throw new Error('disk I/O error');
@@ -155,7 +169,7 @@ describe('makeTransactionMethods', () => {
       endTransactionBehindOurBack,
       createSavepoint,
       releaseSavepoint,
-    } = setup();
+    } = makeFakeDriver();
     createSavepoint('t0');
     endTransactionBehindOurBack();
 
@@ -168,7 +182,7 @@ describe('makeTransactionMethods', () => {
   });
 
   it('leaves an open transaction to whoever began it', () => {
-    const { begin, beginIfNeeded } = setup();
+    const { begin, beginIfNeeded } = makeFakeDriver();
     beginIfNeeded();
 
     expect(beginIfNeeded()).toBe(false);
@@ -176,7 +190,7 @@ describe('makeTransactionMethods', () => {
   });
 
   it('leaves the commit to the savepoint that owns the transaction', () => {
-    const { commit, createSavepoint, commitIfNeeded } = setup();
+    const { commit, createSavepoint, commitIfNeeded } = makeFakeDriver();
     createSavepoint('t0');
 
     commitIfNeeded();
@@ -190,7 +204,7 @@ describe('makeTransactionMethods', () => {
   ] as const)(
     '$method does nothing outside a transaction',
     ({ method, mock }) => {
-      const methods = setup();
+      const methods = makeFakeDriver();
 
       methods[method]();
 
