@@ -490,6 +490,9 @@ describe('KernelRouter', () => {
         (
           endpointHandle.deliverMessage as unknown as MockInstance
         ).mockRejectedValueOnce(new Error('queue full'));
+        (
+          kernelStore.getKernelPromise as unknown as MockInstance
+        ).mockReturnValueOnce({ state: 'unresolved' });
 
         const message: Message = {
           methargs: { body: 'method args', slots: [] },
