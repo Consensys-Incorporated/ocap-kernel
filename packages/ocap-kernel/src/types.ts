@@ -376,11 +376,22 @@ export type RunQueueItemBringOutYourDead = Infer<
   typeof RunQueueItemBringOutYourDeadStruct
 >;
 
+const RunQueueItemRemoteInboundStruct = object({
+  type: literal('remoteInbound'),
+  remoteId: RemoteIdStruct,
+  message: string(),
+});
+
+export type RunQueueItemRemoteInbound = Infer<
+  typeof RunQueueItemRemoteInboundStruct
+>;
+
 export const RunQueueItemStruct = union([
   RunQueueItemSendStruct,
   RunQueueItemNotifyStruct,
   RunQueueItemGCActionStruct,
   RunQueueItemBringOutYourDeadStruct,
+  RunQueueItemRemoteInboundStruct,
 ]);
 
 export type RunQueueItem = Infer<typeof RunQueueItemStruct>;
@@ -945,6 +956,11 @@ export type EndpointHandle = {
   deliverRetireExports: (erefs: ERef[]) => Promise<CrankResult>;
   deliverRetireImports: (erefs: ERef[]) => Promise<CrankResult>;
   deliverBringOutYourDead: () => Promise<CrankResult>;
+};
+
+/** An endpoint that peers send messages to, as opposed to a vat. */
+export type RemoteEndpointHandle = EndpointHandle & {
+  deliverInbound: (message: string) => Promise<CrankResult>;
 };
 
 /**
