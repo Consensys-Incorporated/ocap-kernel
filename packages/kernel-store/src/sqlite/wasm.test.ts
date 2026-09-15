@@ -16,7 +16,7 @@ const mockKVDataForMap: [string, string][] = [
   ['key2', 'value2'],
 ];
 
-const mockStatement = {
+const makeMockStatement = () => ({
   bind: vi.fn(),
   step: vi.fn(),
   getString: vi.fn(),
@@ -24,13 +24,57 @@ const mockStatement = {
   get: vi.fn(),
   getColumnName: vi.fn(),
   columnCount: 2,
+});
+
+const mockStatement = makeMockStatement();
+const mockBegin = makeMockStatement();
+const mockCommit = makeMockStatement();
+const mockAbort = makeMockStatement();
+
+// The driver asks SQLite whether a transaction is open, so the mock answers as
+// SQLite would: stepping BEGIN, COMMIT or ABORT moves `txOpen`, which
+// `sqlite3_get_autocommit` reports.
+let txOpen = false;
+
+const resetStatements = (): void => {
+  [mockStatement, mockBegin, mockCommit, mockAbort].forEach((statement) =>
+    Object.values(statement).forEach((value) => {
+      if (typeof value === 'function') {
+        value.mockReset();
+      }
+    }),
+  );
+  mockBegin.step.mockImplementation(() => {
+    txOpen = true;
+    return false;
+  });
+  mockCommit.step.mockImplementation(() => {
+    txOpen = false;
+    return false;
+  });
+  mockAbort.step.mockImplementation(() => {
+    txOpen = false;
+    return false;
+  });
 };
+resetStatements();
 
 const mockDb = {
   exec: vi.fn(),
-  prepare: vi.fn(() => mockStatement),
+  prepare: vi.fn((sql: string) => {
+    switch (sql) {
+      case SQL_QUERIES.BEGIN_TRANSACTION:
+        return mockBegin;
+      case SQL_QUERIES.COMMIT_TRANSACTION:
+        return mockCommit;
+      case SQL_QUERIES.ABORT_TRANSACTION:
+        return mockAbort;
+      default:
+        return mockStatement;
+    }
+  }),
 
-  _inTx: false,
+  pointer: 1,
 
   _spStack: [] as string[],
   close: vi.fn(),
@@ -41,8 +85,10 @@ const OpfsDbMock = vi.fn(function () {
 const DBMock = vi.fn(function () {
   return mockDb;
 });
+const mockCapi = { sqlite3_get_autocommit: () => (txOpen ? 0 : 1) };
 vi.mock('@sqlite.org/sqlite-wasm', () => ({
   default: vi.fn(async () => ({
+    capi: mockCapi,
     oo1: {
       OpfsDb: OpfsDbMock,
       DB: DBMock,
@@ -56,12 +102,8 @@ vi.mock('./env.ts', () => ({
 
 describe('makeSQLKernelDatabase', () => {
   beforeEach(() => {
-    Object.values(mockStatement)
-      .filter(
-        (value): value is ReturnType<typeof vi.fn> =>
-          typeof value === 'function',
-      )
-      .forEach((mockFn) => mockFn.mockReset());
+    resetStatements();
+    txOpen = false;
   });
 
   it('initializes with OPFS when available', async () => {
@@ -75,6 +117,7 @@ describe('makeSQLKernelDatabase', () => {
     ).default.mockImplementationOnce(
       async () =>
         ({
+          capi: mockCapi,
           oo1: {
             OpfsDb: undefined,
             DB: vi.fn(function () {
@@ -312,6 +355,22 @@ describe('makeSQLKernelDatabase', () => {
       expect(mockDb.exec).toHaveBeenCalledWith(SQL_QUERIES.CREATE_TABLE);
     });
 
+    it('refuses a sqlite3 build without sqlite3_get_autocommit', async () => {
+      vi.mocked(
+        await import('@sqlite.org/sqlite-wasm'),
+      ).default.mockImplementationOnce(
+        async () =>
+          ({
+            capi: {},
+            oo1: { OpfsDb: OpfsDbMock, DB: DBMock },
+          }) as unknown as Sqlite3Static,
+      );
+
+      await expect(makeSQLKernelDatabase({})).rejects.toThrow(
+        'sqlite3 capi lacks sqlite3_get_autocommit',
+      );
+    });
+
     it('should log if logger is provided', async () => {
       const logger = {
         debug: vi.fn(),
@@ -371,7 +430,7 @@ describe('makeSQLKernelDatabase', () => {
   describe('savepoint functionality', () => {
     beforeEach(() => {
       mockDb.exec.mockClear();
-      mockDb._inTx = false;
+      txOpen = false;
       mockDb._spStack = [];
     });
 
@@ -420,14 +479,14 @@ describe('makeSQLKernelDatabase', () => {
     it('createSavepoint begins transaction if needed', async () => {
       const db = await makeSQLKernelDatabase({});
       db.createSavepoint('test_point');
-      expect(mockDb._inTx).toBe(true);
+      expect(mockBegin.step).toHaveBeenCalled();
       expect(mockDb._spStack).toContain('test_point');
       expect(mockDb.exec).toHaveBeenCalledWith('SAVEPOINT test_point');
     });
 
     it('rollbackSavepoint validates savepoint exists', async () => {
       const db = await makeSQLKernelDatabase({});
-      mockDb._inTx = true;
+      txOpen = true;
       mockDb._spStack = ['existing_point'];
       expect(() => db.rollbackSavepoint('nonexistent_point')).toThrowError(
         'No such savepoint: nonexistent_point',
@@ -436,7 +495,7 @@ describe('makeSQLKernelDatabase', () => {
 
     it('rollbackSavepoint removes all points after target', async () => {
       const db = await makeSQLKernelDatabase({});
-      mockDb._inTx = true;
+      txOpen = true;
       mockDb._spStack = ['point1', 'point2', 'point3'];
       db.rollbackSavepoint('point2');
       expect(mockDb._spStack).toStrictEqual(['point1']);
@@ -445,18 +504,19 @@ describe('makeSQLKernelDatabase', () => {
 
     it('rollbackSavepoint closes transaction if no savepoints remain', async () => {
       const db = await makeSQLKernelDatabase({});
-      mockDb._inTx = true;
+      txOpen = true;
       mockDb._spStack = ['point1'];
       db.rollbackSavepoint('point1');
       expect(mockDb._spStack).toStrictEqual([]);
-      expect(mockDb._inTx).toBe(false);
+      expect(mockAbort.step).toHaveBeenCalled();
+      expect(txOpen).toBe(false);
     });
 
     // Otherwise every later write on this connection joins a transaction nothing
     // will ever commit, reports success, and vanishes on close.
     it('rollbackSavepoint discards the transaction when the rollback fails', async () => {
       const db = await makeSQLKernelDatabase({});
-      mockDb._inTx = true;
+      txOpen = true;
       mockDb._spStack = ['point1'];
       mockDb.exec.mockImplementationOnce(() => {
         throw new Error('disk I/O error');
@@ -467,19 +527,20 @@ describe('makeSQLKernelDatabase', () => {
       );
 
       expect(mockDb._spStack).toStrictEqual([]);
-      expect(mockDb._inTx).toBe(false);
+      expect(mockAbort.step).toHaveBeenCalled();
+      expect(txOpen).toBe(false);
     });
 
     // The rollback failure is the diagnosis; a failed abort on top of it only
     // repeats that the same connection is broken.
     it('rollbackSavepoint reports the rollback failure even if the abort fails too', async () => {
       const db = await makeSQLKernelDatabase({});
-      mockDb._inTx = true;
+      txOpen = true;
       mockDb._spStack = ['point1'];
       mockDb.exec.mockImplementationOnce(() => {
         throw new Error('disk I/O error');
       });
-      mockStatement.step.mockImplementationOnce(() => {
+      mockAbort.step.mockImplementationOnce(() => {
         throw new Error('cannot rollback');
       });
 
@@ -488,12 +549,12 @@ describe('makeSQLKernelDatabase', () => {
       );
 
       expect(mockDb._spStack).toStrictEqual([]);
-      mockDb._inTx = false;
+      expect(mockAbort.step).toHaveBeenCalled();
     });
 
     it('releaseSavepoint validates savepoint exists', async () => {
       const db = await makeSQLKernelDatabase({});
-      mockDb._inTx = true;
+      txOpen = true;
       mockDb._spStack = ['existing_point'];
       expect(() => db.releaseSavepoint('nonexistent_point')).toThrowError(
         'No such savepoint: nonexistent_point',
@@ -502,7 +563,7 @@ describe('makeSQLKernelDatabase', () => {
 
     it('releaseSavepoint removes all points after target', async () => {
       const db = await makeSQLKernelDatabase({});
-      mockDb._inTx = true;
+      txOpen = true;
       mockDb._spStack = ['point1', 'point2', 'point3'];
       db.releaseSavepoint('point2');
       expect(mockDb._spStack).toStrictEqual(['point1']);
@@ -511,11 +572,12 @@ describe('makeSQLKernelDatabase', () => {
 
     it('releaseSavepoint commits transaction if no savepoints remain', async () => {
       const db = await makeSQLKernelDatabase({});
-      mockDb._inTx = true;
+      txOpen = true;
       mockDb._spStack = ['point1'];
       db.releaseSavepoint('point1');
       expect(mockDb._spStack).toStrictEqual([]);
-      expect(mockDb._inTx).toBe(false);
+      expect(mockCommit.step).toHaveBeenCalled();
+      expect(txOpen).toBe(false);
     });
 
     it('supports nested savepoints', async () => {
@@ -525,10 +587,12 @@ describe('makeSQLKernelDatabase', () => {
       expect(mockDb._spStack).toStrictEqual(['outer', 'inner']);
       db.rollbackSavepoint('inner');
       expect(mockDb._spStack).toStrictEqual(['outer']);
-      expect(mockDb._inTx).toBe(true);
+      expect(mockBegin.step).toHaveBeenCalledOnce();
+      expect(txOpen).toBe(true);
       db.releaseSavepoint('outer');
       expect(mockDb._spStack).toStrictEqual([]);
-      expect(mockDb._inTx).toBe(false);
+      expect(mockCommit.step).toHaveBeenCalledOnce();
+      expect(txOpen).toBe(false);
     });
   });
 
@@ -600,19 +664,15 @@ describe('makeSQLKernelDatabase', () => {
 
 describe('transaction management', () => {
   beforeEach(() => {
-    Object.values(mockStatement).forEach((mock) => {
-      if (typeof mock === 'function' && mock.mockReset) {
-        mock.mockReset();
-      }
-    });
+    resetStatements();
     mockDb.exec.mockReset();
-    mockDb._inTx = false;
+    txOpen = false;
     mockDb._spStack = [];
   });
 
   it('safeMutate rollbacks transaction on error', async () => {
     const db = await makeSQLKernelDatabase({});
-    mockDb._inTx = false;
+    txOpen = false;
     mockDb._spStack = [];
     mockStatement.step.mockImplementationOnce(() => {
       throw new Error('Database error');
@@ -621,21 +681,18 @@ describe('transaction management', () => {
     expect(() => vatStore.updateKVData([['key', 'value']], [])).toThrowError(
       'Database error',
     );
-    expect(mockStatement.step).toHaveBeenCalled();
+    expect(mockAbort.step).toHaveBeenCalled();
+    expect(txOpen).toBe(false);
   });
 
   it('safeMutate does not commit if already in transaction', async () => {
     const db = await makeSQLKernelDatabase({});
-    mockDb._inTx = true;
+    txOpen = true;
     mockDb._spStack = [];
     const vatStore = db.makeVatStore('test-vat');
     vatStore.updateKVData([['key', 'value']], []);
-    expect(mockStatement.step).not.toHaveBeenCalledWith(
-      expect.objectContaining({ sql: 'BEGIN TRANSACTION' }),
-    );
-    expect(mockStatement.step).not.toHaveBeenCalledWith(
-      expect.objectContaining({ sql: 'COMMIT TRANSACTION' }),
-    );
+    expect(mockBegin.step).not.toHaveBeenCalled();
+    expect(mockCommit.step).not.toHaveBeenCalled();
   });
 
   describe('close functionality', () => {
