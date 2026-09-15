@@ -74,6 +74,8 @@ describe('KernelRouter', () => {
       clearReachableFlag: vi.fn(),
       deleteCListEntry: vi.fn(),
       hasCListEntry: vi.fn().mockReturnValue(true),
+      isVatActive: vi.fn().mockReturnValue(true),
+      isVatTerminated: vi.fn().mockReturnValue(false),
       hasRemoteInfo: vi.fn().mockReturnValue(false),
       orphanKernelObject: vi.fn(),
       forgetKref: vi.fn(),
@@ -1074,6 +1076,22 @@ describe('KernelRouter', () => {
             endpointId: 'bogus' as EndpointId,
           }),
         ).rejects.toThrow('invalid endpoint ID bogus');
+      });
+
+      it('goes by the missing handle, not by the store calling the vat dead', async () => {
+        // A vat being torn down after its stream died is not marked terminated
+        // until its queued termination lands, and one whose launch failed never
+        // is — the store here says live and not terminated, as it would for
+        // both. Gating on that would leave the delivery throwing out of the
+        // crank for exactly the vats that cannot take it.
+        const result = await kernelRouter.deliver({
+          type: 'bringOutYourDead',
+          endpointId,
+        });
+
+        expect(result).toStrictEqual({ didDelivery: endpointId });
+        expect(kernelStore.isVatTerminated).not.toHaveBeenCalled();
+        expect(kernelStore.isVatActive).not.toHaveBeenCalled();
       });
 
       it('still delivers to endpoints that are running', async () => {
