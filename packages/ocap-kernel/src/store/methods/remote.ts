@@ -48,6 +48,17 @@ export function getRemoteMethods(ctx: StoreContext) {
   }
 
   /**
+   * The IDs of every remote the kernel knows about.
+   *
+   * @returns The remote IDs.
+   */
+  function getRemoteIDs(): RemoteId[] {
+    return Array.from(getPrefixedKeys(REMOTE_INFO_BASE)).map(
+      (remoteKey) => remoteKey.slice(REMOTE_INFO_BASE_LEN) as RemoteId,
+    );
+  }
+
+  /**
    * Fetch the stored info about a remote.
    *
    * @param remoteId - The remote whose info is sought.
@@ -299,6 +310,7 @@ export function getRemoteMethods(ctx: StoreContext) {
 
   return {
     getAllRemoteRecords,
+    getRemoteIDs,
     getRemoteInfo,
     setRemoteInfo,
     deleteRemoteInfo,
