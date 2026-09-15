@@ -362,9 +362,6 @@ export class KernelQueue {
       // TODO: Currently all errors terminate the vat, but instead we could
       // restart it and terminate the vat only after a certain number of failed
       // retries. This is probably where we should implement the vat restart logic.
-    } else {
-      // Upon on successful crank completion, enqueue buffered vat outputs for delivery.
-      this.#flushCrankBuffer();
     }
     // Vat termination during delivery is triggered by an illegal syscall
     // or by syscall.exit().
@@ -384,7 +381,23 @@ export class KernelQueue {
       }
     }
     this.#kernelStore.collectGarbage();
-    this.#kernelStore.assertRefCountsIfAuditing();
+    // While a violation can still undo this crank, the audit goes first, so the
+    // flush does not settle the promise `enqueueMessage` gave an external
+    // caller out of state that is about to be rolled back. It can see the
+    // buffered items at all because `computeExpectedRefCounts` credits the
+    // crank buffer. Once a vat's death has committed the crank there is nothing
+    // left to undo, and flushing first is instead what keeps each queue row
+    // with the reference count charge it was given.
+    const auditBeforeFlush = this.#deliveryRollbackAllowed;
+    if (auditBeforeFlush) {
+      this.#kernelStore.assertRefCountsIfAuditing();
+    }
+    if (!crankResult?.abort) {
+      this.#flushCrankBuffer();
+    }
+    if (!auditBeforeFlush) {
+      this.#kernelStore.assertRefCountsIfAuditing();
+    }
   }
 
   /**
