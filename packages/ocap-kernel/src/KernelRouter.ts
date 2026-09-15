@@ -38,6 +38,11 @@ const GC_DELIVERY = {
   retireImports: 'deliverRetireImports',
 } as const satisfies Record<GCRunQueueType, keyof EndpointHandle>;
 
+type MessageRoute = {
+  endpointId?: EndpointId | 'kernel';
+  target: KRef;
+} | null;
+
 type KernelRouterOptions = {
   kernelStore: KernelStore;
   kernelQueue: KernelQueue;
@@ -47,11 +52,6 @@ type KernelRouterOptions = {
   terminateVat: (vatId: VatId, reason?: CapData<KRef>) => Promise<void>;
   logger?: Logger;
 };
-
-type MessageRoute = {
-  endpointId?: EndpointId | 'kernel';
-  target: KRef;
-} | null;
 
 /**
  * The KernelRouter is responsible for routing messages to the correct endpoint.
