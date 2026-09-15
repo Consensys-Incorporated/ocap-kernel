@@ -78,6 +78,20 @@ export function performExportCleanup(
         `endpoint ${endpointId} issued invalid ${action}Exports for ${kref}`,
       );
     }
+    // `translateSyscallVtoK` maps import and export refs alike: without these,
+    // an endpoint could disown another's object or tear down its own import.
+    const owner = kernelStore.getOwner(kref);
+    if (owner !== undefined && owner !== endpointId) {
+      throw Error(
+        `endpoint ${endpointId} issued ${action}Exports for ${kref}, which is owned by ${owner}`,
+      );
+    }
+    const eref = kernelStore.krefToEref(endpointId, kref);
+    if (eref === undefined || parseRef(eref).direction !== 'export') {
+      throw Error(
+        `endpoint ${endpointId} issued ${action}Exports for ${kref}, which it does not export`,
+      );
+    }
     if (checkReachable) {
       if (kernelStore.getReachableFlag(endpointId, kref)) {
         throw Error(`${action}Exports but ${kref} is still reachable`);
