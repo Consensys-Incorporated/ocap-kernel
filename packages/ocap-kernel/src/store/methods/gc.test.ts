@@ -201,6 +201,41 @@ describe('GC methods', () => {
       expect(kernelStore.getObjectRefCount(ko2)).toBeDefined();
     });
 
+    // The object is deleted once its importers have been told, so an importer
+    // left out keeps a c-list entry naming a kref that no longer exists, which
+    // nothing tears down and the audit reports as dangling.
+    it('tells a remote importer too', () => {
+      kernelStore.setVatConfig('v1', { bundleName: 'vat1' });
+      kernelStore.setRemoteInfo('r1', {
+        peerId: 'peer-1',
+      } as unknown as Parameters<typeof kernelStore.setRemoteInfo>[1]);
+      const kref = kernelStore.initKernelObject('v1');
+      kernelStore.addCListEntry('r1', kref, 'ro-1');
+      kernelStore.setGCActions(new Set());
+
+      kernelStore.retireKernelObjects([kref]);
+
+      expect([...kernelStore.getGCActions()]).toStrictEqual([
+        `r1 retireImport ${kref}`,
+      ]);
+    });
+
+    it('tells a terminated importer cleanup has not reached', () => {
+      kernelStore.setVatConfig('v1', { bundleName: 'vat1' });
+      const kref = kernelStore.initKernelObject('v1');
+      kernelStore.addCListEntry('v2', kref, 'o-1');
+      // `deleteVat` drops the config row `getVatIDs` enumerates, but the c-list
+      // survives until `nextTerminatedVatCleanup` reaches this vat.
+      kernelStore.markVatAsTerminated('v2');
+      kernelStore.setGCActions(new Set());
+
+      kernelStore.retireKernelObjects([kref]);
+
+      expect([...kernelStore.getGCActions()]).toStrictEqual([
+        `v2 retireImport ${kref}`,
+      ]);
+    });
+
     it('throws for non-array input', () => {
       expect(() => {
         kernelStore.retireKernelObjects('not-an-array' as unknown as KRef[]);
