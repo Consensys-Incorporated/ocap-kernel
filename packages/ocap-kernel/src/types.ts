@@ -386,12 +386,23 @@ export type RunQueueItemRemoteInbound = Infer<
   typeof RunQueueItemRemoteInboundStruct
 >;
 
+const RunQueueItemPeerIncarnationStruct = object({
+  type: literal('peerIncarnation'),
+  peerId: string(),
+  incarnation: string(),
+});
+
+export type RunQueueItemPeerIncarnation = Infer<
+  typeof RunQueueItemPeerIncarnationStruct
+>;
+
 export const RunQueueItemStruct = union([
   RunQueueItemSendStruct,
   RunQueueItemNotifyStruct,
   RunQueueItemGCActionStruct,
   RunQueueItemBringOutYourDeadStruct,
   RunQueueItemRemoteInboundStruct,
+  RunQueueItemPeerIncarnationStruct,
 ]);
 
 export type RunQueueItem = Infer<typeof RunQueueItemStruct>;

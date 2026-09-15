@@ -108,7 +108,6 @@ export class KernelRouter {
       case 'remoteInbound':
         return await this.#deliverRemoteInbound(item);
       default:
-        // @ts-expect-error Runtime does not respect "never".
         Fail`unsupported or unknown run queue item type ${item.type}`;
     }
     return undefined;
