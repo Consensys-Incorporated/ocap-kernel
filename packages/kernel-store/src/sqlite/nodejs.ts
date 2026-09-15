@@ -5,12 +5,9 @@ import { mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 
-import {
-  SQL_QUERIES,
-  DEFAULT_DB_FILENAME,
-  assertSafeIdentifier,
-} from './common.ts';
+import { SQL_QUERIES, DEFAULT_DB_FILENAME } from './common.ts';
 import { getDBFolder } from './env.ts';
+import { makeTransactionMethods } from './transactions.ts';
 import type { KVStore, VatStore, KernelDatabase } from '../types.ts';
 
 export type Database = SqliteDatabase & {
@@ -150,38 +147,13 @@ export async function makeSQLKernelDatabase({
   const sqlCommitTransaction = db.prepare(SQL_QUERIES.COMMIT_TRANSACTION);
   const sqlAbortTransaction = db.prepare(SQL_QUERIES.ABORT_TRANSACTION);
 
-  /**
-   * Begin a transaction if not already in one
-   *
-   *  @returns True if a new transaction was started, false if already in one
-   */
-  function beginIfNeeded(): boolean {
-    if (db.inTransaction) {
-      return false;
-    }
-    sqlBeginTransaction.run();
-    db._spStack.length = 0;
-    return true;
-  }
-
-  /**
-   * Commit a transaction if one is active and no savepoints remain
-   */
-  function commitIfNeeded(): void {
-    if (db.inTransaction && db._spStack.length === 0) {
-      sqlCommitTransaction.run();
-    }
-  }
-
-  /**
-   * Rollback a transaction
-   */
-  function rollbackIfNeeded(): void {
-    if (db.inTransaction) {
-      sqlAbortTransaction.run();
-      db._spStack.length = 0;
-    }
-  }
+  const { createSavepoint, rollbackSavepoint, releaseSavepoint } =
+    makeTransactionMethods({
+      db,
+      begin: () => sqlBeginTransaction.run(),
+      commit: () => sqlCommitTransaction.run(),
+      abort: () => sqlAbortTransaction.run(),
+    });
 
   /**
    * Delete everything from the database.
@@ -258,75 +230,6 @@ export async function makeSQLKernelDatabase({
    */
   function deleteVatStore(vatId: string): void {
     sqlVatstoreDeleteAll.run(vatId);
-  }
-
-  /**
-   * Create a savepoint in the database.
-   *
-   * @param name - The name of the savepoint.
-   */
-  function createSavepoint(name: string): void {
-    // We must be in a transaction when creating the savepoint or releasing it
-    // later will cause an autocommit.
-    // See https://github.com/Agoric/agoric-sdk/issues/8423
-    beginIfNeeded();
-    assertSafeIdentifier(name);
-    const query = SQL_QUERIES.CREATE_SAVEPOINT.replace('%NAME%', name);
-    db.exec(query);
-    db._spStack.push(name);
-  }
-
-  /**
-   * Rollback to a savepoint in the database.
-   *
-   * @param name - The name of the savepoint.
-   */
-  function rollbackSavepoint(name: string): void {
-    assertSafeIdentifier(name);
-    const idx = db._spStack.lastIndexOf(name);
-    if (idx < 0) {
-      throw new Error(`No such savepoint: ${name}`);
-    }
-    const query = SQL_QUERIES.ROLLBACK_SAVEPOINT.replace('%NAME%', name);
-    try {
-      db.exec(query);
-    } catch (error) {
-      // Left as it was, the savepoint stays on the stack and the transaction open
-      // with nothing to ever commit or abort it, so every later write on this
-      // connection joins it, reports success, and vanishes on close. Discarding
-      // the whole transaction is safe: it begins with the outermost savepoint, so
-      // it holds only what this rollback was abandoning anyway.
-      db._spStack.length = 0;
-      try {
-        rollbackIfNeeded();
-      } catch {
-        // The rollback failure below is the one worth reporting.
-      }
-      throw error;
-    }
-    db._spStack.splice(idx);
-    if (db._spStack.length === 0) {
-      rollbackIfNeeded();
-    }
-  }
-
-  /**
-   * Release a savepoint in the database.
-   *
-   * @param name - The name of the savepoint.
-   */
-  function releaseSavepoint(name: string): void {
-    assertSafeIdentifier(name);
-    const idx = db._spStack.lastIndexOf(name);
-    if (idx < 0) {
-      throw new Error(`No such savepoint: ${name}`);
-    }
-    const query = SQL_QUERIES.RELEASE_SAVEPOINT.replace('%NAME%', name);
-    db.exec(query);
-    db._spStack.splice(idx);
-    if (db._spStack.length === 0) {
-      commitIfNeeded();
-    }
   }
 
   return {
