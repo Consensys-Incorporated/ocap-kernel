@@ -106,8 +106,10 @@ describe('the reference count audit inside a crank', () => {
       throw new Error(STOP_RUN_LOOP);
     };
 
-    // Reaching the second delivery is the assertion: an uncredited crank
-    // buffer makes the first crank's audit report the buffered send as a leak.
+    // An uncredited crank buffer makes the first crank's audit report the
+    // buffered send as a leak, so the second delivery is never reached.
     await expect(kernelQueue.run(deliver)).rejects.toThrow(STOP_RUN_LOOP);
+
+    expect(delivered).toBe(2);
   });
 });

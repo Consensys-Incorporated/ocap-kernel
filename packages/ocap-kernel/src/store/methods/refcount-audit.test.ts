@@ -282,6 +282,32 @@ describe('reference count audit', () => {
           } as unknown as CrankBufferItem);
         },
       },
+      {
+        what: 'a send carrying a result promise',
+        buffer: (kref: KRef) => {
+          const [kpid] = kernelStore.initKernelPromise();
+          kernelStore.incrementRefCount(kref, 'queue|target');
+          kernelStore.incrementRefCount(kpid, 'queue|result');
+          kernelStore.bufferCrankOutput({
+            type: 'send',
+            target: kref,
+            message: { methargs: { body: '', slots: [] }, result: kpid },
+          } as unknown as CrankBufferItem);
+        },
+      },
+      {
+        what: 'every item, not just the first',
+        buffer: (kref: KRef) => {
+          for (const tag of ['first', 'second']) {
+            kernelStore.incrementRefCount(kref, `queue|target|${tag}`);
+            kernelStore.bufferCrankOutput({
+              type: 'send',
+              target: kref,
+              message: { methargs: { body: '', slots: [] }, result: null },
+            } as unknown as CrankBufferItem);
+          }
+        },
+      },
     ])('credits $what that has not been flushed yet', ({ buffer }) => {
       const kref = kernelStore.exportFromEndpoint('v1', 'o+1');
       kernelStore.translateRefKtoE('v2', kref, true);
@@ -301,6 +327,27 @@ describe('reference count audit', () => {
       } as unknown as CrankBufferItem);
 
       expect(kernelStore.auditRefCounts()).toStrictEqual([]);
+    });
+
+    it('still reports a count no buffered item accounts for', () => {
+      const kref = kernelStore.exportFromEndpoint('v1', 'o+1');
+      kernelStore.translateRefKtoE('v2', kref, true);
+      kernelStore.incrementRefCount(kref, 'queue|target');
+      kernelStore.bufferCrankOutput({
+        type: 'send',
+        target: kref,
+        message: { methargs: { body: '', slots: [] }, result: null },
+      } as unknown as CrankBufferItem);
+      kernelStore.incrementRefCount(kref, 'nobody holds this');
+
+      expect(kernelStore.auditRefCounts()).toStrictEqual([
+        {
+          kref,
+          stored: '3,3',
+          expected: '2,2',
+          holders: ['v2 c-list import o-1', 'crank buffer #0 send target'],
+        },
+      ]);
     });
   });
 
