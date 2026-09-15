@@ -832,6 +832,33 @@ describe('RemoteManager', () => {
       ) => Promise<boolean>;
     }
 
+    /**
+     * Complete a handshake and run the crank it queues, the way the transport
+     * and the run loop do between them.
+     *
+     * @param peerId - The peer handshaking.
+     * @param incarnation - The incarnation it reports.
+     * @returns Whether the kernel judged this a restart.
+     */
+    async function handshakeAndRunCrank(
+      peerId: string,
+      incarnation: string,
+    ): Promise<boolean> {
+      const verdict = await getOnIncarnationChange()(peerId, incarnation);
+      const queued = vi
+        .mocked(mockKernelQueue.acceptPeerIncarnation)
+        .mock.calls.at(-1);
+      if (queued) {
+        const result = await remoteManager.applyIncarnationChange({
+          type: 'peerIncarnation',
+          peerId: queued[0],
+          incarnation: queued[1],
+        });
+        await result.afterCommit?.();
+      }
+      return verdict;
+    }
+
     it('triggers persist + finalize peer restart when persisted incarnation differs from observed', async () => {
       const peerId = 'peer-that-restarted';
       const remote = remoteManager.establishRemote(peerId);
@@ -840,7 +867,7 @@ describe('RemoteManager', () => {
       // Seed the persisted incarnation (as if a prior handshake recorded it).
       kernelStore.setPeerIncarnation(peerId, 'incarnation-A');
 
-      const verdict = await getOnIncarnationChange()(peerId, 'incarnation-B');
+      const verdict = await handshakeAndRunCrank(peerId, 'incarnation-B');
 
       expect(verdict).toBe(true);
       expect(persistSpy).toHaveBeenCalled();
@@ -854,7 +881,7 @@ describe('RemoteManager', () => {
       const persistSpy = vi.spyOn(remote, 'persistPeerRestart');
       const finalizeSpy = vi.spyOn(remote, 'finalizePeerRestart');
 
-      const verdict = await getOnIncarnationChange()(peerId, 'incarnation-A');
+      const verdict = await handshakeAndRunCrank(peerId, 'incarnation-A');
 
       expect(verdict).toBe(false);
       expect(persistSpy).not.toHaveBeenCalled();
@@ -869,7 +896,7 @@ describe('RemoteManager', () => {
       const finalizeSpy = vi.spyOn(remote, 'finalizePeerRestart');
       kernelStore.setPeerIncarnation(peerId, 'incarnation-A');
 
-      const verdict = await getOnIncarnationChange()(peerId, 'incarnation-A');
+      const verdict = await handshakeAndRunCrank(peerId, 'incarnation-A');
 
       expect(verdict).toBe(false);
       expect(persistSpy).not.toHaveBeenCalled();
@@ -888,7 +915,7 @@ describe('RemoteManager', () => {
 
       const resolvePromisesSpy = vi.spyOn(mockKernelQueue, 'resolvePromises');
 
-      await getOnIncarnationChange()(peerId, 'incarnation-B');
+      await handshakeAndRunCrank(peerId, 'incarnation-B');
 
       expect(resolvePromisesSpy).toHaveBeenCalledWith(remoteId, [
         [
@@ -910,7 +937,7 @@ describe('RemoteManager', () => {
       // there's a RemoteHandle to reset. Transport callers use the verdict
       // to suppress stale outbound messages; that decision is correct
       // regardless of local handle presence.
-      const verdict = await getOnIncarnationChange()(peerId, 'incarnation-B');
+      const verdict = await handshakeAndRunCrank(peerId, 'incarnation-B');
       expect(verdict).toBe(true);
 
       expect(kernelStore.getPeerIncarnation(peerId)).toBe('incarnation-B');
@@ -924,12 +951,53 @@ describe('RemoteManager', () => {
       kernelStore.setPeerIncarnation(peerId, 'incarnation-A');
       const resolvePromisesSpy = vi.spyOn(mockKernelQueue, 'resolvePromises');
 
-      await getOnIncarnationChange()(peerId, 'incarnation-B');
+      await handshakeAndRunCrank(peerId, 'incarnation-B');
 
       expect(resolvePromisesSpy).not.toHaveBeenCalled();
     });
 
-    it('rolls back the savepoint and preserves stored state when persistPeerRestart throws', async () => {
+    it('answers the handshake without waiting for a crank', async () => {
+      const peerId = 'peer-mid-handshake';
+      const remote = remoteManager.establishRemote(peerId);
+      const persistSpy = vi.spyOn(remote, 'persistPeerRestart');
+      kernelStore.setPeerIncarnation(peerId, 'incarnation-A');
+
+      const verdict = await getOnIncarnationChange()(peerId, 'incarnation-B');
+
+      // The transport needs the verdict to finish the handshake, and the
+      // store already knows the answer.
+      expect(verdict).toBe(true);
+      expect(mockKernelQueue.acceptPeerIncarnation).toHaveBeenCalledWith(
+        peerId,
+        'incarnation-B',
+      );
+      // None of the writes it implies have happened yet.
+      expect(persistSpy).not.toHaveBeenCalled();
+      expect(kernelStore.getPeerIncarnation(peerId)).toBe('incarnation-A');
+    });
+
+    it('rejects the promises the restarted remote was deciding only after the commit', async () => {
+      const peerId = 'peer-deferred-rejects';
+      const remote = remoteManager.establishRemote(peerId);
+      kernelStore.setPeerIncarnation(peerId, 'incarnation-A');
+      const finalizeSpy = vi.spyOn(remote, 'finalizePeerRestart');
+      await getOnIncarnationChange()(peerId, 'incarnation-B');
+
+      const result = await remoteManager.applyIncarnationChange({
+        type: 'peerIncarnation',
+        peerId,
+        incarnation: 'incarnation-B',
+      });
+
+      // Neither a rejection nor the in-memory reset is reversible by a
+      // rollback, so both wait for the crank to commit.
+      expect(finalizeSpy).not.toHaveBeenCalled();
+      expect(kernelStore.getPeerIncarnation(peerId)).toBe('incarnation-B');
+      await result.afterCommit?.();
+      expect(finalizeSpy).toHaveBeenCalledOnce();
+    });
+
+    it('leaves the incarnation unadvanced when persistPeerRestart throws', async () => {
       const peerId = 'peer-handler-throws';
       const remote = remoteManager.establishRemote(peerId);
       kernelStore.setPeerIncarnation(peerId, 'incarnation-A');
@@ -940,16 +1008,24 @@ describe('RemoteManager', () => {
       });
       const finalizeSpy = vi.spyOn(remote, 'finalizePeerRestart');
 
+      // The handshake is answered from what the store already says, so it
+      // succeeds; the writes it queued are what fail.
+      expect(await getOnIncarnationChange()(peerId, 'incarnation-B')).toBe(
+        true,
+      );
       await expect(
-        getOnIncarnationChange()(peerId, 'incarnation-B'),
+        remoteManager.applyIncarnationChange({
+          type: 'peerIncarnation',
+          peerId,
+          incarnation: 'incarnation-B',
+        }),
       ).rejects.toThrow(failure);
 
-      // Persisted incarnation must NOT have advanced — the savepoint
-      // rollback should have reverted the would-be setPeerIncarnation that
-      // runs after persistPeerRestart in the wrapped block.
+      // `setPeerIncarnation` runs after `persistPeerRestart`, so it never
+      // happened. Anything it had reached would go back with the crank, which
+      // this map-backed store cannot model.
       expect(kernelStore.getPeerIncarnation(peerId)).toBe('incarnation-A');
-      // finalize must not run if the persisted phase failed: in-memory
-      // mutations would otherwise drift from the rolled-back kv view.
+      // finalize is post-commit work, and there was no commit.
       expect(finalizeSpy).not.toHaveBeenCalled();
     });
   });
