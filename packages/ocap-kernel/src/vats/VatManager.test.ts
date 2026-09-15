@@ -556,16 +556,8 @@ describe('VatManager', () => {
     it('handles empty vat list', async () => {
       await vatManager.terminateAllVats();
 
+      expect(mockKernelQueue.waitForCrank).toHaveBeenCalled();
       expect(mockKernelStore.markVatAsTerminated).not.toHaveBeenCalled();
-    });
-
-    it('does not wait out a crank of its own', async () => {
-      await vatManager.terminateAllVats();
-
-      // Its only caller is `Kernel.reset`, which has already brought the run
-      // loop to rest; waiting here would be waiting on a loop that is not
-      // running.
-      expect(mockKernelQueue.waitForCrank).not.toHaveBeenCalled();
     });
   });
 
