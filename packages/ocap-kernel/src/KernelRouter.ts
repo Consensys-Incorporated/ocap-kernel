@@ -464,6 +464,11 @@ export class KernelRouter {
           kref,
           erefs[index] as ERef,
         );
+        if (type === 'retireExports') {
+          // Retiring an export is the owner giving up the last name it has for
+          // the object.
+          this.#kernelStore.orphanKernelObject(kref, endpointId);
+        }
       }
     });
     const method =

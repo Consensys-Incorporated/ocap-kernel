@@ -31,6 +31,7 @@ describe('VatSyscall', () => {
       getReachableFlag: vi.fn(),
       forgetKref: vi.fn(),
       getOwner: vi.fn(() => 'v1'),
+      orphanKernelObject: vi.fn(),
       // The identity mock for `translateSyscallVtoK` leaves the vref in place,
       // so the c-list round-trip is the identity too.
       krefToEref: vi.fn((_endpointId: string, kref: string) => kref),

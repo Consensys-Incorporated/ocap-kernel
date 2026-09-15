@@ -98,5 +98,6 @@ export function performExportCleanup(
       }
     }
     kernelStore.forgetKref(endpointId, kref);
+    kernelStore.orphanKernelObject(kref, endpointId);
   }
 }
