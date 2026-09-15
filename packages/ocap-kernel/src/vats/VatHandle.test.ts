@@ -295,5 +295,55 @@ describe('VatHandle', () => {
         value: undefined,
       });
     });
+
+    it('rejects pending commands before closing the channel', async () => {
+      const inner = await TestDuplexStream.make<JsonRpcMessage, JsonRpcMessage>(
+        () => undefined,
+        { validateInput: isJsonRpcMessage },
+      );
+      let releaseEnd = (): void => undefined;
+      const stalling = new Promise<void>((resolve) => {
+        releaseEnd = resolve;
+      });
+      const vat = await VatHandle.make({
+        kernelQueue: null as unknown as KernelQueue,
+        kernelStore: mockKernelStore,
+        vatId: 'v0',
+        vatConfig: { sourceSpec: 'not-really-there.js' },
+        // `end` never settles until released, so a rejection that arrives
+        // before then is one that did not wait for the channel to close.
+        vatStream: {
+          drain: inner.drain.bind(inner),
+          write: inner.write.bind(inner),
+          end: async () => stalling,
+        } as unknown as typeof inner,
+      });
+      sendVatCommandMock.mockRestore();
+      const messagePromise = vat.sendVatCommand({
+        method: 'ping' as const,
+        params: [],
+      });
+
+      const terminating = vat.terminate(true);
+
+      await expect(messagePromise).rejects.toThrow('Vat was deleted.');
+      releaseEnd();
+      await terminating;
+    });
+
+    it('leaves pending commands alone across a restart', async () => {
+      const { vat } = await makeVat();
+      const settled = vi.fn();
+      // eslint-disable-next-line promise/catch-or-return
+      vat
+        .sendVatCommand({ method: 'ping' as const, params: [] })
+        .then(settled, settled);
+
+      await vat.terminate(false);
+      await delay(10);
+
+      // The same vat is coming back, and its answer with it.
+      expect(settled).not.toHaveBeenCalled();
+    });
   });
 });
