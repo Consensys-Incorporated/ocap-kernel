@@ -1,4 +1,5 @@
 import type { CapData } from '@endo/marshal';
+import { Logger } from '@metamask/logger';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { MockInstance } from 'vitest';
 
@@ -72,6 +73,8 @@ describe('KernelRouter', () => {
       ) as unknown as MockInstance,
       clearReachableFlag: vi.fn(),
       deleteCListEntry: vi.fn(),
+      hasCListEntry: vi.fn().mockReturnValue(true),
+      hasRemoteInfo: vi.fn().mockReturnValue(false),
       orphanKernelObject: vi.fn(),
       forgetKref: vi.fn(),
       createCrankSavepoint: vi.fn(),
@@ -880,6 +883,254 @@ describe('KernelRouter', () => {
         expect(getEndpoint).toHaveBeenCalledWith(endpointId);
         expect(endpointHandle.deliverBringOutYourDead).toHaveBeenCalled();
         expect(result).toStrictEqual(mockCrankResult);
+      });
+    });
+
+    describe('an endpoint named by persisted state that is not running', () => {
+      // A vat's ownership entries outlive it. `deleteVat` takes its config and
+      // subcluster membership at termination, but its c-lists and reachable
+      // flags stay until `cleanupTerminatedVat` gets to it — and that runs one
+      // vat per crank, so terminating a subcluster of N leaves a window N
+      // cranks wide in which the kernel still addresses a vat with no handle.
+      // A remote is absent for longer and more ordinarily: every disconnection,
+      // and the whole of startup before `initRemoteComms`.
+      const endpointId = 'v2';
+
+      beforeEach(() => {
+        (getEndpoint as unknown as MockInstance).mockImplementation(
+          (requested: EndpointId) => {
+            if (requested === endpointId) {
+              throw new Error(`Vat not found: ${requested}`);
+            }
+            return endpointHandle;
+          },
+        );
+      });
+
+      /**
+       * A notify whose promise is resolved and still in the endpoint's c-list,
+       * so delivery is reached rather than short-circuited.
+       *
+       * @returns The notify item to deliver.
+       */
+      const makeLiveNotify = (): RunQueueItemNotify => {
+        const kpid = 'kp123';
+        (
+          kernelStore.getKernelPromise as unknown as MockInstance
+        ).mockReturnValue({
+          state: 'fulfilled',
+          value: { body: JSON.stringify({ value: 'v' }), slots: [] },
+        });
+        (kernelStore.krefToEref as unknown as MockInstance).mockReturnValue(
+          'p+123',
+        );
+        (
+          kernelStore.getKpidsToRetire as unknown as MockInstance
+        ).mockReturnValue([kpid]);
+        return { type: 'notify', endpointId, kpid };
+      };
+
+      it.each([
+        [
+          'notify',
+          (): RunQueueItem => makeLiveNotify(),
+          'deliverNotify' as const,
+        ],
+        [
+          'dropExports',
+          (): RunQueueItem => ({
+            type: 'dropExports' as GCRunQueueType,
+            endpointId,
+            krefs: ['ko1'],
+          }),
+          'deliverDropExports' as const,
+        ],
+        [
+          'bringOutYourDead',
+          (): RunQueueItem => ({ type: 'bringOutYourDead', endpointId }),
+          'deliverBringOutYourDead' as const,
+        ],
+      ])(
+        'skips a %s addressed to it instead of throwing out of the crank',
+        async (_what, makeItem, deliverMethod) => {
+          // Throwing here escapes the crank and kills the run loop for good —
+          // and because the crank is rolled back, the same item is re-dequeued
+          // on the next boot and kills that one too.
+          const result = await kernelRouter.deliver(makeItem());
+
+          expect(result).toStrictEqual({ didDelivery: endpointId });
+          expect(
+            endpointHandle[deliverMethod as keyof EndpointHandle],
+          ).not.toHaveBeenCalled();
+        },
+      );
+
+      it('still releases the kernel side of a skipped dropExports', async () => {
+        await kernelRouter.deliver({
+          type: 'dropExports',
+          endpointId,
+          krefs: ['ko1'],
+        });
+
+        // Skip it and the export stays flagged reachable, so the same action is
+        // derived again on the next sweep, forever.
+        expect(kernelStore.clearReachableFlag).toHaveBeenCalledWith(
+          endpointId,
+          'ko1',
+        );
+      });
+
+      it.each(['retireExports', 'retireImports'] as const)(
+        'still tears down the c-list entry of a skipped %s',
+        async (type) => {
+          await kernelRouter.deliver({ type, endpointId, krefs: ['ko1'] });
+
+          expect(kernelStore.deleteCListEntry).toHaveBeenCalledWith(
+            endpointId,
+            'ko1',
+            'translated-ko1',
+          );
+        },
+      );
+
+      it('skips a GC action whose c-list entries went in the same crank', async () => {
+        (kernelStore.hasCListEntry as unknown as MockInstance).mockReturnValue(
+          false,
+        );
+        (
+          kernelStore.krefsToErefs as unknown as MockInstance
+        ).mockImplementation(() => {
+          throw new Error(`unmapped kref ko1 in ${endpointId} c-list`);
+        });
+
+        const result = await kernelRouter.deliver({
+          type: 'dropExports',
+          endpointId,
+          krefs: ['ko1'],
+        });
+
+        expect(result).toStrictEqual({ didDelivery: endpointId });
+        // The cleanup performed the kernel's half already.
+        expect(kernelStore.clearReachableFlag).not.toHaveBeenCalled();
+        expect(kernelStore.deleteCListEntry).not.toHaveBeenCalled();
+      });
+
+      it('allocates nothing in the c-list of an endpoint it is skipping', async () => {
+        await kernelRouter.deliver(makeLiveNotify());
+
+        // Both translations import if needed, minting a c-list entry and taking
+        // a reference on every slot. Doing that for an endpoint nobody will
+        // tell writes rows only that endpoint could release, and it cannot.
+        expect(kernelStore.translateRefKtoE).not.toHaveBeenCalled();
+        expect(kernelStore.translateCapDataKtoE).not.toHaveBeenCalled();
+      });
+
+      it('throws for an endpoint id that is neither a vat nor a remote', async () => {
+        (getEndpoint as unknown as MockInstance).mockImplementation(
+          (requested: EndpointId) => {
+            throw new Error(`invalid endpoint ID ${requested}`);
+          },
+        );
+
+        // A missing vat and a missing remote are ordinary; an id that is
+        // neither is corrupt state or a kernel bug.
+        await expect(
+          kernelRouter.deliver({
+            type: 'bringOutYourDead',
+            endpointId: 'bogus' as EndpointId,
+          }),
+        ).rejects.toThrow('invalid endpoint ID bogus');
+      });
+
+      it('still delivers to endpoints that are running', async () => {
+        const result = await kernelRouter.deliver({
+          type: 'bringOutYourDead',
+          endpointId: 'v1',
+        });
+
+        expect(endpointHandle.deliverBringOutYourDead).toHaveBeenCalled();
+        expect(result).toStrictEqual({ didDelivery: 'v1' });
+      });
+    });
+
+    describe('a release nobody hears', () => {
+      const remoteId = 'r1' as EndpointId;
+      let logger: Logger;
+
+      beforeEach(() => {
+        logger = new Logger('test');
+        (getEndpoint as unknown as MockInstance).mockImplementation(() => {
+          throw new Error(`Remote not found: ${remoteId}`);
+        });
+      });
+
+      /**
+       * @returns A router whose skips this test's logger can see.
+       */
+      const makeRouter = (): KernelRouter =>
+        new KernelRouter(
+          kernelStore,
+          kernelQueue,
+          getEndpoint,
+          vi.fn(),
+          mockRestartVat as unknown as (vatId: VatId) => Promise<void>,
+          mockTerminateVat as unknown as (vatId: VatId) => Promise<void>,
+          logger,
+        );
+
+      it('names the remote that is only unreachable', async () => {
+        // A remote with no handle may just be disconnected, and it keeps the
+        // eref the kernel has released on its side.
+        (kernelStore.hasRemoteInfo as unknown as MockInstance).mockReturnValue(
+          true,
+        );
+        const errorSpy = vi.spyOn(logger, 'error');
+
+        await makeRouter().deliver({
+          type: 'retireImports',
+          endpointId: remoteId,
+          krefs: ['ko1'],
+        });
+
+        expect(errorSpy).toHaveBeenCalledWith(
+          expect.stringContaining('still holds those references'),
+        );
+      });
+
+      it('says nothing extra for a remote the kernel has forgotten', async () => {
+        (kernelStore.hasRemoteInfo as unknown as MockInstance).mockReturnValue(
+          false,
+        );
+        const errorSpy = vi.spyOn(logger, 'error');
+
+        await makeRouter().deliver({
+          type: 'retireImports',
+          endpointId: remoteId,
+          krefs: ['ko1'],
+        });
+
+        // Only the skip itself, which every absent endpoint gets.
+        expect(errorSpy).toHaveBeenCalledTimes(1);
+        expect(errorSpy).toHaveBeenCalledWith(
+          expect.stringContaining('is not running'),
+          expect.anything(),
+        );
+      });
+
+      it('reports the skip above the per-delivery trace level', async () => {
+        const errorSpy = vi.spyOn(logger, 'error');
+
+        await makeRouter().deliver({
+          type: 'bringOutYourDead',
+          endpointId: remoteId,
+        });
+
+        // A delivery dropped on the floor is the only trace of an endpoint that
+        // has quietly stopped listening.
+        expect(errorSpy).toHaveBeenCalledWith(
+          expect.stringContaining(remoteId),
+          expect.anything(),
+        );
       });
     });
 

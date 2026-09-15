@@ -3,7 +3,7 @@ import { peerIdFromPrivateKey } from '@libp2p/peer-id';
 import { NodejsPlatformServices } from '@metamask/kernel-node-runtime';
 import type { KernelDatabase } from '@metamask/kernel-store';
 import { makeSQLKernelDatabase } from '@metamask/kernel-store/sqlite/nodejs';
-import { fromHex } from '@metamask/kernel-utils';
+import { fromHex, waitUntilQuiescent } from '@metamask/kernel-utils';
 import { makeKernelStore, kunser, Kernel } from '@metamask/ocap-kernel';
 import type {
   KernelStore,
@@ -557,6 +557,95 @@ describe('Remote Communications (Integration Tests)', () => {
 
       // Stop the local kernels before the temp dir is cleaned up
       await Promise.all([clientKernel.stop(), serverKernel.stop()]);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('is not bricked by a peer asking it to bring out its dead', async () => {
+    // `bringOutYourDead` is an ordinary arm of the remote protocol: any peer
+    // can send one, unsolicited. The kernel answers by scheduling a reap
+    // against the remote it came from, in the persisted reap queue.
+    //
+    // `scheduleReap` does not wake a parked run loop, so an idle kernel holds
+    // that reap indefinitely — and carries it into its next incarnation, which
+    // starts its run loop inside `Kernel.make`, before `initRemoteComms` can
+    // restore any remote to deliver it to. One message from a peer is therefore
+    // enough to stop a kernel ever booting again, given only that it restarts.
+    const tempDir = await mkdtemp(join(tmpdir(), 'kernel-test-rc-reap-'));
+    const dbFile = join(tempDir, 'victim.db');
+    try {
+      // Only the victim needs to survive a restart, so only it needs a file.
+      await kernel1.stop();
+      const victimStore = makeKernelStore(
+        await makeSQLKernelDatabase({ dbFilename: dbFile }),
+      );
+      let victim = await makeTestKernel(
+        'victim',
+        await makeSQLKernelDatabase({ dbFilename: dbFile }),
+        directNetwork,
+        true,
+        'kernel1-peer',
+        '01',
+      );
+
+      // One exchange, so each kernel holds a remote for the other.
+      await runTestVats(victim, makeSenderSubclusterConfig('Sender'));
+      const receiver = (await runTestVats(
+        kernel2,
+        makeReceiverSubclusterConfig('Receiver'),
+      )) as BootstrapResult;
+      await victim.queueMessage(
+        victimStore.getRootObject('v1') as KRef,
+        'sendMessage',
+        [receiver.ocapURL, 'hello', ['once']],
+      );
+
+      // The attack, in one message. The peer is given local work purely so its
+      // own loop cranks and sends the request; nothing touches the victim
+      // afterwards, so its loop stays parked and never delivers the reap it
+      // just queued.
+      kernel2.reapRemotes();
+      await kernel2.queueMessage(
+        makeKernelStore(kernelDatabase2).getRootObject('v1') as KRef,
+        'hello',
+        ['probe'],
+      );
+      await waitUntilQuiescent();
+      await victim.stop();
+
+      // Asserted, not assumed: if the victim had cranked it would have eaten
+      // its own reap while the remote still existed, and the rest would prove
+      // nothing.
+      const armed = await makeSQLKernelDatabase({ dbFilename: dbFile });
+      expect(
+        JSON.parse(armed.kernelKVStore.get('reapQueue') ?? '[]'),
+      ).not.toStrictEqual([]);
+
+      // Twice, because it is unrecoverable rather than merely fatal: the crank
+      // that dies is rolled back, which puts the reap back on the queue for the
+      // boot after this one.
+      let database = armed;
+      const bootStates = [];
+      for (const boot of [1, 2]) {
+        victim = await makeTestKernel(
+          `victim-boot${boot}`,
+          database,
+          directNetwork,
+          false,
+          'kernel1-peer',
+          '01',
+        );
+        bootStates.push((await victim.getStatus()).runLoop);
+        await victim.stop();
+        database = await makeSQLKernelDatabase({ dbFilename: dbFile });
+      }
+      // Asserted together rather than per boot, so a failure reports both: the
+      // point is that the second is no better than the first.
+      expect(bootStates).toStrictEqual([
+        { state: 'running' },
+        { state: 'running' },
+      ]);
     } finally {
       await rm(tempDir, { recursive: true, force: true });
     }

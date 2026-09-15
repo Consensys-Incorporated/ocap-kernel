@@ -20,9 +20,21 @@ import type {
   RunQueueItemNotify,
   RunQueueItemGCAction,
   CrankResult,
+  GCRunQueueType,
   VatId,
 } from './types.ts';
+import { isRemoteId, isVatId } from './types.ts';
 import { assert, Fail } from './utils/assert.ts';
+
+/**
+ * The delivery each GC action type makes, as a table rather than a method name
+ * assembled from the type and cast back into range.
+ */
+const GC_DELIVERY = {
+  dropExports: 'deliverDropExports',
+  retireExports: 'deliverRetireExports',
+  retireImports: 'deliverRetireImports',
+} as const satisfies Record<GCRunQueueType, keyof EndpointHandle>;
 
 type MessageRoute = {
   endpointId?: EndpointId | 'kernel';
@@ -385,6 +397,44 @@ export class KernelRouter {
   }
 
   /**
+   * Look up an endpoint for a delivery that has nobody to report to — a notify,
+   * a GC action, a reap.
+   *
+   * An endpoint can be named by persisted state without being live. A
+   * terminated vat's c-lists outlive it until `cleanupTerminatedVat` reaches
+   * them, one vat per crank; a remote's outlive every disconnection, and at
+   * startup the run loop begins inside `Kernel.make`, before an embedder can
+   * call `initRemoteComms` to restore any remote at all. Throwing here escapes
+   * the crank and kills the run loop — and the rollback puts the item back, so
+   * the next boot dies on it too.
+   *
+   * @param endpointId - The endpoint the item is addressed to.
+   * @param what - What was being delivered, for the log.
+   * @returns The endpoint's handle, or undefined if it is not running.
+   */
+  #lookupEndpoint(
+    endpointId: EndpointId,
+    what: string,
+  ): EndpointHandle | undefined {
+    try {
+      return this.#getEndpoint(endpointId);
+    } catch (error) {
+      // An id naming neither a vat nor a remote is not an endpoint that has
+      // gone away; it is corrupt state or a kernel bug.
+      if (!isVatId(endpointId) && !isRemoteId(endpointId)) {
+        throw error;
+      }
+      // Above the per-delivery trace channel: a delivery dropped on the floor
+      // is the only trace of an endpoint that has quietly stopped listening.
+      this.#logger?.error(
+        `Skipped ${what} for ${endpointId}, which is not running:`,
+        error,
+      );
+      return undefined;
+    }
+  }
+
+  /**
    * Deliver a 'notify' run queue item.
    *
    * @param item - The notify item to deliver.
@@ -418,6 +468,13 @@ export class KernelRouter {
       // no kpids to retire, already done
       return { didDelivery: endpointId };
     }
+    // Before the translations below, which import if needed: minting c-list
+    // entries for an endpoint that will never be told writes rows only that
+    // endpoint could release.
+    const endpoint = this.#lookupEndpoint(endpointId, `notify of ${kpid}`);
+    if (!endpoint) {
+      return { didDelivery: endpointId };
+    }
     const resolutions: VatOneResolution[] = [];
     for (const toResolve of targets) {
       const tPromise = this.#kernelStore.getKernelPromise(toResolve);
@@ -437,7 +494,6 @@ export class KernelRouter {
     // promise in the batch here, since the endpoint can never refer to a
     // settled promise by that eref again. Left alone for now because the
     // debug UI discovers exported ocap URLs by scanning these entries.
-    const endpoint = this.#getEndpoint(endpointId);
     return await endpoint.deliverNotify(resolutions);
   }
 
@@ -452,12 +508,30 @@ export class KernelRouter {
     this.#logger?.log(
       `@@@@ deliver ${endpointId} ${type} ${JSON.stringify(krefs)}`,
     );
-    const endpoint = this.#getEndpoint(endpointId);
-    const erefs = this.#kernelStore.krefsToErefs(endpointId, krefs);
+    const endpoint = this.#lookupEndpoint(endpointId, type);
+    if (!endpoint) {
+      this.#reportUnheardRelease(endpointId, type);
+    }
+    // `processGCActionSet` selected this action while the endpoint held a
+    // c-list entry for each kref, but `nextTerminatedVatCleanup` runs between
+    // that selection and here and takes a whole c-list at a time. Whatever it
+    // reached has had the kernel's half done for it already, and
+    // `krefsToErefs` reports the missing entry by throwing.
+    const toRelease = endpoint
+      ? krefs
+      : krefs.filter((kref) =>
+          this.#kernelStore.hasCListEntry(endpointId, kref),
+        );
+    if (toRelease.length === 0) {
+      return { didDelivery: endpointId };
+    }
+    const erefs = this.#kernelStore.krefsToErefs(endpointId, toRelease);
     // Telling an endpoint to let go is also the kernel letting go. Otherwise a
     // dropped export stays flagged reachable, so the same action gets derived
-    // again, and retired entries outlive the objects they name.
-    krefs.forEach((kref, index) => {
+    // again, and retired entries outlive the objects they name. It happens even
+    // when the delivery is skipped: the action is already spent from the
+    // durable set, so leaving the entry would keep re-deriving it forever.
+    toRelease.forEach((kref, index) => {
       if (type === 'dropExports') {
         this.#kernelStore.clearReachableFlag(endpointId, kref);
       } else {
@@ -473,13 +547,32 @@ export class KernelRouter {
         }
       }
     });
-    const method =
-      `deliver${(type[0] as string).toUpperCase()}${type.slice(1)}` as
-        | 'deliverDropExports'
-        | 'deliverRetireExports'
-        | 'deliverRetireImports';
-    const crankResult = await endpoint[method](erefs);
+    if (!endpoint) {
+      return { didDelivery: endpointId };
+    }
+    const crankResult = await endpoint[GC_DELIVERY[type]](erefs);
     return crankResult;
+  }
+
+  /**
+   * Say what a skipped GC delivery leaves behind.
+   *
+   * For an endpoint that is gone, nothing: the kernel's half is the whole of
+   * it. A remote the kernel still has a record for is only unreachable, and it
+   * keeps the eref — its next message naming that eref mints a second kref for
+   * the same object, reconciled only by an incarnation change. Keeping the
+   * action instead is what this becomes once remote GC actions can leave the
+   * front of the run queue.
+   *
+   * @param endpointId - The endpoint that could not be told.
+   * @param type - The GC action that was skipped.
+   */
+  #reportUnheardRelease(endpointId: EndpointId, type: GCRunQueueType): void {
+    if (isRemoteId(endpointId) && this.#kernelStore.hasRemoteInfo(endpointId)) {
+      this.#logger?.error(
+        `Released ${type} for remote ${endpointId} without telling it; the peer still holds those references`,
+      );
+    }
   }
 
   /**
@@ -493,7 +586,10 @@ export class KernelRouter {
   ): Promise<CrankResult | undefined> {
     const { endpointId } = item;
     this.#logger?.log(`@@@@ deliver ${endpointId} bringOutYourDead`);
-    const endpoint = this.#getEndpoint(endpointId);
+    const endpoint = this.#lookupEndpoint(endpointId, 'bringOutYourDead');
+    if (!endpoint) {
+      return { didDelivery: endpointId };
+    }
     const crankResult = await endpoint.deliverBringOutYourDead();
     return crankResult;
   }
