@@ -94,12 +94,17 @@ export class KernelQueue {
   )[] = [];
 
   /**
-   * Set while a caller is waiting for the loop to come out of its current
-   * crank, and cleared as the loop leaves. The loop reads it between cranks
-   * only, which is what makes the window it opens a safe one to write in: no
-   * crank is open, and none will start until the loop is run again.
+   * Set while callers are waiting for the loop to come out of its current
+   * crank, and settled however the loop leaves — including by dying, which
+   * would otherwise leave `stopRunLoop` waiting on a loop that is never going
+   * to read the request. Shared by every caller, so a second one asking does
+   * not strand the first.
+   *
+   * The loop reads it between cranks only, which is what makes the window it
+   * opens safe to write in: no crank is open, and none will start until the
+   * loop is run again.
    */
-  #stopRequested: (() => void) | undefined;
+  #stopRequest: ReturnType<typeof makePromiseKit<void>> | undefined;
 
   /**
    * Construct a new KernelQueue instance.
@@ -138,6 +143,13 @@ export class KernelQueue {
       // The recorded failure rather than the raw throw, so that the embedder's
       // handler and `getRunLoopStatus` describe one object rather than two.
       throw this.#failRunLoop(error);
+    } finally {
+      // However the loop left — stopped as asked, or dead. A caller waiting on
+      // a loop that died would otherwise wait for good, and `Kernel.stop`
+      // awaits this before closing the database.
+      const stopped = this.#stopRequest;
+      this.#stopRequest = undefined;
+      stopped?.resolve();
     }
   }
 
@@ -153,11 +165,8 @@ export class KernelQueue {
       // Between cranks, never inside one: whoever asked gets the store with no
       // transaction open and none about to be, which is the whole of what
       // makes their writes safe.
-      if (this.#stopRequested) {
-        const stopped = this.#stopRequested;
-        this.#stopRequested = undefined;
+      if (this.#stopRequest) {
         this.#runLoopState = { state: 'stopped' };
-        stopped();
         return;
       }
       let wakeUpPromise: Promise<void> | undefined;
@@ -249,22 +258,14 @@ export class KernelQueue {
     if (this.#runLoopState.state !== 'running') {
       return false;
     }
-    const { promise, resolve } = makePromiseKit<void>();
-    this.#stopRequested = resolve;
+    this.#stopRequest ??= makePromiseKit<void>();
     // A parked loop is not going to reach the check on its own.
     this.#wakeTheRunLoop();
-    await promise;
-    return true;
-  }
-
-  /**
-   * Whether a crank could start at any moment. False means the store may be
-   * written directly.
-   *
-   * @returns Whether the run loop is running.
-   */
-  isRunning(): boolean {
-    return this.#runLoopState.state === 'running';
+    await this.#stopRequest.promise;
+    // Read after the wait, not before it: the loop may have died rather than
+    // stopped, and a caller that restarted a dead loop would be told it had
+    // died a second time.
+    return this.getRunLoopStatus().state === 'stopped';
   }
 
   /**
@@ -275,6 +276,10 @@ export class KernelQueue {
    * @param why - What became of the work, completing "this message result ...".
    */
   discardQueuedWork(why: string): void {
+    // Inbound remote work too: it has not reached the run queue yet, and a
+    // peer incarnation change applied after a reset would write pre-reset peer
+    // bookkeeping back into a wiped store.
+    this.#arrivedFromRemotes.length = 0;
     this.#abandonSubscriptions(new Error(`Kernel state was discarded; ${why}`));
   }
 
@@ -348,6 +353,12 @@ export class KernelQueue {
   assertRunLoopAlive(what: string): void {
     if (this.#runLoopState.state === 'failed') {
       throw this.#makeDeadRunLoopError(`Kernel run loop died; cannot ${what}`);
+    }
+    if (this.#runLoopState.state === 'stopped') {
+      // Held still for a direct write, or stopped for good by `Kernel.stop`.
+      // Either way nothing is draining the queue, so work taken now would sit
+      // there — and after `stop` the database it names is closed.
+      throw Error(`Kernel run loop is stopped; cannot ${what}`);
     }
   }
 
