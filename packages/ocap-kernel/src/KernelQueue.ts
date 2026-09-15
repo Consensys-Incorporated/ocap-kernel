@@ -339,9 +339,7 @@ export class KernelQueue {
         this.#kernelStore.rollbackCrank('delivery');
       } finally {
         // Cleared even when the rollback threw: the savepoint is gone either
-        // way, and a second attempt from the run loop's catch would report a
-        // missing savepoint as the reason the kernel died, burying the database
-        // error that actually killed it.
+        // way.
         this.#deliveryRollbackAllowed = false;
       }
       // Discard kernel subscriptions that were queued for invocation
@@ -372,14 +370,18 @@ export class KernelQueue {
     // or by syscall.exit().
     if (crankResult?.terminate) {
       const { vatId, info } = crankResult.terminate;
-      await this.#terminateVat(vatId, info);
-      // This killed the worker, so the writes recording it must outlive any
-      // rollback: a store that still believed the vat was alive would relaunch
-      // it, having already rejected the promises it was deciding. The abort
-      // path above has rolled back already, but `vatPowers.exitVat` terminates
-      // without aborting, and there the work below can still throw into the run
-      // loop's catch. They stay inside the crank's transaction either way.
-      this.#deliveryRollbackAllowed = false;
+      try {
+        await this.#terminateVat(vatId, info);
+      } finally {
+        // Withheld even when terminating threw partway: it kills the worker on
+        // its first line, so a store still believing the vat was alive would
+        // relaunch one whose callers have already been answered. The abort path
+        // above has rolled back and has nothing left worth keeping, and
+        // `vatPowers.exitVat` terminates without aborting, so on neither path
+        // does a later throw have a delivery to undo. All of it stays inside
+        // the crank's transaction regardless.
+        this.#deliveryRollbackAllowed = false;
+      }
     }
     this.#kernelStore.collectGarbage();
     this.#kernelStore.assertRefCountsIfAuditing();
