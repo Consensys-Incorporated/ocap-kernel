@@ -42,9 +42,10 @@ describe('a GC candidate produced outside a crank', () => {
     harvest = true,
   }: { rollback?: boolean; harvest?: boolean } = {}): void {
     kernelStore.startCrank();
-    kernelStore.createCrankSavepoint('start');
+    kernelStore.createCrankSavepoint('crank');
+    kernelStore.createCrankSavepoint('delivery');
     if (rollback) {
-      kernelStore.rollbackCrank('start');
+      kernelStore.rollbackCrank('delivery');
     }
     if (harvest) {
       kernelStore.collectGarbage();
