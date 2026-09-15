@@ -8,11 +8,26 @@ import type { CrankBufferItem, Savepoint, StoreContext } from '../types.ts';
  * @param value - Anything.
  * @returns Whether it is a thenable, which is what `await` acts on.
  */
-function isPromiseLike(value: unknown): boolean {
+function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
   return (
     typeof (value as PromiseLike<unknown> | undefined)?.then === 'function'
   );
 }
+
+/**
+ * `never` for any `Result` that has a thenable member, so that the callback
+ * cannot be written.
+ *
+ * The tuple stops the conditional distributing, which is what makes it judge a
+ * union whole: distributed, `number | Promise<number>` resolves to
+ * `unknown | never`, which is `unknown`, and lets one promise-returning branch
+ * of several through.
+ */
+type Synchronous<Result> = [Extract<Result, PromiseLike<unknown>>] extends [
+  never,
+]
+  ? unknown
+  : never;
 
 /**
  * Get the crank methods.
@@ -103,24 +118,30 @@ export function getCrankMethods(ctx: StoreContext, kdb: KernelDatabase) {
    * `work` must be synchronous. The turn is given back the moment it returns,
    * so work that awaits resumes with the run loop free to start a crank — and
    * both callers take a savepoint inside it, which would then nest inside that
-   * crank rather than being the commit point it has to be. The type refuses the
-   * plain cases and the check below catches the rest; a caller that needs to
-   * await does it with what `work` hands back.
+   * crank rather than being the commit point it has to be. A caller that needs
+   * to await does it with what `work` hands back.
+   *
+   * {@link Synchronous} cannot refuse an explicit
+   * `withStoreOutOfCrank<void>`, since a `Promise<void>` is assignable to a
+   * `void` return, nor an `unknown` or `any` one — hence the check below.
    *
    * @param work - The synchronous work to do while holding the store.
    * @returns What `work` returned.
    */
   async function withStoreOutOfCrank<Result>(
-    work: () => Result &
-      (Result extends PromiseLike<unknown> ? never : unknown),
+    work: () => Result & Synchronous<Result>,
   ): Promise<Result> {
     await beginOutOfCrank();
     try {
       const result = work();
-      // Thrown from inside the `try`, so the `finally` still gives the turn
-      // back rather than parking the run loop on top of the mistake.
-      !isPromiseLike(result) ||
+      if (isPromiseLike(result)) {
+        // Nothing awaits this thenable, and an abandoned rejection is an
+        // unhandled one, which ends the process.
+        Promise.resolve(result).catch(() => undefined);
+        // Thrown from inside the `try`, so the `finally` still gives the turn
+        // back rather than parking the run loop on top of the mistake.
         Fail`withStoreOutOfCrank given work that is not synchronous`;
+      }
       return result;
     } finally {
       endOutOfCrank();

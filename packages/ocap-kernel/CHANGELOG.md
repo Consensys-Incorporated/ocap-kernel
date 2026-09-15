@@ -44,6 +44,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add `getOcapURLObjects`, `getOcapURLIssuanceCount`, `retainForOcapURL`, `undoOcapURLRetention` and `releaseOcapURLRetentions` to the kernel store, and `VatManager.releaseVatRootPin` ([#1020](https://github.com/MetaMask/ocap-kernel/pull/1020))
   - `undoOcapURLRetention` unwinds one issuance whose URL was never minted; `releaseOcapURLRetentions` drops a target's whole retention, for disavowing every URL naming it at once
 - Add `getPinCount` to the kernel store, which reports how many pins are held on an object ([#1020](https://github.com/MetaMask/ocap-kernel/pull/1020))
+- Add `withStoreOutOfCrank` and `outOfCrankWorkPending` to the kernel store, for work that has to hold the store outside any crank ([#1021](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1021))
+  - `work` must be synchronous: the turn is given back the moment it returns. A caller that needs to await does it with what `work` hands back
 
 ### Changed
 
@@ -58,8 +60,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **BREAKING:** `getPinnedObjects` now names each pinned object once, however many pins it holds; `getPinCount` gives the number of pins ([#1020](https://github.com/MetaMask/ocap-kernel/pull/1020))
 - **BREAKING:** `incrementRefCount` now throws on a kref the kernel has already deleted, rather than writing a resurrected row ([#1020](https://github.com/MetaMask/ocap-kernel/pull/1020))
   - A missing object row read as `(0, 0)` and was written back as a live-looking object with no owner; a missing promise row read as `NaN`, which no decrement can bring to zero, so the promise could never be collected. `decrementRefCount` still tolerates a missing object row, since releasing a reference to something already gone is ordinary teardown
-- **BREAKING:** `KernelStore`'s `beginOutOfCrank` and `endOutOfCrank` are replaced by `withStoreOutOfCrank(work)`, which takes the turn and gives it back however `work` ends ([#1021](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1021))
-  - A turn that was never given back left the run loop waiting on a promise nothing resolves: no failure, no log, no timeout. `work` must be synchronous: the type refuses a callback that returns a promise, and one that reaches it through inference anyway is thrown on rather than given the turn back mid-flight
 
 ### Fixed
 
@@ -85,7 +85,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Waiting for the store spans a whole crank, and a promise created in that crank was left with no decider and nothing to settle it, so the vat that sent the message waited forever
 - Keep a crank and a savepoint taken through `KernelStore.createSavepoint` from overlapping ([#1021](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1021))
   - Those savepoints bypass `ctx.savepoints` and so are invisible to `createCrankSavepoint`'s ordinal naming. One open across a crank left `releaseAllSavepoints` releasing `t0` into it rather than to a commit, so the caller's later rollback discarded the whole crank; one opened inside a crank was cancelled by a delivery rollback it had nothing to do with, or made durable by a release beneath it, after the peer had already been told the message was committed
-  - Both directions are now refused, and the two production callers — `RemoteHandle.handleRemoteMessage` and `RemoteManager`'s incarnation change — take their turn through the new `beginOutOfCrank`/`endOutOfCrank`, which the run loop consults via `outOfCrankWorkPending` before starting each crank. Work between the two must be synchronous
+  - Both directions are now refused, and the two production callers — `RemoteHandle.handleRemoteMessage` and `RemoteManager`'s incarnation change — take their turn through `withStoreOutOfCrank`, which the run loop consults via `outOfCrankWorkPending` before starting each crank
   - `handleRemoteMessage` now decodes an incoming `redeemURL` before opening its savepoint instead of awaiting inside it; the decode writes nothing, so the message stays atomic
   - Consequence: an inbound remote message or a peer's handshake arriving mid-crank waits for that crank to end, so their latency is now bounded by the slowest crank rather than being independent of it. A crank that sends to a remote can be slow. The alternative is to route inbound messages through the run queue as SwingSet's comms vat does, which is a larger change than this one
 - The reference count audit runs after the crank is committed rather than inside it, so a violation kills the run loop instead of rolling back a delivery whose caller the crank buffer flush had already answered ([#1021](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1021))

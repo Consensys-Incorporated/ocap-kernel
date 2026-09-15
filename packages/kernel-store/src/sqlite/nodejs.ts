@@ -349,13 +349,25 @@ export async function makeSQLKernelDatabase({
    * @param name - The name of the savepoint.
    */
   function createSavepoint(name: string): void {
+    // Ahead of the BEGIN, so a name this refuses leaves no transaction behind.
+    assertSafeIdentifier(name);
     // We must be in a transaction when creating the savepoint or releasing it
     // later will cause an autocommit.
     // See https://github.com/Agoric/agoric-sdk/issues/8423
-    beginIfNeeded();
-    assertSafeIdentifier(name);
+    const startedTransaction = beginIfNeeded();
     const query = SQL_QUERIES.CREATE_SAVEPOINT.replace('%NAME%', name);
-    db.exec(query);
+    try {
+      db.exec(query);
+    } catch (error) {
+      // Nothing was pushed, so no savepoint path would reach this transaction
+      // and `txAbandoned` is unset: left open, it would take every later write
+      // and be committed by some unrelated release. One we merely found open
+      // is the caller's to discard, not ours.
+      if (startedTransaction) {
+        discardTransaction('savepoint creation');
+      }
+      throw error;
+    }
     db._spStack.push(name);
   }
 

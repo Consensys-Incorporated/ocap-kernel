@@ -106,6 +106,32 @@ describe('store work outside a crank', () => {
     expect(() => kernelStore.startCrank()).not.toThrow();
   });
 
+  it('settles a thenable it refuses rather than leaving it unhandled', async () => {
+    let handleRejection: ((reason: unknown) => void) | undefined;
+    const thenable = {
+      then: (
+        _onFulfilled: (value: unknown) => void,
+        onRejected: (reason: unknown) => void,
+      ) => {
+        handleRejection = onRejected;
+      },
+    };
+
+    await expect(
+      kernelStore.withStoreOutOfCrank(
+        (() => thenable) as unknown as () => undefined,
+      ),
+    ).rejects.toThrow('work that is not synchronous');
+
+    // Nothing awaits the refused thenable, and an unhandled rejection ends the
+    // process — so the guard has to take the rejection channel before throwing.
+    expect(handleRejection).toBeDefined();
+    expect(() =>
+      handleRejection?.(new Error('rejected after being refused')),
+    ).not.toThrow();
+    expect(kernelStore.outOfCrankWorkPending()).toBeUndefined();
+  });
+
   // The run loop's protocol: re-check the gate until nothing is waiting, then
   // start the crank with no await in between. Checking once would have it
   // resume into `startCrank` with a caller already holding, which is a refusal

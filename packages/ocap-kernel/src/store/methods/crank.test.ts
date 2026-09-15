@@ -286,7 +286,7 @@ describe('crank methods', () => {
 
     it('forgets its savepoints even if releasing them fails', () => {
       crankMethods.startCrank();
-      context.savepoints = ['test'];
+      context.savepoints = savepoints('test');
       vi.mocked(kdb.releaseSavepoint).mockImplementationOnce(() => {
         throw new Error('database is gone');
       });

@@ -518,6 +518,35 @@ describe('KernelQueue', () => {
       expect(kernelStore.rollbackCrank).toHaveBeenCalledOnce();
     });
 
+    it('does not roll back a recorded vat death when the crank then throws', async () => {
+      (kernelStore.runQueueLength as unknown as MockInstance)
+        .mockReturnValueOnce(1)
+        .mockReturnValue(0);
+      (kernelStore.dequeueRun as unknown as MockInstance).mockReturnValueOnce({
+        type: 'send',
+        target: 'ko123',
+        message: { result: 'kp99' } as KernelMessage,
+      });
+      // `vatPowers.exitVat`: terminate without abort, so nothing has rolled
+      // back yet and the delivery itself succeeded.
+      const info = { body: '"exit"', slots: [] };
+      const deliver = vi
+        .fn()
+        .mockResolvedValue({ terminate: { vatId: 'v1', info } });
+      (
+        kernelStore.collectGarbage as unknown as MockInstance
+      ).mockImplementation(() => {
+        throw new Error(STOP_RUN_LOOP);
+      });
+
+      await expect(kernelQueue.run(deliver)).rejects.toThrow(STOP_RUN_LOOP);
+
+      // A rollback here would undo the death of a worker that is already gone,
+      // and `endCrank` would commit a store that relaunches it on next start.
+      expect(terminateVat).toHaveBeenCalledWith('v1', info);
+      expect(kernelStore.rollbackCrank).not.toHaveBeenCalled();
+    });
+
     it('reports both failures when the rollback also fails', async () => {
       (
         kernelStore.runQueueLength as unknown as MockInstance

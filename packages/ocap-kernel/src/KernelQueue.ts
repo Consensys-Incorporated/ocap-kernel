@@ -55,11 +55,15 @@ export class KernelQueue {
   #wakeUpTheRunQueue: (() => void) | null;
 
   /**
-   * Whether this crank's savepoint has already been handed to `rollbackCrank`.
-   * Attempted, not necessarily succeeded: it is forgotten either way, so asking
-   * twice could only report "no such savepoint" over the real error.
+   * Whether the run loop's catch may still roll this crank's delivery back.
+   *
+   * False once the savepoint has been handed to `rollbackCrank` — attempted,
+   * not necessarily succeeded, since it is forgotten either way and asking
+   * twice could only report "no such savepoint" over the real error — and
+   * false once a vat's death has been recorded, which must outlive whatever
+   * throws after it.
    */
-  #crankRollbackAttempted: boolean = false;
+  #deliveryRollbackAllowed: boolean = true;
 
   /**
    * The run loop's state, as one value so that a failure recorded for a loop
@@ -144,7 +148,7 @@ export class KernelQueue {
       }
 
       this.#kernelStore.startCrank();
-      this.#crankRollbackAttempted = false;
+      this.#deliveryRollbackAllowed = true;
       try {
         // Two savepoints, because rolling back the outermost one discards the
         // enclosing transaction (see `rollbackSavepoint`) and an aborted crank
@@ -176,7 +180,7 @@ export class KernelQueue {
         } catch (error) {
           // An aborted crank already asked; asking again could only throw "no
           // such savepoint" over the real error.
-          if (!this.#crankRollbackAttempted) {
+          if (this.#deliveryRollbackAllowed) {
             try {
               this.#kernelStore.rollbackCrank('delivery');
             } catch (rollbackError) {
@@ -362,8 +366,9 @@ export class KernelQueue {
       try {
         this.#kernelStore.rollbackCrank('delivery');
       } finally {
-        // Set even when the rollback threw: the savepoint is gone either way.
-        this.#crankRollbackAttempted = true;
+        // Cleared even when the rollback threw: the savepoint is gone either
+        // way.
+        this.#deliveryRollbackAllowed = false;
       }
       // Discard kernel subscriptions that were queued for invocation
       this.#resolvedWithKernelSubscription = [];
@@ -386,13 +391,20 @@ export class KernelQueue {
       // restart it and terminate the vat only after a certain number of failed
       // retries. This is probably where we should implement the vat restart logic.
     }
-    // This kills the worker, so its writes must outlive the rollback above: a
-    // store that still believed the vat was alive would relaunch it. They are
-    // still inside the crank's transaction, so a release or commit that fails
-    // in `endCrank` discards them along with the rest of it.
+    // This kills the worker, so its writes must outlive any rollback: a store
+    // that still believed the vat was alive would relaunch it, having already
+    // rejected the promises it was deciding and answered its callers. The
+    // abort path above has rolled back already, so they land on top of it;
+    // `vatPowers.exitVat` terminates *without* aborting, and there the work
+    // below can still throw into the run loop's catch, so the flag is what
+    // keeps that catch off them. Withholding it costs nothing, the delivery
+    // having succeeded on that path. They are still inside the crank's
+    // transaction either way, so a release or commit that fails in `endCrank`
+    // discards them along with the rest of it.
     if (crankResult?.terminate) {
       const { vatId, info } = crankResult.terminate;
       await this.#terminateVat(vatId, info);
+      this.#deliveryRollbackAllowed = false;
     }
     this.#kernelStore.collectGarbage();
     if (!crankResult?.abort) {

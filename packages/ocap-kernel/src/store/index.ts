@@ -303,13 +303,13 @@ export function makeKernelStore(kdb: KernelDatabase, logger?: Logger) {
    * These are invisible to `createCrankSavepoint`'s ordinal naming, so one
    * opened inside a crank would be rolled back by a delivery that has nothing
    * to do with it — after its owner had already reported success to a peer.
-   * Callers take their turn through `beginOutOfCrank`.
+   * Callers take their turn through `withStoreOutOfCrank`.
    *
    * @param name - The savepoint name.
    */
   function createSavepoint(name: string): void {
     !context.inCrank ||
-      Fail`createSavepoint ${q(name)} inside a crank; use beginOutOfCrank`;
+      Fail`createSavepoint ${q(name)} inside a crank; use withStoreOutOfCrank`;
     kdb.createSavepoint(name);
   }
 

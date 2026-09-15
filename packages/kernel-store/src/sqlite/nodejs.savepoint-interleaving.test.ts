@@ -16,7 +16,7 @@ import { makeSQLKernelDatabase } from './nodejs.ts';
  * what SQLite actually does, which is the reason the kernel now serializes the
  * two: `createSavepoint` refuses inside a crank, `startCrank` refuses while a
  * caller holds the store outside one, and callers take their turn through
- * `beginOutOfCrank`. See `crank.out-of-crank.test.ts` for the enforcement.
+ * `withStoreOutOfCrank`. See `crank.out-of-crank.test.ts` for the enforcement.
  */
 describe('a savepoint the crank does not know about', () => {
   it('outside the crank, leaves the crank release with nothing to commit', async () => {

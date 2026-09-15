@@ -82,6 +82,43 @@ describe('the wasm driver after a failure it tolerates', () => {
     mockDb._spStack = [];
   });
 
+  it('discards a transaction it began when the savepoint then fails', async () => {
+    const kdb = await makeSQLKernelDatabase({});
+    issued = [];
+
+    // Out of any transaction, so this call issues the BEGIN itself, and then
+    // the SAVEPOINT fails. Nothing would be on the savepoint stack to reach
+    // that transaction through and `txAbandoned` would be unset, so the orphan
+    // would take every later write and be committed by an unrelated release.
+    failOnce.add('SAVEPOINT t0');
+    expect(() => kdb.createSavepoint('t0')).toThrow('SQLITE_IOERR');
+
+    expect(issued).toStrictEqual([
+      'BEGIN TRANSACTION',
+      'SAVEPOINT t0',
+      'ROLLBACK TRANSACTION',
+    ]);
+    expect(txOpen).toBe(false);
+    expect(mockDb._spStack).toStrictEqual([]);
+  });
+
+  it('leaves a transaction it found open for its owner to discard', async () => {
+    const kdb = await makeSQLKernelDatabase({});
+    // A crank in progress: the transaction and `t0` are the run loop's.
+    txOpen = true;
+    mockDb._spStack = ['t0'];
+    issued = [];
+
+    failOnce.add('SAVEPOINT t1');
+    expect(() => kdb.createSavepoint('t1')).toThrow('SQLITE_IOERR');
+
+    // Discarding here would abort the crank behind its back; it still has `t0`
+    // to reach its own rollback through.
+    expect(issued).toStrictEqual(['SAVEPOINT t1']);
+    expect(txOpen).toBe(true);
+    expect(mockDb._spStack).toStrictEqual(['t0']);
+  });
+
   // Teardown after the run loop dies reaches the store by many doors, most of
   // which never touch `beginIfNeeded`.
   it.each([
