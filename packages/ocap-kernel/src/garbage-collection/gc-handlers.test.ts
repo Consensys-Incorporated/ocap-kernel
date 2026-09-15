@@ -99,6 +99,53 @@ describe('performExportCleanup', () => {
     },
   );
 
+  it.each(actions)(
+    'refuses $name for an object the kernel owns',
+    ({ name, checkReachable }) => {
+      const kref = kernelStore.initKernelObject('kernel');
+      kernelStore.translateRefKtoE('v1', kref, true);
+      kernelStore.clearReachableFlag('v1', kref);
+
+      expect(() =>
+        performExportCleanup([kref], checkReachable, 'v1', kernelStore),
+      ).toThrow(
+        `endpoint v1 issued ${name} for ${kref}, which is owned by kernel`,
+      );
+
+      expect(kernelStore.hasCListEntry('v1', kref)).toBe(true);
+    },
+  );
+
+  it.each(actions)(
+    'lets a remote give up its own export via $name',
+    ({ checkReachable }) => {
+      kernelStore.initEndpoint('r1');
+      const kref = kernelStore.exportFromEndpoint('r1', 'ro+1');
+      kernelStore.clearReachableFlag('r1', kref);
+
+      performExportCleanup([kref], checkReachable, 'r1', kernelStore);
+
+      expect(kernelStore.hasCListEntry('r1', kref)).toBe(false);
+    },
+  );
+
+  it.each(actions)(
+    'refuses $name from a remote that only imports the object',
+    ({ name, checkReachable }) => {
+      kernelStore.initEndpoint('r1');
+      const kref = kernelStore.exportFromEndpoint('v1', 'o+1');
+      kernelStore.translateRefKtoE('r1', kref, true);
+      kernelStore.clearReachableFlag('r1', kref);
+
+      expect(() =>
+        performExportCleanup([kref], checkReachable, 'r1', kernelStore),
+      ).toThrow(`endpoint r1 issued ${name} for ${kref}, which is owned by v1`);
+
+      expect(kernelStore.hasCListEntry('r1', kref)).toBe(true);
+      expect(kernelStore.hasCListEntry('v1', kref)).toBe(true);
+    },
+  );
+
   it('refuses retireExports for an object the owner still reaches', () => {
     const kref = kernelStore.exportFromEndpoint('v1', 'o+1');
 
@@ -119,8 +166,7 @@ describe('performExportCleanup', () => {
   it.each(actions)(
     'refuses $name for a promise',
     ({ name, checkReachable }) => {
-      const kpid = kernelStore.initKernelPromise()[0];
-      kernelStore.exportFromEndpoint('v1', 'p+1');
+      const kpid = kernelStore.exportFromEndpoint('v1', 'p+1');
 
       expect(() =>
         performExportCleanup([kpid], checkReachable, 'v1', kernelStore),

@@ -78,8 +78,8 @@ export function performExportCleanup(
         `endpoint ${endpointId} issued invalid ${action}Exports for ${kref}`,
       );
     }
-    // `translateSyscallVtoK` maps import and export refs alike: without these,
-    // an endpoint could disown another's object or tear down its own import.
+    // `translateSyscallVtoK` maps import and export refs alike, so nothing
+    // below required the named ref to be an export at all.
     const owner = kernelStore.getOwner(kref);
     if (owner !== undefined && owner !== endpointId) {
       throw Error(
