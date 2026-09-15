@@ -14,23 +14,58 @@ const mockKVDataForMap: [string, string][] = [
   ['key2', 'value2'],
 ];
 
-const mockStatement = {
+const makeMockStatement = () => ({
   run: vi.fn(),
   get: vi.fn(),
   all: vi.fn(),
   pluck: vi.fn(),
   iterate: vi.fn(() => mockKVData),
-};
+});
+
+const mockStatement = makeMockStatement();
+const mockBegin = makeMockStatement();
+const mockCommit = makeMockStatement();
+const mockAbort = makeMockStatement();
 
 const mockDb = {
-  prepare: vi.fn(() => mockStatement),
+  prepare: vi.fn((sql: string) => {
+    switch (sql) {
+      case SQL_QUERIES.BEGIN_TRANSACTION:
+        return mockBegin;
+      case SQL_QUERIES.COMMIT_TRANSACTION:
+        return mockCommit;
+      case SQL_QUERIES.ABORT_TRANSACTION:
+        return mockAbort;
+      default:
+        return mockStatement;
+    }
+  }),
   transaction: vi.fn((fn) => fn),
   exec: vi.fn(),
+  // better-sqlite3 reports this live, so the mock has to move it the way SQLite
+  // would: running BEGIN, COMMIT or ABORT is what changes it.
   inTransaction: false,
 
   _spStack: [] as string[],
   close: vi.fn(),
 };
+
+const resetStatements = (): void => {
+  [mockStatement, mockBegin, mockCommit, mockAbort].forEach((statement) =>
+    Object.values(statement).forEach((mock) => mock.mockReset()),
+  );
+  mockStatement.iterate.mockReturnValue(mockKVData);
+  mockBegin.run.mockImplementation(() => {
+    mockDb.inTransaction = true;
+  });
+  mockCommit.run.mockImplementation(() => {
+    mockDb.inTransaction = false;
+  });
+  mockAbort.run.mockImplementation(() => {
+    mockDb.inTransaction = false;
+  });
+};
+resetStatements();
 
 vi.mock('better-sqlite3', () => ({
   default: vi.fn(function () {
@@ -50,7 +85,9 @@ describe('makeSQLKernelDatabase', () => {
   const mockMkdir = vi.mocked(mkdir).mockResolvedValue('');
 
   beforeEach(() => {
-    Object.values(mockStatement).forEach((mock) => mock.mockReset());
+    resetStatements();
+    mockDb.inTransaction = false;
+    mockDb._spStack = [];
   });
 
   it('creates kv table', async () => {
@@ -213,8 +250,6 @@ describe('makeSQLKernelDatabase', () => {
   describe('savepoint functionality', () => {
     beforeEach(() => {
       mockDb.exec.mockClear();
-      mockDb.inTransaction = false;
-      mockDb._spStack = [];
     });
 
     it('creates a savepoint using sanitized name', async () => {
@@ -262,6 +297,7 @@ describe('makeSQLKernelDatabase', () => {
     it('createSavepoint begins transaction if needed', async () => {
       const db = await makeSQLKernelDatabase({});
       db.createSavepoint('test_point');
+      expect(mockBegin.run).toHaveBeenCalled();
       expect(mockDb._spStack).toContain('test_point');
       expect(mockDb.exec).toHaveBeenCalledWith('SAVEPOINT test_point');
     });
@@ -290,6 +326,8 @@ describe('makeSQLKernelDatabase', () => {
       mockDb._spStack = ['point1'];
       db.rollbackSavepoint('point1');
       expect(mockDb._spStack).toStrictEqual([]);
+      expect(mockAbort.run).toHaveBeenCalled();
+      expect(mockDb.inTransaction).toBe(false);
     });
 
     // Otherwise every later write on this connection joins a transaction nothing
@@ -308,9 +346,8 @@ describe('makeSQLKernelDatabase', () => {
       );
 
       expect(mockDb._spStack).toStrictEqual([]);
-      // The abort is the only prepared statement this path runs.
-      expect(mockStatement.run).toHaveBeenCalledOnce();
-      mockDb.inTransaction = false;
+      expect(mockAbort.run).toHaveBeenCalledOnce();
+      expect(mockDb.inTransaction).toBe(false);
     });
 
     // The rollback failure is the diagnosis; a failed abort on top of it only
@@ -322,7 +359,7 @@ describe('makeSQLKernelDatabase', () => {
       mockDb.exec.mockImplementationOnce(() => {
         throw new Error('disk I/O error');
       });
-      mockStatement.run.mockImplementationOnce(() => {
+      mockAbort.run.mockImplementationOnce(() => {
         throw new Error('cannot rollback');
       });
 
@@ -331,7 +368,7 @@ describe('makeSQLKernelDatabase', () => {
       );
 
       expect(mockDb._spStack).toStrictEqual([]);
-      mockDb.inTransaction = false;
+      expect(mockAbort.run).toHaveBeenCalledOnce();
     });
 
     it('releaseSavepoint validates savepoint exists', async () => {
@@ -358,17 +395,35 @@ describe('makeSQLKernelDatabase', () => {
       mockDb._spStack = ['point1'];
       db.releaseSavepoint('point1');
       expect(mockDb._spStack).toStrictEqual([]);
+      expect(mockCommit.run).toHaveBeenCalled();
+      expect(mockDb.inTransaction).toBe(false);
     });
 
     it('supports nested savepoints', async () => {
       const db = await makeSQLKernelDatabase({});
       db.createSavepoint('outer');
       db.createSavepoint('inner');
+      expect(mockBegin.run).toHaveBeenCalledOnce();
       expect(mockDb._spStack).toStrictEqual(['outer', 'inner']);
       db.rollbackSavepoint('inner');
       expect(mockDb._spStack).toStrictEqual(['outer']);
       db.releaseSavepoint('outer');
       expect(mockDb._spStack).toStrictEqual([]);
+      expect(mockCommit.run).toHaveBeenCalledOnce();
+    });
+
+    it('drops savepoints SQLite discarded with the transaction', async () => {
+      const db = await makeSQLKernelDatabase({});
+      db.createSavepoint('t0');
+      // SQLite ends the transaction itself after SQLITE_FULL, IOERR or BUSY,
+      // taking every savepoint in it.
+      mockDb.inTransaction = false;
+
+      db.createSavepoint('t1');
+      db.releaseSavepoint('t1');
+
+      expect(mockDb._spStack).toStrictEqual([]);
+      expect(mockCommit.run).toHaveBeenCalledOnce();
     });
   });
 

@@ -1,5 +1,8 @@
 import { Logger } from '@metamask/logger';
-import type { Database as SqliteDatabase } from '@sqlite.org/sqlite-wasm';
+import type {
+  Database as SqliteDatabase,
+  Sqlite3Static,
+} from '@sqlite.org/sqlite-wasm';
 import sqlite3InitModule from '@sqlite.org/sqlite-wasm';
 
 import {
@@ -11,10 +14,18 @@ import { getDBFolder } from './env.ts';
 import type { KVStore, VatStore, KernelDatabase } from '../types.ts';
 
 export type Database = SqliteDatabase & {
-  _inTx: boolean;
+  /**
+   * A cached answer goes stale: SQLite ends the transaction itself after
+   * SQLITE_FULL, SQLITE_IOERR or SQLITE_BUSY, and a driver still believing one
+   * is open skips the next `BEGIN` and then cannot commit.
+   */
+  readonly inTransaction: boolean;
   // stack of active savepoint names
   _spStack: string[];
 };
+
+/** `sqlite3_get_autocommit` is bound by the wasm build but absent from its types. */
+type AutocommitCapi = { sqlite3_get_autocommit: (pDb: number) => number };
 
 /**
  * Ensure that SQLite is initialized.
@@ -28,6 +39,12 @@ export async function initDB(
   logger?: Logger,
 ): Promise<Database> {
   const sqlite3 = await sqlite3InitModule();
+  const { sqlite3_get_autocommit: getAutocommit } =
+    sqlite3.capi as Sqlite3Static['capi'] & AutocommitCapi;
+  if (typeof getAutocommit !== 'function') {
+    throw Error('sqlite3 capi lacks sqlite3_get_autocommit');
+  }
+
   let db: SqliteDatabase;
 
   if (sqlite3.oo1.OpfsDb) {
@@ -41,7 +58,10 @@ export async function initDB(
   }
 
   const dbWithTx = db as Database;
-  dbWithTx._inTx = false;
+  Object.defineProperty(dbWithTx, 'inTransaction', {
+    get: () =>
+      dbWithTx.pointer !== undefined && getAutocommit(dbWithTx.pointer) === 0,
+  });
   dbWithTx._spStack = [];
 
   return dbWithTx;
@@ -185,12 +205,15 @@ export async function makeSQLKernelDatabase({
    * @returns True if a new transaction was started, false if already in one
    */
   function beginIfNeeded(): boolean {
-    if (db._inTx) {
+    if (db.inTransaction) {
       return false;
     }
     sqlBeginTransaction.step();
     sqlBeginTransaction.reset();
-    db._inTx = true;
+    // A savepoint named on the stack belonged to the transaction SQLite ended,
+    // and is gone with it. Left there, it makes `commitIfNeeded` defer to an
+    // owner that no longer exists, and nothing ever commits this one.
+    db._spStack.length = 0;
     return true;
   }
 
@@ -198,10 +221,9 @@ export async function makeSQLKernelDatabase({
    * Commit a transaction if one is active and no savepoints remain
    */
   function commitIfNeeded(): void {
-    if (db._inTx && db._spStack.length === 0) {
+    if (db.inTransaction && db._spStack.length === 0) {
       sqlCommitTransaction.step();
       sqlCommitTransaction.reset();
-      db._inTx = false;
     }
   }
 
@@ -209,10 +231,9 @@ export async function makeSQLKernelDatabase({
    * Rollback a transaction
    */
   function rollbackIfNeeded(): void {
-    if (db._inTx) {
+    if (db.inTransaction) {
       sqlAbortTransaction.step();
       sqlAbortTransaction.reset();
-      db._inTx = false;
       db._spStack.length = 0;
     }
   }
