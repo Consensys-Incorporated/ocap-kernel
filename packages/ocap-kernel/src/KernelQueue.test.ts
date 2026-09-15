@@ -1036,6 +1036,34 @@ describe('KernelQueue', () => {
     });
   });
 
+  describe('audit ordering', () => {
+    it('audits before the flush answers anyone', async () => {
+      (kernelStore.runQueueLength as unknown as MockInstance)
+        .mockReturnValueOnce(1)
+        .mockReturnValue(0);
+      (kernelStore.dequeueRun as unknown as MockInstance).mockReturnValueOnce({
+        type: 'send',
+        target: 'ko123',
+        message: {} as KernelMessage,
+      });
+      (kernelStore.startCrank as unknown as MockInstance)
+        .mockImplementationOnce(() => undefined)
+        .mockImplementation(() => {
+          throw new Error(STOP_RUN_LOOP);
+        });
+
+      await expect(kernelQueue.run(vi.fn())).rejects.toThrow(STOP_RUN_LOOP);
+
+      const auditedAt = (
+        kernelStore.assertRefCountsIfAuditing as unknown as MockInstance
+      ).mock.invocationCallOrder[0] as number;
+      const flushedAt = (
+        kernelStore.flushCrankBuffer as unknown as MockInstance
+      ).mock.invocationCallOrder[0] as number;
+      expect(auditedAt).toBeLessThan(flushedAt);
+    });
+  });
+
   describe('one-item-per-crank', () => {
     it('calls startCrank/endCrank for each delivered item', async () => {
       const items: RunQueueItem[] = [
@@ -1099,11 +1127,13 @@ describe('KernelQueue', () => {
         mockItem,
       );
       const deliver = vi.fn().mockResolvedValue(undefined);
-      (
-        kernelStore.collectGarbage as unknown as MockInstance
-      ).mockImplementation(() => {
-        throw new Error(STOP_RUN_LOOP);
-      });
+      // The second crank, so the first runs to its flush: the subscription
+      // callbacks come after the audit now.
+      (kernelStore.startCrank as unknown as MockInstance)
+        .mockImplementationOnce(() => undefined)
+        .mockImplementation(() => {
+          throw new Error(STOP_RUN_LOOP);
+        });
       await expect(kernelQueue.run(deliver)).rejects.toThrow(STOP_RUN_LOOP);
       expect(rejectSpy).toHaveBeenCalledWith(rejectedValue);
       expect(resolveSpy).not.toHaveBeenCalled();
@@ -1138,11 +1168,13 @@ describe('KernelQueue', () => {
         mockItem,
       );
       const deliver = vi.fn().mockResolvedValue(undefined);
-      (
-        kernelStore.collectGarbage as unknown as MockInstance
-      ).mockImplementation(() => {
-        throw new Error(STOP_RUN_LOOP);
-      });
+      // The second crank, so the first runs to its flush: the subscription
+      // callbacks come after the audit now.
+      (kernelStore.startCrank as unknown as MockInstance)
+        .mockImplementationOnce(() => undefined)
+        .mockImplementation(() => {
+          throw new Error(STOP_RUN_LOOP);
+        });
       await expect(kernelQueue.run(deliver)).rejects.toThrow(STOP_RUN_LOOP);
       expect(resolveSpy).toHaveBeenCalledWith(fulfilledValue);
       expect(rejectSpy).not.toHaveBeenCalled();
