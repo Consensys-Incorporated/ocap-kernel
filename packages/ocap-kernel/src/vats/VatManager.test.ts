@@ -185,6 +185,18 @@ describe('VatManager', () => {
       expect(kref).toBe('ko1');
     });
 
+    it('stops the worker when the handle never comes back', async () => {
+      makeVatHandleMock.mockRejectedValueOnce(new Error('handshake timed out'));
+
+      await expect(
+        vatManager.launchVat(createMockVatConfig(), 'bob', 's1'),
+      ).rejects.toThrow('Failed to launch vat v1 (bob)');
+
+      // The worker is spawned before anything that can fail here, and no handle
+      // was recorded, so this is the only chance to stop it.
+      expect(mockPlatformServices.terminate).toHaveBeenCalledWith('v1');
+    });
+
     it('attributes a launch failure to the vat by id and config name', async () => {
       const config = createMockVatConfig();
       const cause = new Error(
@@ -241,14 +253,11 @@ describe('VatManager', () => {
       mockKernelStore.setVatConfig.mockImplementationOnce(() => {
         throw cause;
       });
-      // The handle teardown is the last step of `stopVat`, and the one whose
-      // failure escapes it.
-      vatHandles.push = ((handle: Mocked<VatHandle>) => {
-        handle.terminate.mockRejectedValueOnce(
-          new Error('stream will not end'),
-        );
-        return Array.prototype.push.call(vatHandles, handle);
-      }) as typeof vatHandles.push;
+      // `stopVat` stops short of the mark when a write before it throws, which
+      // is what makes the assertion below about this catch rather than it.
+      mockKernelStore.deleteVat.mockImplementationOnce(() => {
+        throw new Error('deleteVat failed');
+      });
 
       const error = await vatManager
         .launchVat(config, 'bob', 's1')
@@ -345,7 +354,31 @@ describe('VatManager', () => {
       ]);
     });
 
-    it('marks the vat terminated even when an earlier write throws', async () => {
+    it('records the death with no yield point in it', async () => {
+      await vatManager.runVat('v1', createMockVatConfig());
+      mockKernelStore.getPromisesByDecider.mockReturnValueOnce(['kp1']);
+
+      const stopping = vatManager.stopVat('v1', true);
+      // Read before awaiting: everything the store has to be told is written in
+      // `stopVat`'s synchronous prefix, so a crank cannot land part-way through.
+      const writesBeforeTheFirstAwait = {
+        resolvePromises: mockKernelQueue.resolvePromises.mock.calls.length,
+        unpinObject: mockKernelStore.unpinObject.mock.calls.length,
+        deleteVat: mockKernelStore.deleteVat.mock.calls.length,
+        markVatAsTerminated:
+          mockKernelStore.markVatAsTerminated.mock.calls.length,
+      };
+      await stopping;
+
+      expect(writesBeforeTheFirstAwait).toStrictEqual({
+        resolvePromises: 1,
+        unpinObject: 1,
+        deleteVat: 1,
+        markVatAsTerminated: 1,
+      });
+    });
+
+    it('leaves the vat unmarked when an earlier write throws', async () => {
       await vatManager.runVat('v1', createMockVatConfig());
       mockKernelStore.deleteVat.mockImplementationOnce(() => {
         throw new Error('deleteVat failed');
@@ -355,11 +388,26 @@ describe('VatManager', () => {
         'deleteVat failed',
       );
 
-      // Otherwise the store goes on calling the vat active while the kernel has
-      // no handle for it.
-      expect(mockKernelStore.markVatAsTerminated).toHaveBeenCalledWith('v1');
+      // Marking it would make the deferred cleanup delete the decider
+      // promises' c-list entries believing they were rejected. Unmarked, the
+      // vat is simply not retired yet and the step can be tried again.
+      expect(mockKernelStore.markVatAsTerminated).not.toHaveBeenCalled();
       expect(mockPlatformServices.terminate).toHaveBeenCalled();
       expect(vatManager.hasVat('v1')).toBe(false);
+    });
+
+    it('reports the store failure rather than the channel failure', async () => {
+      await vatManager.runVat('v1', createMockVatConfig());
+      mockKernelStore.deleteVat.mockImplementationOnce(() => {
+        throw new Error('deleteVat failed');
+      });
+      vatHandles[0]?.terminate.mockRejectedValueOnce(
+        new Error('stream will not end'),
+      );
+
+      await expect(vatManager.stopVat('v1', true)).rejects.toThrow(
+        'deleteVat failed',
+      );
     });
 
     it('records nothing a second time', async () => {
