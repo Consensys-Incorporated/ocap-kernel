@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Add `getRemoteIDs` to the kernel store, listing every remote the kernel knows about ([#1086](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1086))
+- Add `getRemoteIDs` to the kernel store, listing every remote the kernel knows about ([#1088](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1088))
 - Add `IOListener`, an endpoint peers connect to that yields one `IOChannel` per connection via `accept()`, replacing the previous one-client-at-a-time channel. Each accepted connection is a distinct object, so holding one conveys no way to reach another, and `direction` is enforced per connection. `accept()` resolves `null` once the listener is closed so an accept loop can terminate rather than hang ([#1007](https://github.com/MetaMask/ocap-kernel/pull/1007))
 - Anonymous kernel-hosted objects are recorded persistently and swept at kernel init, so one abandoned by a previous incarnation is not left pinned forever, accumulating with every restart — an anonymous object has no name to be re-registered under on boot, unlike a named service. The sweep unpins but cannot delete an object a vat import or queued message still references, so it does not by itself make a delivery to a survivor safe; the `invokeKernelService` fix below is what does ([#1007](https://github.com/MetaMask/ocap-kernel/pull/1007))
 - Add `KernelServiceManager.registerAnonymousKernelObject()` / `releaseAnonymousKernelObject()`, which make a kernel-hosted object routable by kref without entering it in the service-name index, so it has no name in the global service namespace and cannot be requested via a cluster config's `services` list. Used to host accepted IO connections, whose authority comes from holding the reference ([#1007](https://github.com/MetaMask/ocap-kernel/pull/1007))
@@ -62,7 +62,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- `getImporters` counts remote importers and terminated vats cleanup has not reached, so retiring a kernel object tells every endpoint still holding it rather than leaving an importer with a c-list entry naming a kref that no longer exists ([#1086](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1086))
+- `getImporters` counts remote importers and terminated vats cleanup has not reached, so retiring a kernel object tells every endpoint still holding it rather than leaving an importer with a c-list entry naming a kref that no longer exists ([#1088](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1088))
 - A message delivered to a kernel-owned kref with no registered service now rejects the caller with `ENDPOINT_UNREACHABLE` instead of throwing, which escaped the crank and killed the run loop — turning one unreachable reference into a dead kernel ([#1007](https://github.com/MetaMask/ocap-kernel/pull/1007))
   - Reachable without any kernel bug: an anonymous kernel object hosts something that cannot outlive the process, such as an accepted socket connection, so a vat holding one across a restart or a message to one still queued from the previous incarnation lands here. That surviving reference is exactly what stops the init sweep deleting the object, so its `kernel` owner survives with it
   - Matches what `KernelRouter` already does for a delivery whose endpoint has vanished. A message sent with no result promise has nobody to report to, so it is logged instead
