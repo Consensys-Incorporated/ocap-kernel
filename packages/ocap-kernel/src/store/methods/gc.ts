@@ -50,12 +50,12 @@ export function getGCMethods(ctx: StoreContext) {
    */
   function orphanKernelObject(kref: KRef, expectedOwner: EndpointId): void {
     const owner = getOwner(kref);
-    if (owner === undefined) {
-      return;
-    }
-    owner === expectedOwner ||
+    owner === undefined ||
+      owner === expectedOwner ||
       Fail`cannot orphan ${kref} for ${expectedOwner}: owned by ${owner}`;
     ctx.kv.delete(getOwnerKey(kref));
+    // An export c-list entry holds no count, so its teardown queues nothing:
+    // this is the only thing that hands the object to the collector.
     ctx.maybeFreeKrefs.add(kref);
   }
 
@@ -183,9 +183,10 @@ export function getGCMethods(ctx: StoreContext) {
           // might still alive, or might be terminated and in the
           // process of being deleted. These two clauses are
           // mutually exclusive.
-          if (ownerVatID && !terminated && !hasCListEntry(ownerVatID, kref)) {
+          if (ownerVatID && !hasCListEntry(ownerVatID, kref)) {
             // Unreachable once every disown path orphans; repaired loudly so
-            // the collector can continue.
+            // the collector can continue. Both branches below need the entry —
+            // the terminated one reads it with `getRequired`.
             ctx.logger?.error(
               `${kref} is owned by live endpoint ${ownerVatID}, which has no ` +
                 `c-list entry for it; treating it as orphaned`,
