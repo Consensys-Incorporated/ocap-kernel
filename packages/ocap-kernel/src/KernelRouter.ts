@@ -16,7 +16,9 @@ import type {
   KernelMessage,
   RunQueueItem,
   RunQueueItemSend,
+  RemoteEndpointHandle,
   RunQueueItemBringOutYourDead,
+  RunQueueItemRemoteInbound,
   RunQueueItemNotify,
   RunQueueItemGCAction,
   CrankResult,
@@ -103,6 +105,8 @@ export class KernelRouter {
         return await this.#deliverGCAction(item);
       case 'bringOutYourDead':
         return await this.#deliverBringOutYourDead(item);
+      case 'remoteInbound':
+        return await this.#deliverRemoteInbound(item);
       default:
         // @ts-expect-error Runtime does not respect "never".
         Fail`unsupported or unknown run queue item type ${item.type}`;
@@ -478,6 +482,38 @@ export class KernelRouter {
         | 'deliverRetireImports';
     const crankResult = await endpoint[method](erefs);
     return crankResult;
+  }
+
+  /**
+   * Take delivery of a message from a remote peer, in a crank of its own.
+   *
+   * The remote can be gone by the time its turn comes: the message was
+   * accepted while it was live and the queue outlives it. Throwing here would
+   * escape the crank and kill the run loop, and the rollback would put the
+   * item back for the next boot to die on, so the message is dropped and said
+   * so. Absence of a handle is the whole test — a remote can have no handle
+   * without being recorded as terminated.
+   *
+   * @param item - The inbound message.
+   * @returns The crank outcome.
+   */
+  async #deliverRemoteInbound(
+    item: RunQueueItemRemoteInbound,
+  ): Promise<CrankResult> {
+    const { remoteId, message } = item;
+    let remote: RemoteEndpointHandle;
+    try {
+      remote = this.#getEndpoint(remoteId) as RemoteEndpointHandle;
+    } catch (error) {
+      // Above the per-delivery trace channel: a message dropped on the floor is
+      // the only trace of a peer whose remote went away under it.
+      this.#logger?.error(
+        `Skipped an inbound message for ${remoteId}, which is not running:`,
+        error,
+      );
+      return { didDelivery: remoteId };
+    }
+    return await remote.deliverInbound(message);
   }
 
   /**
