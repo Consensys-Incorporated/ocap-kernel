@@ -482,7 +482,19 @@ export class KernelRouter {
       );
       return { didDelivery: remoteId };
     }
-    return await remote.deliverInbound(message);
+    try {
+      return await remote.deliverInbound(message);
+    } catch (error) {
+      // What a peer sends is a peer's to get wrong: an unknown method, a
+      // reference that does not resolve, a reply to a redemption that has
+      // already timed out. None of that is the kernel's to die of, and the
+      // crank has rolled back whatever the attempt started.
+      this.#logger?.error(
+        `Discarded an inbound message from ${remoteId} that could not be delivered:`,
+        error,
+      );
+      return { didDelivery: remoteId, abort: true };
+    }
   }
 
   /**

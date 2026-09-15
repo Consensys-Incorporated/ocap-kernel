@@ -846,6 +846,27 @@ describe('KernelRouter', () => {
 
         expect(result).toStrictEqual({ didDelivery: remoteId });
       });
+
+      // What a peer sends is a peer's to get wrong, and the payload is only
+      // checked when its crank comes up. Throwing would kill the run loop.
+      it('discards a message it cannot deliver rather than dying of it', async () => {
+        const remoteId = 'r1' as RemoteId;
+        const deliverInbound = vi
+          .fn()
+          .mockRejectedValue(Error('unknown remote message type bogus'));
+        vi.mocked(getEndpoint).mockReturnValue({
+          ...endpointHandle,
+          deliverInbound,
+        } as unknown as EndpointHandle);
+
+        const result = await kernelRouter.deliver({
+          type: 'remoteInbound',
+          remoteId,
+          message: '{"seq":1,"method":"bogus"}',
+        });
+
+        expect(result).toStrictEqual({ didDelivery: remoteId, abort: true });
+      });
     });
 
     it('throws on unknown run queue item type', async () => {

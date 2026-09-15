@@ -55,7 +55,7 @@ async function receiveAndRunCrank(
 ): Promise<void> {
   remote.receiveFromPeer(message);
   const queued = vi
-    .mocked(mockKernelQueue.enqueueRemoteInbound)
+    .mocked(mockKernelQueue.acceptRemoteInbound)
     .mock.calls.at(-1);
   if (!queued) {
     return;
@@ -328,75 +328,31 @@ describe('RemoteHandle', () => {
       });
     });
 
-    // Only the run loop consumes `nextReapAction`, so a dead loop would leave the
-    // peer's request acknowledged and never performed.
-    it('refuses an incoming bringOutYourDead when the run loop is dead', async () => {
+    // The run loop is what drains an arrival, so a dead one would leave the
+    // peer acknowledged by a black hole. The refusal is the queue's, at the
+    // point the message is accepted rather than when its crank comes up.
+    it('lets the queue refuse an arrival for a dead run loop', () => {
       const remote = makeRemote();
-      const delivery = JSON.stringify({
-        seq: 1,
-        method: 'deliver',
-        params: ['bringOutYourDead'],
-      });
       const failure = new Error('Kernel run loop died; cannot accept it');
-      vi.mocked(mockKernelQueue.assertRunLoopAlive).mockImplementation(() => {
+      vi.mocked(mockKernelQueue.acceptRemoteInbound).mockImplementation(() => {
         throw failure;
       });
 
-      await expect(remote.deliverInbound(delivery)).rejects.toBe(failure);
-      expect(mockKernelStore.nextReapAction()).toBeUndefined();
+      expect(() =>
+        remote.receiveFromPeer(
+          JSON.stringify({
+            seq: 1,
+            method: 'deliver',
+            params: ['bringOutYourDead'],
+          }),
+        ),
+      ).toThrow(failure);
 
-      // The refusal must not advance the received sequence number, or the peer's
-      // retry would be discarded as a duplicate.
-      vi.mocked(mockKernelQueue.assertRunLoopAlive).mockImplementation(
-        () => undefined,
-      );
-      await receiveAndRunCrank(remote, delivery);
-      expect(mockKernelStore.nextReapAction()).toStrictEqual({
-        type: 'bringOutYourDead',
-        endpointId: remote.remoteId,
-      });
+      // Nothing was recorded, so the peer's retry is not a duplicate.
+      expect(
+        mockKernelStore.getRemoteSeqState(mockRemoteId)?.highestReceivedSeq,
+      ).toBeUndefined();
     });
-
-    // A dead run loop will never deliver the message, and `deliverInbound`
-    // rolls back without advancing the received sequence number, so the peer
-    // retries and gives up rather than being acknowledged by a black hole.
-    it.each([
-      {
-        kind: 'message',
-        params: [
-          'message',
-          'ro+1',
-          { methargs: { body: '["method",[]]', slots: [] }, result: 'rp+2' },
-        ],
-        handedToQueue: () => mockKernelQueue.enqueueSend,
-      },
-      {
-        kind: 'notify',
-        params: ['notify', [['rp+1', false, { body: '"x"', slots: [] }]]],
-        handedToQueue: () => mockKernelQueue.resolvePromises,
-      },
-    ])(
-      'refuses an incoming $kind when the run loop is dead',
-      async ({ params, handedToQueue }) => {
-        const remote = makeRemote();
-        const delivery = JSON.stringify({ seq: 1, method: 'deliver', params });
-        const failure = new Error('Kernel run loop died; cannot accept it');
-        vi.mocked(mockKernelQueue.assertRunLoopAlive).mockImplementation(() => {
-          throw failure;
-        });
-
-        await expect(remote.deliverInbound(delivery)).rejects.toBe(failure);
-        expect(handedToQueue()).not.toHaveBeenCalled();
-
-        // The refusal must not advance the received sequence number, or the
-        // peer's retry would be discarded as a duplicate.
-        vi.mocked(mockKernelQueue.assertRunLoopAlive).mockImplementation(
-          () => undefined,
-        );
-        await receiveAndRunCrank(remote, delivery);
-        expect(handedToQueue()).toHaveBeenCalledOnce();
-      },
-    );
 
     it('does not send BOYD back when remotely triggered (ping-pong prevention)', async () => {
       const remote = makeRemote();
@@ -1276,7 +1232,7 @@ describe('RemoteHandle', () => {
 
       // An acknowledgement is not a delivery: it is handled where it arrives
       // and never reaches the run queue.
-      expect(mockKernelQueue.enqueueRemoteInbound).not.toHaveBeenCalled();
+      expect(mockKernelQueue.acceptRemoteInbound).not.toHaveBeenCalled();
     });
 
     it('assigns sequential sequence numbers to outgoing messages', async () => {
@@ -1315,7 +1271,7 @@ describe('RemoteHandle', () => {
         'invalid message seq',
       );
 
-      expect(mockKernelQueue.enqueueRemoteInbound).not.toHaveBeenCalled();
+      expect(mockKernelQueue.acceptRemoteInbound).not.toHaveBeenCalled();
       // Left to be written, `highestReceivedSeq` reads back as `NaN`, and
       // every later comparison against it is false: duplicate detection never
       // fires again and the peer is never acknowledged again.
@@ -1371,6 +1327,44 @@ describe('RemoteHandle', () => {
       expect(
         mockKernelStore.getPendingMessage(mockRemoteId, 1),
       ).toBeUndefined();
+    });
+  });
+
+  describe('two messages from one peer in flight at once', () => {
+    // The run queue can hold several before any of their cranks commit, and
+    // `#highestReceivedSeq` only catches up as each one does — so memory is
+    // the wrong thing to compare against.
+    it('tells them apart by what the store has, not what memory has', async () => {
+      const remote = makeRemote();
+      const message = (seq: number): string =>
+        JSON.stringify({ seq, method: 'deliver', params: ['notify', []] });
+
+      // Two cranks, neither of their post-commit halves run yet.
+      const first = await remote.deliverInbound(message(1));
+      const second = await remote.deliverInbound(message(2));
+      await first.afterCommit?.();
+      await second.afterCommit?.();
+
+      expect(
+        mockKernelStore.getRemoteSeqState(mockRemoteId)?.highestReceivedSeq,
+      ).toBe(2);
+    });
+
+    it('discards the second delivery of one sequence number', async () => {
+      const remote = makeRemote();
+      const message = JSON.stringify({
+        seq: 1,
+        method: 'deliver',
+        params: ['notify', [['rp+1', false, { body: '"x"', slots: [] }]]],
+      });
+      await remote.deliverInbound(message);
+      vi.mocked(mockKernelQueue.resolvePromises).mockClear();
+
+      // Its crank has not committed, so memory still says nothing was received.
+      const result = await remote.deliverInbound(message);
+
+      expect(result.afterCommit).toBeUndefined();
+      expect(mockKernelQueue.resolvePromises).not.toHaveBeenCalled();
     });
   });
 
