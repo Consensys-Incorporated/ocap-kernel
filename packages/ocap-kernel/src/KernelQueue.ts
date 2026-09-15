@@ -132,6 +132,8 @@ export class KernelQueue {
     this.#runLoopState.state === 'failed' &&
       Fail`run loop died and cannot be run again`;
     this.#runLoopState = { state: 'running' };
+    // So the store can refuse a savepoint taken alongside a crank.
+    this.#kernelStore.setRunLoopRunning(true);
     try {
       return await this.#runLoop(deliver);
     } catch (error) {
@@ -139,6 +141,7 @@ export class KernelQueue {
       // handler and `getRunLoopStatus` describe one object rather than two.
       throw this.#failRunLoop(error);
     } finally {
+      this.#kernelStore.setRunLoopRunning(false);
       // However the loop left — stopped as asked, or dead. A caller waiting on
       // a loop that died would otherwise wait for good, and `Kernel.stop`
       // awaits this before closing the database.
