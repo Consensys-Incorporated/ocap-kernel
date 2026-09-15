@@ -4,18 +4,15 @@ import { makeMapKernelDatabase } from '../../../test/storage.ts';
 import { makeKernelStore } from '../index.ts';
 
 /**
- * `maybeFreeKrefs` is not per-crank: only `collectGarbage` empties it, so a
- * candidate added while no crank was open is still owed a collection and has to
- * survive an unrelated crank's rollback.
+ * Only `collectGarbage` empties `maybeFreeKrefs`, so a candidate added while no
+ * crank was open is still owed a collection and has to survive an unrelated
+ * crank's rollback. A peer restart is the real producer: it runs from a network
+ * callback, `forgetEndpointImports` adds every export the peer abandoned, and
+ * nothing collects them until the next crank harvests.
  *
- * `RemoteManager.#handlePeerIncarnation` is one such producer. It runs from a
- * network callback with no crank open, and `persistPeerRestart` ->
- * `forgetEndpointImports` adds every export the restarting peer abandoned. It
- * calls no `collectGarbage` of its own, so those krefs wait for the next
- * crank's harvest -- and their kv state is already committed by the time it
- * comes. A rollback that discarded them would leave the objects orphaned,
- * undeleted, and invisible even to the reference count audit, which sees an
- * orphan with no holders and a count of zero as consistent.
+ * Discarding them would leave those objects orphaned, undeleted, and invisible
+ * even to the reference count audit, which reads an orphan with no holders and
+ * a count of zero as consistent.
  */
 describe('a GC candidate produced outside a crank', () => {
   let kernelStore: ReturnType<typeof makeKernelStore>;
@@ -37,14 +34,21 @@ describe('a GC candidate produced outside a crank', () => {
    *
    * @param options - How the crank ends.
    * @param options.rollback - Whether the delivery aborts.
+   * @param options.harvest - Whether the crank reaches `collectGarbage`. The
+   * run loop's own catch rolls back and rethrows, so an aborted crank does not.
    */
-  function runCrank({ rollback = false }: { rollback?: boolean } = {}): void {
+  function runCrank({
+    rollback = false,
+    harvest = true,
+  }: { rollback?: boolean; harvest?: boolean } = {}): void {
     kernelStore.startCrank();
     kernelStore.createCrankSavepoint('start');
     if (rollback) {
       kernelStore.rollbackCrank('start');
     }
-    kernelStore.collectGarbage();
+    if (harvest) {
+      kernelStore.collectGarbage();
+    }
     kernelStore.endCrank();
   }
 
@@ -71,7 +75,7 @@ describe('a GC candidate produced outside a crank', () => {
   it('survives a rollback of a crank that never touched it', () => {
     const kref = orphanARemoteExport();
 
-    runCrank({ rollback: true });
+    runCrank({ rollback: true, harvest: false });
     for (let crank = 0; crank < 5; crank += 1) {
       runCrank();
     }

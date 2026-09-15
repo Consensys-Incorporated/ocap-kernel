@@ -54,19 +54,17 @@ export function getCrankMethods(ctx: StoreContext, kdb: KernelDatabase) {
       if (restored?.name === savepoint) {
         try {
           kdb.rollbackSavepoint(`t${ordinal}`);
-          // Forget the savepoint even if the rollback failed. Leaving it listed
-          // would have `endCrank`'s release commit the crank we just abandoned —
-          // the half-finished state this rollback exists to discard. A failed
-          // rollback discards the whole transaction instead (see
-          // `rollbackSavepoint`), which for a crank is the same boundary.
           ctx.savepoints.length = ordinal;
         } catch (error) {
+          // A failed rollback discards the whole transaction (see
+          // `rollbackSavepoint`), so no savepoint survives it and RAM goes back
+          // to where the outermost one was taken, not to the named one.
+          // Reverting before the rethrow, because leaving the caches as they
+          // are would have the dying crank still holding the GC action it
+          // consumed and the freed krefs it was about to collect.
+          const outermost = ctx.savepoints[0] ?? restored;
           ctx.savepoints.length = 0;
-          // Before the rethrow. A failed rollback discards the whole
-          // transaction, so the database has moved back at least as far as a
-          // successful rollback would have taken it and these caches are at
-          // least as stale.
-          revertStateBeneathRollback(restored, error);
+          revertStateBeneathRollback(outermost, error);
           throw error;
         }
         revertStateBeneathRollback(restored);
@@ -90,22 +88,22 @@ export function getCrankMethods(ctx: StoreContext, kdb: KernelDatabase) {
     restored: Savepoint,
     rollbackError?: unknown,
   ): void {
+    // Nothing rolls back RAM. Krefs the abandoned crank added are collection
+    // candidates only because of decrements that were just undone; left in
+    // place, `collectGarbage` throws on a later crank for any promise that
+    // crank created, killing the run loop over work that no longer exists.
+    // Restored to the snapshot rather than cleared, because the set is not
+    // per-crank: only `collectGarbage` empties it, so a candidate added while
+    // the run loop was idle is still owed a collection. Done first, being the
+    // one step that cannot fail.
+    ctx.maybeFreeKrefs.clear();
+    for (const kref of restored.maybeFreeKrefs) {
+      ctx.maybeFreeKrefs.add(kref);
+    }
     try {
       ctx.refreshRunQueue();
       ctx.runQueueLengthCache = -1;
       ctx.refreshCachedValues();
-      // Nothing rolls back RAM. Krefs this crank added are collection
-      // candidates only because of decrements that were just undone; left in
-      // place, `collectGarbage` throws on a later crank for any promise this
-      // one created, killing the run loop over work that no longer exists.
-      // Restored to the snapshot rather than cleared, because the set is not
-      // per-crank: only `collectGarbage` empties it, so a candidate added
-      // while the run loop was idle is still owed a collection and must
-      // survive an unrelated crank's rollback.
-      ctx.maybeFreeKrefs.clear();
-      for (const kref of restored.maybeFreeKrefs) {
-        ctx.maybeFreeKrefs.add(kref);
-      }
     } catch (revertError) {
       if (rollbackError === undefined) {
         throw revertError;
