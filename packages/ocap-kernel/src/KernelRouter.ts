@@ -43,6 +43,16 @@ type MessageRoute = {
   target: KRef;
 } | null;
 
+type KernelRouterOptions = {
+  kernelStore: KernelStore;
+  kernelQueue: KernelQueue;
+  getEndpoint: (endpointId: EndpointId) => EndpointHandle;
+  invokeKernelService: (target: KRef, message: KernelMessage) => void;
+  restartVat: (vatId: VatId) => Promise<void>;
+  terminateVat: (vatId: VatId, reason?: CapData<KRef>) => Promise<void>;
+  logger?: Logger;
+};
+
 /**
  * The KernelRouter is responsible for routing messages to the correct endpoint.
  *
@@ -83,23 +93,24 @@ export class KernelRouter {
   /**
    * Construct a new KernelRouter.
    *
-   * @param kernelStore - The kernel's store.
-   * @param kernelQueue - The kernel's queue.
-   * @param getEndpoint - A function that returns an endpoint handle for a given endpoint id.
-   * @param invokeKernelService - A function that calls a method on a kernel service object.
-   * @param restartVat - A function that replaces a vat's worker.
-   * @param terminateVat - A function that ends a vat.
-   * @param logger - The logger. If not provided, no logging will be done.
+   * @param options - Options bag.
+   * @param options.kernelStore - The kernel's store.
+   * @param options.kernelQueue - The kernel's queue.
+   * @param options.getEndpoint - A function that returns an endpoint handle for a given endpoint id.
+   * @param options.invokeKernelService - A function that calls a method on a kernel service object.
+   * @param options.restartVat - A function that replaces a vat's worker.
+   * @param options.terminateVat - A function that ends a vat.
+   * @param options.logger - The logger. If not provided, no logging will be done.
    */
-  constructor(
-    kernelStore: KernelStore,
-    kernelQueue: KernelQueue,
-    getEndpoint: (endpointId: EndpointId) => EndpointHandle,
-    invokeKernelService: (target: KRef, message: KernelMessage) => void,
-    restartVat: (vatId: VatId) => Promise<void>,
-    terminateVat: (vatId: VatId, reason?: CapData<KRef>) => Promise<void>,
-    logger?: Logger,
-  ) {
+  constructor({
+    kernelStore,
+    kernelQueue,
+    getEndpoint,
+    invokeKernelService,
+    restartVat,
+    terminateVat,
+    logger,
+  }: KernelRouterOptions) {
     this.#kernelStore = kernelStore;
     this.#kernelQueue = kernelQueue;
     this.#getEndpoint = getEndpoint;
