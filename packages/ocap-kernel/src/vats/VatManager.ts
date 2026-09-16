@@ -8,6 +8,7 @@ import { stringify } from '@metamask/kernel-utils';
 import { Logger, splitLoggerStream } from '@metamask/logger';
 
 import type { KernelQueue } from '../KernelQueue.ts';
+import { makeKernelError } from '../liveslots/kernel-marshal.ts';
 import type { KernelStore } from '../store/index.ts';
 import type {
   VatId,
@@ -118,23 +119,60 @@ export class VatManager {
     try {
       await this.runVat(vatId, vatConfig);
     } catch (error) {
+      // `platformServices.launch` has already spawned the worker by the time
+      // anything below it can fail, and `runVat` records no handle to reach it
+      // by, so this is the only chance to stop it. `stopVat` is no use here:
+      // there is neither a handle nor a `vatConfig` row for it to work from.
+      await this.#platformServices
+        .terminate(vatId)
+        .catch((stopError: unknown) =>
+          this.#logger.error(
+            `Failed to stop the worker for vat ${vatId} after an incomplete launch:`,
+            stopError,
+          ),
+        );
       // Attribute the failure to the specific vat by kernel id and name.
       throw new Error(`Failed to launch vat ${vatId} (${vatName})`, {
         cause: error,
       });
     }
-    this.#kernelStore.initEndpoint(vatId);
-    const rootRef = this.#kernelStore.exportFromEndpoint(
-      vatId,
-      ROOT_OBJECT_VREF,
-    );
-    // A root is addressable for as long as its vat lives, whether or not
-    // anyone currently imports it: the kernel's own API hands out root krefs
-    // and `getRootObject` resolves them through this c-list entry. Without a
-    // pin, GC would retire the entry the moment the last importer let go.
-    this.#kernelStore.pinObject(rootRef);
-    this.#kernelStore.setVatConfig(vatId, vatConfig);
-    return rootRef;
+    try {
+      this.#kernelStore.initEndpoint(vatId);
+      const rootRef = this.#kernelStore.exportFromEndpoint(
+        vatId,
+        ROOT_OBJECT_VREF,
+      );
+      // A root is addressable for as long as its vat lives, whether or not
+      // anyone currently imports it: the kernel's own API hands out root krefs
+      // and `getRootObject` resolves them through this c-list entry. Without a
+      // pin, GC would retire the entry the moment the last importer let go.
+      this.#kernelStore.pinObject(rootRef);
+      this.#kernelStore.setVatConfig(vatId, vatConfig);
+      return rootRef;
+    } catch (error) {
+      // The worker is already running, so leaving it would strand a vat the
+      // kernel has no record of.
+      let stopFailure: unknown;
+      try {
+        await this.stopVat(vatId, true);
+      } catch (caught) {
+        stopFailure = caught;
+        this.#logger.error(
+          `Failed to stop vat ${vatId} after incomplete launch; its worker may still be running:`,
+          caught,
+        );
+      }
+      // `stopVat` marks the vat itself, but only if every write before the
+      // mark succeeded. The mark is what makes the terminated-vat cleanup
+      // reclaim the endpoint counters and the root's c-list pair, and a vat
+      // this young has no decider promises for that cleanup to get wrong, so
+      // here it is asserted rather than assumed.
+      this.#kernelStore.markVatAsTerminated(vatId);
+      throw new Error(
+        `Failed to launch vat ${vatId} (${vatName})${stopFailure ? ' (cleanup also failed)' : ''}`,
+        { cause: error },
+      );
+    }
   }
 
   /**
@@ -184,22 +222,98 @@ export class VatManager {
     terminating: boolean,
     reason?: CapData<KRef>,
   ): Promise<void> {
-    const vat = this.getVat(vatId);
+    // A restart needs a live handle to read its config from and to come back
+    // into; an ending vat does not, and must not. A failed relaunch leaves a
+    // vat the store still lists and the kernel has no handle for, and retiring
+    // it is exactly what puts that right.
+    const vat = terminating ? this.#vats.get(vatId) : this.getVat(vatId);
+    if (terminating && !vat && !this.#kernelStore.isVatActive(vatId)) {
+      throw new VatNotFoundError(vatId);
+    }
     let terminationError: Error | undefined;
     if (reason) {
       terminationError = new Error(`Vat termination: ${reason.body}`);
     } else if (terminating) {
       terminationError = new VatDeletedError(vatId);
     }
-    if (terminating) {
-      // A restart keeps the pin: the same root comes back.
-      this.releaseVatRootPin(vatId);
+    let recordFailure: Error | undefined;
+    try {
+      if (terminating) {
+        this.#retireVat(vatId, terminationError as Error);
+      } else {
+        // A restart keeps the pin and the records: the same vat, and the same
+        // root, are coming back. Only the handle goes.
+        this.#vats.delete(vatId);
+      }
+    } catch (error) {
+      // Held rather than thrown: the worker is being killed either way, and a
+      // record that failed must not leave one running.
+      recordFailure = error as Error;
     }
     await this.#platformServices
       .terminate(vatId, terminationError)
       .catch(this.#logger.error);
-    await vat.terminate(terminating, terminationError);
+    try {
+      await vat?.terminate(terminating, terminationError);
+    } catch (error) {
+      // A channel that will not close is survivable and a store left
+      // half-written is not, so the latter is what the caller hears about.
+      if (recordFailure === undefined) {
+        throw error;
+      }
+      this.#logger.error(`Channel to vat ${vatId} would not close:`, error);
+    }
+    if (recordFailure !== undefined) {
+      throw recordFailure;
+    }
+  }
+
+  /**
+   * Record a vat's death: everything the kernel has to remember about it, in
+   * one synchronous step.
+   *
+   * Synchronous is the point. A death is four writes — the promises it was
+   * deciding rejected, its root unpinned, its config and store dropped, the
+   * terminated mark set — and none means much without the others. Interleaved
+   * with awaits, as they used to be, a crank lands between them and reads a vat
+   * that is half dead.
+   *
+   * Killing the worker is deliberately not part of it: that can fail, and a
+   * store that says the vat is dead is worth more than one still waiting to
+   * find out.
+   *
+   * The mark goes last, and is not attempted if anything above it throws. It is
+   * what makes the vat eligible for `nextTerminatedVatCleanup`, and that
+   * cleanup deletes the decider promises' c-list entries on the stated
+   * understanding that its caller has already rejected them. A vat marked after
+   * those rejections failed is one whose subscribers hang for good, so a
+   * failure part-way leaves a vat that has simply not been retired — its c-list
+   * intact, and the whole step available to be tried again.
+   *
+   * Calling it twice records nothing the second time: a second
+   * `releaseVatRootPin` would spend a pin this vat no longer holds.
+   *
+   * @param vatId - The vat being retired.
+   * @param error - Why, for the rejections its subscribers are owed.
+   */
+  #retireVat(vatId: VatId, error: Error): void {
+    // Ahead of the guard, and safe there because nothing below reads it: a vat
+    // the store already calls dead must not keep a handle the router would go
+    // on resolving.
     this.#vats.delete(vatId);
+    if (this.#kernelStore.isVatTerminated(vatId)) {
+      return;
+    }
+    const failure = makeKernelError('VAT_TERMINATED', error.message);
+    for (const kpid of this.#kernelStore.getPromisesByDecider(vatId)) {
+      this.#kernelQueue.resolvePromises(vatId, [[kpid, true, failure]]);
+    }
+    this.releaseVatRootPin(vatId);
+    // Together, always. `cleanupTerminatedVat` sweeps `${vatId}.` keys, which
+    // never match `vatConfig.${vatId}`, so a vat left with that row reads as
+    // active again the moment the cleanup drops the mark.
+    this.#kernelStore.deleteVat(vatId);
+    this.#kernelStore.markVatAsTerminated(vatId);
   }
 
   /**
@@ -211,8 +325,6 @@ export class VatManager {
   async terminateVat(vatId: VatId, reason?: CapData<KRef>): Promise<void> {
     await this.#kernelQueue.waitForCrank();
     await this.stopVat(vatId, true, reason);
-    // Mark for deletion (which will happen later, in vat-cleanup events)
-    this.#kernelStore.markVatAsTerminated(vatId);
   }
 
   /**
