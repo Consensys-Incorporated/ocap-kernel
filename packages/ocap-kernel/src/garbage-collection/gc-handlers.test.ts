@@ -42,6 +42,7 @@ describe('performExportCleanup', () => {
       performExportCleanup([kref], checkReachable, 'v1', kernelStore);
 
       expect(kernelStore.hasCListEntry('v1', kref)).toBe(false);
+      expect(kernelStore.getOwner(kref)).toBeUndefined();
     },
   );
 
@@ -126,6 +127,7 @@ describe('performExportCleanup', () => {
       performExportCleanup([kref], checkReachable, 'r1', kernelStore);
 
       expect(kernelStore.hasCListEntry('r1', kref)).toBe(false);
+      expect(kernelStore.getOwner(kref)).toBeUndefined();
     },
   );
 
@@ -161,6 +163,7 @@ describe('performExportCleanup', () => {
     performExportCleanup([kref], false, 'v1', kernelStore);
 
     expect(kernelStore.hasCListEntry('v1', kref)).toBe(false);
+    expect(kernelStore.getOwner(kref)).toBeUndefined();
   });
 
   it.each(actions)(

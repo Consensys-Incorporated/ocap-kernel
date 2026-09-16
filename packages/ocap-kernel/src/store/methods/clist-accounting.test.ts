@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 
 import { makeMapKernelDatabase } from '../../../test/storage.ts';
+import { performExportCleanup } from '../../garbage-collection/gc-handlers.ts';
 import type { VatConfig, VatId } from '../../types.ts';
 import { makeKernelStore } from '../index.ts';
 
@@ -310,6 +311,86 @@ describe('c-list reference accounting', () => {
         `v1 retireExport ${kref}`,
       ]);
       expect(kernelStore.auditRefCounts()).toStrictEqual([]);
+    });
+  });
+
+  describe('an owner that gives up its own export', () => {
+    /**
+     * Retire an export on the owner's behalf, the way a `retireExports`
+     * syscall does.
+     *
+     * @param kref - The object being given up.
+     */
+    function givenV1RetiresIt(kref: string): void {
+      kernelStore.clearReachableFlag('v1', kref);
+      performExportCleanup([kref], true, 'v1', kernelStore);
+    }
+
+    it('frees the object once the last importer lets go', () => {
+      const kref = kernelStore.exportFromEndpoint('v1', 'o+1');
+      kernelStore.translateRefKtoE('v2', kref, true);
+      kernelStore.clearReachableFlag('v2', kref);
+      kernelStore.collectGarbage();
+
+      givenV1RetiresIt(kref);
+
+      kernelStore.forgetKref('v2', kref);
+      kernelStore.collectGarbage();
+
+      expect(kernelStore.kernelRefExists(kref)).toBe(false);
+      expect(kernelStore.auditRefCounts()).toStrictEqual([]);
+    });
+
+    it('collects an orphan that no importer ever recognized', () => {
+      const kref = kernelStore.exportFromEndpoint('v1', 'o+1');
+
+      givenV1RetiresIt(kref);
+      kernelStore.collectGarbage();
+
+      expect(kernelStore.getOwner(kref)).toBeUndefined();
+      expect(kernelStore.kernelRefExists(kref)).toBe(false);
+    });
+
+    it('retires stragglers that still recognize an orphaned object', () => {
+      const kref = kernelStore.exportFromEndpoint('v1', 'o+1');
+      kernelStore.translateRefKtoE('v2', kref, true);
+      kernelStore.clearReachableFlag('v2', kref);
+
+      givenV1RetiresIt(kref);
+      kernelStore.collectGarbage();
+
+      expect([...kernelStore.getGCActions()]).toStrictEqual([
+        `v2 retireImport ${kref}`,
+      ]);
+      // v2's entry outlives the object it names until that action is delivered.
+      // The audit has to tolerate that window, or the end-of-crank check throws
+      // on a state the collector itself just created.
+      expect(kernelStore.auditRefCounts()).toStrictEqual([]);
+    });
+
+    it('rejects an endpoint disowning an object it does not own', () => {
+      const kref = kernelStore.exportFromEndpoint('v1', 'o+1');
+      kernelStore.translateRefKtoE('v2', kref, true);
+
+      expect(() => kernelStore.orphanKernelObject(kref, 'v2')).toThrow(
+        'owned by "v1"',
+      );
+      expect(kernelStore.getOwner(kref)).toBe('v1');
+    });
+
+    it('survives an owner mapping left behind without a c-list entry', () => {
+      const kref = kernelStore.exportFromEndpoint('v1', 'o+1');
+      kernelStore.translateRefKtoE('v2', kref, true);
+      kernelStore.clearReachableFlag('v2', kref);
+      kernelStore.clearReachableFlag('v1', kref);
+      // Tear the owner's side down but leave the ownership record, the shape
+      // that used to make the next collection read a key that wasn't there.
+      kernelStore.forgetKref('v1', kref);
+      kernelStore.forgetKref('v2', kref);
+
+      expect(() => kernelStore.collectGarbage()).not.toThrow();
+      expect(kernelStore.getOwner(kref)).toBeUndefined();
+      expect(kernelStore.kernelRefExists(kref)).toBe(false);
     });
   });
 });

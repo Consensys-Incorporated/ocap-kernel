@@ -1,6 +1,7 @@
 import { Fail } from '@endo/errors';
 
 import { getBaseMethods } from './base.ts';
+import { getCListMethods } from './clist.ts';
 import { getObjectMethods } from './object.ts';
 import { getPromiseMethods } from './promise.ts';
 import { getReachableMethods } from './reachable.ts';
@@ -33,6 +34,30 @@ export function getGCMethods(ctx: StoreContext) {
   const { getImporters, isVatTerminated } = getVatMethods(ctx);
   const { getReachableFlag, getReachableAndVatSlot } = getReachableMethods(ctx);
   const { clearEmptySubclusters } = getSubclusterMethods(ctx);
+  const { hasCListEntry } = getCListMethods(ctx);
+
+  /**
+   * Give up the kernel's record of who owns an object, leaving the collector to
+   * dispose of it once nothing names it any more.
+   *
+   * The owner mapping must not outlive the c-list entry it was reachable
+   * through, or `collectGarbage` reads an entry that is gone. Disowning is only
+   * ever the owner's own doing, hence `expectedOwner`; an object that is already
+   * orphaned is left alone.
+   *
+   * @param kref - The object whose owner mapping is to be dropped.
+   * @param expectedOwner - The endpoint the caller believes owns `kref`.
+   */
+  function orphanKernelObject(kref: KRef, expectedOwner: EndpointId): void {
+    const owner = getOwner(kref);
+    owner === undefined ||
+      owner === expectedOwner ||
+      Fail`cannot orphan ${kref} for ${expectedOwner}: owned by ${owner}`;
+    ctx.kv.delete(getOwnerKey(kref));
+    // An export c-list entry holds no count, so its teardown queues nothing:
+    // this is the only thing that hands the object to the collector.
+    ctx.maybeFreeKrefs.add(kref);
+  }
 
   /**
    * Get the set of GC actions to perform.
@@ -158,7 +183,17 @@ export function getGCMethods(ctx: StoreContext) {
           // might still alive, or might be terminated and in the
           // process of being deleted. These two clauses are
           // mutually exclusive.
-          if (ownerVatID && !terminated) {
+          if (ownerVatID && !hasCListEntry(ownerVatID, kref)) {
+            // Unreachable once every disown path orphans; repaired loudly so
+            // the collector can continue. Both branches below need the entry —
+            // the terminated one reads it with `getRequired`.
+            ctx.logger?.error(
+              `${kref} is owned by live endpoint ${ownerVatID}, which has no ` +
+                `c-list entry for it; treating it as orphaned`,
+            );
+            orphanKernelObject(kref, ownerVatID);
+            ownerVatID = undefined;
+          } else if (ownerVatID && !terminated) {
             const vatConsidersReachable = getReachableFlag(ownerVatID, kref);
             if (vatConsidersReachable) {
               // the reachable count is zero, but the vat doesn't realize it
@@ -221,6 +256,7 @@ export function getGCMethods(ctx: StoreContext) {
     scheduleReap,
     nextReapAction,
     retireKernelObjects,
+    orphanKernelObject,
     collectGarbage,
   };
 }
