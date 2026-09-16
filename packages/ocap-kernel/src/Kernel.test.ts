@@ -15,6 +15,7 @@ import type {
   OnRunLoopFailure,
   PlatformServices,
   ClusterConfig,
+  RunQueueItem,
 } from './types.ts';
 import { VatHandle } from './vats/VatHandle.ts';
 import { makeMapKernelDatabase } from '../test/storage.ts';
@@ -31,13 +32,19 @@ const mocks = vi.hoisted(() => {
 
     #rejectRunLoop: ((error: Error) => void) | undefined;
 
+    /**
+     * The router's dispatch, so queued work can be carried out as a crank
+     * would carry it out.
+     */
+    #deliver: ((item: RunQueueItem) => Promise<unknown>) | undefined;
+
     // Like the real run loop, this settles only if the kernel dies.
-    run = vi.fn(
-      async () =>
-        new Promise<never>((_resolve, reject) => {
-          this.#rejectRunLoop = reject;
-        }),
-    );
+    run = vi.fn(async (deliver: (item: RunQueueItem) => Promise<unknown>) => {
+      this.#deliver = deliver;
+      return new Promise<never>((_resolve, reject) => {
+        this.#rejectRunLoop = reject;
+      });
+    });
 
     /**
      * Fail the run loop, in the order the real `KernelQueue.run` does: the
@@ -65,7 +72,30 @@ const mocks = vi.hoisted(() => {
         : { state: 'running' },
     );
 
-    enqueueRestartVat = vi.fn();
+    // A stand-in for the run loop: the item is delivered through the router,
+    // on a later turn, exactly as a crank would deliver it.
+    enqueueRestartVat = vi.fn((vatId: string) => {
+      this.#deliverLater({ type: 'restartVat', vatId } as RunQueueItem);
+    });
+
+    enqueueTerminateVat = vi.fn((vatId: string, reason?: unknown) => {
+      this.#deliverLater({
+        type: 'terminateVat',
+        vatId,
+        ...(reason ? { reason } : {}),
+      } as RunQueueItem);
+    });
+
+    /**
+     * @param item - The queued item to hand to the router on a later turn.
+     */
+    #deliverLater(item: RunQueueItem): void {
+      queueMicrotask(() => {
+        this.#deliver?.(item).catch((error: unknown) => {
+          throw error;
+        });
+      });
+    }
 
     onRunLoopDeath = vi.fn((reject: (error: Error) => void) => {
       this.#runLoopDeathWaiters.add(reject);
@@ -678,6 +708,22 @@ describe('Kernel', () => {
   });
 
   describe('terminateVat()', () => {
+    it('asks the run loop to terminate the vat', async () => {
+      const kernel = await Kernel.make(
+        mockPlatformServices,
+        mockKernelDatabase,
+      );
+      await kernel.launchSubcluster(makeSingleVatClusterConfig());
+
+      await kernel.terminateVat('v1');
+
+      // The death is written inside the crank that performs it, rather than in
+      // whichever crank happens to be open when the control plane asks.
+      expect(
+        mocks.KernelQueue.lastInstance.enqueueTerminateVat,
+      ).toHaveBeenCalledWith('v1', undefined);
+    });
+
     it('deletes a vat from the kernel without errors when the vat exists', async () => {
       const kernel = await Kernel.make(
         mockPlatformServices,
@@ -821,6 +867,22 @@ describe('Kernel', () => {
 
       queue.killRunLoop(new Error('run loop boom'));
       await expect(restarting).rejects.toThrow('run loop boom');
+    });
+
+    it('restarts a vat', async () => {
+      const kernel = await Kernel.make(
+        mockPlatformServices,
+        mockKernelDatabase,
+      );
+      await kernel.launchSubcluster(makeSingleVatClusterConfig());
+
+      const returnedHandle = await kernel.restartVat('v1');
+
+      expect(vatHandles[0]?.terminate).toHaveBeenCalledOnce();
+      expect(terminateWorkerMock).toHaveBeenCalledOnce();
+      expect(launchWorkerMock).toHaveBeenCalledTimes(2);
+      expect(kernel.getVatIds()).toStrictEqual(['v1']);
+      expect(returnedHandle).toBe(vatHandles[1]);
     });
 
     it('throws error when restarting non-existent vat', async () => {

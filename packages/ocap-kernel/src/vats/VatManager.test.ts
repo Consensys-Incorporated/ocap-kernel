@@ -1,3 +1,4 @@
+import type { CapData } from '@endo/marshal';
 import {
   VatAlreadyExistsError,
   VatDeletedError,
@@ -11,7 +12,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import type { KernelQueue } from '../KernelQueue.ts';
 import type { KernelStore } from '../store/index.ts';
-import type { VatId, VatConfig, PlatformServices } from '../types.ts';
+import type { KRef, VatId, VatConfig, PlatformServices } from '../types.ts';
 import { VatHandle } from './VatHandle.ts';
 import { VatManager } from './VatManager.ts';
 
@@ -96,6 +97,15 @@ describe('VatManager', () => {
             // back and kills it, so surfacing it here is the point.
             throw error;
           });
+        });
+      }),
+      enqueueTerminateVat: vi.fn((vatId: VatId, reason?: CapData<KRef>) => {
+        queueMicrotask(() => {
+          vatManager
+            .performVatTermination(vatId, reason)
+            .catch((error: unknown) => {
+              throw error;
+            });
         });
       }),
       onRunLoopDeath: vi.fn(() => () => undefined),
@@ -536,7 +546,10 @@ describe('VatManager', () => {
 
       await vatManager.terminateVat('v1');
 
-      expect(mockKernelQueue.waitForCrank).toHaveBeenCalled();
+      expect(mockKernelQueue.enqueueTerminateVat).toHaveBeenCalledWith(
+        'v1',
+        undefined,
+      );
       expect(mockPlatformServices.terminate).toHaveBeenCalled();
       expect(vatHandles[0]?.terminate).toHaveBeenCalled();
       expect(mockKernelStore.markVatAsTerminated).toHaveBeenCalledWith('v1');
@@ -554,6 +567,71 @@ describe('VatManager', () => {
         'v1',
         expect.objectContaining({ message: 'Vat termination: Custom reason' }),
       );
+    });
+
+    it('supersedes a restart still queued for the same vat', async () => {
+      await vatManager.runVat('v1', createMockVatConfig());
+      mockKernelQueue.enqueueRestartVat.mockImplementationOnce(() => undefined);
+      const restarting = vatManager.restartVat('v1');
+
+      await vatManager.terminateVat('v1');
+
+      // The crank that reaches the restart will find nothing to restart, so
+      // its caller is told now rather than left waiting on it.
+      await expect(restarting).rejects.toThrow(VatDeletedError);
+    });
+
+    it('throws for a vat that is neither running nor persisted', async () => {
+      mockKernelStore.isVatActive.mockReturnValue(false);
+
+      await expect(vatManager.terminateVat('v9')).rejects.toThrow(
+        VatNotFoundError,
+      );
+      expect(mockKernelQueue.enqueueTerminateVat).not.toHaveBeenCalled();
+    });
+
+    describe('performVatTermination', () => {
+      it('carries out a request nobody is waiting for', async () => {
+        await vatManager.runVat('v1', createMockVatConfig());
+
+        // A termination is an instruction rather than a request: an item that
+        // outlived its caller is one `initializeAllVats` has just undone.
+        await vatManager.performVatTermination('v1');
+
+        expect(mockKernelStore.markVatAsTerminated).toHaveBeenCalledWith('v1');
+      });
+
+      it('answers a caller whose vat something else already killed', async () => {
+        await vatManager.runVat('v1', createMockVatConfig());
+        mockKernelQueue.enqueueTerminateVat.mockImplementationOnce(
+          () => undefined,
+        );
+        const terminating = vatManager.terminateVat('v1');
+        // The in-crank termination path, or `terminateAllVats`, gets there
+        // first — which is exactly what this caller asked for.
+        await vatManager.stopVat('v1', true);
+        mockKernelStore.isVatActive.mockReturnValue(false);
+
+        await vatManager.performVatTermination('v1');
+
+        expect(await terminating).toBeUndefined();
+      });
+
+      it('settles without rejecting when the teardown fails', async () => {
+        await vatManager.runVat('v1', createMockVatConfig());
+        mockKernelQueue.enqueueTerminateVat.mockImplementationOnce(
+          () => undefined,
+        );
+        const terminating = vatManager.terminateVat('v1');
+        mockKernelStore.deleteVat.mockImplementationOnce(() => {
+          throw new Error('deleteVat failed');
+        });
+
+        // The run loop has no catch: a rejection there rolls the crank back,
+        // undoing whatever of the death did get written.
+        expect(await vatManager.performVatTermination('v1')).toBeUndefined();
+        await expect(terminating).rejects.toThrow('deleteVat failed');
+      });
     });
 
     describe('a vat that is persisted but not running', () => {
@@ -617,15 +695,6 @@ describe('VatManager', () => {
         await vatManager.terminateVat('v1');
 
         expect(mockKernelStore.unpinObject).toHaveBeenCalledWith('ko1');
-      });
-
-      it('throws for a vat that is neither running nor persisted', async () => {
-        mockKernelStore.isVatActive.mockReturnValue(false);
-
-        await expect(vatManager.terminateVat('v9')).rejects.toThrow(
-          VatNotFoundError,
-        );
-        expect(mockKernelStore.markVatAsTerminated).not.toHaveBeenCalled();
       });
     });
   });
@@ -1024,6 +1093,17 @@ describe('VatManager', () => {
   });
 
   describe('terminateAllVats', () => {
+    it('writes directly rather than queuing', async () => {
+      await vatManager.runVat('v1', createMockVatConfig());
+
+      await vatManager.terminateAllVats();
+
+      // Part of tearing the kernel down: `reset` has to work on a kernel whose
+      // run loop has died, and a queued request never would be.
+      expect(mockKernelQueue.enqueueTerminateVat).not.toHaveBeenCalled();
+      expect(mockKernelStore.markVatAsTerminated).toHaveBeenCalledWith('v1');
+    });
+
     it('terminates all vats in reverse order', async () => {
       await vatManager.runVat('v1', createMockVatConfig());
       await vatManager.runVat('v2', createMockVatConfig());
