@@ -49,6 +49,10 @@ const mocks = vi.hoisted(() => {
     killRunLoop(error: Error): void {
       this.#runLoopFailure = error;
       this.#rejectRunLoop?.(error);
+      for (const reject of this.#runLoopDeathWaiters) {
+        reject(error);
+      }
+      this.#runLoopDeathWaiters.clear();
     }
 
     getRunLoopStatus = vi.fn(() =>
@@ -60,6 +64,17 @@ const mocks = vi.hoisted(() => {
           }
         : { state: 'running' },
     );
+
+    enqueueRestartVat = vi.fn();
+
+    onRunLoopDeath = vi.fn((reject: (error: Error) => void) => {
+      this.#runLoopDeathWaiters.add(reject);
+      return () => {
+        this.#runLoopDeathWaiters.delete(reject);
+      };
+    });
+
+    readonly #runLoopDeathWaiters = new Set<(error: Error) => void>();
 
     assertRunLoopAlive = vi.fn((what: string) => {
       if (this.#runLoopFailure) {
@@ -790,44 +805,22 @@ describe('Kernel', () => {
   });
 
   describe('restartVat()', () => {
-    it('preserves vat state across multiple restarts', async () => {
+    it('asks the run loop to restart the vat', async () => {
       const kernel = await Kernel.make(
         mockPlatformServices,
         mockKernelDatabase,
       );
       await kernel.launchSubcluster(makeSingleVatClusterConfig());
-      await kernel.restartVat('v1');
-      expect(kernel.getVatIds()).toStrictEqual(['v1']);
-      await kernel.restartVat('v1');
-      expect(kernel.getVatIds()).toStrictEqual(['v1']);
-      expect(vatHandles).toHaveLength(3); // Three instances created
-      expect(vatHandles[0]?.terminate).toHaveBeenCalledTimes(1);
-      expect(vatHandles[1]?.terminate).toHaveBeenCalledTimes(1);
-      expect(vatHandles[2]?.terminate).not.toHaveBeenCalled();
-      expect(launchWorkerMock).toHaveBeenCalledTimes(3); // initial + 2 restarts
-      expect(launchWorkerMock).toHaveBeenLastCalledWith(
-        'v1',
-        makeMockVatConfig(),
-      );
-    });
+      const queue = mocks.KernelQueue.lastInstance;
 
-    it('restarts a vat', async () => {
-      const kernel = await Kernel.make(
-        mockPlatformServices,
-        mockKernelDatabase,
-      );
-      await kernel.launchSubcluster(makeSingleVatClusterConfig());
-      expect(kernel.getVatIds()).toStrictEqual(['v1']);
-      await kernel.restartVat('v1');
-      expect(vatHandles[0]?.terminate).toHaveBeenCalledOnce();
-      expect(terminateWorkerMock).toHaveBeenCalledOnce();
-      expect(launchWorkerMock).toHaveBeenCalledTimes(2);
-      expect(launchWorkerMock).toHaveBeenLastCalledWith(
-        'v1',
-        makeMockVatConfig(),
-      );
-      expect(kernel.getVatIds()).toStrictEqual(['v1']);
-      expect(makeVatHandleMock).toHaveBeenCalledTimes(2);
+      // The caller waits on the queued item, so the outcome belongs to the
+      // tests that drive a run loop: `VatManager.test.ts` and kernel-test's
+      // `vat-lifecycle`.
+      const restarting = kernel.restartVat('v1');
+      expect(queue.enqueueRestartVat).toHaveBeenCalledWith('v1');
+
+      queue.killRunLoop(new Error('run loop boom'));
+      await expect(restarting).rejects.toThrow('run loop boom');
     });
 
     it('throws error when restarting non-existent vat', async () => {
@@ -838,46 +831,9 @@ describe('Kernel', () => {
       await expect(kernel.restartVat('v999')).rejects.toThrow(VatNotFoundError);
       expect(vatHandles).toHaveLength(0);
       expect(launchWorkerMock).not.toHaveBeenCalled();
-    });
-
-    it('handles restart failure during termination', async () => {
-      const kernel = await Kernel.make(
-        mockPlatformServices,
-        mockKernelDatabase,
-      );
-      await kernel.launchSubcluster(makeSingleVatClusterConfig());
-      vatHandles[0]?.terminate.mockRejectedValueOnce(
-        new Error('Termination failed'),
-      );
-      await expect(kernel.restartVat('v1')).rejects.toThrow(
-        'Termination failed',
-      );
-      expect(launchWorkerMock).toHaveBeenCalledTimes(1);
-    });
-
-    it('handles restart failure during launch', async () => {
-      const kernel = await Kernel.make(
-        mockPlatformServices,
-        mockKernelDatabase,
-      );
-      await kernel.launchSubcluster(makeSingleVatClusterConfig());
-      launchWorkerMock.mockRejectedValueOnce(new Error('Launch failed'));
-      await expect(kernel.restartVat('v1')).rejects.toThrow('Launch failed');
-      expect(vatHandles[0]?.terminate).toHaveBeenCalledOnce();
-      expect(kernel.getVatIds()).toStrictEqual([]);
-    });
-
-    it('returns the new vat handle', async () => {
-      const kernel = await Kernel.make(
-        mockPlatformServices,
-        mockKernelDatabase,
-      );
-      await kernel.launchSubcluster(makeSingleVatClusterConfig());
-      const originalHandle = vatHandles[0];
-      const returnedHandle = await kernel.restartVat('v1');
-      expect(returnedHandle).not.toBe(originalHandle);
-      expect(returnedHandle).toBe(vatHandles[1]);
-      expect(returnedHandle.vatId).toBe('v1');
+      expect(
+        mocks.KernelQueue.lastInstance.enqueueRestartVat,
+      ).not.toHaveBeenCalled();
     });
   });
 

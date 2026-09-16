@@ -20,6 +20,7 @@ import type {
   RunQueueItemNotify,
   RunQueueItemGCAction,
   CrankResult,
+  VatId,
 } from './types.ts';
 import { assert, Fail } from './utils/assert.ts';
 
@@ -47,6 +48,12 @@ export class KernelRouter {
   /** A function that invokes a method on a kernel service. */
   readonly #invokeKernelService: (target: KRef, message: KernelMessage) => void;
 
+  /**
+   * A function that replaces a vat's worker, for the crank that carries out a
+   * queued restart request.
+   */
+  readonly #restartVat: (vatId: VatId) => Promise<void>;
+
   /** The logger, if any. */
   readonly #logger: Logger | undefined;
 
@@ -57,6 +64,7 @@ export class KernelRouter {
    * @param kernelQueue - The kernel's queue.
    * @param getEndpoint - A function that returns an endpoint handle for a given endpoint id.
    * @param invokeKernelService - A function that calls a method on a kernel service object.
+   * @param restartVat - A function that replaces a vat's worker.
    * @param logger - The logger. If not provided, no logging will be done.
    */
   constructor(
@@ -64,12 +72,14 @@ export class KernelRouter {
     kernelQueue: KernelQueue,
     getEndpoint: (endpointId: EndpointId) => EndpointHandle,
     invokeKernelService: (target: KRef, message: KernelMessage) => void,
+    restartVat: (vatId: VatId) => Promise<void>,
     logger?: Logger,
   ) {
     this.#kernelStore = kernelStore;
     this.#kernelQueue = kernelQueue;
     this.#getEndpoint = getEndpoint;
     this.#invokeKernelService = invokeKernelService;
+    this.#restartVat = restartVat;
     this.#logger = logger;
   }
 
@@ -103,6 +113,9 @@ export class KernelRouter {
         return await this.#deliverGCAction(item);
       case 'bringOutYourDead':
         return await this.#deliverBringOutYourDead(item);
+      case 'restartVat':
+        await this.#restartVat(item.vatId);
+        return undefined;
       default:
         // @ts-expect-error Runtime does not respect "never".
         Fail`unsupported or unknown run queue item type ${item.type}`;

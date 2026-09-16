@@ -16,6 +16,7 @@ import type {
   GCRunQueueType,
   CrankResult,
   EndpointHandle,
+  VatId,
 } from './types.ts';
 
 describe('KernelRouter', () => {
@@ -25,6 +26,7 @@ describe('KernelRouter', () => {
   let getEndpoint: (endpointId: EndpointId) => EndpointHandle;
   let endpointHandle: EndpointHandle;
   let kernelRouter: KernelRouter;
+  let mockRestartVat: MockInstance<(vatId: VatId) => Promise<void>>;
 
   beforeEach(() => {
     // Mock EndpointHandle with more detailed return values
@@ -76,6 +78,7 @@ describe('KernelRouter', () => {
     } as unknown as KernelQueue;
 
     const mockInvokeKernelService = vi.fn();
+    mockRestartVat = vi.fn(async () => undefined);
 
     // Create the router to test
     kernelRouter = new KernelRouter(
@@ -83,7 +86,21 @@ describe('KernelRouter', () => {
       kernelQueue,
       getEndpoint,
       mockInvokeKernelService,
+      mockRestartVat,
     );
+  });
+
+  describe('restartVat', () => {
+    it('hands a queued restart request to the vat manager', async () => {
+      const result = await kernelRouter.deliver({
+        type: 'restartVat',
+        vatId: 'v1',
+      });
+
+      expect(mockRestartVat).toHaveBeenCalledWith('v1');
+      // Nothing for the crank to do with it: the manager answers its caller.
+      expect(result).toBeUndefined();
+    });
   });
 
   describe('deliver', () => {
