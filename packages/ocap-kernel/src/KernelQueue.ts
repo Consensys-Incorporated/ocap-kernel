@@ -127,6 +127,7 @@ export class KernelQueue {
   ): Promise<never> {
     for (;;) {
       let wakeUpPromise: Promise<void> | undefined;
+      let afterCommit: (() => Promise<void>) | undefined;
       // Boxed, so a crank that threw `undefined` stays distinguishable from one
       // that did not throw.
       let crankFailure: { error: unknown } | undefined;
@@ -153,6 +154,9 @@ export class KernelQueue {
             this.#kernelStore.nextTerminatedVatCleanup();
             const crankResult = await deliver(queueItem);
             await this.#processCrankResult(crankResult, queueItem);
+            if (!crankResult?.abort) {
+              afterCommit = crankResult?.afterCommit;
+            }
           } else {
             if (this.#wakeUpTheRunQueue !== null) {
               Fail`run queue already waiting to be woken; cannot sleep again before the previous wake handler is consumed`;
@@ -185,6 +189,12 @@ export class KernelQueue {
         if (wakeUpPromise) {
           await wakeUpPromise;
         }
+      }
+      // Outside the `finally`, so a crank that threw never reaches it: the
+      // writes this reports on are not there to report. Guarded rather than
+      // `await afterCommit?.()`, which would yield a microtask on every crank.
+      if (afterCommit) {
+        await afterCommit();
       }
     }
   }
