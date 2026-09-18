@@ -61,6 +61,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A crank that aborts keeps the writes that follow the abort — the vat's death, the collection after it — instead of autocommitting them one statement at a time outside any transaction: the run loop takes a savepoint for the crank and one for the delivery, and only the delivery is rolled back ([#1090](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1090))
+- A vat that exits gracefully stays dead when the rest of its crank then throws; before, the run loop's catch rolled the death record back and would have relaunched a vat whose worker was gone and whose callers had been answered ([#1090](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1090))
 - A crank rollback reverts the in-memory caches built over the writes it discards, so an abandoned crank no longer leaves the kernel reading its own undone state: a vat it marked terminated, a GC action it queued, or a collection candidate whose promise the rollback deleted — the last of which killed the run loop on the next crank ([#1087](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1087))
 - `clearStorage` re-reads the caches it emptied the database under, so the next crank no longer dies dequeueing a run queue row that is gone ([#1087](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1087))
 - A message delivered to a kernel-owned kref with no registered service now rejects the caller with `ENDPOINT_UNREACHABLE` instead of throwing, which escaped the crank and killed the run loop — turning one unreachable reference into a dead kernel ([#1007](https://github.com/MetaMask/ocap-kernel/pull/1007))
