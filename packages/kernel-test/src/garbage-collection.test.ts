@@ -86,6 +86,34 @@ describe('Garbage Collection', () => {
     importerKRef = kernelStore.getRootObject(importerVatId) as KRef;
   });
 
+  /**
+   * Give a vat a chance to notice a dropped object and tell the kernel.
+   *
+   * A reap only reports what the engine collected before `bringOutYourDead`
+   * ran, which one round of `gc()` does not guarantee includes the dropped
+   * presence, hence the retries.
+   *
+   * @param vatId - The vat to reap.
+   * @param rootKRef - That vat's root, to poke with cranks afterwards.
+   * @param isSettled - Predicate that holds once the kernel has seen the drop.
+   */
+  async function reapAndSettle(
+    vatId: VatId,
+    rootKRef: KRef,
+    isSettled: () => boolean,
+  ): Promise<void> {
+    for (let attempt = 0; attempt < MAX_REAP_ATTEMPTS; attempt++) {
+      kernel.reapVats((id) => id === vatId);
+      for (let i = 0; i < CRANKS_PER_REAP; i++) {
+        await kernel.queueMessage(rootKRef, 'noop', []);
+        await waitUntilQuiescent(500);
+      }
+      if (isSettled()) {
+        return;
+      }
+    }
+  }
+
   it('objects are tracked with reference counts', async () => {
     const objectId = 'test-object';
     // Create an object in the exporter vat
@@ -164,14 +192,11 @@ describe('Garbage Collection', () => {
     await kernel.queueMessage(importerKRef, 'makeWeak', [objectId]);
     await waitUntilQuiescent();
 
-    // Schedule reap to trigger bringOutYourDead on next crank
-    kernel.reapVats((vatId) => vatId === importerVatId);
-
-    // Run 3 cranks to allow bringOutYourDead to be processed
-    for (let i = 0; i < 3; i++) {
-      await kernel.queueMessage(importerKRef, 'noop', []);
-      await waitUntilQuiescent(500);
-    }
+    await reapAndSettle(
+      importerVatId,
+      importerKRef,
+      () => kernelStore.getObjectRefCount(createObjectRef).reachable === 1,
+    );
 
     // Check reference counts after dropImports
     const afterWeakRefCounts = kernelStore.getObjectRefCount(createObjectRef);
@@ -183,13 +208,11 @@ describe('Garbage Collection', () => {
     await kernel.queueMessage(importerKRef, 'forgetImport', []);
     await waitUntilQuiescent();
 
-    // Schedule another reap
-    kernel.reapVats((vatId) => vatId === importerVatId);
-
-    for (let i = 0; i < 3; i++) {
-      await kernel.queueMessage(importerKRef, 'noop', []);
-      await waitUntilQuiescent(500);
-    }
+    await reapAndSettle(
+      importerVatId,
+      importerKRef,
+      () => kernelStore.getObjectRefCount(createObjectRef).recognizable === 1,
+    );
 
     // Check reference counts after retireImports
     const afterForgetRefCounts = kernelStore.getObjectRefCount(createObjectRef);
@@ -239,34 +262,6 @@ describe('Garbage Collection', () => {
         secondImporterVatId,
       ) as KRef;
     });
-
-    /**
-     * Give an importer a chance to notice a dropped object and tell the kernel.
-     *
-     * A reap only reports what the engine collected before `bringOutYourDead`
-     * ran, which one round of `gc()` does not guarantee includes the dropped
-     * presence, hence the retries.
-     *
-     * @param vatId - The vat to reap.
-     * @param rootKRef - That vat's root, to poke with cranks afterwards.
-     * @param isSettled - Predicate that holds once the kernel has seen the drop.
-     */
-    async function reapAndSettle(
-      vatId: VatId,
-      rootKRef: KRef,
-      isSettled: () => boolean,
-    ): Promise<void> {
-      for (let attempt = 0; attempt < MAX_REAP_ATTEMPTS; attempt++) {
-        kernel.reapVats((id) => id === vatId);
-        for (let i = 0; i < CRANKS_PER_REAP; i++) {
-          await kernel.queueMessage(rootKRef, 'noop', []);
-          await waitUntilQuiescent(500);
-        }
-        if (isSettled()) {
-          return;
-        }
-      }
-    }
 
     it('survives until both importers let go', async () => {
       const objectId = 'shared-object';
