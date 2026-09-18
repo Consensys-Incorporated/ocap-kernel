@@ -28,11 +28,8 @@ export type Database = SqliteDatabase & {
 async function initDB(dbFilename: string, logger?: Logger): Promise<Database> {
   const dbPath = await getDBFilename(dbFilename);
   logger?.debug('dbPath:', dbPath);
-  const db = new Sqlite(dbPath, {
-    verbose: (logger ? logger.info.bind(logger) : undefined) as
-      | ((...args: unknown[]) => void)
-      | undefined,
-  }) as Database;
+  // No `verbose`: it logs every statement with values inlined, and the rows are vat state.
+  const db = new Sqlite(dbPath) as Database;
   db._spStack = [];
   return db;
 }
