@@ -59,15 +59,15 @@
     "test:dev:quiet": "yarn test:dev --reporter @ocap/repo-tools/vitest-reporters/silent"
   },
   "dependencies": {
-    "@metamask/design-system-react": "^0.10.0",
-    "@metamask/design-system-tailwind-preset": "^0.6.1",
-    "@metamask/design-tokens": "^8.1.1",
+    "@metamask/design-system-react": "^0.43.0",
+    "@metamask/design-system-tailwind-preset": "^0.13.0",
+    "@metamask/design-tokens": "^8.7.0",
     "@metamask/kernel-browser-runtime": "workspace:^",
     "@metamask/kernel-rpc-methods": "workspace:^",
     "@metamask/kernel-utils": "workspace:^",
     "@metamask/logger": "workspace:^",
     "@metamask/ocap-kernel": "workspace:^",
-    "@metamask/utils": "^11.9.0",
+    "@metamask/utils": "^11.12.1",
     "tailwindcss": "^3.0.0"
   },
   "peerDependencies": {
@@ -76,10 +76,10 @@
   },
   "devDependencies": {
     "@arethetypeswrong/cli": "^0.17.4",
-    "@metamask/auto-changelog": "^5.3.0",
-    "@metamask/eslint-config": "^15.0.0",
-    "@metamask/eslint-config-nodejs": "^15.0.0",
-    "@metamask/eslint-config-typescript": "^15.0.0",
+    "@metamask/auto-changelog": "^5.3.2",
+    "@metamask/eslint-config": "^15.0.1",
+    "@metamask/eslint-config-nodejs": "^15.0.1",
+    "@metamask/eslint-config-typescript": "^15.0.1",
     "@ocap/repo-tools": "workspace:^",
     "@testing-library/dom": "^10.4.0",
     "@testing-library/jest-dom": "^6.6.3",
