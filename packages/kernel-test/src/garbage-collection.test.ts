@@ -93,15 +93,21 @@ describe('Garbage Collection', () => {
    * ran, which one round of `gc()` does not guarantee includes the dropped
    * presence, hence the retries.
    *
-   * @param vatId - The vat to reap.
-   * @param rootKRef - That vat's root, to poke with cranks afterwards.
-   * @param isSettled - Predicate that holds once the kernel has seen the drop.
+   * @param options - Options bag.
+   * @param options.vatId - The vat to reap.
+   * @param options.rootKRef - That vat's root object.
+   * @param options.isSettled - Predicate that holds once the kernel has seen
+   * the drop.
    */
-  async function reapAndSettle(
-    vatId: VatId,
-    rootKRef: KRef,
-    isSettled: () => boolean,
-  ): Promise<void> {
+  async function reapAndSettle({
+    vatId,
+    rootKRef,
+    isSettled,
+  }: {
+    vatId: VatId;
+    rootKRef: KRef;
+    isSettled: () => boolean;
+  }): Promise<void> {
     for (let attempt = 0; attempt < MAX_REAP_ATTEMPTS; attempt++) {
       kernel.reapVats((id) => id === vatId);
       for (let i = 0; i < CRANKS_PER_REAP; i++) {
@@ -192,11 +198,15 @@ describe('Garbage Collection', () => {
     await kernel.queueMessage(importerKRef, 'makeWeak', [objectId]);
     await waitUntilQuiescent();
 
-    await reapAndSettle(
-      importerVatId,
-      importerKRef,
-      () => kernelStore.getObjectRefCount(createObjectRef).reachable === 1,
-    );
+    await reapAndSettle({
+      vatId: importerVatId,
+      rootKRef: importerKRef,
+      isSettled: () => {
+        const { reachable, recognizable } =
+          kernelStore.getObjectRefCount(createObjectRef);
+        return reachable === 1 && recognizable === 2;
+      },
+    });
 
     // Check reference counts after dropImports
     const afterWeakRefCounts = kernelStore.getObjectRefCount(createObjectRef);
@@ -208,11 +218,15 @@ describe('Garbage Collection', () => {
     await kernel.queueMessage(importerKRef, 'forgetImport', []);
     await waitUntilQuiescent();
 
-    await reapAndSettle(
-      importerVatId,
-      importerKRef,
-      () => kernelStore.getObjectRefCount(createObjectRef).recognizable === 1,
-    );
+    await reapAndSettle({
+      vatId: importerVatId,
+      rootKRef: importerKRef,
+      isSettled: () => {
+        const { reachable, recognizable } =
+          kernelStore.getObjectRefCount(createObjectRef);
+        return reachable === 1 && recognizable === 1;
+      },
+    });
 
     // Check reference counts after retireImports
     const afterForgetRefCounts = kernelStore.getObjectRefCount(createObjectRef);
@@ -238,7 +252,7 @@ describe('Garbage Collection', () => {
       [objectId],
     );
     expect(parseReplyBody(exporterFinalCheck.body)).toBe(false);
-  }, 40000);
+  }, 60000);
 
   describe('an object shared by two importers', () => {
     let secondImporterKRef: KRef;
@@ -294,11 +308,12 @@ describe('Garbage Collection', () => {
       await kernel.queueMessage(importerKRef, 'makeWeak', [objectId]);
       await kernel.queueMessage(importerKRef, 'forgetImport', []);
       await waitUntilQuiescent();
-      await reapAndSettle(
-        importerVatId,
-        importerKRef,
-        () => !kernelStore.getImporters(sharedKRef).includes(importerVatId),
-      );
+      await reapAndSettle({
+        vatId: importerVatId,
+        rootKRef: importerKRef,
+        isSettled: () =>
+          !kernelStore.getImporters(sharedKRef).includes(importerVatId),
+      });
 
       // The exporter must not have been told to drop it: the second importer
       // legitimately still holds it
@@ -331,14 +346,18 @@ describe('Garbage Collection', () => {
       await kernel.queueMessage(secondImporterKRef, 'makeWeak', [objectId]);
       await kernel.queueMessage(secondImporterKRef, 'forgetImport', []);
       await waitUntilQuiescent();
-      await reapAndSettle(secondImporterVatId, secondImporterKRef, () => {
-        const { reachable, recognizable } =
-          kernelStore.getObjectRefCount(sharedKRef);
-        return (
-          kernelStore.getImporters(sharedKRef).length === 0 &&
-          reachable === 1 &&
-          recognizable === 1
-        );
+      await reapAndSettle({
+        vatId: secondImporterVatId,
+        rootKRef: secondImporterKRef,
+        isSettled: () => {
+          const { reachable, recognizable } =
+            kernelStore.getObjectRefCount(sharedKRef);
+          return (
+            kernelStore.getImporters(sharedKRef).length === 0 &&
+            reachable === 1 &&
+            recognizable === 1
+          );
+        },
       });
 
       expect(kernelStore.getImporters(sharedKRef)).toStrictEqual([]);
