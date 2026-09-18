@@ -24,7 +24,7 @@
     "lint:dependencies:fix": "yarn dedupe >/dev/null && yarn depcheck --quiet && yarn workspaces foreach --all --parallel --verbose run lint:dependencies",
     "lint:eslint": "yarn eslint . --cache",
     "lint:fix": "yarn constraints --fix && yarn lint:eslint --fix && yarn lint:misc --write && yarn lint:dependencies:fix",
-    "lint:misc": "prettier --no-error-on-unmatched-pattern '**/*.json' '**/*.md' '**/*.html'  '**/*.yml' '!**/CHANGELOG.old.md' '!.yarnrc.yml' '!CLAUDE.md' '!merged-packages/**' --ignore-path .gitignore  --log-level error",
+    "lint:misc": "prettier --no-error-on-unmatched-pattern '**/*.json' '**/*.md' '**/*.html'  '**/*.yml' '!**/CHANGELOG.old.md' '!.yarnrc.yml' '!CLAUDE.md' '!merged-packages/**' --ignore-path .gitignore  --log-level warn",
     "postinstall": "patch-package && simple-git-hooks && yarn rebuild:native",
     "prepack": "./scripts/prepack.sh",
     "rebuild:native": "./scripts/rebuild-native.sh",
