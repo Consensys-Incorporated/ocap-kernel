@@ -68,7 +68,7 @@
  *   kernelService.${serviceName} = ${koid}   // kref of kernel service object ${serviceName}
  */
 
-import { Fail } from '@endo/errors';
+import { Fail, q } from '@endo/errors';
 import type { KernelDatabase, KVStore, VatStore } from '@metamask/kernel-store';
 import { Logger } from '@metamask/logger';
 
@@ -208,6 +208,7 @@ export function makeKernelStore(kdb: KernelDatabase, logger?: Logger) {
     // replay).
     maybeFreeKrefs: new Set<KRef>(),
     inCrank: false,
+    runLoopRunning: false,
     savepoints: [],
     crankBuffer: [],
     auditRefCounts: false,
@@ -317,11 +318,29 @@ export function makeKernelStore(kdb: KernelDatabase, logger?: Logger) {
   }
 
   /**
+   * Record whether the run loop is running, which is what decides whether a
+   * caller may take a savepoint of its own.
+   *
+   * @param running - Whether it is running.
+   */
+  function setRunLoopRunning(running: boolean): void {
+    context.runLoopRunning = running;
+  }
+
+  /**
    * Create a savepoint for atomic operations on persistent storage.
    *
    * @param name - The savepoint name.
    */
   function createSavepoint(name: string): void {
+    // The run loop's own savepoints do not come through here; these are the
+    // outermost one on the connection, and so the transaction's commit point.
+    // Taken while the loop runs, they nest inside whatever crank is open — or
+    // open a transaction the next crank then nests inside — and either way
+    // somebody else decides whether this caller's writes survive. Callers work
+    // between cranks instead; `Kernel` holds the loop still for them.
+    !context.runLoopRunning ||
+      Fail`createSavepoint ${q(name)} while the run loop is running`;
     kdb.createSavepoint(name);
   }
 
@@ -368,6 +387,7 @@ export function makeKernelStore(kdb: KernelDatabase, logger?: Logger) {
     reset,
     provideIncarnationId,
     createSavepoint,
+    setRunLoopRunning,
     releaseSavepoint,
     rollbackSavepoint,
     // NOTE: kv is intentionally NOT exposed here. All KV access should go

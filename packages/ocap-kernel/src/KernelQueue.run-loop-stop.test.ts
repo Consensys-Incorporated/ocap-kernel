@@ -111,6 +111,35 @@ describe('the window a stopped run loop opens', () => {
     await running;
   });
 
+  it('refuses a savepoint taken alongside a crank', async () => {
+    const { kernelStore, kernelQueue } = await makeFixture(0);
+    const running = kernelQueue.run(vi.fn());
+
+    // Not one of the crank's own: this is the outermost savepoint on the
+    // connection, and so the transaction's commit point. Taken now, the run
+    // loop decides whether this caller's writes survive.
+    expect(() => kernelStore.createSavepoint('mine')).toThrow(
+      'while the run loop is running',
+    );
+
+    await kernelQueue.stopRunLoop();
+    await running;
+  });
+
+  it('allows one once the loop has come to rest', async () => {
+    const { kernelStore, kernelQueue } = await makeFixture(0);
+    const running = kernelQueue.run(vi.fn());
+    await kernelQueue.stopRunLoop();
+    await running;
+
+    // Round-tripping a savepoint of its own is the whole of what the control
+    // plane needs the window for.
+    expect(() => {
+      kernelStore.createSavepoint('mine');
+      kernelStore.releaseSavepoint('mine');
+    }).not.toThrow();
+  });
+
   it('refuses work while it is stopped', async () => {
     const { kernelQueue } = await makeFixture(0);
     const running = kernelQueue.run(vi.fn());
