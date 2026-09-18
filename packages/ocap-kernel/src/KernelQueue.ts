@@ -14,6 +14,7 @@ import type {
   RemoteId,
   RunLoopStatus,
   RunQueueItem,
+  RunQueueItemPeerIncarnation,
   RunQueueItemRemoteInbound,
   RunQueueItemNotify,
   RunQueueItemSend,
@@ -81,8 +82,11 @@ export class KernelQueue {
    */
   #runLoopState: RunLoopState = { state: 'idle' };
 
-  /** Messages from peers, waiting for a crank to take delivery of them. */
-  #arrivedFromRemotes: RunQueueItemRemoteInbound[] = [];
+  /** What peers have sent, waiting for a crank to take delivery of it. */
+  readonly #arrivedFromRemotes: (
+    | RunQueueItemRemoteInbound
+    | RunQueueItemPeerIncarnation
+  )[] = [];
 
   /**
    * Construct a new KernelQueue instance.
@@ -554,19 +558,25 @@ export class KernelQueue {
   }
 
   /**
-   * Forget what a remote sent before an incarnation change, none of which the
-   * peer that sent it is still waiting on.
+   * Accept a peer's incarnation change, for the run loop to carry out in a
+   * crank of its own.
    *
-   * Left queued, a message from the old incarnation would record its sequence
-   * number against the new one, and the new incarnation's first message would
-   * then be discarded as a duplicate.
+   * Held with the arrivals, and behind any this peer has already sent: the
+   * messages ahead of it belong to the incarnation that is ending and are its
+   * to account for, and the ones behind it to the incarnation that is
+   * starting.
    *
-   * @param remoteId - The remote whose arrivals to discard.
+   * @param peerId - The peer that restarted.
+   * @param incarnation - The incarnation it now reports.
    */
-  discardRemoteInbound(remoteId: RemoteId): void {
-    this.#arrivedFromRemotes = this.#arrivedFromRemotes.filter(
-      (item) => item.remoteId !== remoteId,
-    );
+  acceptPeerIncarnation(peerId: string, incarnation: string): void {
+    this.assertRunLoopAlive('accept a peer incarnation change');
+    this.#arrivedFromRemotes.push({
+      type: 'peerIncarnation',
+      peerId,
+      incarnation,
+    });
+    this.#wakeTheRunLoop();
   }
 
   /**
