@@ -1,0 +1,46 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended"
+  ],
+  "enabledManagers": ["github-actions", "npm"],
+  "dependencyDashboard": false,
+  "packageRules": [
+    {
+      "matchManagers": ["npm"],
+      "enabled": false
+    },
+    {
+      "matchManagers": ["github-actions"],
+      "enabled": false
+    },
+    {
+      "description": "Pin and group GitHub Actions updates for actions/* and MetaMask/*",
+      "matchManagers": ["github-actions"],
+      "matchPackagePrefixes": ["actions/", "MetaMask/"],
+      "enabled": true,
+      "pinDigests": true,
+      "minimumReleaseAge": "7 days",
+      "groupName": "GitHub Actions updates"
+    },
+    {
+      "description": "Allow immediate updates for Consensys-Incorporated/github-actions",
+      "matchManagers": ["github-actions"],
+      "matchPackagePrefixes": ["Consensys-Incorporated/github-actions"],
+      "enabled": true,
+      "pinDigests": true,
+      "minimumReleaseAge": "0 days"
+    },
+    {
+      "description": "Group npm dependency updates for allowed packages",
+      "matchManagers": ["npm"],
+      "matchPackagePrefixes": ["@metamask/", "@agoric/", "@endo/"],
+      "matchPackageNames": ["ses"],
+      "enabled": true,
+      "rangeStrategy": "bump",
+      "minimumReleaseAge": "7 days",
+      "schedule": ["before 7am"],
+      "groupName": "npm dependencies"
+    }
+  ]
+}
