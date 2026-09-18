@@ -55,6 +55,9 @@ function makeTestSubcluster(extraImporters: string[] = []): ClusterConfig {
   };
 }
 
+const CRANKS_PER_REAP = 3;
+const MAX_REAP_ATTEMPTS = 10;
+
 describe('Garbage Collection', () => {
   let kernel: Kernel;
   let kernelDatabase: KernelDatabase;
@@ -240,14 +243,28 @@ describe('Garbage Collection', () => {
     /**
      * Give an importer a chance to notice a dropped object and tell the kernel.
      *
+     * A reap only reports what the engine collected before `bringOutYourDead`
+     * ran, which one round of `gc()` does not guarantee includes the dropped
+     * presence, hence the retries.
+     *
      * @param vatId - The vat to reap.
      * @param rootKRef - That vat's root, to poke with cranks afterwards.
+     * @param isSettled - Predicate that holds once the kernel has seen the drop.
      */
-    async function reapAndSettle(vatId: VatId, rootKRef: KRef): Promise<void> {
-      kernel.reapVats((id) => id === vatId);
-      for (let i = 0; i < 3; i++) {
-        await kernel.queueMessage(rootKRef, 'noop', []);
-        await waitUntilQuiescent(500);
+    async function reapAndSettle(
+      vatId: VatId,
+      rootKRef: KRef,
+      isSettled: () => boolean,
+    ): Promise<void> {
+      for (let attempt = 0; attempt < MAX_REAP_ATTEMPTS; attempt++) {
+        kernel.reapVats((id) => id === vatId);
+        for (let i = 0; i < CRANKS_PER_REAP; i++) {
+          await kernel.queueMessage(rootKRef, 'noop', []);
+          await waitUntilQuiescent(500);
+        }
+        if (isSettled()) {
+          return;
+        }
       }
     }
 
@@ -282,7 +299,11 @@ describe('Garbage Collection', () => {
       await kernel.queueMessage(importerKRef, 'makeWeak', [objectId]);
       await kernel.queueMessage(importerKRef, 'forgetImport', []);
       await waitUntilQuiescent();
-      await reapAndSettle(importerVatId, importerKRef);
+      await reapAndSettle(
+        importerVatId,
+        importerKRef,
+        () => !kernelStore.getImporters(sharedKRef).includes(importerVatId),
+      );
 
       // The exporter must not have been told to drop it: the second importer
       // legitimately still holds it
@@ -315,7 +336,15 @@ describe('Garbage Collection', () => {
       await kernel.queueMessage(secondImporterKRef, 'makeWeak', [objectId]);
       await kernel.queueMessage(secondImporterKRef, 'forgetImport', []);
       await waitUntilQuiescent();
-      await reapAndSettle(secondImporterVatId, secondImporterKRef);
+      await reapAndSettle(secondImporterVatId, secondImporterKRef, () => {
+        const { reachable, recognizable } =
+          kernelStore.getObjectRefCount(sharedKRef);
+        return (
+          kernelStore.getImporters(sharedKRef).length === 0 &&
+          reachable === 1 &&
+          recognizable === 1
+        );
+      });
 
       expect(kernelStore.getImporters(sharedKRef)).toStrictEqual([]);
       // Only the createObject result's stored value still names it
