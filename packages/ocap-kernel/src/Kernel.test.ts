@@ -34,14 +34,20 @@ const mocks = vi.hoisted(() => {
     /** The callback the kernel gave the run loop, for tests to drive. */
     deliver: ((item: unknown) => Promise<unknown>) | undefined;
 
-    // Like the real run loop, this settles only if the kernel dies.
-    run = vi.fn(
-      async (deliver: (item: unknown) => Promise<unknown>) =>
-        new Promise<never>((_resolve, reject) => {
-          this.deliver = deliver;
-          this.#rejectRunLoop = reject;
-        }),
-    );
+    #stopRunLoopLoop: (() => void) | undefined;
+
+    #running = false;
+
+    // Like the real run loop, this settles only when the kernel dies or the
+    // loop is stopped, and the state it reports follows.
+    run = vi.fn(async (deliver: (item: unknown) => Promise<unknown>) => {
+      this.deliver = deliver;
+      this.#running = true;
+      return new Promise<void>((resolve, reject) => {
+        this.#rejectRunLoop = reject;
+        this.#stopRunLoopLoop = resolve;
+      });
+    });
 
     /**
      * Fail the run loop, in the order the real `KernelQueue.run` does: the
@@ -52,18 +58,37 @@ const mocks = vi.hoisted(() => {
      */
     killRunLoop(error: Error): void {
       this.#runLoopFailure = error;
+      this.#running = false;
       this.#rejectRunLoop?.(error);
     }
 
-    getRunLoopStatus = vi.fn(() =>
-      this.#runLoopFailure
-        ? {
-            state: 'failed',
-            error: this.#runLoopFailure.message,
-            detail: `{"message":"${this.#runLoopFailure.message}"}`,
-          }
-        : { state: 'running' },
-    );
+    getRunLoopStatus = vi.fn(() => {
+      if (this.#runLoopFailure) {
+        return {
+          state: 'failed',
+          error: this.#runLoopFailure.message,
+          detail: `{"message":"${this.#runLoopFailure.message}"}`,
+        };
+      }
+      if (this.#running) {
+        return { state: 'running' };
+      }
+      return { state: this.#hasRun ? 'stopped' : 'idle' };
+    });
+
+    #hasRun = false;
+
+    stopRunLoop = vi.fn(async () => {
+      if (!this.#running) {
+        return false;
+      }
+      this.#running = false;
+      this.#hasRun = true;
+      this.#stopRunLoopLoop?.();
+      return true;
+    });
+
+    discardQueuedWork = vi.fn();
 
     assertRunLoopAlive = vi.fn((what: string) => {
       if (this.#runLoopFailure) {
@@ -795,24 +820,101 @@ describe('Kernel', () => {
       expect(vatHandles[0]?.terminate).not.toHaveBeenCalled();
 
       // Verify stop sequence
-      expect(queueInstance.waitForCrank).toHaveBeenCalledOnce();
+      expect(queueInstance.stopRunLoop).toHaveBeenCalledOnce();
       expect(stopRemoteCommsMock).toHaveBeenCalledOnce();
       expect(remoteManagerInstance.cleanup).toHaveBeenCalledOnce();
       expect(workerTerminateAllMock).toHaveBeenCalledOnce();
     });
 
-    it('waits for crank before stopping', async () => {
+    it('stops the run loop before tearing anything down', async () => {
       const kernel = await Kernel.make(
         mockPlatformServices,
         mockKernelDatabase,
       );
       const queueInstance = mocks.KernelQueue.lastInstance;
-      const waitForCrankSpy = vi.spyOn(queueInstance, 'waitForCrank');
+      const closeSpy = vi.spyOn(mockKernelDatabase, 'close');
 
       await kernel.stop();
 
-      // Verify waitForCrank is called before other operations
-      expect(waitForCrankSpy).toHaveBeenCalledOnce();
+      // Waiting out the crank in flight is not enough: the loop wins the race
+      // to the next one by construction, so these writes would land in it.
+      expect(
+        (queueInstance.stopRunLoop as unknown as MockInstance).mock
+          .invocationCallOrder[0] as number,
+      ).toBeLessThan(closeSpy.mock.invocationCallOrder[0] as number);
+    });
+
+    it('leaves the run loop running after a reset that threw', async () => {
+      const kernel = await Kernel.make(
+        mockPlatformServices,
+        mockKernelDatabase,
+      );
+      const queueInstance = mocks.KernelQueue.lastInstance;
+      vi.spyOn(mockKernelDatabase, 'clear').mockImplementationOnce(() => {
+        throw new Error('test error');
+      });
+
+      await expect(kernel.reset()).rejects.toThrow('test error');
+
+      // A kernel left with its loop stopped would look alive and process
+      // nothing, which is worse than the half-reset state it is in.
+      expect(queueInstance.getRunLoopStatus()).toStrictEqual({
+        state: 'running',
+      });
+    });
+
+    it('does not restart a loop that had already died', async () => {
+      const kernel = await Kernel.make(
+        mockPlatformServices,
+        mockKernelDatabase,
+      );
+      const queueInstance = mocks.KernelQueue.lastInstance;
+      queueInstance.killRunLoop(new Error('died earlier'));
+      queueInstance.run.mockClear();
+
+      // `reset` has to work on a kernel whose loop is dead — that is much of
+      // what it is for — and starting a dead loop is not possible.
+      await kernel.reset();
+
+      expect(queueInstance.run).not.toHaveBeenCalled();
+    });
+
+    it('holds a second direct write off until the first is done', async () => {
+      const kernel = await Kernel.make(
+        mockPlatformServices,
+        mockKernelDatabase,
+      );
+      const queueInstance = mocks.KernelQueue.lastInstance;
+      const order: string[] = [];
+      vi.spyOn(mockKernelDatabase, 'clear').mockImplementation(() => {
+        order.push('wrote');
+      });
+      queueInstance.stopRunLoop.mockImplementation(async () => {
+        order.push('stopped');
+        return false;
+      });
+
+      await Promise.all([kernel.clearStorage(), kernel.clearStorage()]);
+
+      // Interleaved, the second would find the loop already stopped and write
+      // while the first restarts it underneath — the defect this all exists to
+      // remove, wearing a different hat.
+      expect(order).toStrictEqual(['stopped', 'wrote', 'stopped', 'wrote']);
+    });
+
+    it('leaves the run loop stopped', async () => {
+      const kernel = await Kernel.make(
+        mockPlatformServices,
+        mockKernelDatabase,
+      );
+      const queueInstance = mocks.KernelQueue.lastInstance;
+      queueInstance.run.mockClear();
+
+      await kernel.stop();
+
+      // The kernel is over; there is nothing left for a loop to do, and the
+      // database it would read is closed.
+      expect(queueInstance.run).not.toHaveBeenCalled();
     });
 
     it('saves lastActiveTime to KV store', async () => {
