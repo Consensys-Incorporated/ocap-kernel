@@ -61,6 +61,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A delivery failure no longer re-rejects a result promise the endpoint had already settled, which threw from the delivery's own catch and killed the run loop ([#1084](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1084))
 - Two pending garbage-collection actions of one type for one endpoint no longer kill the run loop: `processGCActionSet` sorted the kref list after hardening it, and sorting a frozen array throws ([#1082](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1082))
 - `makeGCAndFinalize` drains pending work before collecting, so a vat reports the imports it has already let go of on the `bringOutYourDead` that asks rather than on a later one ([#1083](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1083))
 - A message delivered to a kernel-owned kref with no registered service now rejects the caller with `ENDPOINT_UNREACHABLE` instead of throwing, which escaped the crank and killed the run loop — turning one unreachable reference into a dead kernel ([#1007](https://github.com/MetaMask/ocap-kernel/pull/1007))
