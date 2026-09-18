@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **BREAKING:** Bump `better-sqlite3` from `^12.4.1` to `^13.0.3`, which requires Node 22 or later — the same floor this package already declares ([#1045](https://github.com/MetaMask/ocap-kernel/pull/1045))
+- **BREAKING:** Bump `better-sqlite3` from `^12.4.1` to `^13.0.3`, which requires Node 22 or later — the same floor this package already declares ([#1113](https://github.com/MetaMask/ocap-kernel/pull/1113))
   - On Node 24.20.0, 12.x aborts the process during teardown: `Statement::~Statement` reaches `RemoveEnvironmentCleanupHook` after the environment is gone, and Node asserts. The tests it kills have already passed, so it surfaces as a worker dying rather than as a failure anyone can read
   - Nothing in this package's driver changes. The 13.x major touches none of `prepare`, `run`, `get`, `all`, `iterate`, `pluck`, `transaction`, `exec`, or `close`
 
