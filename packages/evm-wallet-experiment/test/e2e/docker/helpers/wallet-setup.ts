@@ -45,13 +45,13 @@ export function launchWalletSubcluster(
       ? {
           delegator: {
             bundleSpec: `${BUNDLE_BASE}/delegator-vat.bundle`,
-            globals: ['TextEncoder', 'TextDecoder', 'crypto'],
+            globals: ['crypto'],
           },
         }
       : {
           redeemer: {
             bundleSpec: `${BUNDLE_BASE}/redeemer-vat.bundle`,
-            globals: ['TextEncoder', 'TextDecoder'],
+            globals: [],
           },
         };
 
@@ -62,22 +62,15 @@ export function launchWalletSubcluster(
     vats: {
       coordinator: {
         bundleSpec: coordinatorBundle,
-        globals: ['TextEncoder', 'TextDecoder', 'Date', 'setTimeout'],
+        globals: ['Date', 'setTimeout'],
       },
       keyring: {
         bundleSpec: `${BUNDLE_BASE}/keyring-vat.bundle`,
-        globals: ['TextEncoder', 'TextDecoder', 'crypto'],
+        globals: ['crypto'],
       },
       provider: {
         bundleSpec: `${BUNDLE_BASE}/provider-vat.bundle`,
-        globals: [
-          'TextEncoder',
-          'TextDecoder',
-          'fetch',
-          'Request',
-          'Headers',
-          'Response',
-        ],
+        globals: ['fetch', 'Request', 'Headers', 'Response'],
         network: { allowedHosts },
       },
       ...auxiliaryVat,

@@ -726,18 +726,18 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@endo/captp@npm:^4.5.1":
-  version: 4.5.1
-  resolution: "@endo/captp@npm:4.5.1"
+"@endo/captp@npm:4.5.0":
+  version: 4.5.0
+  resolution: "@endo/captp@npm:4.5.0"
   dependencies:
-    "@endo/errors": "npm:^1.3.1"
-    "@endo/eventual-send": "npm:^1.5.0"
+    "@endo/errors": "npm:^1.3.0"
+    "@endo/eventual-send": "npm:^1.4.0"
     "@endo/harden": "npm:^1.1.0"
-    "@endo/marshal": "npm:^1.10.0"
+    "@endo/marshal": "npm:^1.9.0"
     "@endo/nat": "npm:^5.2.0"
-    "@endo/pass-style": "npm:^1.8.0"
-    "@endo/promise-kit": "npm:^1.2.1"
-  checksum: 10/f73747e8acc145d3ff01771219a4e5d4502089ce235036daf68739a49a80d96ffa060bb9d9daee14b618be92f3b27cfab18aec72616284f2fdd68fa7a4aca6c7
+    "@endo/pass-style": "npm:^1.7.0"
+    "@endo/promise-kit": "npm:^1.2.0"
+  checksum: 10/2b45850c5aed48b8aeaa5ce2637bd99f53dc11fdd69994a94bb33ba5865f261bfb06552feeae39d78730a87d349f1db0ce46bf5b69e9a3856d4187a2d1dab4c0
   languageName: node
   linkType: hard
 
@@ -798,7 +798,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@endo/errors@npm:^1.2.13, @endo/errors@npm:^1.3.1":
+"@endo/errors@npm:^1.2.13, @endo/errors@npm:^1.3.0, @endo/errors@npm:^1.3.1":
   version: 1.3.1
   resolution: "@endo/errors@npm:1.3.1"
   dependencies:
@@ -909,7 +909,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@endo/marshal@npm:^1.10.0, @endo/marshal@npm:^1.8.0":
+"@endo/marshal@npm:^1.10.0, @endo/marshal@npm:^1.8.0, @endo/marshal@npm:^1.9.0":
   version: 1.10.0
   resolution: "@endo/marshal@npm:1.10.0"
   dependencies:
@@ -944,7 +944,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@endo/pass-style@npm:^1.6.3, @endo/pass-style@npm:^1.8.0, @endo/pass-style@npm:^1.8.1, @endo/pass-style@npm:^1.8.2":
+"@endo/pass-style@npm:^1.6.3, @endo/pass-style@npm:^1.7.0, @endo/pass-style@npm:^1.8.0, @endo/pass-style@npm:^1.8.1, @endo/pass-style@npm:^1.8.2":
   version: 1.8.2
   resolution: "@endo/pass-style@npm:1.8.2"
   dependencies:
@@ -2580,7 +2580,7 @@ __metadata:
   resolution: "@metamask/kernel-browser-runtime@workspace:packages/kernel-browser-runtime"
   dependencies:
     "@arethetypeswrong/cli": "npm:^0.17.4"
-    "@endo/captp": "npm:^4.5.1"
+    "@endo/captp": "npm:4.5.0"
     "@endo/eventual-send": "npm:^1.5.0"
     "@metamask/auto-changelog": "npm:^5.3.2"
     "@metamask/eslint-config": "npm:^15.0.1"
@@ -2618,7 +2618,7 @@ __metadata:
     nanoid: "npm:^5.1.5"
     prettier: "npm:^3.5.3"
     rimraf: "npm:^6.0.1"
-    ses: "npm:^1.15.0"
+    ses: "npm:^2.3.0"
     tsx: "npm:^4.20.6"
     turbo: "npm:^2.9.1"
     typedoc: "npm:^0.28.1"
@@ -2672,7 +2672,7 @@ __metadata:
     prettier: "npm:^3.5.3"
     rimraf: "npm:^6.0.1"
     serve-handler: "npm:^6.1.6"
-    ses: "npm:^1.15.0"
+    ses: "npm:^2.3.0"
     turbo: "npm:^2.9.1"
     typedoc: "npm:^0.28.1"
     typescript: "npm:~5.8.2"
@@ -2716,7 +2716,7 @@ __metadata:
     jsdom: "npm:^29.0.2"
     prettier: "npm:^3.5.3"
     rimraf: "npm:^6.0.1"
-    ses: "npm:^1.15.0"
+    ses: "npm:^2.3.0"
     turbo: "npm:^2.9.1"
     typedoc: "npm:^0.28.1"
     typescript: "npm:~5.8.2"
@@ -2732,7 +2732,7 @@ __metadata:
   dependencies:
     "@arethetypeswrong/cli": "npm:^0.17.4"
     "@chainsafe/libp2p-quic": "npm:^2.0.1"
-    "@endo/captp": "npm:^4.5.1"
+    "@endo/captp": "npm:4.5.0"
     "@endo/eventual-send": "npm:^1.5.0"
     "@endo/promise-kit": "npm:^1.2.1"
     "@libp2p/interface": "npm:3.1.1"
@@ -2770,7 +2770,7 @@ __metadata:
     node-gyp: "npm:^11.2.0"
     prettier: "npm:^3.5.3"
     rimraf: "npm:^6.0.1"
-    ses: "npm:^1.15.0"
+    ses: "npm:^2.3.0"
     turbo: "npm:^2.9.1"
     typedoc: "npm:^0.28.1"
     typescript: "npm:~5.8.2"
@@ -2810,7 +2810,7 @@ __metadata:
     eslint-plugin-promise: "npm:^7.2.1"
     prettier: "npm:^3.5.3"
     rimraf: "npm:^6.0.1"
-    ses: "npm:^1.15.0"
+    ses: "npm:^2.3.0"
     turbo: "npm:^2.9.1"
     typedoc: "npm:^0.28.1"
     typescript: "npm:~5.8.2"
@@ -2889,7 +2889,7 @@ __metadata:
     eslint-plugin-promise: "npm:^7.2.1"
     prettier: "npm:^3.5.3"
     rimraf: "npm:^6.0.1"
-    ses: "npm:^1.15.0"
+    ses: "npm:^2.3.0"
     turbo: "npm:^2.9.1"
     typescript: "npm:~5.8.2"
     typescript-eslint: "npm:^8.29.0"
@@ -2931,7 +2931,7 @@ __metadata:
     eslint-plugin-promise: "npm:^7.2.1"
     prettier: "npm:^3.5.3"
     rimraf: "npm:^6.0.1"
-    ses: "npm:^1.15.0"
+    ses: "npm:^2.3.0"
     turbo: "npm:^2.9.1"
     typedoc: "npm:^0.28.1"
     typescript: "npm:~5.8.2"
@@ -3010,9 +3010,9 @@ __metadata:
     "@arethetypeswrong/cli": "npm:^0.17.4"
     "@chainsafe/libp2p-noise": "npm:^17.0.0"
     "@chainsafe/libp2p-yamux": "npm:8.0.1"
-    "@endo/captp": "npm:^4.5.1"
     "@endo/errors": "npm:^1.3.1"
     "@endo/exo": "npm:^1.7.0"
+    "@endo/pass-style": "npm:^1.8.2"
     "@endo/patterns": "npm:^1.9.1"
     "@endo/promise-kit": "npm:^1.2.1"
     "@libp2p/autonat": "npm:3.0.14"
@@ -3052,7 +3052,7 @@ __metadata:
     libp2p: "npm:3.1.7"
     prettier: "npm:^3.5.3"
     rimraf: "npm:^6.0.1"
-    ses: "npm:^1.15.0"
+    ses: "npm:^2.3.0"
     setimmediate: "npm:^1.0.5"
     turbo: "npm:^2.9.1"
     typedoc: "npm:^0.28.1"
@@ -3117,7 +3117,7 @@ __metadata:
     eslint-plugin-promise: "npm:^7.2.1"
     prettier: "npm:^3.5.3"
     rimraf: "npm:^6.0.1"
-    ses: "npm:^1.15.0"
+    ses: "npm:^2.3.0"
     turbo: "npm:^2.9.1"
     typedoc: "npm:^0.28.1"
     typescript: "npm:~5.8.2"
@@ -3231,7 +3231,7 @@ __metadata:
     multiformats: "npm:^13.3.6"
     prettier: "npm:^3.5.3"
     rimraf: "npm:^6.0.1"
-    ses: "npm:^1.15.0"
+    ses: "npm:^2.3.0"
     setimmediate: "npm:^1.0.5"
     turbo: "npm:^2.9.1"
     typescript: "npm:~5.8.2"
@@ -3494,7 +3494,7 @@ __metadata:
     eslint-plugin-promise: "npm:^7.2.1"
     prettier: "npm:^3.5.3"
     rimraf: "npm:^6.0.1"
-    ses: "npm:^1.15.0"
+    ses: "npm:^2.3.0"
     turbo: "npm:^2.9.1"
     typedoc: "npm:^0.28.1"
     typescript: "npm:~5.8.2"
@@ -3641,7 +3641,7 @@ __metadata:
     playwright: "npm:^1.59.1"
     prettier: "npm:^3.5.3"
     rimraf: "npm:^6.0.1"
-    ses: "npm:^1.15.0"
+    ses: "npm:^2.3.0"
     turbo: "npm:^2.9.1"
     typedoc: "npm:^0.28.1"
     typescript: "npm:~5.8.2"
@@ -4223,7 +4223,7 @@ __metadata:
     react: "npm:^18.3.1"
     react-dom: "npm:^18.3.1"
     rimraf: "npm:^6.0.1"
-    ses: "npm:^1.15.0"
+    ses: "npm:^2.3.0"
     tsx: "npm:^4.20.6"
     turbo: "npm:^2.9.1"
     typedoc: "npm:^0.28.1"
@@ -4268,7 +4268,7 @@ __metadata:
     eslint-plugin-promise: "npm:^7.2.1"
     prettier: "npm:^3.5.3"
     rimraf: "npm:^6.0.1"
-    ses: "npm:^1.15.0"
+    ses: "npm:^2.3.0"
     tree-sitter: "npm:^0.25.0"
     tree-sitter-javascript: "npm:^0.25.0"
     turbo: "npm:^2.9.1"
@@ -4314,7 +4314,7 @@ __metadata:
     partial-json: "npm:^0.1.7"
     prettier: "npm:^3.5.3"
     rimraf: "npm:^6.0.1"
-    ses: "npm:^1.15.0"
+    ses: "npm:^2.3.0"
     turbo: "npm:^2.9.1"
     typedoc: "npm:^0.28.1"
     typescript: "npm:~5.8.2"
@@ -4357,7 +4357,7 @@ __metadata:
     ollama: "npm:^0.5.16"
     prettier: "npm:^3.5.3"
     rimraf: "npm:^6.0.1"
-    ses: "npm:^1.15.0"
+    ses: "npm:^2.3.0"
     turbo: "npm:^2.9.1"
     typedoc: "npm:^0.28.1"
     typescript: "npm:~5.8.2"
@@ -4694,7 +4694,7 @@ __metadata:
     react-dom: "npm:^18.3.1"
     rimraf: "npm:^6.0.1"
     semver: "npm:^7.7.1"
-    ses: "npm:^1.15.0"
+    ses: "npm:^2.3.0"
     tsx: "npm:^4.20.6"
     turbo: "npm:^2.9.1"
     typedoc: "npm:^0.28.1"
@@ -14831,7 +14831,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"ses@npm:^1.14.0, ses@npm:^1.15.0":
+"ses@npm:^1.14.0":
   version: 1.15.0
   resolution: "ses@npm:1.15.0"
   dependencies:

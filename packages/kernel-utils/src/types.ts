@@ -1,4 +1,4 @@
-import type { Primitive } from '@endo/captp';
+import type { JSPrimitive } from '@endo/pass-style';
 import type { PromiseKit } from '@endo/promise-kit';
 import type { Infer, Struct } from '@metamask/superstruct';
 import { array, empty, is, object, string, union } from '@metamask/superstruct';
@@ -35,7 +35,7 @@ const primitives = new Set([
   'undefined',
 ]);
 
-export const isPrimitive = (value: unknown): value is Primitive =>
+export const isPrimitive = (value: unknown): value is JSPrimitive =>
   value === null || primitives.has(typeof value);
 
 export const isTypedArray = <ElementType>(

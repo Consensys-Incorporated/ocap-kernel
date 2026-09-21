@@ -62,7 +62,7 @@
     "test:dev:quiet": "yarn test:dev --reporter @ocap/repo-tools/vitest-reporters/silent"
   },
   "dependencies": {
-    "@endo/captp": "^4.5.1",
+    "@endo/captp": "4.5.0",
     "@metamask/json-rpc-engine": "^10.5.0",
     "@metamask/kernel-errors": "workspace:^",
     "@metamask/kernel-platforms": "workspace:^",
@@ -77,7 +77,7 @@
     "@metamask/superstruct": "^3.4.1",
     "@metamask/utils": "^11.12.1",
     "nanoid": "^5.1.5",
-    "ses": "^1.15.0"
+    "ses": "^2.3.0"
   },
   "devDependencies": {
     "@arethetypeswrong/cli": "^0.17.4",

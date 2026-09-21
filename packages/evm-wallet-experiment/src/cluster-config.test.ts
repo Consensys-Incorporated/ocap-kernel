@@ -102,27 +102,15 @@ describe('cluster-config', () => {
       });
 
       const providerConfig = config.vats.provider as { globals?: string[] };
-      expect(providerConfig.globals).toStrictEqual([
-        'TextEncoder',
-        'TextDecoder',
-      ]);
+      expect(providerConfig.globals).toStrictEqual([]);
 
       for (const vatName of ['keyring', 'delegator']) {
         const vatConfig = config.vats[vatName] as { globals?: string[] };
-        expect(vatConfig.globals).toStrictEqual([
-          'TextEncoder',
-          'TextDecoder',
-          'crypto',
-        ]);
+        expect(vatConfig.globals).toStrictEqual(['crypto']);
       }
 
       const coordConfig = config.vats.coordinator as { globals?: string[] };
-      expect(coordConfig.globals).toStrictEqual([
-        'TextEncoder',
-        'TextDecoder',
-        'Date',
-        'setTimeout',
-      ]);
+      expect(coordConfig.globals).toStrictEqual(['Date', 'setTimeout']);
     });
 
     it('defaults forceReset to false', () => {

@@ -58,6 +58,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **BREAKING:** `getPinnedObjects` now names each pinned object once, however many pins it holds; `getPinCount` gives the number of pins ([#1020](https://github.com/MetaMask/ocap-kernel/pull/1020))
 - **BREAKING:** `incrementRefCount` now throws on a kref the kernel has already deleted, rather than writing a resurrected row ([#1020](https://github.com/MetaMask/ocap-kernel/pull/1020))
   - A missing object row read as `(0, 0)` and was written back as a live-looking object with no owner; a missing promise row read as `NaN`, which no decrement can bring to zero, so the promise could never be collected. `decrementRefCount` still tolerates a missing object row, since releasing a reference to something already gone is ordinary teardown
+- **BREAKING:** `Float16Array`, `Float32Array`, and `Float64Array` are no longer reachable from vat code, following the upgrade to SES 2 ([#1112](https://github.com/MetaMask/ocap-kernel/pull/1112))
+  - They are not available as endowments either: SES withholds them because a shared `ArrayBuffer` view makes a `NaN`'s bit pattern readable as a side channel, and endowing one would reopen it for the vat that asked
+  - Migrate to `DataView`, whose `setFloat*` methods lockdown repairs to write only canonical `NaN`s. This applies to bundled dependencies as much as to vat code: a library reaching for `Float64Array` at module scope will now throw on vat startup
+- **BREAKING:** Remove `TextEncoder` and `TextDecoder` from `AllowedGlobalName`, since SES 2 permits them in every compartment and the kernel no longer endows them. A vat still naming either in `VatConfig.globals` now fails `initVat` with `unknown global`, so drop them from cluster configs ([#1112](https://github.com/MetaMask/ocap-kernel/pull/1112))
+  - Vats keep access to both, and `allowedGlobalNames` can no longer withhold them
 
 ### Fixed
 

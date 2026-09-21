@@ -127,6 +127,6 @@
     "@metamask/kernel-utils": "workspace:^",
     "@metamask/superstruct": "^3.4.1",
     "ollama": "^0.5.16",
-    "ses": "^1.15.0"
+    "ses": "^2.3.0"
   }
 }

@@ -39,6 +39,12 @@
       "minimumReleaseAge": "7 days",
       "schedule": ["before 7am"],
       "groupName": "npm dependencies"
+    },
+    {
+      "description": "4.5.1 was published without its generated .d.ts files, so `makeCapTP` resolves to `any` and builds fail under noImplicitAny. Unpin once a release ships declarations again.",
+      "matchManagers": ["npm"],
+      "matchPackageNames": ["@endo/captp"],
+      "allowedVersions": "<=4.5.0"
     }
   ]
 }

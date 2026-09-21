@@ -197,6 +197,6 @@
     "@metamask/logger": "workspace:^",
     "@ocap/kernel-language-model-service": "workspace:^",
     "partial-json": "^0.1.7",
-    "ses": "^1.15.0"
+    "ses": "^2.3.0"
   }
 }

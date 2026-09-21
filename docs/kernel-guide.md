@@ -169,8 +169,6 @@ The kernel ships with the following set, sourced from `@metamask/snaps-execution
 | `Request`         | Network              | Hardened constructor surfaced alongside `fetch` so vat code can build requests before calling it.                                                                                                             |
 | `Headers`         | Network              | Hardened constructor.                                                                                                                                                                                         |
 | `Response`        | Network              | Hardened constructor; overrides `[Symbol.hasInstance]` so wrapped fetch results still pass `instanceof Response`.                                                                                             |
-| `TextEncoder`     | Text codec           | Plain hardened.                                                                                                                                                                                               |
-| `TextDecoder`     | Text codec           | Plain hardened.                                                                                                                                                                                               |
 | `URL`             | URL                  | Plain hardened.                                                                                                                                                                                               |
 | `URLSearchParams` | URL                  | Plain hardened.                                                                                                                                                                                               |
 | `atob`            | Base64               | Plain hardened.                                                                                                                                                                                               |
@@ -179,6 +177,8 @@ The kernel ships with the following set, sourced from `@metamask/snaps-execution
 | `AbortSignal`     | Abort                | Plain hardened.                                                                                                                                                                                               |
 
 "Plain hardened" means the value is the host's implementation wrapped with `harden()` — it behaves identically to the browser/Node version. "Attenuated" means the value is a deliberate reimplementation with different semantics; the Notes column flags the relevant differences. The canonical list lives in [`endowments.ts`](../packages/ocap-kernel/src/vats/endowments.ts).
+
+`TextEncoder` and `TextDecoder` are absent from the table because SES permits them in every compartment, so they are not endowments and naming them in `globals` fails like any other unknown global. The same goes for JS intrinsics such as `ArrayBuffer` and `Intl`. The exceptions are `Float16Array`, `Float32Array`, and `Float64Array`, which SES withholds from compartments to close a `NaN` bit-pattern side channel and which the kernel therefore cannot endow; use `DataView` instead.
 
 ### Network endowment
 
@@ -213,7 +213,7 @@ Two levers, applied at different layers:
 
 ```ts
 const kernel = await Kernel.make(platformServices, db, {
-  allowedGlobalNames: ['TextEncoder', 'TextDecoder', 'URL'],
+  allowedGlobalNames: ['URL', 'URLSearchParams'],
 });
 ```
 

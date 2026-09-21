@@ -51,7 +51,7 @@
   "dependencies": {
     "@endo/eventual-send": "^1.5.0",
     "@endo/lockdown": "^1.0.19",
-    "ses": "^1.15.0"
+    "ses": "^2.3.0"
   },
   "devDependencies": {
     "@endo/bundle-source": "^4.3.2",
