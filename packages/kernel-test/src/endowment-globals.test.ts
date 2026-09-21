@@ -189,6 +189,24 @@ describe('global endowments', () => {
       expect(logs).toContain(`checkGlobal: ${name}=false`);
     });
 
+    // Unlike the above, these are intrinsics, withheld by SES so that a vat
+    // cannot read a `NaN` bit pattern through a shared `ArrayBuffer` and use
+    // it as a side channel. Snaps offers the 32- and 64-bit constructors as
+    // endowments, so this guards against restoring one via
+    // `ALLOWED_GLOBAL_NAMES`.
+    it.each(['Float16Array', 'Float32Array', 'Float64Array'])(
+      'does not have %s in a vat',
+      async (name) => {
+        const { kernel, entries } = await setup({ globals: [] });
+
+        await kernel.queueMessage(v1Root, 'checkGlobal', [name]);
+        await waitUntilQuiescent();
+
+        const logs = extractTestLogs(entries, vatId);
+        expect(logs).toContain(`checkGlobal: ${name}=false`);
+      },
+    );
+
     it('throws when calling tamed Date.now without endowing Date', async () => {
       const { kernel } = await setup({ globals: [] });
 
