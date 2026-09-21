@@ -60,8 +60,7 @@ describe('global endowments', () => {
     return { kernel, entries };
   };
 
-  // SES permits these universally, so they are not endowments and are absent
-  // from `AllowedGlobalName`; a vat naming them no longer initializes.
+  // SES permits these universally, so they are not endowments at all.
   it('can use TextEncoder and TextDecoder without endowing them', async () => {
     const { kernel, entries } = await setup({ globals: [] });
 
@@ -204,6 +203,17 @@ describe('global endowments', () => {
 
         const logs = extractTestLogs(entries, vatId);
         expect(logs).toContain(`checkGlobal: ${name}=false`);
+      },
+    );
+
+    // Rejected by `VatConfigStruct` before `VatSupervisor`'s allowlist check,
+    // so this surfaces as a config error rather than "unknown global".
+    it.each(['TextEncoder', 'TextDecoder'])(
+      'rejects a vat config naming %s',
+      async (name) => {
+        await expect(
+          setup({ globals: [name as AllowedGlobalName] }),
+        ).rejects.toThrow('invalid cluster config');
       },
     );
 
