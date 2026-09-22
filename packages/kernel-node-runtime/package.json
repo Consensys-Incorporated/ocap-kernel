@@ -71,7 +71,7 @@
     "@chainsafe/libp2p-quic": "^2.0.1",
     "@endo/eventual-send": "^1.5.0",
     "@endo/promise-kit": "^1.2.1",
-    "@libp2p/interface": "3.1.1",
+    "@libp2p/interface": "3.3.0",
     "@libp2p/tcp": "11.0.14",
     "@libp2p/webrtc": "6.0.15",
     "@metamask/kernel-platforms": "workspace:^",

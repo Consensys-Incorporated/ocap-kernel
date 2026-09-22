@@ -39,7 +39,7 @@ describe('Kernel Worker', () => {
     };
     await kernel.launchSubcluster(testConfig);
     expect(kernel.getVatIds()).toHaveLength(1);
-  });
+  }, 5000);
 
   const launchTestVats = async (): Promise<void> => {
     const testConfig: ClusterConfig = {
