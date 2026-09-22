@@ -848,6 +848,18 @@ describe('RemoteManager', () => {
       expect(kernelStore.getPeerIncarnation(peerId)).toBe('incarnation-B');
     });
 
+    // A live restart arrives here, never through `handlePeerRestart`.
+    it('discards what the old incarnation sent', async () => {
+      const peerId = 'peer-that-restarted';
+      const { remoteId } = remoteManager.establishRemote(peerId);
+      const discardSpy = vi.spyOn(mockKernelQueue, 'discardRemoteInbound');
+      kernelStore.setPeerIncarnation(peerId, 'incarnation-A');
+
+      await getOnIncarnationChange()(peerId, 'incarnation-B');
+
+      expect(discardSpy).toHaveBeenCalledWith(remoteId);
+    });
+
     it('does not trigger restart on first observation of a peer', async () => {
       const peerId = 'peer-first-contact';
       const remote = remoteManager.establishRemote(peerId);
