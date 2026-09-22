@@ -36,6 +36,20 @@ export const isConsoleForwardMessage = (
 ): value is ConsoleForwardMessage => is(value, ConsoleForwardMessageStruct);
 
 /**
+ * Checks whether a message event source is the window of an iframe in the
+ * current document. Vat iframes are sandboxed and have the opaque origin
+ * `"null"`, so their messages cannot be authenticated by `event.origin`.
+ *
+ * @param source - The `source` of a message event.
+ * @returns Whether the source is the window of an iframe in the document.
+ */
+export const isIframeWindow = (source: MessageEventSource | null): boolean =>
+  source !== null &&
+  Array.from(document.querySelectorAll('iframe')).some(
+    (iframe) => iframe.contentWindow === source,
+  );
+
+/**
  * Wraps console methods to forward messages via a provided callback.
  * This enables capturing console output from contexts that Playwright cannot
  * directly access (like offscreen documents, workers, or iframes).

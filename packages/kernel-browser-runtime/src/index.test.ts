@@ -14,6 +14,7 @@ describe('index', () => {
       'handleConsoleForwardMessage',
       'isCapTPNotification',
       'isConsoleForwardMessage',
+      'isIframeWindow',
       'makeBackgroundCapTP',
       'makeCapTPNotification',
       'makeIframeVatWorker',
