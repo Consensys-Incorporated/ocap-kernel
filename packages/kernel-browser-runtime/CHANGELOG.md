@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Add `isIframeWindow` for authenticating `message` events from vat iframes, whose origin is opaque, by their `source` window ([#XXXX](https://github.com/Consensys-Incorporated/ocap-kernel/pull/XXXX))
+- Add `isIframeWindow` for authenticating `message` events from vat iframes, whose origin is opaque, by their `source` window ([#1122](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1122))
 - Log a fatal message when the kernel's run loop dies, since the worker outlives the kernel and has no exit to take ([#1005](https://github.com/MetaMask/ocap-kernel/pull/1005))
 
 ### Changed
