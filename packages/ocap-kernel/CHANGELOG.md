@@ -66,6 +66,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A service or IO channel named `__proto__` in a cluster config reaches the bootstrap vat as an ordinary key of `services` instead of replacing that object's prototype ([#XXXX](https://github.com/Consensys-Incorporated/ocap-kernel/pull/XXXX))
 - A crank that aborts keeps the writes that follow the abort — the vat's death, the collection after it — instead of autocommitting them one statement at a time outside any transaction: the run loop takes a savepoint for the crank and one for the delivery, and only the delivery is rolled back ([#1090](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1090))
 - A vat that exits gracefully stays dead when the rest of its crank then throws; before, the run loop's catch rolled the death record back and would have relaunched a vat whose worker was gone and whose callers had been answered ([#1090](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1090))
 - A crank rollback reverts the in-memory caches built over the writes it discards, so an abandoned crank no longer leaves the kernel reading its own undone state: a vat it marked terminated, a GC action it queued, or a collection candidate whose promise the rollback deleted — the last of which killed the run loop on the next crank ([#1087](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1087))
