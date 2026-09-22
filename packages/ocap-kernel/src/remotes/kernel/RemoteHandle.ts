@@ -1535,19 +1535,19 @@ export class RemoteHandle implements EndpointHandle {
    * leave the in-memory view inconsistent with the persisted view.
    */
   handlePeerRestart(): void {
-    // Anything still waiting its turn belongs to the incarnation that is gone.
-    this.#kernelQueue.discardRemoteInbound(this.remoteId);
     this.persistPeerRestart();
     this.finalizePeerRestart();
   }
 
   /**
-   * Apply the in-memory side of a peer restart: cancel timers, reject
-   * in-flight URL redemption promises, and reset sequence counters. Must
-   * be called after {@link persistPeerRestart} and after the caller's
-   * savepoint has been released.
+   * Apply the in-memory side of a peer restart: discard arrivals from the
+   * incarnation that is gone, cancel timers, reject in-flight URL redemption
+   * promises, and reset sequence counters. Must be called after
+   * {@link persistPeerRestart} and after the caller's savepoint has been
+   * released.
    */
   finalizePeerRestart(): void {
+    this.#kernelQueue.discardRemoteInbound(this.remoteId);
     const pendingCount = this.#getPendingCount();
     if (this.#hasPendingMessages()) {
       this.#logger.log(

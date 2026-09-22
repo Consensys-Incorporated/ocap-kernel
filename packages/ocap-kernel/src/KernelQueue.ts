@@ -596,6 +596,12 @@ export class KernelQueue {
    * number against the new one, and the new incarnation's first message would
    * then be discarded as a duplicate.
    *
+   * Reaches only what is still waiting. An arrival already handed to a crank
+   * has been shifted off this list, and a restart detected while that crank is
+   * suspended still records the old incarnation's sequence number — the
+   * handshake runs on the transport's flow, with nothing serializing it
+   * against an open crank.
+   *
    * @param remoteId - The remote whose arrivals to discard.
    */
   discardRemoteInbound(remoteId: RemoteId): void {
