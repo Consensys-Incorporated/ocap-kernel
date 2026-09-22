@@ -48,8 +48,6 @@ describe('createDefaultEndowments', () => {
       'Request',
       'Response',
       'SubtleCrypto',
-      'TextDecoder',
-      'TextEncoder',
       'URL',
       'URLSearchParams',
       'atob',

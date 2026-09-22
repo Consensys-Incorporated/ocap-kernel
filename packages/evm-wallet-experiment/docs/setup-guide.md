@@ -464,20 +464,20 @@ yarn ocap daemon exec launchSubcluster '{
     "vats": {
       "coordinator": {
         "bundleSpec": "packages/evm-wallet-experiment/src/vats/home-coordinator.bundle",
-        "globals": ["TextEncoder", "TextDecoder", "Date", "setTimeout"]
+        "globals": ["Date", "setTimeout"]
       },
       "keyring": {
         "bundleSpec": "packages/evm-wallet-experiment/src/vats/keyring-vat.bundle",
-        "globals": ["TextEncoder", "TextDecoder", "crypto"]
+        "globals": ["crypto"]
       },
       "provider": {
         "bundleSpec": "packages/evm-wallet-experiment/src/vats/provider-vat.bundle",
-        "globals": ["TextEncoder", "TextDecoder", "fetch", "Request", "Headers", "Response"],
+        "globals": ["fetch", "Request", "Headers", "Response"],
         "network": { "allowedHosts": ["<chain>.infura.io", "api.pimlico.io", "swap.api.cx.metamask.io"] }
       },
       "delegator": {
         "bundleSpec": "packages/evm-wallet-experiment/src/vats/delegator-vat.bundle",
-        "globals": ["TextEncoder", "TextDecoder", "crypto"],
+        "globals": ["crypto"],
         "parameters": { "delegationManagerAddress": "0xdb9B1e94B5b69Df7e401DDbedE43491141047dB3" }
       }
     }
@@ -564,20 +564,20 @@ yarn ocap daemon exec launchSubcluster '{
     "vats": {
       "coordinator": {
         "bundleSpec": "packages/evm-wallet-experiment/src/vats/away-coordinator.bundle",
-        "globals": ["TextEncoder", "TextDecoder", "Date", "setTimeout"]
+        "globals": ["Date", "setTimeout"]
       },
       "keyring": {
         "bundleSpec": "packages/evm-wallet-experiment/src/vats/keyring-vat.bundle",
-        "globals": ["TextEncoder", "TextDecoder", "crypto"]
+        "globals": ["crypto"]
       },
       "provider": {
         "bundleSpec": "packages/evm-wallet-experiment/src/vats/provider-vat.bundle",
-        "globals": ["TextEncoder", "TextDecoder", "fetch", "Request", "Headers", "Response"],
+        "globals": ["fetch", "Request", "Headers", "Response"],
         "network": { "allowedHosts": ["<chain>.infura.io", "api.pimlico.io", "swap.api.cx.metamask.io"] }
       },
       "redeemer": {
         "bundleSpec": "packages/evm-wallet-experiment/src/vats/redeemer-vat.bundle",
-        "globals": ["TextEncoder", "TextDecoder"]
+        "globals": []
       }
     }
   }
