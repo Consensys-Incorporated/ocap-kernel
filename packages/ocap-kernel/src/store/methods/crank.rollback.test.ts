@@ -25,9 +25,10 @@ describe('what a crank rollback reverts beyond the database', () => {
   function crankThenRollBack(work: () => void): void {
     kernelStore.startCrank();
     try {
-      kernelStore.createCrankSavepoint('start');
+      kernelStore.createCrankSavepoint('crank');
+      kernelStore.createCrankSavepoint('delivery');
       work();
-      kernelStore.rollbackCrank('start');
+      kernelStore.rollbackCrank('delivery');
     } finally {
       kernelStore.endCrank();
     }
@@ -65,7 +66,8 @@ describe('what a crank rollback reverts beyond the database', () => {
     // deleted is not there to be read, so a stale candidate throws here and
     // kills the run loop over work that no longer exists.
     kernelStore.startCrank();
-    kernelStore.createCrankSavepoint('start');
+    kernelStore.createCrankSavepoint('crank');
+    kernelStore.createCrankSavepoint('delivery');
     const [collectable] = kernelStore.initKernelPromise();
     kernelStore.decrementRefCount(collectable, 'test');
     kernelStore.collectGarbage();
