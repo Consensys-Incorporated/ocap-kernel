@@ -489,6 +489,21 @@ describe('kernel store', () => {
     });
   });
 
+  describe('clear', () => {
+    it('leaves the run queue and counters usable', () => {
+      const ks = makeKernelStore(mockKernelDatabase);
+      ks.getNextVatId();
+      ks.enqueueRun(tm('test message'));
+
+      ks.clear();
+
+      // The cached run queue head named a row `clear` deleted, so the next
+      // dequeue threw and killed the run loop.
+      expect(ks.dequeueRun()).toBeUndefined();
+      expect(ks.getNextVatId()).toBe('v1');
+    });
+  });
+
   describe('reset', () => {
     it('clears store and resets counters', () => {
       const ks = makeKernelStore(mockKernelDatabase);
