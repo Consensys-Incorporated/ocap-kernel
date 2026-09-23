@@ -96,6 +96,32 @@ type PersistedCommand = {
   wasEmpty: boolean;
 };
 
+/** The span of outgoing sequence numbers awaiting acknowledgement. */
+type SeqWindow = {
+  startSeq: number;
+  nextSendSeq: number;
+};
+
+/**
+ * Whether a sequence window holds anything.
+ *
+ * @param window - The window to measure.
+ * @returns True if it holds at least one unacknowledged message.
+ */
+function hasPending(window: SeqWindow): boolean {
+  return window.nextSendSeq > 0 && window.startSeq <= window.nextSendSeq;
+}
+
+/**
+ * How many messages a sequence window holds.
+ *
+ * @param window - The window to measure.
+ * @returns The count of unacknowledged messages.
+ */
+function countPending(window: SeqWindow): number {
+  return hasPending(window) ? window.nextSendSeq - window.startSeq + 1 : 0;
+}
+
 type RemoteCommand = {
   seq: number;
   ack?: number;
@@ -150,7 +176,10 @@ export class RemoteHandle implements EndpointHandle {
 
   // --- Sequence/ACK tracking state ---
 
-  /** Next sequence number to assign to outgoing messages. */
+  /**
+   * Next sequence number to assign to outgoing messages. A copy of the store's
+   * counter that lags it until {@link #transmitRemoteCommand} catches it up.
+   */
   #nextSendSeq: number = 0;
 
   /** Highest sequence number received from remote (for piggyback ACK). */
@@ -297,7 +326,7 @@ export class RemoteHandle implements EndpointHandle {
    * @returns True if there are pending messages.
    */
   #hasPendingMessages(): boolean {
-    return this.#nextSendSeq > 0 && this.#startSeq <= this.#nextSendSeq;
+    return hasPending(this.#seqWindow);
   }
 
   /**
@@ -306,20 +335,44 @@ export class RemoteHandle implements EndpointHandle {
    * @returns The count of pending messages.
    */
   #getPendingCount(): number {
-    if (!this.#hasPendingMessages()) {
-      return 0;
-    }
-    return this.#nextSendSeq - this.#startSeq + 1;
+    return countPending(this.#seqWindow);
   }
 
   /**
-   * Get the next sequence number and increment the counter.
+   * The sequence window as this handle holds it in memory.
    *
-   * @returns The sequence number to use for the next outgoing message.
+   * @returns The in-memory window.
    */
-  #getNextSeq(): number {
-    this.#nextSendSeq += 1;
-    return this.#nextSendSeq;
+  get #seqWindow(): SeqWindow {
+    return { startSeq: this.#startSeq, nextSendSeq: this.#nextSendSeq };
+  }
+
+  /**
+   * The sequence window as the store holds it, which is the one a crank
+   * rollback restores.
+   *
+   * @returns The persisted window.
+   */
+  get #storedSeqWindow(): SeqWindow {
+    const stored = this.#kernelStore.getRemoteSeqState(this.remoteId);
+    return {
+      startSeq: stored?.startSeq ?? 0,
+      nextSendSeq: stored?.nextSendSeq ?? 0,
+    };
+  }
+
+  /**
+   * The window the next outgoing message is numbered from: the store's, which
+   * a crank rollback restores, unless memory has gone further. Memory is ahead
+   * only where a rollback took back a message the peer already had, and the
+   * peer's view is the one that cannot be revised, so that number is never
+   * handed out a second time.
+   *
+   * @returns The window to number from.
+   */
+  get #sendWindow(): SeqWindow {
+    const stored = this.#storedSeqWindow;
+    return this.#nextSendSeq > stored.nextSendSeq ? this.#seqWindow : stored;
   }
 
   /**
@@ -381,7 +434,10 @@ export class RemoteHandle implements EndpointHandle {
    * Clear the ACK timeout timer.
    */
   #clearAckTimeout(): void {
-    if (this.#ackTimeoutHandle) {
+    // Tested against `undefined` rather than for truthiness, to agree with
+    // {@link #transmitRemoteCommand}, where the same field decides whether to
+    // arm one.
+    if (this.#ackTimeoutHandle !== undefined) {
       clearTimeout(this.#ackTimeoutHandle);
       this.#ackTimeoutHandle = undefined;
     }
@@ -551,6 +607,13 @@ export class RemoteHandle implements EndpointHandle {
    * it commits: a crank that goes on to fail must not leave the peer holding a
    * message the kernel has rolled back and will never account for again.
    *
+   * The in-memory counters read one message behind the store between those two
+   * steps, and everything that measures the pending queue from them — an ACK,
+   * a timeout, a give-up — is correct only because nothing can run in between:
+   * the run loop awaits no unsettled promise from here to `afterCommit`. Put a
+   * real `await` in that path and `#rejectAllPending` starts abandoning a queue
+   * it cannot see the whole of.
+   *
    * @param messageBase - The delivery to make.
    * @returns This handle's crank result, carrying the send.
    */
@@ -588,6 +651,14 @@ export class RemoteHandle implements EndpointHandle {
    * because a message prepared inside a crank must be persisted in that
    * crank's transaction, while sending it has to wait for the commit.
    *
+   * Numbers the message from {@link #sendWindow} and leaves the in-memory
+   * counters alone: a rollback takes these writes back but not RAM, and an
+   * aborted crank that had moved them would leave the handle counting a
+   * message the store no longer has — the next delivery would find the queue
+   * non-empty and arm no ACK timeout, so a message that really did go out
+   * would never be retransmitted. {@link #transmitRemoteCommand} moves them,
+   * once the number is one the peer has.
+   *
    * @param messageBase - The message, before its sequence number and ack.
    * @param options - Options bag.
    * @param options.exemptFromCapacityLimit - Whether the pending queue's
@@ -600,21 +671,22 @@ export class RemoteHandle implements EndpointHandle {
       exemptFromCapacityLimit = false,
     }: { exemptFromCapacityLimit?: boolean } = {},
   ): PersistedCommand {
+    const window = this.#sendWindow;
+
     // Check queue capacity before consuming any resources (seq number, ACK timer).
     if (
       !exemptFromCapacityLimit &&
-      this.#getPendingCount() >= MAX_PENDING_MESSAGES
+      countPending(window) >= MAX_PENDING_MESSAGES
     ) {
       throw Error(
         `Message rejected: pending queue at capacity (${MAX_PENDING_MESSAGES})`,
       );
     }
 
-    // Track whether this is the first pending message (before incrementing seq)
-    const wasEmpty = !this.#hasPendingMessages();
+    const wasEmpty = !hasPending(window);
 
     // Build full message with seq and optional piggyback ack
-    const seq = this.#getNextSeq();
+    const seq = window.nextSendSeq + 1;
     const ack = this.#getAckValue();
     const remoteCommand: RemoteCommand =
       ack === undefined
@@ -629,11 +701,10 @@ export class RemoteHandle implements EndpointHandle {
     this.#kernelStore.setPendingMessage(this.remoteId, seq, messageString);
 
     if (wasEmpty) {
-      this.#startSeq = seq;
       this.#kernelStore.setRemoteStartSeq(this.remoteId, seq);
     }
 
-    this.#kernelStore.setRemoteNextSendSeq(this.remoteId, this.#nextSendSeq);
+    this.#kernelStore.setRemoteNextSendSeq(this.remoteId, seq);
 
     return { seq, messageString, wasEmpty };
   }
@@ -648,6 +719,27 @@ export class RemoteHandle implements EndpointHandle {
    */
   #transmitRemoteCommand(persisted: PersistedCommand): void {
     const { seq, messageString, wasEmpty } = persisted;
+
+    // A peer restart between the persist and here empties the pending queue,
+    // payloads and all, so a message still in it is one still owed to the peer
+    // this handle is talking to. One that is gone belongs to an incarnation
+    // that is gone, and sending it would spend a sequence number the new
+    // incarnation has not seen — which it would then drop as a duplicate when
+    // this handle numbers a real message with it.
+    if (this.#kernelStore.getPendingMessage(this.remoteId, seq) === undefined) {
+      return;
+    }
+
+    // The peer is about to have this number, so memory takes it. Never
+    // backwards: an immediate send can be numbered from the store while a
+    // deferred one is still waiting for its commit, and then goes out first.
+    if (wasEmpty) {
+      this.#startSeq = seq;
+    }
+    if (seq > this.#nextSendSeq) {
+      this.#nextSendSeq = seq;
+    }
+
     if (this.#needsHinting) {
       // Hints are registered lazily because (a) transmitting to the platform
       // services process has to be done asynchronously, which is very painful
@@ -671,8 +763,11 @@ export class RemoteHandle implements EndpointHandle {
     // Clear delayed ACK timer - we're piggybacking the ACK on this message
     this.#clearDelayedAck();
 
-    // Start ACK timeout if this is the first pending message
-    if (wasEmpty) {
+    // Keyed on the timer rather than on this being the queue's first message,
+    // so a queue left untimed — by a rejection that landed between this
+    // message's persist and its send — gets one rather than waiting on a timer
+    // no later send will arm.
+    if (this.#ackTimeoutHandle === undefined) {
       this.#startAckTimeout();
     }
 
