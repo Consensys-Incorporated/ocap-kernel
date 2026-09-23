@@ -297,6 +297,27 @@ describe('SubclusterManager', () => {
       ]);
     });
 
+    it('passes a service named __proto__ as an own property', async () => {
+      const config: ClusterConfig = {
+        bootstrap: 'testVat',
+        vats: {
+          testVat: { sourceSpec: 'test.js' },
+        },
+        services: ['__proto__'],
+      };
+      (mockGetKernelService as ReturnType<typeof vi.fn>).mockReturnValue({
+        kref: 'ko99',
+        systemOnly: false,
+      });
+
+      await subclusterManager.launchSubcluster(config);
+
+      const [, services] = (mockQueueMessage as ReturnType<typeof vi.fn>).mock
+        .calls[0]?.[2] as [unknown, object];
+      expect(Object.getPrototypeOf(services)).toBe(Object.prototype);
+      expect(Object.keys(services)).toStrictEqual(['__proto__']);
+    });
+
     it('throws when user subcluster requests a restricted service', async () => {
       const config: ClusterConfig = {
         bootstrap: 'testVat',

@@ -352,7 +352,6 @@ export class SubclusterManager {
   }> {
     const vatEntries = Object.entries(config.vats);
 
-    const services: Record<string, SlotValue> = {};
     const ioNames = config.io
       ? new Set(Object.keys(config.io))
       : new Set<string>();
@@ -360,19 +359,21 @@ export class SubclusterManager {
     // Collect all service names: explicit services plus IO channel names
     const allServiceNames = new Set([...(config.services ?? []), ...ioNames]);
 
-    for (const name of allServiceNames) {
-      // IO services are registered under scoped names to avoid collisions
-      const lookupName = ioNames.has(name)
-        ? `io:${subclusterId}:${name}`
-        : name;
-      const possibleService = this.#getKernelService(lookupName);
-      if (possibleService) {
-        const { kref } = possibleService;
-        services[name] = kslot(kref);
-      } else {
-        throw Error(`no registered kernel service '${lookupName}'`);
-      }
-    }
+    // Object.fromEntries so that a name like `__proto__` becomes an own
+    // property instead of replacing the prototype.
+    const services: Record<string, SlotValue> = Object.fromEntries(
+      [...allServiceNames].map((name) => {
+        // IO services are registered under scoped names to avoid collisions
+        const lookupName = ioNames.has(name)
+          ? `io:${subclusterId}:${name}`
+          : name;
+        const possibleService = this.#getKernelService(lookupName);
+        if (!possibleService) {
+          throw Error(`no registered kernel service '${lookupName}'`);
+        }
+        return [name, kslot(possibleService.kref)];
+      }),
+    );
 
     // Launch all vats concurrently. getNextVatId() runs synchronously before
     // each launchVat's first await, so vat-ID allocation order is deterministic.
