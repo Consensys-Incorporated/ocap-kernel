@@ -48,8 +48,13 @@ export class KernelQueue {
     }
   > = new Map();
 
-  /** Promises resolved during this crank that have kernel subscriptions */
-  #resolvedWithKernelSubscription: KRef[] = [];
+  /**
+   * Resolutions made during this crank of promises that have kernel
+   * subscriptions. Each carries its value because `collectGarbage` runs before
+   * the flush and a subscription takes no reference count, so the promise may
+   * be gone from the store by the time its subscriber is answered.
+   */
+  #resolvedWithKernelSubscription: KernelOneResolution[] = [];
 
   /** Thunk to signal run queue transition from empty to non-empty */
   #wakeUpTheRunQueue: (() => void) | null;
@@ -362,9 +367,6 @@ export class KernelQueue {
       // TODO: Currently all errors terminate the vat, but instead we could
       // restart it and terminate the vat only after a certain number of failed
       // retries. This is probably where we should implement the vat restart logic.
-    } else {
-      // Upon on successful crank completion, enqueue buffered vat outputs for delivery.
-      this.#flushCrankBuffer();
     }
     // Vat termination during delivery is triggered by an illegal syscall
     // or by syscall.exit().
@@ -384,7 +386,23 @@ export class KernelQueue {
       }
     }
     this.#kernelStore.collectGarbage();
-    this.#kernelStore.assertRefCountsIfAuditing();
+    // While a violation can still undo this crank, the audit goes first, so the
+    // flush does not settle the promise `enqueueMessage` gave an external
+    // caller out of state that is about to be rolled back. It can see the
+    // buffered items at all because `computeExpectedRefCounts` credits the
+    // crank buffer. Once a vat's death has committed the crank there is nothing
+    // left to undo, and flushing first is instead what keeps each queue row
+    // with the reference count charge it was given.
+    const auditBeforeFlush = this.#deliveryRollbackAllowed;
+    if (auditBeforeFlush) {
+      this.#kernelStore.assertRefCountsIfAuditing();
+    }
+    if (!crankResult?.abort) {
+      this.#flushCrankBuffer();
+    }
+    if (!auditBeforeFlush) {
+      this.#kernelStore.assertRefCountsIfAuditing();
+    }
   }
 
   /**
@@ -422,8 +440,8 @@ export class KernelQueue {
 
     // Invoke kernel subscriptions for promises resolved during this crank
     // that don't have kernel-level subscribers (e.g., promises from enqueueMessage)
-    for (const kpid of this.#resolvedWithKernelSubscription) {
-      this.#invokeKernelSubscription(kpid);
+    for (const resolution of this.#resolvedWithKernelSubscription) {
+      this.#settleKernelSubscription(resolution);
     }
     this.#resolvedWithKernelSubscription = [];
   }
@@ -434,14 +452,31 @@ export class KernelQueue {
    * @param kpid - The promise ID to check for subscriptions.
    */
   #invokeKernelSubscription(kpid: KRef): void {
+    if (this.subscriptions.has(kpid)) {
+      const promise = this.#kernelStore.getKernelPromise(kpid);
+      this.#settleKernelSubscription([
+        kpid,
+        promise.state === 'rejected',
+        promise.value as CapData<KRef>,
+      ]);
+    }
+  }
+
+  /**
+   * Settle the kernel subscription for a promise, if any, with a resolution
+   * the caller already has.
+   *
+   * @param resolution - The promise and how it was resolved.
+   */
+  #settleKernelSubscription(resolution: KernelOneResolution): void {
+    const [kpid, rejected, data] = resolution;
     const subscription = this.subscriptions.get(kpid);
     if (subscription) {
       this.subscriptions.delete(kpid);
-      const promise = this.#kernelStore.getKernelPromise(kpid);
-      if (promise.state === 'rejected') {
-        subscription.reject(promise.value);
+      if (rejected) {
+        subscription.reject(data);
       } else {
-        subscription.resolve(promise.value as CapData<KRef>);
+        subscription.resolve(data);
       }
     }
   }
@@ -588,7 +623,7 @@ export class KernelQueue {
         this.#invokeKernelSubscription(kpid);
       } else if (this.subscriptions.has(kpid)) {
         // Track resolved promises that have kernel subscriptions for invocation at flush time
-        this.#resolvedWithKernelSubscription.push(kpid);
+        this.#resolvedWithKernelSubscription.push(resolution);
       }
     }
   }
