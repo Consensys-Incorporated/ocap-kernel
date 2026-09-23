@@ -1235,6 +1235,56 @@ describe('KernelQueue', () => {
       expect(resolveSpy).toHaveBeenCalledWith(fulfilledValue);
       expect(rejectSpy).not.toHaveBeenCalled();
     });
+
+    it('answers a subscription whose promise was collected before the flush', async () => {
+      const resolveSpy = vi.fn();
+      kernelQueue.subscriptions.set('kp1', {
+        resolve: resolveSpy,
+        reject: vi.fn(),
+      });
+      const fulfilledValue = { body: '"ok"', slots: [] };
+      let collected = false;
+      (
+        kernelStore.getKernelPromise as unknown as MockInstance
+      ).mockImplementation(() => {
+        if (collected) {
+          throw new Error('unknown kernel promise kp1');
+        }
+        return { state: 'unresolved', decider: 'v1', subscribers: [] };
+      });
+      (
+        kernelStore.collectGarbage as unknown as MockInstance
+      ).mockImplementation(() => {
+        collected = true;
+      });
+      (kernelStore.runQueueLength as unknown as MockInstance)
+        .mockReturnValueOnce(1)
+        .mockReturnValue(0);
+      (kernelStore.dequeueRun as unknown as MockInstance).mockReturnValueOnce({
+        type: 'send',
+        target: 'ko1',
+        message: {} as KernelMessage,
+      });
+      // The vat resolves the promise mid-crank, so the answer waits for the
+      // flush.
+      const deliver = vi.fn().mockImplementation(async () => {
+        kernelQueue.resolvePromises(
+          'v1',
+          [['kp1', false, fulfilledValue]],
+          false,
+        );
+        return undefined;
+      });
+      (kernelStore.startCrank as unknown as MockInstance)
+        .mockImplementationOnce(() => undefined)
+        .mockImplementation(() => {
+          throw new Error(STOP_RUN_LOOP);
+        });
+
+      await expect(kernelQueue.run(deliver)).rejects.toThrow(STOP_RUN_LOOP);
+
+      expect(resolveSpy).toHaveBeenCalledWith(fulfilledValue);
+    });
   });
 
   describe('waitForCrank', () => {
