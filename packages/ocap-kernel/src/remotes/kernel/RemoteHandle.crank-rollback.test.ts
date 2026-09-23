@@ -254,7 +254,7 @@ describe('RemoteHandle across a crank boundary', () => {
       expect(sentSeqs(remoteComms)).toStrictEqual([1, 2]);
     });
 
-    it('keeps track of one that overtakes a delivery awaiting its commit', async () => {
+    it('waits behind a delivery whose crank has yet to commit', async () => {
       const { remote, kernelStore, remoteComms } =
         await makeRemoteOverRealStore();
 
@@ -262,18 +262,79 @@ describe('RemoteHandle across a crank boundary', () => {
       kernelStore.createCrankSavepoint('crank');
       kernelStore.createCrankSavepoint('delivery');
       const { afterCommit } = await remote.deliverBringOutYourDead();
-      // Numbered from the store, so it takes seq 2 and goes out first.
+      // Numbered from the store, so it takes seq 2 while seq 1 awaits its
+      // commit.
+      remote.redeemOcapURL('ocap:abc123@somepeer').catch(() => undefined);
+      await drainMicrotasks();
+
+      expect(sentSeqs(remoteComms)).toStrictEqual([]);
+
+      kernelStore.endCrank();
+      await afterCommit?.();
+
+      expect(sentSeqs(remoteComms)).toStrictEqual([1, 2]);
+    });
+
+    it('keeps both messages on the retransmit list', async () => {
+      const { remote, kernelStore, remoteComms } =
+        await makeRemoteOverRealStore();
+
+      kernelStore.startCrank();
+      kernelStore.createCrankSavepoint('crank');
+      kernelStore.createCrankSavepoint('delivery');
+      const { afterCommit } = await remote.deliverBringOutYourDead();
       remote.redeemOcapURL('ocap:abc123@somepeer').catch(() => undefined);
       await drainMicrotasks();
       kernelStore.endCrank();
       await afterCommit?.();
 
-      // Both are the handle's to retransmit; neither may be left off the list
-      // because the other moved the counters first.
       pendingTimers[0]?.();
       await drainMicrotasks();
 
-      expect(sentSeqs(remoteComms)).toStrictEqual([2, 1, 1, 2]);
+      expect(sentSeqs(remoteComms)).toStrictEqual([1, 2, 1, 2]);
+    });
+
+    it('drops one whose crank aborted while it waited its turn', async () => {
+      const { remote, kernelStore, remoteComms } =
+        await makeRemoteOverRealStore();
+
+      kernelStore.startCrank();
+      kernelStore.createCrankSavepoint('crank');
+      kernelStore.createCrankSavepoint('delivery');
+      // Seq 1 never commits, so seq 2 is still waiting behind it when the
+      // rollback takes both payloads back.
+      await remote.deliverBringOutYourDead();
+      remote.redeemOcapURL('ocap:abc123@somepeer').catch(() => undefined);
+      await drainMicrotasks();
+      kernelStore.rollbackCrank('delivery');
+      kernelStore.endCrank();
+
+      await deliverAndCommit(remote, kernelStore);
+
+      // Sending the stranded seq 2 would spend a number on a payload the
+      // kernel no longer has any record of.
+      expect(sentSeqs(remoteComms)).toStrictEqual([1]);
+    });
+
+    it('records where the store’s queue begins', async () => {
+      const { remote, kernelStore } = await makeRemoteOverRealStore();
+
+      kernelStore.startCrank();
+      kernelStore.createCrankSavepoint('crank');
+      kernelStore.createCrankSavepoint('delivery');
+      remote.redeemOcapURL('ocap:abc123@somepeer').catch(() => undefined);
+      await drainMicrotasks();
+      kernelStore.rollbackCrank('delivery');
+      kernelStore.endCrank();
+
+      await deliverAndCommit(remote, kernelStore);
+
+      // Memory still holds the rolled-back seq 1, but the store's queue really
+      // does begin at 2, and a restart reads the store.
+      expect(kernelStore.getRemoteSeqState(REMOTE_ID)).toMatchObject({
+        startSeq: 2,
+        nextSendSeq: 2,
+      });
     });
   });
 });
