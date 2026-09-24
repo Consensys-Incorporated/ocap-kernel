@@ -82,6 +82,13 @@ export class Kernel {
   /** Logger for outputting messages (such as errors) to the console */
   readonly #logger: Logger;
 
+  /**
+   * A queue of one, so that two control-plane writes cannot hold the run loop
+   * still at the same time. Replaced with each turn's settlement rather than
+   * the turn itself, so a failed write does not wedge the ones after it.
+   */
+  #directWriteTurn: Promise<void> = Promise.resolve();
+
   /** The kernel's run queue */
   readonly #kernelQueue: KernelQueue;
 
@@ -342,6 +349,25 @@ export class Kernel {
 
     // Start the kernel queue processing (non-blocking)
     // This runs for the entire lifetime of the kernel
+    this.#startRunLoop();
+
+    // Launch new system subclusters (requires queue to be running)
+    await this.#subclusterManager.launchNewSystemSubclusters(configs);
+  }
+
+  /**
+   * Start the run loop, or start it again after it was stopped for a direct
+   * write. Deliberately not awaited: it runs for as long as the kernel does.
+   *
+   * A loop that cannot be started is this method's caller's bug, not a kernel
+   * failure, so it is thrown here rather than handed to the embedder's
+   * terminal hook — which would report a death that has not happened.
+   */
+  #startRunLoop(): void {
+    const { state } = this.#kernelQueue.getRunLoopStatus();
+    if (state !== 'idle' && state !== 'stopped') {
+      throw Error(`cannot start the run loop while it is ${state}`);
+    }
     this.#kernelQueue
       .run(async (item) => {
         // Not a delivery to an endpoint, so not the router's to route: a peer
@@ -365,9 +391,53 @@ export class Kernel {
         }
       })
       .catch((error) => this.#handleRunLoopFailure(error));
+  }
 
-    // Launch new system subclusters (requires queue to be running)
-    await this.#subclusterManager.launchNewSystemSubclusters(configs);
+  /**
+   * Bring the run loop to rest, do something to the store directly, and start
+   * it again.
+   *
+   * The control plane used to wait out the crank in flight and then write,
+   * which does not work: the loop is synchronous from `endCrank` to the next
+   * `startCrank`, so it wins that race by construction and the write lands in
+   * the next crank's `delivery` savepoint, for an ordinary abort to undo after
+   * the caller was told it had succeeded. Between cranks there is no
+   * transaction to land in.
+   *
+   * @param work - What to do while the loop is stopped.
+   * @param options - Options bag.
+   * @param options.thenRestart - Whether to run the loop again afterwards.
+   * False for teardown, which is the end of the kernel.
+   * @returns What `work` returned.
+   */
+  async #withRunLoopStopped<Result>(
+    work: () => Promise<Result> | Result,
+    { thenRestart = true }: { thenRestart?: boolean } = {},
+  ): Promise<Result> {
+    // One at a time. Two of these at once is the defect this exists to remove,
+    // wearing a different hat: the second would find the loop already stopped,
+    // write unprotected, and have the first restart the loop underneath it.
+    const previousTurn = this.#directWriteTurn;
+    const ourTurn = (async (): Promise<Result> => {
+      await previousTurn;
+      const wasRunning = await this.#kernelQueue.stopRunLoop();
+      try {
+        return await work();
+      } finally {
+        // Only if it was ours to stop, and only if the kernel goes on:
+        // starting a loop the caller never had running would be a surprise,
+        // and one that died cannot be started at all.
+        if (wasRunning && thenRestart) {
+          this.#startRunLoop();
+        }
+      }
+    })();
+    // The queue goes on whether or not this turn threw, or one failure would
+    // wedge every later direct write. The caller hears about the failure.
+    this.#directWriteTurn = (async (): Promise<void> => {
+      await ourTurn.catch(() => undefined);
+    })();
+    return await ourTurn;
   }
 
   /**
@@ -660,8 +730,12 @@ export class Kernel {
    * Clear the database.
    */
   async clearStorage(): Promise<void> {
-    await this.#kernelQueue.waitForCrank();
-    this.#kernelStore.clear();
+    await this.#withRunLoopStopped(() => {
+      this.#kernelStore.clear();
+      this.#kernelQueue.discardQueuedWork(
+        'this message result will never be delivered',
+      );
+    });
   }
 
   /**
@@ -855,18 +929,22 @@ export class Kernel {
    * the queue still refuses new work.
    */
   async reset(): Promise<void> {
-    await this.#kernelQueue.waitForCrank();
-    try {
-      if (this.#ioManager) {
-        await this.#ioManager.destroyAllChannels();
+    await this.#withRunLoopStopped(async () => {
+      try {
+        if (this.#ioManager) {
+          await this.#ioManager.destroyAllChannels();
+        }
+        await this.terminateAllVats();
+        this.#subclusterManager.clearSystemSubclusters();
+        this.#kernelQueue.discardQueuedWork(
+          'this message result will never be delivered',
+        );
+        this.#resetKernelState();
+      } catch (error) {
+        this.#logger.error('Error resetting kernel:', error);
+        throw error;
       }
-      await this.terminateAllVats();
-      this.#subclusterManager.clearSystemSubclusters();
-      this.#resetKernelState();
-    } catch (error) {
-      this.#logger.error('Error resetting kernel:', error);
-      throw error;
-    }
+    });
   }
 
   /**
@@ -881,12 +959,25 @@ export class Kernel {
    * Gracefully stop the kernel without deleting vats.
    */
   async stop(): Promise<void> {
-    await this.#kernelQueue.waitForCrank();
-    this.#kernelStore.recordLastActiveTime();
-    await this.#platformServices.stopRemoteComms();
-    this.#remoteManager.cleanup();
-    await this.#platformServices.terminateAll();
-    this.#kernelDatabase.close();
+    await this.#withRunLoopStopped(
+      async () => {
+        // First, so that a caller waiting on work this kernel will never do
+        // hears about it even if tearing the platform down then fails.
+        this.#kernelQueue.discardQueuedWork(
+          'the kernel was stopped before this message result was delivered',
+        );
+        try {
+          this.#kernelStore.recordLastActiveTime();
+          await this.#platformServices.stopRemoteComms();
+          this.#remoteManager.cleanup();
+          await this.#platformServices.terminateAll();
+        } finally {
+          // Whatever else failed, the database handle is not left open.
+          this.#kernelDatabase.close();
+        }
+      },
+      { thenRestart: false },
+    );
   }
 
   /**
