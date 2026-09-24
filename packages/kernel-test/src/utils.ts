@@ -16,14 +16,14 @@ import type {
   OnRunLoopFailure,
   PlatformServices,
 } from '@metamask/ocap-kernel';
-import { afterAll, afterEach, vi } from 'vitest';
+import { afterEach, vi } from 'vitest';
 
 /**
  * The first run loop death seen since it was last reported, held here rather
  * than passed to a test because the crank that kills the loop is often one no
  * test is awaiting — a garbage collection or reap crank, or one that lands
- * after the last assertion. The hooks below are the only thing guaranteed to
- * look, so they are registered for every file that imports this module.
+ * after the last assertion. The hook below is the only thing guaranteed to
+ * look, so it is registered for every file that imports this module.
  */
 let runLoopFailure: Error | undefined;
 
@@ -64,6 +64,11 @@ const closedDatabases = new WeakSet<KernelDatabase>();
 const STOP_TIMEOUT_MS = 5_000;
 
 /**
+ * A `stop` that outlasted {@link STOP_TIMEOUT_MS}.
+ */
+class StopTimeoutError extends Error {}
+
+/**
  * Stop a kernel, or throw if it takes longer than allowed.
  *
  * @param kernel - The kernel.
@@ -76,7 +81,12 @@ async function stopWithin(kernel: Kernel, timeoutMs: number): Promise<void> {
       kernel.stop(),
       new Promise<never>((_resolve, reject) => {
         timer = setTimeout(
-          () => reject(Error(`Kernel did not stop within ${timeoutMs} ms`)),
+          () =>
+            reject(
+              new StopTimeoutError(
+                `Kernel did not stop within ${timeoutMs} ms`,
+              ),
+            ),
           timeoutMs,
         );
       }),
@@ -87,33 +97,52 @@ async function stopWithin(kernel: Kernel, timeoutMs: number): Promise<void> {
 }
 
 /**
- * Stop every kernel the test left running, then fail the test if any stop
- * failed or any run loop died, this teardown's stops included.
+ * Stop a tracked kernel if it is still running.
+ *
+ * @param tracked - The tracked kernel.
+ * @param tracked.kernel - The kernel.
+ * @param tracked.kernelDatabase - The kernel's database.
  */
-async function tearDownKernels(): Promise<void> {
-  const errors: unknown[] = [];
-  for (const {
-    kernel,
-    platformServices,
-    kernelDatabase,
-  } of trackedKernels.splice(0)) {
+async function stopTrackedKernel({
+  kernel,
+  kernelDatabase,
+}: (typeof trackedKernels)[number]): Promise<void> {
+  try {
+    await stopWithin(kernel, STOP_TIMEOUT_MS);
+  } catch (error) {
     // A second `stop` throws on the closed database: expected for a kernel the
-    // test stopped, or one whose database another kernel closed.
-    const wasClosed = closedDatabases.has(kernelDatabase);
-    try {
-      await stopWithin(kernel, STOP_TIMEOUT_MS);
-    } catch (error) {
-      if (!wasClosed) {
-        errors.push(error);
-      }
-    }
-    // `stop` skips this if anything before it throws.
-    try {
-      await platformServices.terminateAll();
-    } catch (error) {
-      errors.push(error);
+    // test stopped, or one whose database another kernel closed. Checked after
+    // the `stop`, since a kernel sharing the database may be stopping in
+    // parallel with this one. A timeout is reported regardless.
+    if (
+      error instanceof StopTimeoutError ||
+      !closedDatabases.has(kernelDatabase)
+    ) {
+      throw error;
     }
   }
+}
+
+/**
+ * Stop every kernel the test left running and terminate its workers, in
+ * parallel so that each hung `stop` does not add its timeout to the hook's,
+ * then fail the test if any of it failed or any run loop died, this teardown's
+ * stops included.
+ */
+async function tearDownKernels(): Promise<void> {
+  const results = await Promise.allSettled(
+    trackedKernels.splice(0).flatMap((tracked) => {
+      const stopped = stopTrackedKernel(tracked);
+      // `stop` skips this if anything before it throws.
+      const terminated = stopped
+        .catch(() => undefined)
+        .then(async () => tracked.platformServices.terminateAll());
+      return [stopped, terminated];
+    }),
+  );
+  const errors = results
+    .filter((result) => result.status === 'rejected')
+    .map(({ reason }) => reason);
   try {
     assertRunLoopAlive();
   } catch (error) {
@@ -128,7 +157,6 @@ async function tearDownKernels(): Promise<void> {
 }
 
 afterEach(tearDownKernels);
-afterAll(tearDownKernels);
 
 /**
  * Kernel options under which reference count drift fails the test run.
@@ -177,8 +205,8 @@ export async function makeTrackedKernel(
       {
         ...kernelDatabase,
         close: () => {
-          closedDatabases.add(kernelDatabase);
           kernelDatabase.close();
+          closedDatabases.add(kernelDatabase);
         },
       },
       options,
