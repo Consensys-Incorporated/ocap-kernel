@@ -71,11 +71,12 @@ function sentSeqs(remoteComms: RemoteComms): number[] {
 }
 
 /**
- * Let a retransmission run to completion: it awaits each send before the next,
- * so one message costs several microtasks.
+ * Let the outbound chain run to a standstill. Every send waits on the one
+ * before it, whether a flush or a retransmission issued it, so a queue costs
+ * several microtasks per message.
  */
 async function drainMicrotasks(): Promise<void> {
-  for (let i = 0; i < 10; i += 1) {
+  for (let i = 0; i < 100; i += 1) {
     await Promise.resolve();
   }
 }
@@ -97,6 +98,9 @@ async function deliverAndCommit(
   const { afterCommit } = await remote.deliverBringOutYourDead();
   kernelStore.endCrank();
   await afterCommit?.();
+  // The run loop does not wait for the wire, so the sends `afterCommit` set
+  // going are still queued behind one another when it returns.
+  await drainMicrotasks();
 }
 
 /**
@@ -305,6 +309,7 @@ describe('RemoteHandle across a crank boundary', () => {
 
       kernelStore.endCrank();
       await afterCommit?.();
+      await drainMicrotasks();
 
       expect(sentSeqs(remoteComms)).toStrictEqual([1, 2]);
     });
@@ -531,6 +536,33 @@ describe('RemoteHandle across a crank boundary', () => {
       // Nothing will ever take seq 2. Waiting for it would strand seq 3 and
       // every message after it for the life of the incarnation.
       expect(sentSeqs(remoteComms)).toStrictEqual([1, 3, 4]);
+    });
+
+    it('hands it over one message at a time', async () => {
+      const { remote, kernelStore } = await makeRemoteOverRealStore();
+
+      await deliverAndDie(remote, kernelStore);
+      await deliverAndDie(remote, kernelStore);
+
+      const { remote: restarted, remoteComms } = startOver(kernelStore);
+      // The transport dials and shakes hands on the first message of a cold
+      // channel, which a restart always has. A second sent meanwhile finds
+      // that channel registered and writes first.
+      let letTheFirstSendFinish = (): void => undefined;
+      vi.mocked(remoteComms.sendRemoteMessage).mockReturnValueOnce(
+        new Promise((resolve) => {
+          letTheFirstSendFinish = () => resolve(undefined);
+        }),
+      );
+
+      await deliverAndCommit(restarted, kernelStore);
+
+      expect(sentSeqs(remoteComms)).toStrictEqual([1]);
+
+      letTheFirstSendFinish();
+      await drainMicrotasks();
+
+      expect(sentSeqs(remoteComms)).toStrictEqual([1, 2, 3]);
     });
 
     it('steps over the part of it the peer acknowledges meanwhile', async () => {

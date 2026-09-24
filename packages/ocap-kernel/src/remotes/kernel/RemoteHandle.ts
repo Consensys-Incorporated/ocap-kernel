@@ -201,6 +201,19 @@ export class RemoteHandle implements EndpointHandle {
    */
   #lastTransmittedSeq: number = 0;
 
+  /**
+   * The sends already on their way, which the next one waits behind.
+   *
+   * `sendRemoteMessage` reaches the wire by more than one route: the call that
+   * finds no channel dials and shakes hands, while one arriving a moment later
+   * finds that channel registered and writes straight away, overtaking it. Two
+   * sends left to run concurrently therefore arrive in either order, and the
+   * peer buffers no gaps — which would undo the ordering
+   * {@link #flushTransmitQueue} exists to impose, most readily just after a
+   * restart, when the queue is long and the channel is cold.
+   */
+  #outboundChain: Promise<void> = Promise.resolve();
+
   /** Retry count for pending messages (reset on ACK). */
   #retryCount: number = 0;
 
@@ -509,16 +522,15 @@ export class RemoteHandle implements EndpointHandle {
   /**
    * Retransmit all pending messages.
    *
-   * Sends sequentially so a peer-restart detection during the first send can
+   * Awaits each send, so a peer-restart detection during the first can
    * short-circuit the rest: clearRemoteSeqState (called by persistPeerRestart)
    * deletes both the seq counters and the `remotePending.*` payloads, so
    * `getPendingMessage` returns undefined for subsequent iterations and the
    * loop bound (`seq <= this.#nextSendSeq`, now 0) terminates immediately.
-   *
-   * Sending in parallel is unsafe: once the first send registers the channel
-   * post-restart, parallel iterations would see `state.channel` set and
-   * bypass the outbound handshake's stale-delivery guard, writing
-   * pre-restart payloads on the same channel.
+   * Were they to run concurrently, one that found the channel the first had
+   * just registered would bypass the outbound handshake's stale-delivery
+   * guard and write a pre-restart payload on it. {@link #outboundChain} keeps
+   * them apart from a flush running at the same time, for the same reason.
    *
    * Terminal errors (intentional close, network stopped, peer-restart-detected
    * throw) abort the loop instead of being logged-and-skipped: continuing
@@ -535,7 +547,7 @@ export class RemoteHandle implements EndpointHandle {
         continue;
       }
       try {
-        await this.#remoteComms.sendRemoteMessage(this.#peerId, messageString);
+        await this.#sendInOrder(messageString);
       } catch (error) {
         if (isTerminalSendError(error)) {
           this.#logger.log(
@@ -554,6 +566,30 @@ export class RemoteHandle implements EndpointHandle {
       }
     }
     this.#startAckTimeout();
+  }
+
+  /**
+   * Hand a message to the transport once everything already on its way has
+   * gone, so that the order this handle sends in is the order the peer sees.
+   *
+   * Bounded: every send times out, so a peer that stops reading holds the
+   * queue up only for as long as its own write takes to fail, and the failure
+   * then empties the queue rather than lengthening it.
+   *
+   * @param messageString - The message, as it goes on the wire.
+   * @returns A promise for this send alone; the caller handles its failure.
+   */
+  async #sendInOrder(messageString: string): Promise<void> {
+    const sent = this.#outboundChain.then(async () =>
+      this.#remoteComms.sendRemoteMessage(this.#peerId, messageString),
+    );
+    // The chain keeps going whatever this send does, or one failure would
+    // strand every message behind it. Each caller answers for its own.
+    this.#outboundChain = sent.then(
+      () => undefined,
+      () => undefined,
+    );
+    return sent;
   }
 
   /**
@@ -920,22 +956,20 @@ export class RemoteHandle implements EndpointHandle {
     // most of the cleanup below is already a no-op. The guards inside
     // `#rejectAllPending` and `rejectPendingRedemptions` keep this safe;
     // calling `#onGiveUp` again exercises an idempotent path.
-    this.#remoteComms
-      .sendRemoteMessage(this.#peerId, messageString)
-      .catch((error) => {
-        if (isTerminalSendError(error)) {
-          const reason = (error as Error).message;
-          this.#clearAckTimeout();
-          this.#rejectAllPending(reason);
-          this.rejectPendingRedemptions(reason);
-          this.#onGiveUp?.(this.#peerId);
-          return;
-        }
-        this.#logger.error(
-          `${this.#peerId.slice(0, 8)}:: error sending remote message seq=${seq}:`,
-          error,
-        );
-      });
+    this.#sendInOrder(messageString).catch((error) => {
+      if (isTerminalSendError(error)) {
+        const reason = (error as Error).message;
+        this.#clearAckTimeout();
+        this.#rejectAllPending(reason);
+        this.rejectPendingRedemptions(reason);
+        this.#onGiveUp?.(this.#peerId);
+        return;
+      }
+      this.#logger.error(
+        `${this.#peerId.slice(0, 8)}:: error sending remote message seq=${seq}:`,
+        error,
+      );
+    });
   }
 
   /**
