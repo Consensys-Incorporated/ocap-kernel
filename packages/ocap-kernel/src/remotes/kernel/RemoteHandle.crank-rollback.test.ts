@@ -577,7 +577,7 @@ describe('RemoteHandle across a crank boundary', () => {
       const { afterCommit } = await restarted.deliverBringOutYourDead();
       // Seq 1 did reach the peer, whose acknowledgement arrives on the
       // transport's flow, so it can land here.
-      await restarted.handleRemoteMessage(JSON.stringify({ ack: 1 }));
+      restarted.receiveFromPeer(JSON.stringify({ ack: 1 }));
       kernelStore.endCrank();
       await afterCommit?.();
 
