@@ -221,6 +221,9 @@ export class RemoteHandle implements EndpointHandle {
    * sequence number cannot say as much by itself: a restart numbers from 1
    * again, so the number a stale send carries may by then belong to a real
    * message of the incarnation that replaced it.
+   *
+   * Kept in memory alone. A crank that rolls back a give-up's writes does not
+   * revive the sends it let go of — their callers have been told they failed.
    */
   #outboundQueueId: number = 0;
 
@@ -629,6 +632,11 @@ export class RemoteHandle implements EndpointHandle {
    * @param reason - The reason for failure.
    */
   #rejectAllPending(reason: string): void {
+    // Ahead of the early return, where the cost of being wrong is one-sided: a
+    // generation too many lets go of a send the peer has acknowledged anyway,
+    // one too few puts an abandoned message on the wire.
+    this.#outboundQueueId += 1;
+
     const window = this.#sendWindow;
     const pendingCount = countPending(window);
     if (pendingCount === 0) {
@@ -648,7 +656,6 @@ export class RemoteHandle implements EndpointHandle {
     this.#kernelStore.setRemoteNextSendSeq(this.remoteId, window.nextSendSeq);
     this.#kernelStore.setRemoteStartSeq(this.remoteId, this.#startSeq);
     this.#retryCount = 0;
-    this.#outboundQueueId += 1;
   }
 
   /**
@@ -1542,7 +1549,9 @@ export class RemoteHandle implements EndpointHandle {
    * Apply the in-memory side of a peer restart: cancel timers, reject
    * in-flight URL redemption promises, and reset sequence counters. Must
    * be called after {@link persistPeerRestart} and after the caller's
-   * savepoint has been released.
+   * savepoint has been released, with nothing awaited in between: a send whose
+   * turn comes there finds the queue emptied in the store but not yet retired
+   * here, and writes a message of the incarnation that has ended.
    */
   finalizePeerRestart(): void {
     const pendingCount = this.#getPendingCount();
