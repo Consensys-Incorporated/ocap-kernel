@@ -17,6 +17,7 @@ import type {
   RunQueueItem,
   RunQueueItemSend,
   RemoteEndpointHandle,
+  RunQueueItemPeerIncarnation,
   RunQueueItemBringOutYourDead,
   RunQueueItemRemoteInbound,
   RunQueueItemNotify,
@@ -24,6 +25,13 @@ import type {
   CrankResult,
 } from './types.ts';
 import { assert, Fail } from './utils/assert.ts';
+
+/**
+ * Every run queue item the router routes. A peer's incarnation change is not a
+ * delivery to an endpoint and is carried out by the kernel instead, so leaving
+ * it out is what keeps the exhaustiveness check below honest.
+ */
+type RoutedRunQueueItem = Exclude<RunQueueItem, RunQueueItemPeerIncarnation>;
 
 type MessageRoute = {
   endpointId?: EndpointId | 'kernel';
@@ -93,7 +101,7 @@ export class KernelRouter {
    * @param item - The message/notification to deliver.
    * @returns The crank outcome.
    */
-  async deliver(item: RunQueueItem): Promise<CrankResult | undefined> {
+  async deliver(item: RoutedRunQueueItem): Promise<CrankResult | undefined> {
     switch (item.type) {
       case 'send':
         return await this.#deliverSend(item);
