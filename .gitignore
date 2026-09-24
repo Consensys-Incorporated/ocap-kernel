@@ -96,4 +96,6 @@ test-results
 
 # Claude
 **/.claude/settings.local.json
+**/.claude/.cc-writes/
+/.claude/worktrees/
 .playwright-mcp/
