@@ -343,7 +343,27 @@ export class Kernel {
     // Start the kernel queue processing (non-blocking)
     // This runs for the entire lifetime of the kernel
     this.#kernelQueue
-      .run(this.#kernelRouter.deliver.bind(this.#kernelRouter))
+      .run(async (item) => {
+        // Not a delivery to an endpoint, so not the router's to route: a peer
+        // restarting is the kernel's own bookkeeping, and for a peer with no
+        // live remote there is no endpoint to route it to at all.
+        if (item.type !== 'peerIncarnation') {
+          return await this.#kernelRouter.deliver(item);
+        }
+        try {
+          return await this.#remoteManager.applyIncarnationChange(item);
+        } catch (error) {
+          // A peer restarting is the peer's doing, and the crank has rolled
+          // back whatever this started. The handshake that queued it is long
+          // answered, and the peer will hand us its incarnation again on the
+          // next one.
+          this.#logger.error(
+            `Could not record the incarnation change for peer ${item.peerId}:`,
+            error,
+          );
+          return { abort: true };
+        }
+      })
       .catch((error) => this.#handleRunLoopFailure(error));
 
     // Launch new system subclusters (requires queue to be running)

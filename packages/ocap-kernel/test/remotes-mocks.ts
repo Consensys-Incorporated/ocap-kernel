@@ -77,7 +77,7 @@ export class MockRemotesFactory {
       enqueueSend: vi.fn(),
       enqueueNotify: vi.fn(),
       acceptRemoteInbound: vi.fn(),
-      discardRemoteInbound: vi.fn(),
+      acceptPeerIncarnation: vi.fn(),
       resolvePromises: vi.fn(),
       assertRunLoopAlive: vi.fn(),
       waitForCrank: vi.fn(),
