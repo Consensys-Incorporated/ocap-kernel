@@ -55,6 +55,17 @@ async function deliverAndCommit(
   return result;
 }
 
+/**
+ * What went to the peer, in the order it went.
+ *
+ * @returns One payload per send.
+ */
+function sentStrings(): string[] {
+  return vi
+    .mocked(mockRemoteComms.sendRemoteMessage)
+    .mock.calls.map(([, messageString]) => messageString);
+}
+
 describe('RemoteHandle', () => {
   beforeEach(() => {
     mockFactory = createMockRemotesFactory({
@@ -1376,10 +1387,10 @@ describe('RemoteHandle', () => {
       // Verify restore happened by checking the next seq number assigned
       await deliverAndCommit(remote.deliverNotify(resolutions));
 
-      const sentString = vi.mocked(mockRemoteComms.sendRemoteMessage).mock
-        .calls[0]?.[1];
-      expect(sentString).toBeDefined();
-      const parsed = JSON.parse(sentString as string);
+      const sent = sentStrings();
+      // The restored queue goes out ahead of the message numbered after it.
+      expect(sent.slice(0, -1)).toStrictEqual(['message 2', 'message 3']);
+      const parsed = JSON.parse(sent.at(-1) as string);
       expect(parsed.seq).toBe(4);
       expect(parsed.ack).toBe(2); // Should have restored highestReceivedSeq
     });
@@ -1403,10 +1414,13 @@ describe('RemoteHandle', () => {
       ];
       await deliverAndCommit(remote.deliverNotify(resolutions));
 
-      const sentString = vi.mocked(mockRemoteComms.sendRemoteMessage).mock
-        .calls[0]?.[1];
-      expect(sentString).toBeDefined();
-      const parsed = JSON.parse(sentString as string);
+      const sent = sentStrings();
+      expect(sent.slice(0, -1)).toStrictEqual([
+        'message 1',
+        'message 2',
+        'message 3',
+      ]);
+      const parsed = JSON.parse(sent.at(-1) as string);
       expect(parsed.seq).toBe(4);
 
       // Verify nextSendSeq was repaired in storage
@@ -1432,10 +1446,9 @@ describe('RemoteHandle', () => {
       ];
       await deliverAndCommit(remote.deliverNotify(resolutions));
 
-      const sentString = vi.mocked(mockRemoteComms.sendRemoteMessage).mock
-        .calls[0]?.[1];
-      expect(sentString).toBeDefined();
-      const parsed = JSON.parse(sentString as string);
+      const sent = sentStrings();
+      expect(sent.slice(0, -1)).toStrictEqual(['message 1']);
+      const parsed = JSON.parse(sent.at(-1) as string);
       expect(parsed.seq).toBe(2);
 
       // Verify state is correct: 2 pending messages (seq 1 and 2)
@@ -1461,10 +1474,9 @@ describe('RemoteHandle', () => {
       ];
       await deliverAndCommit(remote.deliverNotify(resolutions));
 
-      const sentString = vi.mocked(mockRemoteComms.sendRemoteMessage).mock
-        .calls[0]?.[1];
-      expect(sentString).toBeDefined();
-      const parsed = JSON.parse(sentString as string);
+      const sent = sentStrings();
+      expect(sent.slice(0, -1)).toStrictEqual(['message 1']);
+      const parsed = JSON.parse(sent.at(-1) as string);
       expect(parsed.seq).toBe(2);
 
       // Verify state is correct: seq state recovered and 2 pending messages
