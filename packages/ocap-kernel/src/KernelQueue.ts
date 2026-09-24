@@ -94,6 +94,19 @@ export class KernelQueue {
   )[] = [];
 
   /**
+   * Set while callers are waiting for the loop to come out of its current
+   * crank, and settled however the loop leaves — including by dying, which
+   * would otherwise leave `stopRunLoop` waiting on a loop that is never going
+   * to read the request. Shared by every caller, so a second one asking does
+   * not strand the first.
+   *
+   * The loop reads it between cranks only, which is what makes the window it
+   * opens safe to write in: no crank is open, and none will start until the
+   * loop is run again.
+   */
+  #stopRequest: ReturnType<typeof makePromiseKit<void>> | undefined;
+
+  /**
    * Construct a new KernelQueue instance.
    *
    * @param kernelStore - The kernel's persistent state store.
@@ -119,8 +132,10 @@ export class KernelQueue {
    */
   async run(
     deliver: (item: RunQueueItem) => Promise<CrankResult | undefined>,
-  ): Promise<never> {
-    this.#runLoopState.state === 'idle' || Fail`run loop already started`;
+  ): Promise<void> {
+    this.#runLoopState.state === 'running' && Fail`run loop already started`;
+    this.#runLoopState.state === 'failed' &&
+      Fail`run loop died and cannot be run again`;
     this.#runLoopState = { state: 'running' };
     try {
       return await this.#runLoop(deliver);
@@ -128,6 +143,13 @@ export class KernelQueue {
       // The recorded failure rather than the raw throw, so that the embedder's
       // handler and `getRunLoopStatus` describe one object rather than two.
       throw this.#failRunLoop(error);
+    } finally {
+      // However the loop left — stopped as asked, or dead. A caller waiting on
+      // a loop that died would otherwise wait for good, and `Kernel.stop`
+      // awaits this before closing the database.
+      const stopped = this.#stopRequest;
+      this.#stopRequest = undefined;
+      stopped?.resolve();
     }
   }
 
@@ -138,8 +160,15 @@ export class KernelQueue {
    */
   async #runLoop(
     deliver: (item: RunQueueItem) => Promise<CrankResult | undefined>,
-  ): Promise<never> {
+  ): Promise<void> {
     for (;;) {
+      // Between cranks, never inside one: whoever asked gets the store with no
+      // transaction open and none about to be, which is the whole of what
+      // makes their writes safe.
+      if (this.#stopRequest) {
+        this.#runLoopState = { state: 'stopped' };
+        return;
+      }
       let wakeUpPromise: Promise<void> | undefined;
       let afterCommit: (() => Promise<void>) | undefined;
       // Boxed, so a crank that threw `undefined` stays distinguishable from one
@@ -214,6 +243,61 @@ export class KernelQueue {
   }
 
   /**
+   * Bring the run loop to rest between cranks, so a caller may write the store
+   * directly. Resolves once the loop has stopped; a loop that is idle, already
+   * stopped or dead is already at rest.
+   *
+   * A crank in flight is waited out rather than interrupted. Nothing refuses
+   * work queued in the meantime — it simply waits for the loop to be run
+   * again, which is the caller's job.
+   *
+   * @returns Whether the loop had to be stopped, so the caller knows whether
+   * to start it again.
+   */
+  async stopRunLoop(): Promise<boolean> {
+    if (this.#runLoopState.state !== 'running') {
+      return false;
+    }
+    this.#stopRequest ??= makePromiseKit<void>();
+    // A parked loop is not going to reach the check on its own.
+    this.#wakeTheRunLoop();
+    await this.#stopRequest.promise;
+    // Read after the wait, not before it: the loop may have died rather than
+    // stopped, and a caller that restarted a dead loop would be told it had
+    // died a second time.
+    return this.getRunLoopStatus().state === 'stopped';
+  }
+
+  /**
+   * Tell everyone waiting on queued work that it will not be carried out,
+   * because the queue holding it has been destroyed. Kernel promises in the
+   * store go with it, so nothing else would ever settle these.
+   *
+   * @param why - What became of the work, completing "this message result ...".
+   */
+  discardQueuedWork(why: string): void {
+    // Inbound remote work too: it has not reached the run queue yet, and a
+    // peer incarnation change applied after a reset would write pre-reset peer
+    // bookkeeping back into a wiped store.
+    this.#arrivedFromRemotes.length = 0;
+    this.#abandonSubscriptions(new Error(`Kernel state was discarded; ${why}`));
+  }
+
+  /**
+   * Fail every message-result subscription the kernel is holding.
+   *
+   * @param error - What to tell them.
+   */
+  #abandonSubscriptions(error: Error): void {
+    const orphaned = [...this.subscriptions.values()];
+    this.subscriptions.clear();
+    this.#resolvedWithKernelSubscription = [];
+    for (const { reject } of orphaned) {
+      reject(error);
+    }
+  }
+
+  /**
    * Record the death of the run loop and fail the kernel's own message-result
    * subscriptions, which would otherwise hang forever. Kernel promises in the
    * store stay unresolved, so vats awaiting a notify the dead loop owed them
@@ -228,17 +312,11 @@ export class KernelQueue {
         ? error
         : new Error(String(error), { cause: error });
     this.#runLoopState = { state: 'failed', error: failure };
-
-    const orphaned = [...this.subscriptions.values()];
-    this.subscriptions.clear();
-    this.#resolvedWithKernelSubscription = [];
-    for (const { reject } of orphaned) {
-      reject(
-        this.#makeDeadRunLoopError(
-          'Kernel run loop died; this message result will never be delivered',
-        ),
-      );
-    }
+    this.#abandonSubscriptions(
+      this.#makeDeadRunLoopError(
+        'Kernel run loop died; this message result will never be delivered',
+      ),
+    );
     return failure;
   }
 
@@ -275,6 +353,12 @@ export class KernelQueue {
   assertRunLoopAlive(what: string): void {
     if (this.#runLoopState.state === 'failed') {
       throw this.#makeDeadRunLoopError(`Kernel run loop died; cannot ${what}`);
+    }
+    if (this.#runLoopState.state === 'stopped') {
+      // Held still for a direct write, or stopped for good by `Kernel.stop`.
+      // Either way nothing is draining the queue, so work taken now would sit
+      // there — and after `stop` the database it names is closed.
+      throw Error(`Kernel run loop is stopped; cannot ${what}`);
     }
   }
 
