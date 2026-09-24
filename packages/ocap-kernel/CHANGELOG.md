@@ -49,6 +49,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `KernelStore.createSavepoint` refuses one taken while the run loop is running. Such a savepoint is the outermost on the connection, so it either nests inside whatever crank is open or opens a transaction the next crank nests inside, and either way the run loop decides whether its caller's writes survive. Callers work between cranks instead ([#1106](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1106))
 - **BREAKING:** `RunLoopStatus` gains a `stopped` state, reported while the control plane holds the loop still to write the store directly. A consumer matching exhaustively on `runLoop.state` has a new case ([#1105](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1105))
 - **BREAKING:** A peer's incarnation change is carried out by the run loop, in a crank of its own, instead of in a `peerIncarnation_*` savepoint nested inside whichever crank was open. The handshake is still answered immediately, from what the store already says, because the transport cannot wait for a crank to finish; only the writes it implies are queued ([#1104](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1104))
   - Queued behind anything that peer has already sent, so a message from the incarnation that is ending is recorded against it and one from the incarnation that is starting is not. Ordering is what keeps them apart, which is why nothing has to be discarded
