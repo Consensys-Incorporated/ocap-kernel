@@ -71,6 +71,23 @@ function sentSeqs(remoteComms: RemoteComms): number[] {
 }
 
 /**
+ * Hold the next send up, the way a cold channel's dial and handshake hold up
+ * the first message to a peer.
+ *
+ * @param remoteComms - The comms the send goes through.
+ * @returns A function that lets that send finish.
+ */
+function holdTheNextSend(remoteComms: RemoteComms): () => void {
+  let letItFinish = (): void => undefined;
+  vi.mocked(remoteComms.sendRemoteMessage).mockReturnValueOnce(
+    new Promise((resolve) => {
+      letItFinish = () => resolve(undefined);
+    }),
+  );
+  return letItFinish;
+}
+
+/**
  * Let the outbound chain run to a standstill. Every send waits on the one
  * before it, whether a flush or a retransmission issued it, so a queue costs
  * several microtasks per message.
@@ -545,15 +562,7 @@ describe('RemoteHandle across a crank boundary', () => {
       await deliverAndDie(remote, kernelStore);
 
       const { remote: restarted, remoteComms } = startOver(kernelStore);
-      // The transport dials and shakes hands on the first message of a cold
-      // channel, which a restart always has. A second sent meanwhile finds
-      // that channel registered and writes first.
-      let letTheFirstSendFinish = (): void => undefined;
-      vi.mocked(remoteComms.sendRemoteMessage).mockReturnValueOnce(
-        new Promise((resolve) => {
-          letTheFirstSendFinish = () => resolve(undefined);
-        }),
-      );
+      const letTheFirstSendFinish = holdTheNextSend(remoteComms);
 
       await deliverAndCommit(restarted, kernelStore);
 
@@ -584,6 +593,58 @@ describe('RemoteHandle across a crank boundary', () => {
       // Nothing is owed at seq 1 and nothing will take that number, so seq 2
       // must not wait behind it.
       expect(sentSeqs(remoteComms)).toStrictEqual([2]);
+    });
+  });
+
+  describe('a send still waiting its turn on the wire', () => {
+    it('does not reach the incarnation that replaced the one it was for', async () => {
+      const { remote, kernelStore, remoteComms } =
+        await makeRemoteOverRealStore();
+      const letTheFirstSendFinish = holdTheNextSend(remoteComms);
+
+      await deliverAndCommit(remote, kernelStore);
+      await deliverAndCommit(remote, kernelStore);
+      remote.persistPeerRestart();
+      remote.finalizePeerRestart();
+      letTheFirstSendFinish();
+      await drainMicrotasks();
+
+      expect(sentSeqs(remoteComms)).toStrictEqual([1]);
+    });
+
+    it('does not reach a peer whose promises a give-up has rejected', async () => {
+      const { remote, kernelStore, remoteComms } =
+        await makeRemoteOverRealStore();
+      const letTheFirstSendFinish = holdTheNextSend(remoteComms);
+
+      await deliverAndCommit(remote, kernelStore);
+      await deliverAndCommit(remote, kernelStore);
+      remote.giveUp('not acknowledged after 3 retries');
+      letTheFirstSendFinish();
+      await drainMicrotasks();
+
+      expect(sentSeqs(remoteComms)).toStrictEqual([1]);
+    });
+
+    it('is told from a message of the incarnation that replaced it', async () => {
+      const { remote, kernelStore, remoteComms } =
+        await makeRemoteOverRealStore();
+      const letTheFirstSendFinish = holdTheNextSend(remoteComms);
+
+      await deliverAndCommit(remote, kernelStore);
+      await deliverAndCommit(remote, kernelStore);
+      remote.persistPeerRestart();
+      remote.finalizePeerRestart();
+      // The new incarnation numbers from 1 again, so the store holds a real
+      // message at the sequence number the stale send carries.
+      await deliverAndCommit(remote, kernelStore);
+      await deliverAndCommit(remote, kernelStore);
+      letTheFirstSendFinish();
+      await drainMicrotasks();
+
+      // The new incarnation's two, and not the old seq 2 ahead of them, which
+      // would have made the peer drop them both as duplicates.
+      expect(sentSeqs(remoteComms)).toStrictEqual([1, 1, 2]);
     });
   });
 });

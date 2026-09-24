@@ -214,6 +214,16 @@ export class RemoteHandle implements EndpointHandle {
    */
   #outboundChain: Promise<void> = Promise.resolve();
 
+  /**
+   * Which run of the pending queue the sends on {@link #outboundChain} belong
+   * to. A peer restart and a give-up each retire the whole queue, and a send
+   * still waiting its turn behind a slow one must not write afterwards. The
+   * sequence number cannot say as much by itself: a restart numbers from 1
+   * again, so the number a stale send carries may by then belong to a real
+   * message of the incarnation that replaced it.
+   */
+  #outboundQueueId: number = 0;
+
   /** Retry count for pending messages (reset on ACK). */
   #retryCount: number = 0;
 
@@ -547,7 +557,7 @@ export class RemoteHandle implements EndpointHandle {
         continue;
       }
       try {
-        await this.#sendInOrder(messageString);
+        await this.#sendInOrder(seq, messageString);
       } catch (error) {
         if (isTerminalSendError(error)) {
           this.#logger.log(
@@ -572,17 +582,28 @@ export class RemoteHandle implements EndpointHandle {
    * Hand a message to the transport once everything already on its way has
    * gone, so that the order this handle sends in is the order the peer sees.
    *
+   * Waiting puts time between the decision to send and the send, so a message
+   * whose queue was retired in between is let go of rather than written.
+   *
    * Bounded: every send times out, so a peer that stops reading holds the
    * queue up only for as long as its own write takes to fail, and the failure
    * then empties the queue rather than lengthening it.
    *
+   * @param seq - The message's sequence number.
    * @param messageString - The message, as it goes on the wire.
    * @returns A promise for this send alone; the caller handles its failure.
    */
-  async #sendInOrder(messageString: string): Promise<void> {
-    const sent = this.#outboundChain.then(async () =>
-      this.#remoteComms.sendRemoteMessage(this.#peerId, messageString),
-    );
+  async #sendInOrder(seq: number, messageString: string): Promise<void> {
+    const queue = this.#outboundQueueId;
+    const sent = this.#outboundChain.then(async () => {
+      if (queue !== this.#outboundQueueId) {
+        this.#logger.log(
+          `${this.#peerId.slice(0, 8)}:: message ${seq} retired before it reached the wire`,
+        );
+        return undefined;
+      }
+      return this.#remoteComms.sendRemoteMessage(this.#peerId, messageString);
+    });
     // The chain keeps going whatever this send does, or one failure would
     // strand every message behind it. Each caller answers for its own.
     this.#outboundChain = sent.then(
@@ -627,6 +648,7 @@ export class RemoteHandle implements EndpointHandle {
     this.#kernelStore.setRemoteNextSendSeq(this.remoteId, window.nextSendSeq);
     this.#kernelStore.setRemoteStartSeq(this.remoteId, this.#startSeq);
     this.#retryCount = 0;
+    this.#outboundQueueId += 1;
   }
 
   /**
@@ -956,7 +978,7 @@ export class RemoteHandle implements EndpointHandle {
     // most of the cleanup below is already a no-op. The guards inside
     // `#rejectAllPending` and `rejectPendingRedemptions` keep this safe;
     // calling `#onGiveUp` again exercises an idempotent path.
-    this.#sendInOrder(messageString).catch((error) => {
+    this.#sendInOrder(seq, messageString).catch((error) => {
       if (isTerminalSendError(error)) {
         const reason = (error as Error).message;
         this.#clearAckTimeout();
@@ -1538,6 +1560,7 @@ export class RemoteHandle implements EndpointHandle {
     this.#lastTransmittedSeq = 0;
     this.#awaitingTransmit.clear();
     this.#retryCount = 0;
+    this.#outboundQueueId += 1;
     this.#remoteGcRequested = false;
   }
 }
