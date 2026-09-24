@@ -38,8 +38,70 @@ function assertRunLoopAlive(): void {
   }
 }
 
-afterEach(assertRunLoopAlive);
-afterAll(assertRunLoopAlive);
+/**
+ * Kernels made by {@link makeTrackedKernel} since the last teardown. Each holds
+ * a worker thread per vat, and a worker costs about 250 MB, so a file that
+ * leaves them running holds gigabytes by its last test. Several such files
+ * running at once exhaust a CI runner's memory, and whichever tests are in
+ * flight time out.
+ */
+const trackedKernels: {
+  kernel: Kernel;
+  platformServices: PlatformServices;
+  kernelDatabase: KernelDatabase;
+}[] = [];
+
+/**
+ * Databases closed through a tracked kernel. Tests share one database between
+ * kernels to simulate a restart, so whether it is open is not a fact about any
+ * one kernel.
+ */
+const closedDatabases = new WeakSet<KernelDatabase>();
+
+/**
+ * Stop every kernel the test left running, then fail the test if any stop
+ * failed or any run loop died, this teardown's stops included.
+ */
+async function tearDownKernels(): Promise<void> {
+  const errors: unknown[] = [];
+  for (const {
+    kernel,
+    platformServices,
+    kernelDatabase,
+  } of trackedKernels.splice(0)) {
+    // A second `stop` still halts the run loop before it throws on the closed
+    // database, which is the expected failure for a kernel the test stopped,
+    // or one whose database another kernel closed.
+    const wasClosed = closedDatabases.has(kernelDatabase);
+    try {
+      await kernel.stop();
+    } catch (error) {
+      if (!wasClosed) {
+        errors.push(error);
+      }
+    } finally {
+      // `stop` skips this if anything before it throws. It does nothing for a
+      // kernel that was stopped.
+      await platformServices.terminateAll();
+    }
+  }
+  try {
+    assertRunLoopAlive();
+  } catch (error) {
+    errors.unshift(error);
+  }
+  if (errors.length === 1) {
+    throw errors[0];
+  }
+  if (errors.length > 1) {
+    throw new AggregateError(errors, 'Kernel teardown failed');
+  }
+}
+
+// `afterAll` as well, for a kernel that a timed-out last test made after its
+// `afterEach` ran.
+afterEach(tearDownKernels);
+afterAll(tearDownKernels);
 
 /**
  * Kernel options under which reference count drift fails the test run.
@@ -65,6 +127,42 @@ export function makeAuditedKernelOptions(): {
       runLoopFailure ??= failure;
     },
   };
+}
+
+/**
+ * `Kernel.make`, with the kernel stopped after the current test unless the test
+ * stops it first.
+ *
+ * @param platformServices - As for `Kernel.make`.
+ * @param kernelDatabase - As for `Kernel.make`.
+ * @param options - As for `Kernel.make`.
+ * @returns The new kernel.
+ */
+export async function makeTrackedKernel(
+  platformServices: PlatformServices,
+  kernelDatabase: KernelDatabase,
+  options: Parameters<typeof Kernel.make>[2],
+): Promise<Kernel> {
+  let kernel: Kernel;
+  try {
+    kernel = await Kernel.make(
+      platformServices,
+      {
+        ...kernelDatabase,
+        close: () => {
+          closedDatabases.add(kernelDatabase);
+          kernelDatabase.close();
+        },
+      },
+      options,
+    );
+  } catch (error) {
+    // A kernel that restarts vats has launched their workers by now.
+    await platformServices.terminateAll();
+    throw error;
+  }
+  trackedKernels.push({ kernel, platformServices, kernelDatabase });
+  return kernel;
 }
 
 /**
@@ -142,13 +240,12 @@ export async function makeKernel(
   }
   const platformServicesClient =
     platformServices ?? new NodejsPlatformServices(platformServicesConfig);
-  const kernel = await Kernel.make(platformServicesClient, kernelDatabase, {
+  return await makeTrackedKernel(platformServicesClient, kernelDatabase, {
     resetStorage,
     logger,
     keySeed,
     ...makeAuditedKernelOptions(),
   });
-  return kernel;
 }
 
 /**
