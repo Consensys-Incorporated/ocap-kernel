@@ -194,7 +194,11 @@ export class RemoteHandle implements EndpointHandle {
    */
   readonly #awaitingTransmit: Map<number, PersistedCommand> = new Map();
 
-  /** Highest sequence number handed to the transport. */
+  /**
+   * Highest sequence number this incarnation has handed to the transport. A
+   * restart leaves it at the start of the pending queue, not its end: nothing
+   * inherited has been handed over here.
+   */
   #lastTransmittedSeq: number = 0;
 
   /** Retry count for pending messages (reset on ACK). */
@@ -284,7 +288,6 @@ export class RemoteHandle implements EndpointHandle {
         // Found orphan message - recover by setting up state
         this.#startSeq = 1;
         this.#nextSendSeq = 1;
-        this.#lastTransmittedSeq = 1;
         this.#kernelStore.setRemoteStartSeq(this.remoteId, 1);
         this.#kernelStore.setRemoteNextSendSeq(this.remoteId, 1);
         this.#logger.log(
@@ -308,9 +311,13 @@ export class RemoteHandle implements EndpointHandle {
       this.#kernelStore.setRemoteNextSendSeq(this.remoteId, this.#nextSendSeq);
     }
 
-    // Everything restored is retransmitted by #retransmitPending rather than
-    // through the ordered flush, so the next new message must not wait on it.
-    this.#lastTransmittedSeq = this.#nextSendSeq;
+    // The queue begins unsent: a crank can commit a message and the kernel die
+    // before `afterCommit` hands it over, so the peer may never have seen any
+    // of it. {@link #flushTransmitQueue} sends it ahead of whatever is
+    // numbered next. Clamped because a store can hold a seq state whose
+    // counters are both zero, and a watermark of -1 puts a sequence number
+    // nothing can ever have at the head of the queue.
+    this.#lastTransmittedSeq = Math.max(this.#startSeq - 1, 0);
 
     // Clean up orphan messages (seq < startSeq) left behind by crashes during ACK
     const orphansDeleted = this.#kernelStore.cleanupOrphanMessages(
@@ -401,6 +408,11 @@ export class RemoteHandle implements EndpointHandle {
   /**
    * Process an incoming ACK (cumulative - acknowledges all messages up to ackSeq).
    * Uses crash-safe ordering: update startSeq first, then delete acked messages.
+   *
+   * Measures the queue from memory, unlike {@link #rejectAllPending}, and must
+   * keep doing so: memory stops at what has actually been sent, so a peer
+   * cannot retire a message still awaiting its crank's commit, which
+   * {@link #flushTransmitQueue} would then step over rather than send.
    *
    * @param ackSeq - The highest sequence number being acknowledged.
    */
@@ -545,24 +557,38 @@ export class RemoteHandle implements EndpointHandle {
   }
 
   /**
-   * Discard all pending messages due to delivery failure. Safe no-op when
-   * the queue is already empty — guards against clobbering kv state that a
-   * prior cleanup (e.g. {@link persistPeerRestart}) already cleared.
+   * Discard all pending messages due to delivery failure. Safe no-op when the
+   * queue is already empty, rather than writing a `startSeq` over kv state a
+   * prior cleanup has reset.
+   *
+   * Measures the queue from {@link #sendWindow} rather than from memory,
+   * because the transport detaches its failure handling from the send and the
+   * run loop awaits between a delivery's persist and its `afterCommit`: this
+   * can land in that gap, where the message just written down is in a part of
+   * the queue only the store can see. Give up on less than the whole of it and
+   * that message still goes to a peer whose promise for it has just been
+   * rejected.
    *
    * @param reason - The reason for failure.
    */
   #rejectAllPending(reason: string): void {
-    const pendingCount = this.#getPendingCount();
+    const window = this.#sendWindow;
+    const pendingCount = countPending(window);
     if (pendingCount === 0) {
       return;
     }
     for (let i = 0; i < pendingCount; i += 1) {
       this.#logger.warn(
-        `Message ${this.#startSeq + i} delivery failed: ${reason}`,
+        `Message ${window.startSeq + i} delivery failed: ${reason}`,
       );
     }
-    // Mark all as rejected by advancing startSeq past all pending messages
-    this.#startSeq = this.#nextSendSeq + 1;
+    // Both ends of the window move, in memory and in the store, so no later
+    // message is numbered below the one this abandons: a queue whose start has
+    // outrun its end reads as empty to whatever numbers the next message, and
+    // that message is then taken for one already retired.
+    this.#startSeq = window.nextSendSeq + 1;
+    this.#nextSendSeq = window.nextSendSeq;
+    this.#kernelStore.setRemoteNextSendSeq(this.remoteId, window.nextSendSeq);
     this.#kernelStore.setRemoteStartSeq(this.remoteId, this.#startSeq);
     this.#retryCount = 0;
   }
@@ -621,13 +647,11 @@ export class RemoteHandle implements EndpointHandle {
    * message the kernel has rolled back and will never account for again.
    *
    * The in-memory counters read one message behind the store between those two
-   * steps, and everything that measures the pending queue from them — an ACK,
-   * a timeout, a give-up — is correct only because nothing can run in between:
-   * the run loop awaits no unsettled promise from here to `afterCommit`. Put a
-   * real `await` in that path and `#rejectAllPending` starts abandoning a queue
-   * it cannot see the whole of. What may safely run in between is another
-   * message taking a later number, which {@link #flushTransmitQueue} holds
-   * back until this one has gone.
+   * steps, and the run loop awaits in between, so anything measuring the
+   * pending queue there sees a queue short of this message —
+   * {@link #rejectAllPending} measures it from the store for that reason. What
+   * may also run in between is another message taking a later number, which
+   * {@link #flushTransmitQueue} holds back until this one has gone.
    *
    * @param messageBase - The delivery to make.
    * @returns This handle's crank result, carrying the send.
@@ -769,29 +793,71 @@ export class RemoteHandle implements EndpointHandle {
    * destroys it: the earlier one is discarded as a duplicate on arrival and a
    * cumulative ACK then retires both. A delivery is handed over a commit later
    * than it is numbered, and a request that cannot wait for that commit is
-   * numbered from the store meanwhile, so the two do overtake.
+   * numbered from the store meanwhile, so the two do overtake. So does a
+   * restart, whose inherited queue would otherwise wait for the ACK timeout,
+   * behind whatever the kernel sends first.
    */
   #flushTransmitQueue(): void {
     for (;;) {
       const next = this.#lastTransmittedSeq + 1;
+
+      // Retired — acknowledged, or abandoned by a give-up — so the peer is owed
+      // nothing at this number and nothing will take it. Stop here and the
+      // queue behind it never moves again.
+      if (next < this.#startSeq) {
+        if (this.#awaitingTransmit.delete(next)) {
+          this.#logger.log(
+            `${this.#peerId.slice(0, 8)}:: message ${next} abandoned before it was sent`,
+          );
+        }
+        this.#lastTransmittedSeq = next;
+        continue;
+      }
+
+      // An unheld number belongs either to a crank still to commit, which
+      // `afterCommit` will bring here, or to one a restart inherited, which is
+      // owed to the peer now. `#nextSendSeq` tells them apart: a crank's number
+      // is above it, being what the message was numbered from. A give-up can
+      // raise it over one, but raises the queue's start with it, so the
+      // step-over above has taken that number already.
       const held = this.#awaitingTransmit.get(next);
-      if (!held) {
+      if (!held && next > this.#nextSendSeq) {
         return;
       }
       this.#awaitingTransmit.delete(next);
 
-      // Rolled back between its persist and its turn, so the peer is not owed
-      // it. The number goes back to the store to be handed out again, and the
-      // message that takes it will arrive here and be sent in its place — so
-      // the watermark must not move past it.
-      if (
-        this.#kernelStore.getPendingMessage(this.remoteId, next) === undefined
-      ) {
-        return;
+      const messageString = this.#kernelStore.getPendingMessage(
+        this.remoteId,
+        next,
+      );
+      if (messageString === undefined) {
+        // A held message rolled back between its persist and its turn, so the
+        // peer is not owed it. The number goes back to the store to be handed
+        // out again, and the message that takes it will arrive here and be sent
+        // in its place — so the watermark must not move past it.
+        if (held) {
+          return;
+        }
+        // A number the store has already issued, so nothing will ever take it:
+        // a rolled-back mid-crank send leaves one behind, the next message
+        // being numbered from memory, which the rollback did not reach.
+        // Waiting on it would wedge the queue for the life of the incarnation.
+        this.#logger.log(
+          `${this.#peerId.slice(0, 8)}:: nothing to send at seq ${next}, moving on`,
+        );
+        this.#lastTransmittedSeq = next;
+        continue;
       }
 
       this.#lastTransmittedSeq = next;
-      this.#putOnTheWire(held);
+      // An inherited message was already in a queue and is already counted by
+      // `#nextSendSeq`, so neither of the counters `#putOnTheWire` keeps
+      // should move for it.
+      this.#putOnTheWire({
+        seq: next,
+        messageString,
+        wasEmpty: held?.wasEmpty ?? false,
+      });
     }
   }
 
