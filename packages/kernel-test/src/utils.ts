@@ -39,11 +39,9 @@ function assertRunLoopAlive(): void {
 }
 
 /**
- * Kernels made by {@link makeTrackedKernel} since the last teardown. Each holds
- * a worker thread per vat, and a worker costs about 250 MB, so a file that
- * leaves them running holds gigabytes by its last test. Several such files
- * running at once exhaust a CI runner's memory, and whichever tests are in
- * flight time out.
+ * Kernels made by {@link makeTrackedKernel} since the last teardown. Each vat
+ * is a worker thread of about 250 MB, so kernels left running exhaust a CI
+ * runner's memory within a few files.
  */
 const trackedKernels: {
   kernel: Kernel;
@@ -59,6 +57,36 @@ const trackedKernels: {
 const closedDatabases = new WeakSet<KernelDatabase>();
 
 /**
+ * How long a teardown waits for `stop`, which waits out the crank in flight.
+ * A test that timed out may have left a crank that never finishes; its workers
+ * are terminated anyway, within the 10 s hook timeout.
+ */
+const STOP_TIMEOUT_MS = 5_000;
+
+/**
+ * Stop a kernel, or throw if it takes longer than allowed.
+ *
+ * @param kernel - The kernel.
+ * @param timeoutMs - How long to wait.
+ */
+async function stopWithin(kernel: Kernel, timeoutMs: number): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      kernel.stop(),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(
+          () => reject(Error(`Kernel did not stop within ${timeoutMs} ms`)),
+          timeoutMs,
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
  * Stop every kernel the test left running, then fail the test if any stop
  * failed or any run loop died, this teardown's stops included.
  */
@@ -69,20 +97,21 @@ async function tearDownKernels(): Promise<void> {
     platformServices,
     kernelDatabase,
   } of trackedKernels.splice(0)) {
-    // A second `stop` still halts the run loop before it throws on the closed
-    // database, which is the expected failure for a kernel the test stopped,
-    // or one whose database another kernel closed.
+    // A second `stop` throws on the closed database: expected for a kernel the
+    // test stopped, or one whose database another kernel closed.
     const wasClosed = closedDatabases.has(kernelDatabase);
     try {
-      await kernel.stop();
+      await stopWithin(kernel, STOP_TIMEOUT_MS);
     } catch (error) {
       if (!wasClosed) {
         errors.push(error);
       }
-    } finally {
-      // `stop` skips this if anything before it throws. It does nothing for a
-      // kernel that was stopped.
+    }
+    // `stop` skips this if anything before it throws.
+    try {
       await platformServices.terminateAll();
+    } catch (error) {
+      errors.push(error);
     }
   }
   try {
@@ -98,8 +127,6 @@ async function tearDownKernels(): Promise<void> {
   }
 }
 
-// `afterAll` as well, for a kernel that a timed-out last test made after its
-// `afterEach` ran.
 afterEach(tearDownKernels);
 afterAll(tearDownKernels);
 
@@ -141,7 +168,7 @@ export function makeAuditedKernelOptions(): {
 export async function makeTrackedKernel(
   platformServices: PlatformServices,
   kernelDatabase: KernelDatabase,
-  options: Parameters<typeof Kernel.make>[2],
+  options?: Parameters<typeof Kernel.make>[2],
 ): Promise<Kernel> {
   let kernel: Kernel;
   try {
@@ -158,7 +185,7 @@ export async function makeTrackedKernel(
     );
   } catch (error) {
     // A kernel that restarts vats has launched their workers by now.
-    await platformServices.terminateAll();
+    await platformServices.terminateAll().catch(() => undefined);
     throw error;
   }
   trackedKernels.push({ kernel, platformServices, kernelDatabase });
