@@ -1,6 +1,6 @@
 import { makeSQLKernelDatabase } from '@metamask/kernel-store/sqlite/nodejs';
 import { waitUntilQuiescent } from '@metamask/kernel-utils';
-import { Kernel } from '@metamask/ocap-kernel';
+import type { Kernel } from '@metamask/ocap-kernel';
 import * as net from 'node:net';
 import * as os from 'node:os';
 import * as path from 'node:path';
@@ -10,6 +10,7 @@ import {
   getBundleSpec,
   makeAuditedKernelOptions,
   makeTestLogger,
+  makeTrackedKernel,
 } from './utils.ts';
 
 function tempSocketPath(): string {
@@ -74,7 +75,7 @@ async function makeIoKernel(
   const { NodejsPlatformServices, makeIOListenerFactory } = await import(
     '@metamask/kernel-node-runtime'
   );
-  const kernel = await Kernel.make(
+  const kernel = await makeTrackedKernel(
     new NodejsPlatformServices({
       logger: logger.subLogger({ tags: ['platform'] }),
     }),

@@ -16,7 +16,7 @@ import type {
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 
 import {
   makeTestLogger,
@@ -61,23 +61,21 @@ class DirectNetworkService {
     const self = this;
     // Store the actual peer ID once we know it
     let actualPeerId: string | undefined;
+    const realServices = new NodejsPlatformServices({
+      logger: makeTestLogger().logger,
+    });
 
     return {
       async launch(vatId) {
-        const realServices = new NodejsPlatformServices({
-          logger: makeTestLogger().logger,
-        });
         return realServices.launch(vatId);
       },
 
-      async terminate() {
-        // Mock implementation
-        return Promise.resolve();
+      async terminate(vatId) {
+        return realServices.terminate(vatId);
       },
 
       async terminateAll() {
-        // Mock implementation
-        return Promise.resolve();
+        return realServices.terminateAll();
       },
 
       async sendRemoteMessage(to: string, message: string) {
@@ -279,17 +277,6 @@ describe('Remote Communications (Integration Tests)', () => {
       'kernel2-peer',
       '02',
     );
-  });
-
-  afterEach(async () => {
-    await Promise.all([
-      kernel1.stop().catch(() => {
-        // already stopped inside the test
-      }),
-      kernel2.stop().catch(() => {
-        // already stopped inside the test
-      }),
-    ]);
   });
 
   it('should initialize remote communications without errors', async () => {
