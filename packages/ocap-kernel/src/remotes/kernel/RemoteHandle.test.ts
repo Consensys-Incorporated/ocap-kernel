@@ -52,7 +52,19 @@ async function deliverAndCommit(
 ): Promise<CrankResult> {
   const result = await delivery;
   await result.afterCommit?.();
+  await drainSends();
   return result;
+}
+
+/**
+ * Let the outbound chain run to a standstill. Every send waits on the one
+ * before it, and the run loop does not wait for any of them, so they are still
+ * in flight when the post-commit work returns.
+ */
+async function drainSends(): Promise<void> {
+  for (let i = 0; i < 100; i += 1) {
+    await Promise.resolve();
+  }
 }
 
 /**
@@ -987,6 +999,9 @@ describe('RemoteHandle', () => {
     await promise1;
     await promise2;
     await promise3;
+    // A reply can arrive before the request behind it has left, since each
+    // send waits on the one before it.
+    await drainSends();
 
     // Verify each redemption uses a different reply key (messages are strings with seq)
     const { calls } = vi.mocked(mockRemoteComms.sendRemoteMessage).mock;
@@ -1808,10 +1823,7 @@ describe('RemoteHandle', () => {
       expect(sendCalls).toHaveLength(1);
 
       resolveFirst();
-      // Drain microtasks so the second iteration completes.
-      for (let i = 0; i < 5; i += 1) {
-        await Promise.resolve();
-      }
+      await drainSends();
       expect(sendCalls).toHaveLength(2);
     });
 
@@ -1846,9 +1858,7 @@ describe('RemoteHandle', () => {
       );
 
       fireLastAckTimer();
-      for (let i = 0; i < 5; i += 1) {
-        await Promise.resolve();
-      }
+      await drainSends();
 
       // Only iteration 1 runs before the terminal error short-circuits.
       expect(mockRemoteComms.sendRemoteMessage).toHaveBeenCalledTimes(1);
@@ -1880,9 +1890,7 @@ describe('RemoteHandle', () => {
         .mockResolvedValueOnce(undefined);
 
       fireLastAckTimer();
-      for (let i = 0; i < 5; i += 1) {
-        await Promise.resolve();
-      }
+      await drainSends();
 
       // Both iterations ran — the transient failure didn't abort.
       expect(mockRemoteComms.sendRemoteMessage).toHaveBeenCalledTimes(2);
