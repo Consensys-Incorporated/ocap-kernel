@@ -60,6 +60,10 @@ Testing:
 - Prefer `it.each()` for parameterized tests
 - Test titles should use concise verb forms without "should" (e.g., `it('creates and starts libp2p node', ...)` not `it('should create and start libp2p node', ...)`)
 - Use `vi.useFakeTimers()` for tests that rely on timers
+- Do not assert an exo guard refusal with `rejects.toThrow`: under `mock-endoify` a
+  guard violation rejects with `undefined`, which satisfies every matcher, so the
+  assertion passes with the guard removed too. Assert an observable consequence
+  instead, such as the guarded method never running
 
 TypeScript:
 
