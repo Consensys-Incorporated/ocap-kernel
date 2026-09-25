@@ -443,30 +443,46 @@ export class RemoteHandle implements EndpointHandle {
    * @param ackSeq - The highest sequence number being acknowledged.
    */
   #handleAck(ackSeq: number): void {
-    const seqsToDelete: number[] = [];
     const originalStartSeq = this.#startSeq;
 
     while (this.#startSeq <= ackSeq && this.#hasPendingMessages()) {
-      seqsToDelete.push(this.#startSeq);
       this.#logger.log(
         `${this.#peerId.slice(0, 8)}:: message ${this.#startSeq} acknowledged`,
       );
       this.#startSeq += 1;
     }
 
-    // Crash-safe dequeue: persist updated startSeq first, then delete messages
-    // On crash recovery, orphan entries (seq < startSeq) will be cleaned lazily
     if (this.#startSeq !== originalStartSeq) {
-      this.#kernelStore.setRemoteStartSeq(this.remoteId, this.#startSeq);
-      for (const seq of seqsToDelete) {
-        this.#kernelStore.deletePendingMessage(this.remoteId, seq);
-      }
       // Reset retry count when messages are acknowledged
       this.#retryCount = 0;
     }
+    this.#persistAcknowledged();
 
     // Restart or clear ACK timeout based on remaining pending messages
     this.#startAckTimeout();
+  }
+
+  /**
+   * Bring the store's queue up to what memory knows the peer has
+   * acknowledged. An ACK is taken wherever it arrives, which can be inside a
+   * crank that then rolls back: the store gets back messages the peer already
+   * has, and memory, which has moved past them, would otherwise never write
+   * them off again. So this catches up from the store's start rather than
+   * memory's, and runs on every ACK and in every crank that writes this
+   * peer's queue or receipts.
+   */
+  #persistAcknowledged(): void {
+    const stored = this.#storedSeqWindow;
+    if (!hasPending(stored) || stored.startSeq >= this.#startSeq) {
+      return;
+    }
+    // Crash-safe dequeue: persist updated startSeq first, then delete messages
+    // On crash recovery, orphan entries (seq < startSeq) will be cleaned lazily
+    this.#kernelStore.setRemoteStartSeq(this.remoteId, this.#startSeq);
+    const lastAcked = Math.min(this.#startSeq - 1, stored.nextSendSeq);
+    for (let seq = stored.startSeq; seq <= lastAcked; seq += 1) {
+      this.#kernelStore.deletePendingMessage(this.remoteId, seq);
+    }
   }
 
   /**
@@ -780,6 +796,7 @@ export class RemoteHandle implements EndpointHandle {
       ack = this.#getAckValue(),
     }: { exemptFromCapacityLimit?: boolean; ack?: number | undefined } = {},
   ): PersistedCommand {
+    this.#persistAcknowledged();
     const window = this.#sendWindow;
 
     // Check queue capacity before consuming any resources (seq number, ACK timer).
@@ -1318,10 +1335,9 @@ export class RemoteHandle implements EndpointHandle {
    * Take a message off the wire from this peer.
    *
    * Acknowledgements and validation happen here, at receive time: they are
-   * in-memory, idempotent, and must not wait for a turn in the run queue.
-   * Everything that touches the kernel store happens in
-   * {@link deliverInbound}, in a crank of its own, rather than in a savepoint
-   * nested inside whichever crank is open.
+   * idempotent and must not wait for a turn in the run queue. The message
+   * itself is processed in {@link deliverInbound}, in a crank of its own,
+   * rather than in a savepoint nested inside whichever crank is open.
    *
    * @param message - The message, as it arrived.
    */
@@ -1373,6 +1389,7 @@ export class RemoteHandle implements EndpointHandle {
       this.#kernelStore.getRemoteSeqState(this.remoteId)?.highestReceivedSeq ??
       0;
     if (command.seq <= highestReceived) {
+      this.#persistAcknowledged();
       this.#logger.log(
         `${this.#peerId.slice(0, 8)}:: ignoring duplicate message seq=${command.seq} (highestReceived=${highestReceived})`,
       );
@@ -1413,6 +1430,7 @@ export class RemoteHandle implements EndpointHandle {
     }
 
     this.#kernelStore.setRemoteHighestReceivedSeq(this.remoteId, seq);
+    this.#persistAcknowledged();
 
     // Written down inside the crank; only sending it waits for the commit.
     const reply =
