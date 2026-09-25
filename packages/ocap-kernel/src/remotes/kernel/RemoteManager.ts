@@ -200,12 +200,11 @@ export class RemoteManager {
    * old recorded incarnation.
    *
    * The savepoint guards only kv-layer writes (`setPeerIncarnation` plus
-   * everything `handlePeerRestart` persists via `clearRemoteSeqState` and
-   * `forgetEndpointImports`). Run-queue mutations (`resolvePromises`) and
-   * the in-memory counter resets inside `RemoteHandle.handlePeerRestart`
-   * are NOT reversible by a savepoint, so we collect the work to do inside
-   * the savepoint, commit, and then fan it out — mirroring the
-   * deferred-completion pattern in `RemoteHandle.handleRemoteMessage`.
+   * what `persistPeerRestart` writes). Run-queue mutations
+   * (`resolvePromises`) and everything `finalizePeerRestart` touches are
+   * NOT reversible by a savepoint, so we collect the work to do inside the
+   * savepoint, commit, and then fan it out — mirroring the
+   * deferred-completion pattern in `RemoteHandle.deliverInbound`.
    *
    * Fires on every handshake (not only on detected change) because the
    * in-memory PeerStateManager is unreliable across receiver restart and
@@ -464,14 +463,15 @@ export class RemoteManager {
    *
    * @param from - The peer ID of the sender.
    * @param message - The message content.
-   * @returns a promise for the response message, or null if no response is needed.
+   * @returns Null: nothing is answered on arrival, and any reply goes out once
+   * the crank that takes the message has committed.
    */
   async handleRemoteMessage(
     from: string,
     message: string,
   ): Promise<string | null> {
-    const remote = this.remoteFor(from);
-    return await remote.handleRemoteMessage(message);
+    this.remoteFor(from).receiveFromPeer(message);
+    return null;
   }
 
   /**
