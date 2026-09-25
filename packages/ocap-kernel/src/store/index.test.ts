@@ -616,6 +616,22 @@ describe('kernel store', () => {
     });
   });
 
+  describe('cleanupTerminatedVat', () => {
+    it('discards the config of a vat whose retirement did not', () => {
+      const ks = makeKernelStore(mockKernelDatabase);
+      ks.setVatConfig('v1', { sourceSpec: 'vat.js' });
+      ks.markVatAsTerminated('v1');
+
+      ks.cleanupTerminatedVat('v1');
+
+      // The sweep drops the mark on its way out, and `isVatActive` reads only
+      // this row — left behind, the vat reads as running again and the next
+      // boot relaunches it with everything else about it swept away.
+      expect(ks.isVatActive('v1')).toBe(false);
+      expect(ks.isVatTerminated('v1')).toBe(false);
+    });
+  });
+
   describe('incarnation ID', () => {
     it('generates a new incarnation ID on first call', () => {
       const ks = makeKernelStore(mockKernelDatabase);

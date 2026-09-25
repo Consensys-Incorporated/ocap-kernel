@@ -33,9 +33,11 @@ let mockKernelStore: KernelStore;
 const makeVat = async ({
   logger,
   dispatch,
+  onStreamFailure = () => undefined,
 }: {
   logger?: Logger;
   dispatch?: (input: unknown) => void | Promise<void>;
+  onStreamFailure?: (error: Error) => void;
 } = {}): Promise<{
   vat: VatHandle;
   stream: TestDuplexStream<JsonRpcMessage, JsonRpcMessage>;
@@ -54,6 +56,7 @@ const makeVat = async ({
       vatConfig: { sourceSpec: 'not-really-there.js' },
       vatStream,
       logger,
+      onStreamFailure,
     }),
     stream: vatStream,
   };
@@ -119,6 +122,35 @@ describe('VatHandle', () => {
         expect.objectContaining({
           message: expect.stringMatching(/^Received unexpected message/u),
         }),
+      );
+    });
+
+    it('reports a dead channel to its owner', async () => {
+      const onStreamFailure = vi.fn();
+      const { stream } = await makeVat({ onStreamFailure });
+
+      await stream.receiveInput(NaN);
+      await delay(10);
+
+      expect(onStreamFailure).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: 'Unexpected stream read error.',
+        }),
+      );
+    });
+
+    it('rejects pending commands when the channel dies', async () => {
+      const { vat, stream } = await makeVat();
+      sendVatCommandMock.mockRestore();
+      const messagePromise = vat.sendVatCommand({
+        method: 'ping' as const,
+        params: [],
+      });
+
+      await stream.receiveInput(NaN);
+
+      await expect(messagePromise).rejects.toThrow(
+        'Unexpected stream read error.',
       );
     });
   });
@@ -317,6 +349,7 @@ describe('VatHandle', () => {
           write: inner.write.bind(inner),
           end: async () => stalling,
         } as unknown as typeof inner,
+        onStreamFailure: () => undefined,
       });
       sendVatCommandMock.mockRestore();
       const messagePromise = vat.sendVatCommand({
