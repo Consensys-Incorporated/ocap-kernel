@@ -784,6 +784,60 @@ describe('KernelQueue', () => {
       });
     });
 
+    // A parked run loop with work waiting is a permanent wedge, and an arrival
+    // is the one kind of work that does not go through `#enqueueRun`.
+    it.each([
+      {
+        what: 'a message arrives',
+        accept: (queue: KernelQueue) =>
+          queue.acceptRemoteInbound('r1' as RemoteId, '{"seq":1}'),
+      },
+      {
+        what: 'a peer restarts',
+        accept: (queue: KernelQueue) =>
+          queue.acceptPeerIncarnation('peer-1', 'incarnation-B'),
+      },
+    ])('wakes a parked run loop when $what', async ({ accept }) => {
+      (kernelStore.runQueueLength as unknown as MockInstance).mockReturnValue(
+        0,
+      );
+      let turns = 0;
+      (kernelStore.endCrank as unknown as MockInstance).mockImplementation(
+        () => {
+          turns += 1;
+          if (turns === 1) {
+            // The loop found nothing and has armed its wake.
+            accept(kernelQueue);
+          } else if (turns > 2) {
+            throw new Error(STOP_RUN_LOOP);
+          }
+        },
+      );
+      const deliver = vi.fn().mockResolvedValue({});
+
+      await expect(kernelQueue.run(deliver)).rejects.toThrow(STOP_RUN_LOOP);
+
+      expect(mockPromiseKit.resolve).toHaveBeenCalled();
+      expect(deliver).toHaveBeenCalledOnce();
+    });
+
+    it('refuses an incarnation change once the run loop has died', async () => {
+      const deliver = vi.fn().mockRejectedValue(new Error('dead'));
+      (
+        kernelStore.runQueueLength as unknown as MockInstance
+      ).mockReturnValueOnce(1);
+      (kernelStore.dequeueRun as unknown as MockInstance).mockReturnValue({
+        type: 'send',
+        target: 'ko1',
+        message: {} as KernelMessage,
+      });
+      await expect(kernelQueue.run(deliver)).rejects.toThrow('dead');
+
+      expect(() =>
+        kernelQueue.acceptPeerIncarnation('peer-1', 'incarnation-B'),
+      ).toThrow('Kernel run loop died');
+    });
+
     it('refuses an arrival once the run loop has died', async () => {
       const deliver = vi.fn().mockRejectedValue(new Error('dead'));
       (
@@ -801,23 +855,28 @@ describe('KernelQueue', () => {
       ).toThrow('Kernel run loop died');
     });
 
-    it('discards what a remote sent before its incarnation changed', async () => {
+    it("keeps a peer's messages and its incarnation change in the order they arrived", async () => {
       kernelQueue.acceptRemoteInbound('r1' as RemoteId, '{"seq":47}');
-      kernelQueue.acceptRemoteInbound('r2' as RemoteId, '{"seq":3}');
-
-      kernelQueue.discardRemoteInbound('r1' as RemoteId);
+      kernelQueue.acceptPeerIncarnation('peer-1', 'incarnation-B');
+      kernelQueue.acceptRemoteInbound('r1' as RemoteId, '{"seq":1}');
 
       const delivered: RunQueueItem[] = [];
       const deliver = vi.fn().mockImplementation((item: RunQueueItem) => {
         delivered.push(item);
-        throw new Error(STOP_RUN_LOOP);
+        if (delivered.length === 3) {
+          throw new Error(STOP_RUN_LOOP);
+        }
+        return {};
       });
       await expect(kernelQueue.run(deliver)).rejects.toThrow(STOP_RUN_LOOP);
 
-      // Kept, the old incarnation's seq would be recorded against the new one
-      // and the new one's first message discarded as a duplicate.
-      expect(delivered).toStrictEqual([
-        { type: 'remoteInbound', remoteId: 'r2', message: '{"seq":3}' },
+      // Order is what keeps the incarnations apart: the message ahead of the
+      // change belongs to the incarnation that ended and is recorded against
+      // it, the one behind it to the incarnation that started.
+      expect(delivered.map((item) => item.type)).toStrictEqual([
+        'remoteInbound',
+        'peerIncarnation',
+        'remoteInbound',
       ]);
     });
   });
