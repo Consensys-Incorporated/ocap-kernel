@@ -16,6 +16,7 @@ import type {
   GCRunQueueType,
   CrankResult,
   EndpointHandle,
+  RemoteId,
 } from './types.ts';
 
 describe('KernelRouter', () => {
@@ -836,6 +837,66 @@ describe('KernelRouter', () => {
         expect(getEndpoint).toHaveBeenCalledWith(endpointId);
         expect(endpointHandle.deliverBringOutYourDead).toHaveBeenCalled();
         expect(result).toStrictEqual(mockCrankResult);
+      });
+    });
+
+    describe('remoteInbound', () => {
+      it('takes delivery of an inbound message on the remote it names', async () => {
+        const remoteId = 'r1' as RemoteId;
+        const mockCrankResult: CrankResult = { didDelivery: remoteId };
+        const deliverInbound = vi.fn().mockResolvedValue(mockCrankResult);
+        vi.mocked(getEndpoint).mockReturnValue({
+          ...endpointHandle,
+          deliverInbound,
+        } as unknown as EndpointHandle);
+
+        const result = await kernelRouter.deliver({
+          type: 'remoteInbound',
+          remoteId,
+          message: '{"seq":1}',
+        });
+
+        expect(getEndpoint).toHaveBeenCalledWith(remoteId);
+        expect(deliverInbound).toHaveBeenCalledWith('{"seq":1}');
+        expect(result).toStrictEqual(mockCrankResult);
+      });
+
+      // Throwing would escape the crank and kill the run loop, and the
+      // rollback would put the item back for the next boot to die on.
+      it('drops a message for a remote that is gone', async () => {
+        const remoteId = 'r1' as RemoteId;
+        vi.mocked(getEndpoint).mockImplementation(() => {
+          throw Error(`unknown remote ${remoteId}`);
+        });
+
+        const result = await kernelRouter.deliver({
+          type: 'remoteInbound',
+          remoteId,
+          message: '{"seq":1}',
+        });
+
+        expect(result).toStrictEqual({ didDelivery: remoteId });
+      });
+
+      // What a peer sends is a peer's to get wrong, and the payload is only
+      // checked when its crank comes up. Throwing would kill the run loop.
+      it('discards a message it cannot deliver rather than dying of it', async () => {
+        const remoteId = 'r1' as RemoteId;
+        const deliverInbound = vi
+          .fn()
+          .mockRejectedValue(Error('unknown remote message type bogus'));
+        vi.mocked(getEndpoint).mockReturnValue({
+          ...endpointHandle,
+          deliverInbound,
+        } as unknown as EndpointHandle);
+
+        const result = await kernelRouter.deliver({
+          type: 'remoteInbound',
+          remoteId,
+          message: '{"seq":1,"method":"bogus"}',
+        });
+
+        expect(result).toStrictEqual({ didDelivery: remoteId, abort: true });
       });
     });
 

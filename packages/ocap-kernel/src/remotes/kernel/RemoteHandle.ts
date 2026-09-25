@@ -443,30 +443,46 @@ export class RemoteHandle implements EndpointHandle {
    * @param ackSeq - The highest sequence number being acknowledged.
    */
   #handleAck(ackSeq: number): void {
-    const seqsToDelete: number[] = [];
     const originalStartSeq = this.#startSeq;
 
     while (this.#startSeq <= ackSeq && this.#hasPendingMessages()) {
-      seqsToDelete.push(this.#startSeq);
       this.#logger.log(
         `${this.#peerId.slice(0, 8)}:: message ${this.#startSeq} acknowledged`,
       );
       this.#startSeq += 1;
     }
 
-    // Crash-safe dequeue: persist updated startSeq first, then delete messages
-    // On crash recovery, orphan entries (seq < startSeq) will be cleaned lazily
     if (this.#startSeq !== originalStartSeq) {
-      this.#kernelStore.setRemoteStartSeq(this.remoteId, this.#startSeq);
-      for (const seq of seqsToDelete) {
-        this.#kernelStore.deletePendingMessage(this.remoteId, seq);
-      }
       // Reset retry count when messages are acknowledged
       this.#retryCount = 0;
     }
+    this.#persistAcknowledged();
 
     // Restart or clear ACK timeout based on remaining pending messages
     this.#startAckTimeout();
+  }
+
+  /**
+   * Bring the store's queue up to what memory knows the peer has
+   * acknowledged. An ACK is taken wherever it arrives, which can be inside a
+   * crank that then rolls back: the store gets back messages the peer already
+   * has, and memory, which has moved past them, would otherwise never write
+   * them off again. So this catches up from the store's start rather than
+   * memory's, and runs on every ACK and in every crank that writes this
+   * peer's queue or receipts.
+   */
+  #persistAcknowledged(): void {
+    const stored = this.#storedSeqWindow;
+    if (!hasPending(stored) || stored.startSeq >= this.#startSeq) {
+      return;
+    }
+    // Crash-safe dequeue: persist updated startSeq first, then delete messages
+    // On crash recovery, orphan entries (seq < startSeq) will be cleaned lazily
+    this.#kernelStore.setRemoteStartSeq(this.remoteId, this.#startSeq);
+    const lastAcked = Math.min(this.#startSeq - 1, stored.nextSendSeq);
+    for (let seq = stored.startSeq; seq <= lastAcked; seq += 1) {
+      this.#kernelStore.deletePendingMessage(this.remoteId, seq);
+    }
   }
 
   /**
@@ -769,14 +785,18 @@ export class RemoteHandle implements EndpointHandle {
    * @param options - Options bag.
    * @param options.exemptFromCapacityLimit - Whether the pending queue's
    * capacity limit does not apply, for a reply that must not fail.
+   * @param options.ack - The receipt to piggyback, when this crank is recording
+   * one the handle has not caught up to yet.
    * @returns What transmitting it needs.
    */
   #persistRemoteCommand(
     messageBase: Delivery | RedeemURLRequest | RedeemURLReply,
     {
       exemptFromCapacityLimit = false,
-    }: { exemptFromCapacityLimit?: boolean } = {},
+      ack = this.#getAckValue(),
+    }: { exemptFromCapacityLimit?: boolean; ack?: number | undefined } = {},
   ): PersistedCommand {
+    this.#persistAcknowledged();
     const window = this.#sendWindow;
 
     // Check queue capacity before consuming any resources (seq number, ACK timer).
@@ -793,7 +813,6 @@ export class RemoteHandle implements EndpointHandle {
 
     // Build full message with seq and optional piggyback ack
     const seq = window.nextSendSeq + 1;
-    const ack = this.#getAckValue();
     const remoteCommand: RemoteCommand =
       ack === undefined
         ? { seq, ...messageBase }
@@ -1157,11 +1176,6 @@ export class RemoteHandle implements EndpointHandle {
     const [method] = params;
     switch (method) {
       case 'message': {
-        // Refuse rather than queue work for a loop that will never drain it.
-        // The caller rolls this delivery back without advancing the received
-        // sequence number, so the peer retries and then gives up instead of
-        // believing a black hole accepted its message.
-        this.#kernelQueue.assertRunLoopAlive('accept a remote message');
         const [, target, message] = params;
         this.#kernelQueue.enqueueSend(
           this.#kernelStore.translateRefEtoK(this.remoteId, target),
@@ -1170,7 +1184,6 @@ export class RemoteHandle implements EndpointHandle {
         break;
       }
       case 'notify': {
-        this.#kernelQueue.assertRunLoopAlive('accept a remote notify');
         const [, resolutions] = params;
         const kResolutions: KernelOneResolution[] = resolutions.map(
           (resolution) => {
@@ -1208,7 +1221,6 @@ export class RemoteHandle implements EndpointHandle {
         // Queue work like the arms above: `scheduleReap` is consumed only by the
         // run loop, via `nextReapAction`. The other GC arms need no guard — they
         // only touch refcounts, which the caller's crank commits by itself.
-        this.#kernelQueue.assertRunLoopAlive('accept a remote reap request');
         this.#kernelStore.scheduleReap(this.remoteId);
         break;
       }
@@ -1246,21 +1258,30 @@ export class RemoteHandle implements EndpointHandle {
   }
 
   /**
-   * Complete handling of an incoming redeemURL message by sending the reply.
+   * Write the reply to a redeemURL request to the store, ready to send.
    *
-   * @param data - The data from #handleRedeemURLRequest.
+   * @param data - What handling the request worked out.
+   * @param ack - The sequence number of the request being replied to.
+   * @returns The persisted reply, for {@link #transmitRemoteCommand}.
    */
-  async #completeHandleRedeemURLRequest(
+  #persistRedeemURLReply(
     data: DeferredRedeemURLRequest,
-  ): Promise<void> {
+    ack: number,
+  ): PersistedCommand {
     const success = 'ref' in data;
     const value = success ? data.ref : data.error;
-    await this.#sendRemoteCommand(
+    return this.#persistRemoteCommand(
       {
         method: 'redeemURLReply',
         params: [success, data.replyKey, value],
       },
-      true, // exempt from capacity limit - this a reply that mustn't fail and is not vat-initiated
+      {
+        // exempt from capacity limit - this a reply that mustn't fail and is not vat-initiated
+        exemptFromCapacityLimit: true,
+        // The request being replied to. This crank records the receipt, so the
+        // acknowledgement is durable exactly when the reply is.
+        ack,
+      },
     );
   }
 
@@ -1311,112 +1332,132 @@ export class RemoteHandle implements EndpointHandle {
   }
 
   /**
-   * Handle a communication received from the remote end.
+   * Take a message off the wire from this peer.
    *
-   * @param message - The message that was received.
+   * Acknowledgements and validation happen here, at receive time: they are
+   * idempotent and must not wait for a turn in the run queue. The message
+   * itself is processed in {@link deliverInbound}, in a crank of its own,
+   * rather than in a savepoint nested inside whichever crank is open.
    *
-   * @returns a string containing a message to send back to the original message
-   *   sender as a response, or null if no response is to be sent.
+   * @param message - The message, as it arrived.
    */
-  async handleRemoteMessage(message: string): Promise<string | null> {
+  receiveFromPeer(message: string): void {
     const parsed = JSON.parse(message);
 
     // Handle standalone ACK message (no seq, no method - just ack)
     if (parsed.ack !== undefined && parsed.seq === undefined) {
       this.#handleAck(parsed.ack);
-      return null;
+      return;
     }
 
-    const remoteCommand = parsed as RemoteCommand;
-    const { seq, ack, method, params } = remoteCommand;
+    const { seq, ack } = parsed as RemoteCommand;
 
-    // Handle piggyback ACK if present (outside transaction - ACK processing is idempotent)
+    // Handle piggyback ACK if present (ACK processing is idempotent)
     if (ack !== undefined) {
       this.#handleAck(ack);
     }
 
-    // Start delayed ACK timer - will send standalone ACK if no outgoing traffic
+    // Start delayed ACK timer - will send standalone ACK if no outgoing
+    // traffic. Ahead of everything below, including the duplicate check the
+    // crank makes: a retransmission is the peer telling us it never got our
+    // acknowledgement, and it has to provoke another one.
     this.#startDelayedAck();
 
-    // Validate seq value.
+    // Validate seq value. Here rather than in the crank, because a run queue
+    // item that throws on delivery kills the run loop and is rolled back onto
+    // the queue to kill the next boot too.
     if (typeof seq !== 'number' || !Number.isInteger(seq) || seq < 1) {
       throw Error(`invalid message seq: ${seq}`);
     }
 
-    // Duplicate detection: skip if we've already processed this sequence number
-    if (seq <= this.#highestReceivedSeq) {
+    this.#kernelQueue.acceptRemoteInbound(this.remoteId, message);
+  }
+
+  /**
+   * Take delivery of a message from the peer, in a crank of its own.
+   *
+   * @param message - The message, as it arrived.
+   * @returns The crank outcome, carrying the work that follows the commit.
+   */
+  async deliverInbound(message: string): Promise<CrankResult> {
+    const command = JSON.parse(message) as RemoteCommand;
+
+    // Against the store, not `#highestReceivedSeq`: several messages from this
+    // peer can be waiting their turn in the run queue at once, and the
+    // in-memory value only catches up as each one's crank commits.
+    const highestReceived =
+      this.#kernelStore.getRemoteSeqState(this.remoteId)?.highestReceivedSeq ??
+      0;
+    if (command.seq <= highestReceived) {
+      this.#persistAcknowledged();
       this.#logger.log(
-        `${this.#peerId.slice(0, 8)}:: ignoring duplicate message seq=${seq} (highestReceived=${this.#highestReceivedSeq})`,
+        `${this.#peerId.slice(0, 8)}:: ignoring duplicate message seq=${command.seq} (highestReceived=${highestReceived})`,
       );
-      return null;
+      return { didDelivery: this.remoteId };
     }
 
-    // Wrap message processing in a transaction for atomicity: Either both (1)
-    // message processing and (2) seq update succeed together, or neither
-    // happens. This ensures crash-safe exactly-once delivery.
-    const savepointName = `receive_${this.remoteId}_${seq}`;
-    this.#kernelStore.createSavepoint(savepointName);
+    const afterCommit = await this.#receiveInbound(command);
+    return { didDelivery: this.remoteId, afterCommit };
+  }
 
+  /**
+   * Carry out an inbound message's writes. Everything here belongs to the
+   * crank's one transaction: the message is processed and its sequence number
+   * recorded together, or neither happens, which is what makes delivery
+   * exactly-once across a crash.
+   *
+   * @param command - The parsed message.
+   * @returns The work to run once those writes are durable: in-memory state,
+   * and sending the reply this has already written down.
+   */
+  async #receiveInbound(command: RemoteCommand): Promise<() => Promise<void>> {
+    const { seq, method, params } = command;
     let deferredCompletion: DeferredCompletion | undefined;
 
-    try {
-      switch (method) {
-        case 'deliver':
-          this.#handleRemoteDeliver(params);
-          break;
-        case 'redeemURL':
-          deferredCompletion = await this.#handleRedeemURLRequest(...params);
-          break;
-        case 'redeemURLReply':
-          deferredCompletion = this.#handleRedeemURLReply(...params);
-          break;
-        default:
-          // eslint-disable-next-line @typescript-eslint/restrict-template-expressions
-          throw Error(`unknown remote message type ${method}`);
+    switch (method) {
+      case 'deliver':
+        this.#handleRemoteDeliver(params);
+        break;
+      case 'redeemURL':
+        deferredCompletion = await this.#handleRedeemURLRequest(...params);
+        break;
+      case 'redeemURLReply':
+        deferredCompletion = this.#handleRedeemURLReply(...params);
+        break;
+      default:
+        // eslint-disable-next-line @typescript-eslint/restrict-template-expressions
+        throw Error(`unknown remote message type ${method}`);
+    }
+
+    this.#kernelStore.setRemoteHighestReceivedSeq(this.remoteId, seq);
+    this.#persistAcknowledged();
+
+    // Written down inside the crank; only sending it waits for the commit.
+    const reply =
+      deferredCompletion?.type === 'redeemURL'
+        ? this.#persistRedeemURLReply(deferredCompletion, seq)
+        : undefined;
+
+    return async () => {
+      // Updating in-memory seq state after commit ensures any ACK piggybacked
+      // on outgoing messages doesn't acknowledge uncommitted message receipts.
+      this.#highestReceivedSeq = seq;
+
+      // Set ping-pong prevention flag after commit so it's only visible once
+      // the BOYD delivery is durably recorded.
+      if (method === 'deliver' && params[0] === 'bringOutYourDead') {
+        this.#remoteGcRequested = true;
       }
 
-      // Persist sequence tracking at the end, within the transaction
-      this.#kernelStore.setRemoteHighestReceivedSeq(this.remoteId, seq);
-
-      // Commit the transaction
-      this.#kernelStore.releaseSavepoint(savepointName);
-    } catch (error) {
-      // Rollback on any error - in-memory state unchanged since we didn't update it yet
-      this.#kernelStore.rollbackSavepoint(savepointName);
-      throw error;
-    }
-
-    // All in-memory state changes happen after commit
-
-    // Updating in-memory seq state after commit ensures any ACK piggybacked
-    // on outgoing messages doesn't acknowledge uncommitted message receipts.
-    this.#highestReceivedSeq = seq;
-
-    // Set ping-pong prevention flag after commit so it's only visible once
-    // the BOYD delivery is durably recorded.
-    if (method === 'deliver' && params[0] === 'bringOutYourDead') {
-      this.#remoteGcRequested = true;
-    }
-
-    // Complete deferred operations
-    if (deferredCompletion) {
-      switch (deferredCompletion.type) {
-        case 'redeemURL':
-          await this.#completeHandleRedeemURLRequest(deferredCompletion);
-          break;
-        case 'redeemURLReply':
-          this.#completeHandleRedeemURLReply(deferredCompletion);
-          break;
-        default:
-          throw Error(
-            `unknown deferred completion type: ${(deferredCompletion as DeferredCompletion).type}`,
-          );
+      if (reply) {
+        this.#transmitRemoteCommand(reply);
+      } else if (deferredCompletion?.type === 'redeemURLReply') {
+        this.#completeHandleRedeemURLReply(deferredCompletion);
       }
-    }
 
-    // Restart delayed ACK timer, which may have been cleared by #sendRemoteCommand.
-    this.#startDelayedAck();
-    return null;
+      // Restart delayed ACK timer, which may have been cleared by transmitting.
+      this.#startDelayedAck();
+    };
   }
 
   /**
@@ -1546,14 +1587,16 @@ export class RemoteHandle implements EndpointHandle {
   }
 
   /**
-   * Apply the in-memory side of a peer restart: cancel timers, reject
-   * in-flight URL redemption promises, and reset sequence counters. Must
-   * be called after {@link persistPeerRestart} and after the caller's
-   * savepoint has been released, with nothing awaited in between: a send whose
-   * turn comes there finds the queue emptied in the store but not yet retired
-   * here, and writes a message of the incarnation that has ended.
+   * Apply the in-memory side of a peer restart: discard arrivals from the
+   * incarnation that is gone, cancel timers, reject in-flight URL redemption
+   * promises, and reset sequence counters. Must be called after
+   * {@link persistPeerRestart} and after the caller's savepoint has been
+   * released, with nothing awaited in between: a send whose turn comes there
+   * finds the queue emptied in the store but not yet retired here, and writes
+   * a message of the incarnation that has ended.
    */
   finalizePeerRestart(): void {
+    this.#kernelQueue.discardRemoteInbound(this.remoteId);
     const pendingCount = this.#getPendingCount();
     if (this.#hasPendingMessages()) {
       this.#logger.log(

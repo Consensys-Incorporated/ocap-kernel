@@ -248,6 +248,75 @@ describe('RemoteHandle across a crank boundary', () => {
     });
   });
 
+  describe('an ACK whose crank rolls back', () => {
+    /**
+     * Take the peer's ACK of seq 1 inside a crank that then rolls back, as one
+     * arriving on the transport's flow while a vat delivery is awaited can be.
+     *
+     * @param remote - The handle the ACK reaches.
+     * @param kernelStore - The store the crank runs against.
+     */
+    function ackAndRollBack(
+      remote: RemoteHandle,
+      kernelStore: ReturnType<typeof makeKernelStore>,
+    ): void {
+      kernelStore.startCrank();
+      kernelStore.createCrankSavepoint('crank');
+      kernelStore.createCrankSavepoint('delivery');
+      remote.receiveFromPeer(JSON.stringify({ ack: 1 }));
+      kernelStore.rollbackCrank('delivery');
+      kernelStore.endCrank();
+    }
+
+    it('is written down again by the next ACK', async () => {
+      const { remote, kernelStore } = await makeRemoteOverRealStore();
+
+      await deliverAndCommit(remote, kernelStore);
+      ackAndRollBack(remote, kernelStore);
+
+      expect(kernelStore.getPendingMessage(REMOTE_ID, 1)).toBeDefined();
+
+      // Nothing new for the peer to acknowledge, so memory has nothing to move.
+      remote.receiveFromPeer(JSON.stringify({ ack: 1 }));
+
+      expect(kernelStore.getPendingMessage(REMOTE_ID, 1)).toBeUndefined();
+      expect(kernelStore.getRemoteSeqState(REMOTE_ID)).toMatchObject({
+        startSeq: 2,
+        nextSendSeq: 1,
+      });
+    });
+
+    it('is written down by the crank of the message that carried it', async () => {
+      const { remote, kernelStore } = await makeRemoteOverRealStore();
+
+      await deliverAndCommit(remote, kernelStore);
+      const message = JSON.stringify({
+        seq: 1,
+        ack: 1,
+        method: 'deliver',
+        params: ['bringOutYourDead'],
+      });
+      kernelStore.startCrank();
+      kernelStore.createCrankSavepoint('crank');
+      kernelStore.createCrankSavepoint('delivery');
+      remote.receiveFromPeer(message);
+      kernelStore.rollbackCrank('delivery');
+      kernelStore.endCrank();
+
+      kernelStore.startCrank();
+      kernelStore.createCrankSavepoint('crank');
+      kernelStore.createCrankSavepoint('delivery');
+      await remote.deliverInbound(message);
+      kernelStore.endCrank();
+
+      // A restart retransmits whatever the store still holds.
+      const { remote: restarted, remoteComms } = startOver(kernelStore);
+      await deliverAndCommit(restarted, kernelStore);
+
+      expect(sentSeqs(remoteComms)).toStrictEqual([2]);
+    });
+  });
+
   describe('a delivery the peer restarts out from under', () => {
     it('does not send what the restart retired', async () => {
       const { remote, kernelStore, remoteComms } =
@@ -586,7 +655,7 @@ describe('RemoteHandle across a crank boundary', () => {
       const { afterCommit } = await restarted.deliverBringOutYourDead();
       // Seq 1 did reach the peer, whose acknowledgement arrives on the
       // transport's flow, so it can land here.
-      await restarted.handleRemoteMessage(JSON.stringify({ ack: 1 }));
+      restarted.receiveFromPeer(JSON.stringify({ ack: 1 }));
       kernelStore.endCrank();
       await afterCommit?.();
 
