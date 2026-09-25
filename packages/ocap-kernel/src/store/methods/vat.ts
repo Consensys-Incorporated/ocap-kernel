@@ -312,6 +312,12 @@ export function getVatMethods(ctx: StoreContext) {
     // Clean up any remaining c-list entries and vat-specific counters
     deleteEndpoint(vatID);
 
+    // The sweep above matches `${vatID}.` keys, which `vatConfig.${vatID}` is
+    // not, and `isVatActive` reads nothing else. A vat retired by a caller that
+    // marked it and then failed to discard it would come back to life here as
+    // the mark is dropped, and be relaunched — gutted — on the next boot.
+    deleteVatConfig(vatID);
+
     // Remove the vat from the terminated vats list
     forgetTerminatedVat(vatID);
 

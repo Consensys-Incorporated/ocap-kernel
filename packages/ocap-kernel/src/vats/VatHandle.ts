@@ -44,6 +44,11 @@ type VatConstructorProps = {
   kernelQueue: KernelQueue;
   logger?: Logger | undefined;
   allowedGlobalNames?: AllowedGlobalName[] | undefined;
+  /**
+   * Called when the channel to the worker fails, so that whoever keeps this
+   * vat's records can retire it.
+   */
+  onStreamFailure: (error: Error) => void;
 };
 
 /**
@@ -71,6 +76,9 @@ export class VatHandle implements EndpointHandle {
   /** The vat's syscall */
   readonly #vatSyscall: VatSyscall;
 
+  /** Told when the channel to the worker fails */
+  readonly #onStreamFailure: (error: Error) => void;
+
   readonly #rpcClient: RpcClient<typeof vatMethodSpecs>;
 
   readonly #rpcService: RpcService<typeof vatSyscallHandlers>;
@@ -86,6 +94,7 @@ export class VatHandle implements EndpointHandle {
    * @param params.kernelQueue - The kernel's queue.
    * @param params.logger - Optional logger for error and diagnostic output.
    * @param params.allowedGlobalNames - Optional list of allowed global names for vat endowments.
+   * @param params.onStreamFailure - Called when the channel to the worker fails.
    */
   // eslint-disable-next-line no-restricted-syntax
   private constructor({
@@ -96,12 +105,14 @@ export class VatHandle implements EndpointHandle {
     kernelQueue,
     logger,
     allowedGlobalNames,
+    onStreamFailure,
   }: VatConstructorProps) {
     this.vatId = vatId;
     this.config = vatConfig;
     this.#logger = logger;
     this.#allowedGlobalNames = allowedGlobalNames;
     this.#vatStream = vatStream;
+    this.#onStreamFailure = onStreamFailure;
     this.#vatStore = kernelStore.makeVatStore(vatId);
     this.#vatSyscall = new VatSyscall({
       vatId,
@@ -154,12 +165,27 @@ export class VatHandle implements EndpointHandle {
    */
   async #init(): Promise<VatDeliveryResult> {
     Promise.all([this.#vatStream.drain(this.#handleMessage.bind(this))]).catch(
-      async (error) => {
+      (error) => {
         this.#logger?.error(`Unexpected read error`, error);
-        await this.terminate(
-          true,
-          new StreamReadError({ vatId: this.vatId }, error),
-        );
+        const streamError = new StreamReadError({ vatId: this.vatId }, error);
+        try {
+          // Not left to the retirement's own `terminate`, which reaches it only
+          // after the worker has been killed: a crank blocked on a delivery
+          // this channel will never carry waits behind that.
+          this.#rpcClient.rejectAll(streamError);
+        } finally {
+          try {
+            this.#onStreamFailure(streamError);
+          } catch (reportError) {
+            // Nothing awaits this handler, so a throw would be an unhandled
+            // rejection and the only account of the vat's death would be the
+            // read error logged above.
+            this.#logger?.error(
+              `Failed to report the dead channel of vat ${this.vatId}`,
+              reportError,
+            );
+          }
+        }
       },
     );
 
