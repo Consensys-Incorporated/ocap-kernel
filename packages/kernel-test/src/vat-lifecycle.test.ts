@@ -1,6 +1,8 @@
+import { NodejsPlatformServices } from '@metamask/kernel-node-runtime';
 import { makeSQLKernelDatabase } from '@metamask/kernel-store/sqlite/nodejs';
 import { waitUntilQuiescent } from '@metamask/kernel-utils';
 import { makeKernelStore } from '@metamask/ocap-kernel';
+import type { VatId } from '@metamask/ocap-kernel';
 import { describe, expect, it, beforeEach } from 'vitest';
 
 import {
@@ -143,5 +145,81 @@ describe('Vat Lifecycle', { timeout: 30_000 }, () => {
 
     // The target root object should be cleaned up after GC
     expect(kernelStore.getRootObject(deadVatId)).toBeUndefined();
+  });
+
+  it('leaves no record of a terminated vat for the next boot to restore', async () => {
+    const kernelDatabase = await makeSQLKernelDatabase({
+      dbFilename: ':memory:',
+    });
+    const kernel = await makeKernel(
+      kernelDatabase,
+      true,
+      logger.logger.subLogger({ tags: ['test'] }),
+    );
+    const kernelStore = makeKernelStore(kernelDatabase);
+
+    await runTestVats(kernel, {
+      bootstrap: 'main',
+      vats: {
+        main: {
+          bundleSpec: getBundleSpec('logger-vat'),
+          parameters: { name: 'DoomedVat' },
+        },
+      },
+    });
+    await waitUntilQuiescent();
+    const vatId = kernel.getVats()[0]?.id as string;
+
+    await kernel.terminateVat(vatId);
+    await waitUntilQuiescent();
+    // The mark is what schedules this, and it is dropped once the sweep is
+    // done — so the `vatConfig` row it never touches is the thing that decides
+    // whether the vat is active after it.
+    kernel.collectGarbage();
+    await waitUntilQuiescent();
+
+    expect(kernelStore.isVatActive(vatId)).toBe(false);
+    expect([...kernelStore.getAllVatRecords()]).toStrictEqual([]);
+  });
+
+  it('retires a vat whose channel to its worker fails', async () => {
+    const kernelDatabase = await makeSQLKernelDatabase({
+      dbFilename: ':memory:',
+    });
+    const platformServices = new NodejsPlatformServices({
+      logger: logger.logger.subLogger({ tags: ['vat-worker-manager'] }),
+    });
+    const kernel = await makeKernel(
+      kernelDatabase,
+      true,
+      logger.logger.subLogger({ tags: ['test'] }),
+      undefined,
+      platformServices,
+    );
+    const kernelStore = makeKernelStore(kernelDatabase);
+
+    await runTestVats(kernel, {
+      bootstrap: 'main',
+      vats: {
+        main: {
+          bundleSpec: getBundleSpec('logger-vat'),
+          parameters: { name: 'DoomedVat' },
+        },
+      },
+    });
+    await waitUntilQuiescent();
+    const vatId = kernel.getVats()[0]?.id as VatId;
+
+    // Nothing listens for a worker that dies outright, so what the kernel can
+    // actually see is a worker still sending: this is that worker's own
+    // message event, carrying something the reader will not take.
+    platformServices.workers.get(vatId)?.worker.emit('message', NaN);
+    await waitUntilQuiescent();
+    kernel.collectGarbage();
+    await waitUntilQuiescent();
+
+    expect(kernel.getVats()).toStrictEqual([]);
+    expect(kernelStore.isVatActive(vatId)).toBe(false);
+    expect([...kernelStore.getAllVatRecords()]).toStrictEqual([]);
   });
 });
