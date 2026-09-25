@@ -13,6 +13,7 @@ import type {
   KernelOneResolution,
   RemoteId,
   RunLoopStatus,
+  RunLoopItem,
   RunQueueItem,
   RunQueueItemRemoteInbound,
   RunQueueItemNotify,
@@ -20,6 +21,14 @@ import type {
   VatId,
 } from './types.ts';
 import { Fail } from './utils/assert.ts';
+
+/**
+ * The most arrivals held for one remote at once. A peer keeps about this many
+ * messages unacknowledged, and retransmits all of them on a timeout, so a
+ * refusal is usually a copy of one already waiting; any other is
+ * unacknowledged, and sent again.
+ */
+const MAX_ARRIVALS_PER_REMOTE = 200;
 
 type RunLoopState =
   | Exclude<RunLoopStatus, { state: 'failed' }>
@@ -89,6 +98,9 @@ export class KernelQueue {
   /** Messages from peers, waiting for a crank to take delivery of them. */
   #arrivedFromRemotes: RunQueueItemRemoteInbound[] = [];
 
+  /** Whether the last crank took an arrival, so the run queue goes next. */
+  #tookArrivalLast = false;
+
   /**
    * Construct a new KernelQueue instance.
    *
@@ -114,7 +126,7 @@ export class KernelQueue {
    * @returns A promise that rejects with the `Error` that killed the run loop.
    */
   async run(
-    deliver: (item: RunQueueItem) => Promise<CrankResult | undefined>,
+    deliver: (item: RunLoopItem) => Promise<CrankResult | undefined>,
   ): Promise<never> {
     this.#runLoopState.state === 'idle' || Fail`run loop already started`;
     this.#runLoopState = { state: 'running' };
@@ -133,7 +145,7 @@ export class KernelQueue {
    * @param deliver - A function that delivers an item to the kernel.
    */
   async #runLoop(
-    deliver: (item: RunQueueItem) => Promise<CrankResult | undefined>,
+    deliver: (item: RunLoopItem) => Promise<CrankResult | undefined>,
   ): Promise<never> {
     for (;;) {
       let wakeUpPromise: Promise<void> | undefined;
@@ -299,7 +311,7 @@ export class KernelQueue {
    *
    * @returns The next item in the run queue, or undefined if the queue is empty.
    */
-  #getNextRunQueueItem(): RunQueueItem | undefined {
+  #getNextRunQueueItem(): RunLoopItem | undefined {
     const gcAction = processGCActionSet(this.#kernelStore);
     if (gcAction) {
       return gcAction;
@@ -310,9 +322,16 @@ export class KernelQueue {
       return reapAction;
     }
 
-    const arrival = this.#arrivedFromRemotes.shift();
-    if (arrival) {
-      return arrival;
+    // Arrivals and the run queue take turns, so a peer that sends faster than
+    // cranks finish cannot hold up the kernel's own work.
+    const arrivalFirst =
+      !this.#tookArrivalLast || this.#kernelStore.runQueueLength() === 0;
+    this.#tookArrivalLast = false;
+    if (arrivalFirst) {
+      const arrival = this.#takeArrival();
+      if (arrival) {
+        return arrival;
+      }
     }
 
     if (this.#kernelStore.runQueueLength() > 0) {
@@ -321,7 +340,18 @@ export class KernelQueue {
         return item;
       }
     }
-    return undefined;
+    return this.#takeArrival();
+  }
+
+  /**
+   * Take the oldest arrival, if there is one.
+   *
+   * @returns The arrival, or undefined if none is waiting.
+   */
+  #takeArrival(): RunQueueItemRemoteInbound | undefined {
+    const arrival = this.#arrivedFromRemotes.shift();
+    this.#tookArrivalLast = arrival !== undefined;
+    return arrival;
   }
 
   /**
@@ -354,7 +384,7 @@ export class KernelQueue {
    */
   async #processCrankResult(
     crankResult: CrankResult | undefined,
-    queueItem: RunQueueItem,
+    queueItem: RunLoopItem,
   ): Promise<void> {
     if (crankResult?.abort) {
       // Rollback the kernel state to before the failed delivery attempt.
@@ -577,15 +607,24 @@ export class KernelQueue {
    *
    * @param remoteId - The remote the message came from.
    * @param message - The message, as it arrived.
+   * @returns False if the remote already has `MAX_ARRIVALS_PER_REMOTE`
+   * arrivals waiting and this one was refused.
    */
-  acceptRemoteInbound(remoteId: RemoteId, message: string): void {
+  acceptRemoteInbound(remoteId: RemoteId, message: string): boolean {
     this.assertRunLoopAlive('accept a remote message');
+    const held = this.#arrivedFromRemotes.filter(
+      (item) => item.remoteId === remoteId,
+    ).length;
+    if (held >= MAX_ARRIVALS_PER_REMOTE) {
+      return false;
+    }
     this.#arrivedFromRemotes.push({
       type: 'remoteInbound',
       remoteId,
       message,
     });
     this.#wakeTheRunLoop();
+    return true;
   }
 
   /**

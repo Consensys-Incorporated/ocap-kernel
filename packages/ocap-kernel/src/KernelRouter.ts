@@ -14,7 +14,7 @@ import type {
   ERef,
   KRef,
   KernelMessage,
-  RunQueueItem,
+  RunLoopItem,
   RunQueueItemSend,
   RemoteEndpointHandle,
   RunQueueItemBringOutYourDead,
@@ -93,7 +93,7 @@ export class KernelRouter {
    * @param item - The message/notification to deliver.
    * @returns The crank outcome.
    */
-  async deliver(item: RunQueueItem): Promise<CrankResult | undefined> {
+  async deliver(item: RunLoopItem): Promise<CrankResult | undefined> {
     switch (item.type) {
       case 'send':
         return await this.#deliverSend(item);
@@ -489,8 +489,7 @@ export class KernelRouter {
    *
    * The remote can be gone by the time its turn comes: the message was
    * accepted while it was live and the queue outlives it. Throwing here would
-   * escape the crank and kill the run loop, and the rollback would put the
-   * item back for the next boot to die on, so the message is dropped and said
+   * escape the crank and kill the run loop, so the message is dropped and said
    * so. Absence of a handle is the whole test — a remote can have no handle
    * without being recorded as terminated.
    *
@@ -507,7 +506,7 @@ export class KernelRouter {
     } catch (error) {
       // Above the per-delivery trace channel: a message dropped on the floor is
       // the only trace of a peer whose remote went away under it.
-      this.#logger?.error(
+      this.#logger?.warn(
         `Skipped an inbound message for ${remoteId}, which is not running:`,
         error,
       );

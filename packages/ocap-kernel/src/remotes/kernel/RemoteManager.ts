@@ -463,7 +463,8 @@ export class RemoteManager {
    *
    * @param from - The peer ID of the sender.
    * @param message - The message content.
-   * @returns a promise for the response message, or null if no response is needed.
+   * @returns Null: nothing is answered on arrival, and any reply goes out once
+   * the crank that takes the message has committed.
    */
   async handleRemoteMessage(
     from: string,

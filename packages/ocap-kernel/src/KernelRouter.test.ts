@@ -861,8 +861,7 @@ describe('KernelRouter', () => {
         expect(result).toStrictEqual(mockCrankResult);
       });
 
-      // Throwing would escape the crank and kill the run loop, and the
-      // rollback would put the item back for the next boot to die on.
+      // Throwing would escape the crank and kill the run loop.
       it('drops a message for a remote that is gone', async () => {
         const remoteId = 'r1' as RemoteId;
         vi.mocked(getEndpoint).mockImplementation(() => {
