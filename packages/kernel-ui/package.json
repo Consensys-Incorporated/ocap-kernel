@@ -61,13 +61,13 @@
   "dependencies": {
     "@metamask/design-system-react": "^0.45.1",
     "@metamask/design-system-tailwind-preset": "^0.14.0",
-    "@metamask/design-tokens": "^8.7.0",
+    "@metamask/design-tokens": "^11.1.0",
     "@metamask/kernel-browser-runtime": "workspace:^",
     "@metamask/kernel-rpc-methods": "workspace:^",
     "@metamask/kernel-utils": "workspace:^",
     "@metamask/logger": "workspace:^",
     "@metamask/ocap-kernel": "workspace:^",
-    "@metamask/utils": "^11.12.1",
+    "@metamask/utils": "^12.0.0",
     "tailwindcss": "^3.0.0"
   },
   "peerDependencies": {
@@ -76,7 +76,7 @@
   },
   "devDependencies": {
     "@arethetypeswrong/cli": "^0.17.4",
-    "@metamask/auto-changelog": "^5.3.2",
+    "@metamask/auto-changelog": "^6.2.1",
     "@metamask/eslint-config": "^15.0.1",
     "@metamask/eslint-config-nodejs": "^15.0.1",
     "@metamask/eslint-config-typescript": "^15.0.1",
