@@ -59,7 +59,7 @@
     "test:dev:quiet": "yarn test:dev --reporter @ocap/repo-tools/vitest-reporters/silent"
   },
   "dependencies": {
-    "@metamask/design-system-react": "^0.45.1",
+    "@metamask/design-system-react": "^0.45.3",
     "@metamask/design-system-tailwind-preset": "^0.14.0",
     "@metamask/design-tokens": "^11.1.0",
     "@metamask/kernel-browser-runtime": "workspace:^",
