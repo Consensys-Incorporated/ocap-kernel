@@ -2,6 +2,9 @@ import { makeSQLKernelDatabase } from '@metamask/kernel-store/sqlite/nodejs';
 import { waitUntilQuiescent } from '@metamask/kernel-utils';
 import { kunser } from '@metamask/ocap-kernel';
 import type { Kernel, KRef, VatConfig } from '@metamask/ocap-kernel';
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, sep } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { getBundleSpec, makeKernel, makeTestLogger } from './utils.ts';
@@ -11,15 +14,19 @@ const V1_ROOT: KRef = 'ko4';
 /**
  * Launch the narrowing vat.
  *
+ * @param platformConfig - Platform capabilities to grant the vat, if any.
  * @returns The running kernel.
  */
-const launchNarrowingVat = async (): Promise<Kernel> => {
+const launchNarrowingVat = async (
+  platformConfig?: VatConfig['platformConfig'],
+): Promise<Kernel> => {
   const { logger } = makeTestLogger();
   const database = await makeSQLKernelDatabase({});
   const kernel = await makeKernel(database, true, logger);
   const vat: VatConfig = {
     bundleSpec: getBundleSpec('narrowing-vat'),
     parameters: {},
+    ...(platformConfig && { platformConfig }),
   };
   await kernel.launchSubcluster({ bootstrap: 'main', vats: { main: vat } });
   await waitUntilQuiescent();
@@ -39,6 +46,34 @@ const probe = async (
   method: string,
   args: unknown[],
 ): Promise<unknown> => kunser(await kernel.queueMessage(V1_ROOT, method, args));
+
+/**
+ * Create a readable file two directories deep, so that a narrowing of the
+ * directory holding it is strictly narrower than the configured root.
+ *
+ * @returns Absolute segment arrays for the tree, and the file's byte length.
+ */
+const makeTempTree = async (): Promise<{
+  root: string[];
+  inner: string[];
+  file: string[];
+  sibling: string[];
+  size: number;
+}> => {
+  const contents = 'narrowed-fs\n';
+  const dir = await mkdtemp(join(tmpdir(), 'narrowing-'));
+  await mkdir(join(dir, 'inner'));
+  await writeFile(join(dir, 'inner', 'hello.txt'), contents);
+  await writeFile(join(dir, 'sibling.txt'), contents);
+  const root = dir.split(sep).filter(Boolean);
+  return {
+    root,
+    inner: [...root, 'inner'],
+    file: [...root, 'inner', 'hello.txt'],
+    sibling: [...root, 'sibling.txt'],
+    size: contents.length,
+  };
+};
 
 describe('narrowing', () => {
   it('narrows a vat-local exo', async () => {
@@ -147,5 +182,50 @@ describe('narrowing', () => {
     expect(
       await probe(kernel, 'probeDefaultGuarded', [['srv', 'data', 'x']]),
     ).toBe('ok:loose:srv/data/x');
+  });
+
+  it('receives fs as an exo', async () => {
+    const { root, file, size } = await makeTempTree();
+    const kernel = await launchNarrowingVat({
+      fs: { root, methods: ['readFile'] },
+    });
+    expect(await probe(kernel, 'probeFs', [file])).toBe(`ok:${size}`);
+  });
+
+  it('scopes fs by config', async () => {
+    const { root, file, size } = await makeTempTree();
+    const kernel = await launchNarrowingVat({
+      fs: { root, methods: ['readFile'] },
+    });
+    expect(await probe(kernel, 'probeFs', [file])).toBe(`ok:${size}`);
+    expect(await probe(kernel, 'probeFs', [['etc', 'passwd']])).toMatch(
+      /^rejected:/u,
+    );
+  });
+
+  // `pathUnder` matches the root's positions and cannot see inside a segment,
+  // so this satisfies the config's pattern and is refused by the capability's
+  // own well-formedness check, which the narrowing inherits by forwarding.
+  it('rejects a separator inside a segment the config pattern admits', async () => {
+    const { root } = await makeTempTree();
+    const kernel = await launchNarrowingVat({
+      fs: { root, methods: ['readFile'] },
+    });
+    expect(
+      await probe(kernel, 'probeFs', [[...root, 'x/../../etc/passwd']]),
+    ).toMatch(/^rejected:.*invalid segment/u);
+  });
+
+  it('narrows the config-scoped fs further', async () => {
+    const { root, inner, file, sibling, size } = await makeTempTree();
+    const kernel = await launchNarrowingVat({
+      fs: { root, methods: ['readFile'] },
+    });
+    expect(await probe(kernel, 'probeFsNarrowed', [inner, file])).toBe(
+      `ok:${size}`,
+    );
+    expect(await probe(kernel, 'probeFsNarrowed', [inner, sibling])).toMatch(
+      /^rejected:/u,
+    );
   });
 });
