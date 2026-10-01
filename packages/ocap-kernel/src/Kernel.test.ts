@@ -813,9 +813,8 @@ describe('Kernel', () => {
       await kernel.launchSubcluster(makeSingleVatClusterConfig());
       const queue = mocks.KernelQueue.lastInstance;
 
-      // The caller waits on the queued item, so the outcome belongs to the
-      // tests that drive a run loop: `VatManager.test.ts` and kernel-test's
-      // `vat-lifecycle`.
+      // The mocked queue never carries the item out, so the outcome is tested
+      // where a run loop does.
       const restarting = kernel.restartVat('v1');
       expect(queue.enqueueRestartVat).toHaveBeenCalledWith('v1');
 

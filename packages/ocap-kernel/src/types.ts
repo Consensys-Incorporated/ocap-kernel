@@ -378,11 +378,6 @@ export type RunQueueItemBringOutYourDead = Infer<
 
 /**
  * A request to replace a vat's worker, queued so the run loop performs it.
- *
- * Queued rather than done where it is asked for, because the run loop is then
- * the only thing that takes a vat out of the kernel's reach: no crank can
- * observe the vat mid-replacement, and the vat is idle while it happens, since
- * the crank doing the work is the one that would otherwise deliver to it.
  */
 const RunQueueItemRestartVatStruct = object({
   type: literal('restartVat'),

@@ -53,12 +53,9 @@ export class VatManager {
   /**
    * Callers awaiting a queued restart, by vat.
    *
-   * An array, because two requests for one vat are one restart: the second
-   * caller wants a fresh worker and the first one's crank gives it one. Every
-   * request queues an item all the same — a request that skipped the queue on
-   * the strength of someone else's would wait forever if that item were rolled
-   * away by an aborting crank — and the crank that arrives first settles the
-   * whole list, leaving later items with nothing to do.
+   * The first crank for a vat settles the whole list, so later items find it
+   * empty. Every request still queues its own item: one relying on another's
+   * would wait forever if that item were rolled away.
    */
   readonly #restartWaiters: Map<
     VatId,
@@ -413,11 +410,7 @@ export class VatManager {
   /**
    * Restarts a vat.
    *
-   * Asks the run loop to do it rather than doing it here. A restart keeps the
-   * vat's c-list while taking the vat itself out of the kernel's reach for as
-   * long as launching a worker and negotiating with it takes, and doing that
-   * alongside a running run loop means a crank can land in that window and read
-   * a live vat as a dead one. In a crank of its own there is no window.
+   * Queued for the run loop, so no crank can observe the vat between workers.
    *
    * @param vatId - The ID of the vat.
    * @returns A promise for the restarted vat.
@@ -435,9 +428,8 @@ export class VatManager {
     const { promise, resolve, reject } = makePromiseKit<void>();
     const waiters = this.#restartWaiters.get(vatId) ?? [];
     this.#restartWaiters.set(vatId, [...waiters, { resolve, reject }]);
-    // The run loop is what carries the request out, and a restart has no kernel
-    // promise behind it the way a message result does, so nothing else would
-    // ever settle this caller.
+    // A restart has no kernel promise behind it, so nothing else would settle
+    // this caller if the run loop dies.
     const stopWatchingTheRunLoop = this.#kernelQueue.onRunLoopDeath(reject);
     try {
       await promise;
