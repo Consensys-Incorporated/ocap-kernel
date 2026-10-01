@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING:** `NodePort` requires an `off` method, which `NodeWorkerDuplexStream` uses to remove its listener when the stream ends ([#1138](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1138))
+- `split` accepts any number of predicates and narrows the type of each split ([#1138](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1138))
+- The `ChromeRuntimeDuplexStream` constructor throws if `localTarget` and `remoteTarget` are the same, as `make()` already did ([#1138](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1138))
+
+### Removed
+
+- **BREAKING:** Remove the `MessagePortReader`, `MessagePortWriter`, `PostMessageReader`, `PostMessageWriter`, `ChromeRuntimeReader`, `ChromeRuntimeWriter`, `NodeWorkerReader`, and `NodeWorkerWriter` exports; use the corresponding duplex streams instead ([#1138](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1138))
+
 ### Fixed
 
 - `PostMessageDuplexStream` calls `onEnd` once per stream, and writes after the remote side ends return a done result instead of throwing when `onEnd` closes the transport ([#1137](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1137))
