@@ -6,8 +6,6 @@ describe('index', () => {
   it('has the expected exports', () => {
     expect(Object.keys(indexModule).sort()).toStrictEqual([
       'NodeWorkerDuplexStream',
-      'NodeWorkerReader',
-      'NodeWorkerWriter',
       'split',
     ]);
   });
