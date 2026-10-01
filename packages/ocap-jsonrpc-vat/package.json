@@ -48,7 +48,7 @@
   },
   "dependencies": {
     "@endo/eventual-send": "^1.5.0",
-    "@endo/pass-style": "^2.0.1",
+    "@endo/pass-style": "^1.8.2",
     "@metamask/kernel-utils": "workspace:^",
     "@metamask/ocap-kernel": "workspace:^"
   },

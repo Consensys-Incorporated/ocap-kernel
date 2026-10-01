@@ -58,7 +58,7 @@
   "dependencies": {
     "@endo/eventual-send": "^1.5.0",
     "@endo/exo": "^1.7.0",
-    "@endo/patterns": "^2.1.0",
+    "@endo/patterns": "^1.9.1",
     "@metamask/kernel-utils": "workspace:^"
   },
   "devDependencies": {
