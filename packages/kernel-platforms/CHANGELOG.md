@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **BREAKING:** Vend the `fs` capability as an exo taking absolute path segments, replacing the `node:fs` lookalike record of functions ([#1055](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1055), [#1056](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1056), [#1057](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1057))
+- **BREAKING:** Vend the `fs` capability as an exo taking absolute path segments, replacing the `node:fs` lookalike record of functions ([#1135](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1135))
 
   - Call it as `await E(fs).readFile(['srv', 'data', 'x'], 'utf8')`. Methods share one flat namespace, so `promises.readFile` is now `readFile`, and a segment may not be empty, `.`, `..`, or contain a path separator.
   - `readFile` requires an encoding and resolves a string. Without one Node resolves a `Buffer`, and no typed array can cross an exo boundary, so reading raw bytes is not available.
@@ -18,7 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Every argument must be Passable, so an options record carrying an `AbortSignal` is rejected where the bare `node:fs` function accepted it.
   - The capability factory is now async.
 
-- Enforce the `fs` config's `root` and method set with a narrowing rather than a hand-rolled caveat, so a holder that narrows the capability further composes with the configured bound instead of stacking a second mechanism on it ([#1058](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1058))
+- Enforce the `fs` config's `root` and method set with a narrowing rather than a hand-rolled caveat, so a holder that narrows the capability further composes with the configured bound instead of stacking a second mechanism on it ([#1135](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1135))
 
 ### Removed
 
