@@ -52,7 +52,7 @@ export class KernelRouter {
    * A function that replaces a vat's worker, for the crank that carries out a
    * queued restart request.
    */
-  readonly #restartVat: (vatId: VatId) => Promise<void>;
+  readonly #restartVat: (vatId: VatId) => Promise<CrankResult | undefined>;
 
   /** The logger, if any. */
   readonly #logger: Logger | undefined;
@@ -72,7 +72,7 @@ export class KernelRouter {
     kernelQueue: KernelQueue,
     getEndpoint: (endpointId: EndpointId) => EndpointHandle,
     invokeKernelService: (target: KRef, message: KernelMessage) => void,
-    restartVat: (vatId: VatId) => Promise<void>,
+    restartVat: (vatId: VatId) => Promise<CrankResult | undefined>,
     logger?: Logger,
   ) {
     this.#kernelStore = kernelStore;
@@ -114,8 +114,7 @@ export class KernelRouter {
       case 'bringOutYourDead':
         return await this.#deliverBringOutYourDead(item);
       case 'restartVat':
-        await this.#restartVat(item.vatId);
-        return undefined;
+        return await this.#restartVat(item.vatId);
       default:
         // @ts-expect-error Runtime does not respect "never".
         Fail`unsupported or unknown run queue item type ${item.type}`;

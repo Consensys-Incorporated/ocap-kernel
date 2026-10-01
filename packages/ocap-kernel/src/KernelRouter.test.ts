@@ -94,14 +94,16 @@ describe('KernelRouter', () => {
 
   describe('restartVat', () => {
     it('hands a queued restart request to the vat manager', async () => {
+      const crankResult = { abort: true };
+      mockRestartVat.mockResolvedValueOnce(crankResult);
+
       const result = await kernelRouter.deliver({
         type: 'restartVat',
         vatId: 'v1',
       });
 
       expect(mockRestartVat).toHaveBeenCalledWith('v1');
-      // Nothing for the crank to do with it: the manager answers its caller.
-      expect(result).toBeUndefined();
+      expect(result).toBe(crankResult);
     });
   });
 
