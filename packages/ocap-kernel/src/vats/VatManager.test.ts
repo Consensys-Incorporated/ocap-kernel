@@ -11,6 +11,7 @@ import type { Mocked, MockInstance } from 'vitest';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import type { KernelQueue } from '../KernelQueue.ts';
+import { makeFatalKernelError } from '../liveslots/kernel-marshal.ts';
 import type { KernelStore } from '../store/index.ts';
 import type { VatId, VatConfig, PlatformServices } from '../types.ts';
 import { VatHandle } from './VatHandle.ts';
@@ -89,14 +90,22 @@ describe('VatManager', () => {
       resolvePromises: vi.fn(),
       // Stands in for the run loop taking the item in a crank of its own.
       enqueueRestartVat: vi.fn((vatId: VatId) => {
-        // No `catch`: the run loop has none either, and a rejection there
-        // rolls the crank back and kills it.
         queueMicrotask(() => {
-          vatManager.performVatRestart(vatId).catch((error: unknown) => {
-            // The run loop has no catch: a rejection there rolls the crank
-            // back and kills it, so surfacing it here is the point.
-            throw error;
-          });
+          vatManager
+            .performVatRestart(vatId)
+            .then(async (crankResult) => {
+              // As the run loop does once it has rolled the crank back.
+              if (crankResult?.terminate) {
+                const { info } = crankResult.terminate;
+                await vatManager.stopVat(vatId, true, info);
+              }
+              return undefined;
+            })
+            .catch((error: unknown) => {
+              // The run loop has no catch: a rejection there rolls the crank
+              // back and kills it, so surfacing it here is the point.
+              throw error;
+            });
         });
       }),
       onRunLoopDeath: vi.fn(() => () => undefined),
@@ -931,7 +940,7 @@ describe('VatManager', () => {
       expect(mockKernelStore.markVatAsTerminated).not.toHaveBeenCalled();
     });
 
-    it('settles without rejecting when the relaunch fails', async () => {
+    it('aborts the crank and terminates the vat when the relaunch fails', async () => {
       await vatManager.runVat('v1', createMockVatConfig());
       mockKernelQueue.enqueueRestartVat.mockImplementationOnce(() => undefined);
       const restarting = vatManager.restartVat('v1');
@@ -939,13 +948,23 @@ describe('VatManager', () => {
         new Error('ENOENT: no such file or directory'),
       );
 
-      // The run loop has no catch: a rejection here rolls the crank back,
-      // undoing the retirement and restoring the request.
-      expect(await vatManager.performVatRestart('v1')).toBeUndefined();
+      // Not a rejection: the run loop's catch would roll the crank back and
+      // die.
+      expect(await vatManager.performVatRestart('v1')).toStrictEqual({
+        abort: true,
+        terminate: {
+          vatId: 'v1',
+          reject: true,
+          info: makeFatalKernelError(
+            'INTERNAL_ERROR',
+            'ENOENT: no such file or directory',
+          ),
+        },
+      });
       await expect(restarting).rejects.toThrow('ENOENT');
     });
 
-    it('retires a vat whose relaunch fails, without throwing', async () => {
+    it('retires a vat whose relaunch fails', async () => {
       await vatManager.runVat('v1', createMockVatConfig());
       mockPlatformServices.launch.mockRejectedValueOnce(
         new Error('ENOENT: no such file or directory'),
@@ -953,10 +972,9 @@ describe('VatManager', () => {
 
       await expect(vatManager.restartVat('v1')).rejects.toThrow('ENOENT');
 
-      // Throwing would have the run loop roll the crank back, undoing the
-      // records below and restoring the request, so every later start would
-      // replay the same failing restart.
-      expect(mockKernelStore.markVatAsTerminated).toHaveBeenCalledWith('v1');
+      await vi.waitFor(() =>
+        expect(mockKernelStore.markVatAsTerminated).toHaveBeenCalledWith('v1'),
+      );
       expect(mockKernelStore.deleteVat).toHaveBeenCalledWith('v1');
       expect(vatManager.hasVat('v1')).toBe(false);
     });
@@ -969,26 +987,14 @@ describe('VatManager', () => {
         'handshake timed out',
       );
 
-      // The relaunch spawned a worker and recorded no handle for it, so the
-      // retirement is the only thing that can stop it.
-      expect(mockPlatformServices.terminate).toHaveBeenLastCalledWith(
-        'v1',
-        expect.any(VatDeletedError),
+      await vi.waitFor(() =>
+        expect(mockPlatformServices.terminate).toHaveBeenLastCalledWith(
+          'v1',
+          expect.objectContaining({
+            message: expect.stringContaining('handshake timed out'),
+          }),
+        ),
       );
-    });
-
-    it('answers its caller even when the retirement fails', async () => {
-      await vatManager.runVat('v1', createMockVatConfig());
-      mockPlatformServices.launch.mockRejectedValueOnce(
-        new Error('ENOENT: no such file or directory'),
-      );
-      mockKernelStore.deleteVat.mockImplementationOnce(() => {
-        throw new Error('deleteVat failed');
-      });
-
-      // The relaunch failure, not the retirement failure, is what the caller
-      // asked about.
-      await expect(vatManager.restartVat('v1')).rejects.toThrow('ENOENT');
     });
   });
 
