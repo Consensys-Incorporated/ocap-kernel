@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Export `BaseReader` and `BaseWriter` for one-way streams over any transport ([#1138](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1138))
+
 ### Changed
 
 - **BREAKING:** `NodePort` requires an `off` method, which `NodeWorkerDuplexStream` uses to remove its listener when the stream ends ([#1138](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1138))
