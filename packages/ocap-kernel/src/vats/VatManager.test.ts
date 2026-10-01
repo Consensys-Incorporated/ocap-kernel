@@ -806,8 +806,6 @@ describe('VatManager', () => {
 
       await vatManager.restartVat('v1');
 
-      // No handle on the books, but the store still lists the vat, so this is a
-      // request for one that is coming back.
       expect(vatManager.hasVat('v1')).toBe(true);
     });
 
@@ -819,8 +817,6 @@ describe('VatManager', () => {
         vatManager.restartVat('v1'),
       ]);
 
-      // Both queue an item, but the first crank settles the whole list, so the
-      // second finds nothing to do: one fresh worker answers both.
       expect(mockKernelQueue.enqueueRestartVat).toHaveBeenCalledTimes(2);
       expect(mockPlatformServices.launch).toHaveBeenCalledTimes(2);
       expect(first).toBe(second);
@@ -842,9 +838,6 @@ describe('VatManager', () => {
       await vatManager.runVat('v1', createMockVatConfig());
       const unhandled = vi.fn();
       process.on('unhandledRejection', unhandled);
-      // The shape this guards against: a run loop already dead rejects the
-      // waiter the moment it is registered, and the refused enqueue then leaves
-      // by the throw, so nothing ever awaits that rejected promise.
       mockKernelQueue.onRunLoopDeath.mockImplementationOnce(
         (reject: (error: Error) => void) => {
           reject(new Error('run loop died'));
@@ -874,8 +867,6 @@ describe('VatManager', () => {
         },
       );
 
-      // A restart has no kernel promise behind it, so nothing else would ever
-      // settle this caller.
       await expect(vatManager.restartVat('v1')).rejects.toThrow(
         'run loop died',
       );
@@ -888,8 +879,6 @@ describe('VatManager', () => {
 
       await vatManager.performVatRestart('v1');
 
-      // The item outlived the process that queued it, and
-      // `initializeAllVats` has already launched a fresh worker.
       expect(mockPlatformServices.launch).toHaveBeenCalledTimes(1);
     });
 
@@ -898,8 +887,6 @@ describe('VatManager', () => {
       await vatManager.restartVat('v1');
       const launches = mockPlatformServices.launch.mock.calls.length;
 
-      // Two callers queue two items and the first crank answers both, so the
-      // second must find the list given up and nothing left to do.
       await vatManager.performVatRestart('v1');
 
       expect(mockPlatformServices.launch).toHaveBeenCalledTimes(launches);
@@ -910,8 +897,6 @@ describe('VatManager', () => {
       mockKernelQueue.enqueueRestartVat.mockImplementationOnce(
         (vatId: VatId) => {
           queueMicrotask(() => {
-            // `terminateVat` does not go through the run queue, so it can land
-            // between the request and the crank that would carry it out.
             mockKernelStore.isVatActive.mockReturnValue(false);
             vatManager
               .stopVat(vatId, true)
@@ -934,8 +919,6 @@ describe('VatManager', () => {
 
       await vatManager.restartVat('v1');
 
-      // The handle is off the books and the worker killed either way, so an
-      // untidy shutdown must not cost the vat its new incarnation.
       expect(mockPlatformServices.launch).toHaveBeenCalledTimes(2);
       expect(mockKernelStore.markVatAsTerminated).not.toHaveBeenCalled();
     });

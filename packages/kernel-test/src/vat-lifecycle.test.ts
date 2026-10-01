@@ -177,10 +177,8 @@ describe('Vat Lifecycle', { timeout: 30_000 }, () => {
     });
     await waitUntilQuiescent();
 
-    // The request is a run queue item, so each of these resolves only once the
-    // run loop has taken it and the new worker has answered. `start count`
-    // comes from the vat's own baggage, so it counts incarnations: a restart
-    // that settled its caller without replacing the worker would not move it.
+    // `start count` lives in the vat's baggage, so a restart that answered its
+    // caller without replacing the worker would not move it.
     await kernel.restartVat('v1');
     await kernel.restartVat('v1');
     await waitUntilQuiescent(1000);
