@@ -146,10 +146,13 @@ export class SubclusterManager {
       // up IO channels and the persisted subcluster record.
       // Each step is best-effort — cleanup errors must not mask the original
       // failure.
+      const survivors: VatId[] = [];
       try {
         const vatIds = this.#kernelStore.getSubclusterVats(subclusterId);
         for (const vatId of vatIds.reverse()) {
-          await this.#terminateVatQuietly(vatId);
+          if (!(await this.#terminateVatQuietly(vatId))) {
+            survivors.push(vatId);
+          }
         }
       } catch (vatCleanupError) {
         this.#logger.error(
@@ -167,7 +170,23 @@ export class SubclusterManager {
           cleanupError,
         );
       }
-      this.#kernelStore.deleteSubcluster(subclusterId);
+      if (survivors.length > 0) {
+        // Kept for the reason `terminateSubcluster` keeps it.
+        this.#logger.error(
+          `Keeping subcluster ${subclusterId} after its failed launch; vats still running: ${survivors.join(', ')}`,
+        );
+      } else {
+        try {
+          // Waits for the reason `terminateSubcluster` does.
+          await this.#kernelQueue.waitForCrank();
+          this.#kernelStore.deleteSubcluster(subclusterId);
+        } catch (cleanupError) {
+          this.#logger.error(
+            'Error deleting the subcluster record on failed launch:',
+            cleanupError,
+          );
+        }
+      }
       throw error;
     }
   }
