@@ -2405,45 +2405,45 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@metamask/design-system-react@npm:^0.43.0":
-  version: 0.43.0
-  resolution: "@metamask/design-system-react@npm:0.43.0"
+"@metamask/design-system-react@npm:^0.45.1":
+  version: 0.45.3
+  resolution: "@metamask/design-system-react@npm:0.45.3"
   dependencies:
     "@floating-ui/react-dom": "npm:^2.1.2"
-    "@metamask/design-system-shared": "npm:^0.37.0"
+    "@metamask/design-system-shared": "npm:^0.39.0"
     "@metamask/jazzicon": "npm:^2.0.0"
     "@radix-ui/react-slot": "npm:^1.1.0"
     blo: "npm:^2.0.0"
     react-focus-lock: "npm:^2.9.4"
     tailwind-merge: "npm:^2.0.0"
   peerDependencies:
-    "@metamask/design-system-tailwind-preset": ^0.13.0
+    "@metamask/design-system-tailwind-preset": ^0.14.0
     "@metamask/design-tokens": ^11.0.0
     "@metamask/utils": ^11.12.1
     react: ^17.0.0 || ^18.0.0 || ^19.0.0
     react-dom: ^17.0.0 || ^18.0.0 || ^19.0.0
-  checksum: 10/4610ab7a6e52b29736eb228de55c1b714156322936c8d8dc794c46c544fe2634f307bb5413dc88efe6813f3b1c46118803a665782a19e2f74d90b9d0f07bf69d
+  checksum: 10/27bca569dd668d0da3033217bb316dfb87f346dcdd053f43bbb5085059a3e4808bf3ce2c609539493367ee56d0a683c1ce9c7d4bde38f2822e76d02630091958
   languageName: node
   linkType: hard
 
-"@metamask/design-system-shared@npm:^0.37.0":
-  version: 0.37.0
-  resolution: "@metamask/design-system-shared@npm:0.37.0"
+"@metamask/design-system-shared@npm:^0.39.0":
+  version: 0.39.0
+  resolution: "@metamask/design-system-shared@npm:0.39.0"
   dependencies:
     "@metamask/utils": "npm:^11.12.1"
   peerDependencies:
     react: ^17.0.0 || ^18.0.0 || ^19.0.0
-  checksum: 10/62e5fe597adedb9cbcabd33c331ff8a1a83dc226452b8d98378ace02421ae324c3427aae349608416d3dfd4c741054cd834702e4b7e77b8e4139b8d21a71f7a6
+  checksum: 10/9f09c129326d2acd7d7d5c1b74843fa3bd5af8cf891affaeda56d02a3e24d6f1be761b75e2e1623b83d60165ebab99245cdaa3c14ee4c28041ba3206d47a2b32
   languageName: node
   linkType: hard
 
-"@metamask/design-system-tailwind-preset@npm:^0.13.0":
-  version: 0.13.0
-  resolution: "@metamask/design-system-tailwind-preset@npm:0.13.0"
+"@metamask/design-system-tailwind-preset@npm:^0.14.0":
+  version: 0.14.0
+  resolution: "@metamask/design-system-tailwind-preset@npm:0.14.0"
   peerDependencies:
     "@metamask/design-tokens": ^11.0.0
     tailwindcss: ^3.0.0
-  checksum: 10/bc974310460763ec03174930f796a653e6470b4beec2a0607e527c1a50055b3804549904cf66a4f69d111acf79109e2266cfa25681cef5b596b3e942a3b975c9
+  checksum: 10/d4ab2a71d9123cf4965af27f15c1686956e8cdde826064b878b9912549192a1ec019c6850c4827e60054a227d6f01044ba85d516e7ba77ad5f3c2d341b9175b7
   languageName: node
   linkType: hard
 
@@ -2971,8 +2971,8 @@ __metadata:
   dependencies:
     "@arethetypeswrong/cli": "npm:^0.17.4"
     "@metamask/auto-changelog": "npm:^5.3.2"
-    "@metamask/design-system-react": "npm:^0.43.0"
-    "@metamask/design-system-tailwind-preset": "npm:^0.13.0"
+    "@metamask/design-system-react": "npm:^0.45.1"
+    "@metamask/design-system-tailwind-preset": "npm:^0.14.0"
     "@metamask/design-tokens": "npm:^8.7.0"
     "@metamask/eslint-config": "npm:^15.0.1"
     "@metamask/eslint-config-nodejs": "npm:^15.0.1"
