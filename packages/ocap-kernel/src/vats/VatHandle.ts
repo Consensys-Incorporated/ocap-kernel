@@ -44,10 +44,7 @@ type VatConstructorProps = {
   kernelQueue: KernelQueue;
   logger?: Logger | undefined;
   allowedGlobalNames?: AllowedGlobalName[] | undefined;
-  /**
-   * Called when the channel to the worker fails, so that whoever keeps this
-   * vat's records can retire it.
-   */
+  /** Called when the channel to the worker fails. */
   onStreamFailure: (error: Error) => void;
 };
 
@@ -169,17 +166,13 @@ export class VatHandle implements EndpointHandle {
         this.#logger?.error(`Unexpected read error`, error);
         const streamError = new StreamReadError({ vatId: this.vatId }, error);
         try {
-          // Not left to the retirement's own `terminate`, which reaches it only
-          // after the worker has been killed: a crank blocked on a delivery
-          // this channel will never carry waits behind that.
+          // Now, not in the retirement's `terminate`: that waits for the
+          // current crank, which may be blocked on a pending command.
           this.#rpcClient.rejectAll(streamError);
         } finally {
           try {
             this.#onStreamFailure(streamError);
           } catch (reportError) {
-            // Nothing awaits this handler, so a throw would be an unhandled
-            // rejection and the only account of the vat's death would be the
-            // read error logged above.
             this.#logger?.error(
               `Failed to report the dead channel of vat ${this.vatId}`,
               reportError,
@@ -321,22 +314,15 @@ export class VatHandle implements EndpointHandle {
   }
 
   /**
-   * Closes this handle's channel to the vat worker.
+   * Closes this handle's channel to the vat worker. The store side of a vat's
+   * death is `VatManager`'s.
    *
-   * Only the handle's own business: the store side of a vat's death belongs to
-   * `VatManager`, which writes it in one synchronous step. Split that way
-   * because the two have opposite failure requirements — ending a stream can
-   * fail and it does not matter, since the worker is already being killed,
-   * while a store left half-told about a vat is a state nothing recovers from.
-   *
-   * @param terminating - If true, the vat is being killed permanently, so
-   *   callers waiting on a command it will never answer are told now.
+   * @param terminating - If true, the vat is being killed permanently.
    * @param error - The error to terminate the vat with.
    */
   async terminate(terminating: boolean, error?: Error): Promise<void> {
     if (terminating) {
-      // Ahead of the stream, so a stream that refuses to close does not leave
-      // these callers waiting on a worker that is already dead.
+      // Before `end`, which may never settle.
       this.#rpcClient.rejectAll(error ?? new VatDeletedError(this.vatId));
     }
     await this.#vatStream.end(error);

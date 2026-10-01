@@ -193,8 +193,6 @@ describe('VatManager', () => {
         vatManager.launchVat(createMockVatConfig(), 'bob', 's1'),
       ).rejects.toThrow('Failed to launch vat v1 (bob)');
 
-      // The worker is spawned before anything that can fail here, and no handle
-      // was recorded, so this is the only chance to stop it.
       expect(mockPlatformServices.terminate).toHaveBeenCalledWith('v1');
     });
 
@@ -207,9 +205,7 @@ describe('VatManager', () => {
         vatManager.launchVat(createMockVatConfig(), 'bob', 's1'),
       ).rejects.toThrow('Failed to launch vat v1 (bob)');
 
-      // Both runtimes throw for a vat they have no worker for, so asking would
-      // report a cleanup failure over the launch failure an operator is reading
-      // the log to find.
+      // Both runtimes throw for an unknown worker, burying the launch failure.
       expect(mockPlatformServices.terminate).not.toHaveBeenCalled();
     });
 
@@ -280,7 +276,6 @@ describe('VatManager', () => {
       expect((error as Error).message).toBe(
         'Failed to launch vat v1 (bob) (cleanup also failed)',
       );
-      // The launch failure, not the cleanup failure, is what the caller needs.
       expect((error as Error).cause).toBe(cause);
     });
 
@@ -297,10 +292,6 @@ describe('VatManager', () => {
         'Failed to launch vat v1 (bob) (cleanup also failed)',
       );
 
-      // Marking here would schedule the cleanup for a vat whose `deleteVat`
-      // never ran, and the mark is dropped once that cleanup has swept: the
-      // vat store and the subcluster row would be left with no way to reach
-      // them again.
       expect(mockKernelStore.markVatAsTerminated).not.toHaveBeenCalled();
     });
   });
@@ -372,8 +363,6 @@ describe('VatManager', () => {
 
         reportStreamFailure(new Error('channel failed'));
         await delay(10);
-        // Written inside an open delivery savepoint, the whole death is undone
-        // by a crank that goes on to abort, while the dropped handle is not.
         const writesDuringTheCrank =
           mockKernelStore.deleteVat.mock.calls.length;
         releaseCrank();
@@ -405,8 +394,7 @@ describe('VatManager', () => {
         await vatManager.restartVat('v1');
         const deletesBefore = mockKernelStore.deleteVat.mock.calls.length;
 
-        // The handle the first launch made, reporting after the handle that
-        // replaced it is the one the manager keeps.
+        // The first launch's handle, reporting after the restart replaced it.
         reportStreamFailure(new Error('channel failed'));
         await delay(10);
 
@@ -499,8 +487,7 @@ describe('VatManager', () => {
       mockKernelStore.getPromisesByDecider.mockReturnValueOnce(['kp1']);
 
       const stopping = vatManager.stopVat('v1', true);
-      // Read before awaiting: everything the store has to be told is written in
-      // `stopVat`'s synchronous prefix, so a crank cannot land part-way through.
+      // Read before awaiting, to pin that no write follows a yield point.
       const writesBeforeTheFirstAwait = {
         resolvePromises: mockKernelQueue.resolvePromises.mock.calls.length,
         unpinObject: mockKernelStore.unpinObject.mock.calls.length,
@@ -528,9 +515,6 @@ describe('VatManager', () => {
         'unpin failed',
       );
 
-      // Marking it would make the deferred cleanup delete the decider
-      // promises' c-list entries believing they were rejected. Unmarked, the
-      // vat is simply not retired yet and the step can be tried again.
       expect(mockKernelStore.markVatAsTerminated).not.toHaveBeenCalled();
       expect(mockPlatformServices.terminate).toHaveBeenCalled();
       expect(vatManager.hasVat('v1')).toBe(false);
@@ -703,9 +687,7 @@ describe('VatManager', () => {
 
     describe('a vat that is persisted but not running', () => {
       /**
-       * Leave the vat in the state a failed relaunch does: gone from the
-       * running map, with its record, its own store and its root pin all still
-       * in place.
+       * Leave the vat persisted but not running, as a failed relaunch does.
        */
       async function givenAFailedRestart(): Promise<void> {
         await vatManager.runVat('v1', createMockVatConfig());
@@ -729,9 +711,6 @@ describe('VatManager', () => {
 
         await vatManager.terminateVat('v1');
 
-        // The cleanup the mark schedules walks keys prefixed `${vatId}.`, which
-        // never matches `vatConfig.${vatId}`; a record left behind restores the
-        // vat at the next boot whose code is reachable.
         expect(mockKernelStore.deleteVat).toHaveBeenCalledWith('v1');
       });
 
@@ -744,10 +723,6 @@ describe('VatManager', () => {
           slots: [],
         });
 
-        // `cleanupTerminatedVat` deletes these promises' c-list entries and
-        // drops the decider's refcount on the understanding that its caller
-        // rejected them first. A promise left unresolved with a decider that no
-        // longer exists hangs its waiters for good.
         expect(mockKernelQueue.resolvePromises).toHaveBeenCalledWith('v1', [
           [
             'kp1',

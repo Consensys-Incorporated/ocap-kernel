@@ -375,7 +375,6 @@ describe('VatHandle', () => {
       await vat.terminate(false);
       await delay(10);
 
-      // The same vat is coming back, and its answer with it.
       expect(settled).not.toHaveBeenCalled();
     });
   });

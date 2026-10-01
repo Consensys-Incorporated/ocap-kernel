@@ -172,9 +172,6 @@ describe('Vat Lifecycle', { timeout: 30_000 }, () => {
 
     await kernel.terminateVat(vatId);
     await waitUntilQuiescent();
-    // The mark is what schedules this, and it is dropped once the sweep is
-    // done — so the `vatConfig` row it never touches is the thing that decides
-    // whether the vat is active after it.
     kernel.collectGarbage();
     await waitUntilQuiescent();
 
@@ -210,9 +207,7 @@ describe('Vat Lifecycle', { timeout: 30_000 }, () => {
     await waitUntilQuiescent();
     const vatId = kernel.getVats()[0]?.id as VatId;
 
-    // Nothing listens for a worker that dies outright, so what the kernel can
-    // actually see is a worker still sending: this is that worker's own
-    // message event, carrying something the reader will not take.
+    // The kernel cannot see a killed worker, only a bad frame from a live one.
     platformServices.workers.get(vatId)?.worker.emit('message', NaN);
     await waitUntilQuiescent();
     kernel.collectGarbage();

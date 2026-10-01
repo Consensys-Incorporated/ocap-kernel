@@ -624,9 +624,6 @@ describe('kernel store', () => {
 
       ks.cleanupTerminatedVat('v1');
 
-      // The sweep drops the mark on its way out, and `isVatActive` reads only
-      // this row — left behind, the vat reads as running again and the next
-      // boot relaunches it with everything else about it swept away.
       expect(ks.isVatActive('v1')).toBe(false);
       expect(ks.isVatTerminated('v1')).toBe(false);
     });
