@@ -170,21 +170,30 @@ export class PostMessageDuplexStream<
     onEnd,
     ...args
   }: PostMessageDuplexStreamArgs<Read>) {
+    let didCallOnEnd = false;
+    const callOnEndOnce = async (): Promise<void> => {
+      if (!didCallOnEnd) {
+        didCallOnEnd = true;
+        await onEnd?.();
+      }
+    };
+
     let writer: PostMessageWriter<Write>; // eslint-disable-line prefer-const
     const reader = new PostMessageReader<Read>({
       ...args,
       messageTarget,
       validateInput: makeDuplexStreamInputValidator(validateInput),
+      // End the writer first, since onEnd may close the transport.
       onEnd: async () => {
-        await onEnd?.();
         await writer.return();
+        await callOnEndOnce();
       },
     } as PostMessageReaderArgs<Read>);
     writer = new PostMessageWriter<Write>(messageTarget, {
       name: 'PostMessageDuplexStream',
       onEnd: async () => {
-        await onEnd?.();
         await reader.return();
+        await callOnEndOnce();
       },
     });
     super(reader, writer);

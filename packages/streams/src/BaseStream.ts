@@ -390,13 +390,18 @@ export class BaseWriter<Write> implements Writer<Write> {
 
   /**
    * Closes the underlying transport and returns. Idempotent.
+   * The stream ends even if dispatching the done signal fails, in which case
+   * the dispatch error is rethrown.
    *
    * @returns The final result for this stream.
    */
   async return(): Promise<IteratorResult<undefined, undefined>> {
     if (!this.#isDone) {
-      await this.#onDispatch(makeStreamDoneSignal());
-      await this.#end();
+      try {
+        await this.#onDispatch(makeStreamDoneSignal());
+      } finally {
+        await this.#end();
+      }
     }
     return makeDoneResult();
   }

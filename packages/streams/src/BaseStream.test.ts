@@ -372,6 +372,20 @@ describe('BaseWriter', () => {
       expect(await writer.return()).toStrictEqual(makeDoneResult());
       expect(await writer.return()).toStrictEqual(makeDoneResult());
     });
+
+    it('ends the stream and rejects if dispatching the done signal fails', async () => {
+      const onEnd = vi.fn();
+      const onDispatch = vi.fn(() => {
+        throw new Error('foo');
+      });
+      const writer = new TestWriter({ onDispatch, onEnd });
+
+      await expect(writer.return()).rejects.toThrow('foo');
+      expect(onEnd).toHaveBeenCalledOnce();
+      expect(await writer.next(42)).toStrictEqual(makeDoneResult());
+      expect(await writer.return()).toStrictEqual(makeDoneResult());
+      expect(onDispatch).toHaveBeenCalledOnce();
+    });
   });
 
   describe('throw', () => {
