@@ -578,14 +578,9 @@ export class KernelQueue {
   /**
    * Enqueue a request to replace a vat's worker.
    *
-   * The work belongs to the run loop, which is the point: a restart done where
-   * it is asked for takes the vat out of the kernel's reach while cranks
-   * continue, and a crank landing in that window reads a live vat as a dead one.
-   *
    * @param vatId - The vat whose worker is to be replaced.
    */
   enqueueRestartVat(vatId: VatId): void {
-    // A dead loop will never do it, and the caller would wait forever.
     this.assertRunLoopAlive('restart a vat');
     this.#enqueueRun({ type: 'restartVat', vatId });
   }
