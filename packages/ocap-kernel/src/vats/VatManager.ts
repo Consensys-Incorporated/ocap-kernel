@@ -569,10 +569,10 @@ export class VatManager {
       return undefined;
     }
     if (!this.#vats.has(vatId) && !this.#kernelStore.isVatActive(vatId)) {
-      // A termination queued after this request runs before it if the queue
-      // was already busy, so the vat can be gone by the time this crank comes
-      // round. Dropped rather than thrown: the alternative is a dead run loop
-      // over work that is merely obsolete.
+      // A termination queued ahead of this request, or one a crank carried
+      // out itself, can retire the vat before this crank comes round. Dropped
+      // rather than thrown: the alternative is a dead run loop over work that
+      // is merely obsolete.
       const error = new VatNotFoundError(vatId);
       this.#logger.error(
         `Restart of vat ${vatId} dropped; the vat is gone:`,
