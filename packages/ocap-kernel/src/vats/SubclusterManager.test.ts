@@ -243,6 +243,24 @@ describe('SubclusterManager', () => {
       expect(mockKernelStore.deleteSubcluster).toHaveBeenCalledWith('s1');
     });
 
+    it("waits for the crank to end before deleting a failed launch's record", async () => {
+      mockVatManager.launchVat.mockRejectedValueOnce(new Error('boom'));
+      mockKernelStore.getSubclusterVats.mockReturnValue(['v1' as VatId]);
+      (mockVatManager.hasVat as ReturnType<typeof vi.fn>).mockReturnValue(true);
+
+      await expect(
+        subclusterManager.launchSubcluster(createMockClusterConfig()),
+      ).rejects.toThrow('boom');
+
+      const [terminated] = mockVatManager.terminateVat.mock.invocationCallOrder;
+      const [deleted] =
+        mockKernelStore.deleteSubcluster.mock.invocationCallOrder;
+      const waited =
+        mockKernelQueue.waitForCrank.mock.invocationCallOrder.at(-1);
+      expect(waited).toBeGreaterThan(terminated as number);
+      expect(waited).toBeLessThan(deleted as number);
+    });
+
     it('terminates the remaining vats when one of them fails to terminate', async () => {
       const config: ClusterConfig = {
         bootstrap: 'alice',
@@ -270,10 +288,40 @@ describe('SubclusterManager', () => {
         'carol exploded',
       );
 
-      // alice is still torn down despite bob's failure, and the record is gone.
+      // alice is still torn down despite bob's failure, and the record stays
+      // while bob is alive.
       expect(mockVatManager.terminateVat).toHaveBeenCalledWith('v2');
       expect(mockVatManager.terminateVat).toHaveBeenCalledWith('v1');
-      expect(mockKernelStore.deleteSubcluster).toHaveBeenCalledWith('s1');
+      expect(mockKernelStore.deleteSubcluster).not.toHaveBeenCalled();
+    });
+
+    it('keeps the subcluster record when the run loop dies during launch', async () => {
+      mockVatManager.launchVat.mockResolvedValueOnce('ko1' as KRef);
+      mockQueueMessage = vi
+        .fn()
+        .mockRejectedValue(
+          new Error('run loop died'),
+        ) as typeof mockQueueMessage;
+      subclusterManager = new SubclusterManager({
+        kernelStore: mockKernelStore,
+        kernelQueue: mockKernelQueue,
+        vatManager: mockVatManager,
+        getKernelService: mockGetKernelService,
+        queueMessage: mockQueueMessage,
+      });
+      mockKernelStore.getSubclusterVats.mockReturnValue(['v1' as VatId]);
+      (mockVatManager.hasVat as ReturnType<typeof vi.fn>).mockReturnValue(true);
+      // What `terminateVat` does once the run loop is dead.
+      mockVatManager.terminateVat.mockRejectedValue(
+        new Error('Kernel run loop died; cannot terminate a vat'),
+      );
+
+      await expect(
+        subclusterManager.launchSubcluster(createMockClusterConfig()),
+      ).rejects.toThrow('run loop died');
+
+      expect(mockVatManager.terminateVat).toHaveBeenCalledWith('v1');
+      expect(mockKernelStore.deleteSubcluster).not.toHaveBeenCalled();
     });
 
     it('includes unrestricted kernel services when specified', async () => {
