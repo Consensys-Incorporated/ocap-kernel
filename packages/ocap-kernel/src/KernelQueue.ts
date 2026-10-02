@@ -437,6 +437,9 @@ export class KernelQueue {
         this.#deliveryRollbackAllowed = false;
       }
     }
+    if (crankResult?.irrevocable) {
+      this.#deliveryRollbackAllowed = false;
+    }
     this.#kernelStore.collectGarbage();
     // While a violation can still undo this crank, the audit goes first, so the
     // flush does not settle the promise `enqueueMessage` gave an external
@@ -618,6 +621,25 @@ export class KernelQueue {
     for (const item of held) {
       this.#enqueueRun(item);
     }
+  }
+
+  /**
+   * Enqueue a request to terminate a vat.
+   *
+   * The work belongs to the run loop, so that a vat's death is written inside
+   * the crank that performs it rather than in whichever crank happens to be
+   * open when the control plane asks.
+   *
+   * @param vatId - The vat to terminate.
+   * @param reason - Why, if there is a reason to pass on.
+   */
+  enqueueTerminateVat(vatId: VatId, reason?: CapData<KRef>): void {
+    this.assertRunLoopAlive('terminate a vat');
+    this.#enqueueRequest({
+      type: 'terminateVat',
+      vatId,
+      ...(reason && { reason }),
+    });
   }
 
   /**
