@@ -63,6 +63,13 @@ export class KernelQueue {
   /** Callers awaiting work the run loop has been asked for but not yet done. */
   readonly #pendingWorkWaiters: Set<(error: Error) => void> = new Set();
 
+  /**
+   * Requests made while a crank was open, for the run loop to write once it
+   * ends. Written into the crank, they would be rolled back with it if it
+   * aborts, and their callers would wait on work nothing is going to do.
+   */
+  #heldRequests: RunQueueItem[] = [];
+
   /** Thunk to signal run queue transition from empty to non-empty */
   #wakeUpTheRunQueue: (() => void) | null;
 
@@ -198,6 +205,9 @@ export class KernelQueue {
         throw error;
       } finally {
         this.#endCrank(crankFailure);
+        if (!crankFailure) {
+          this.#enqueueHeldRequests();
+        }
         if (wakeUpPromise) {
           await wakeUpPromise;
         }
@@ -582,7 +592,32 @@ export class KernelQueue {
    */
   enqueueRestartVat(vatId: VatId): void {
     this.assertRunLoopAlive('restart a vat');
-    this.#enqueueRun({ type: 'restartVat', vatId });
+    this.#enqueueRequest({ type: 'restartVat', vatId });
+  }
+
+  /**
+   * Enqueue a request from outside the run loop, holding it until the open
+   * crank, if any, has ended.
+   *
+   * @param item - The item to add.
+   */
+  #enqueueRequest(item: RunQueueItem): void {
+    if (this.#kernelStore.isInCrank()) {
+      this.#heldRequests.push(item);
+    } else {
+      this.#enqueueRun(item);
+    }
+  }
+
+  /**
+   * Write the requests held while the crank that just ended was open.
+   */
+  #enqueueHeldRequests(): void {
+    const held = this.#heldRequests;
+    this.#heldRequests = [];
+    for (const item of held) {
+      this.#enqueueRun(item);
+    }
   }
 
   /**
