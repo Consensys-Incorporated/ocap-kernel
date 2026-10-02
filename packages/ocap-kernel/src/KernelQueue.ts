@@ -19,6 +19,10 @@ import type {
 } from './types.ts';
 import { Fail } from './utils/assert.ts';
 
+/** What a caller awaiting queued work is told when the run loop dies. */
+const DEAD_RUN_LOOP_WORK =
+  'Kernel run loop died; this work will never be carried out';
+
 type RunLoopState =
   | Exclude<RunLoopStatus, { state: 'failed' }>
   | { state: 'failed'; error: Error };
@@ -55,6 +59,16 @@ export class KernelQueue {
    * be gone from the store by the time its subscriber is answered.
    */
   #resolvedWithKernelSubscription: KernelOneResolution[] = [];
+
+  /** Callers awaiting work the run loop has been asked for but not yet done. */
+  readonly #pendingWorkWaiters: Set<(error: Error) => void> = new Set();
+
+  /**
+   * Requests made while a crank was open, for the run loop to write once it
+   * ends. Written into the crank, they would be rolled back with it if it
+   * aborts, and their callers would wait on work nothing is going to do.
+   */
+  #heldRequests: RunQueueItem[] = [];
 
   /** Thunk to signal run queue transition from empty to non-empty */
   #wakeUpTheRunQueue: (() => void) | null;
@@ -191,6 +205,9 @@ export class KernelQueue {
         throw error;
       } finally {
         this.#endCrank(crankFailure);
+        if (!crankFailure) {
+          this.#enqueueHeldRequests();
+        }
         if (wakeUpPromise) {
           await wakeUpPromise;
         }
@@ -205,10 +222,29 @@ export class KernelQueue {
   }
 
   /**
+   * Tell a caller waiting on queued work if the run loop dies before carrying
+   * it out. `subscriptions` covers a message's result; a request with no kernel
+   * promise behind it — a vat restart — has nothing else that would settle it.
+   *
+   * @param reject - How to tell the caller.
+   * @returns A function that unregisters it, for the caller's own `finally`.
+   */
+  onRunLoopDeath(reject: (error: Error) => void): () => void {
+    if (this.#runLoopState.state === 'failed') {
+      reject(this.#makeDeadRunLoopError(DEAD_RUN_LOOP_WORK));
+      return () => undefined;
+    }
+    this.#pendingWorkWaiters.add(reject);
+    return () => {
+      this.#pendingWorkWaiters.delete(reject);
+    };
+  }
+
+  /**
    * Record the death of the run loop and fail the kernel's own message-result
-   * subscriptions, which would otherwise hang forever. Kernel promises in the
-   * store stay unresolved, so vats awaiting a notify the dead loop owed them
-   * are not rescued by this.
+   * subscriptions and anyone waiting on queued work, which would otherwise hang
+   * forever. Kernel promises in the store stay unresolved, so vats awaiting a
+   * notify the dead loop owed them are not rescued by this.
    *
    * @param error - The error that killed the run loop.
    * @returns The failure, as an `Error` whatever was thrown.
@@ -229,6 +265,12 @@ export class KernelQueue {
           'Kernel run loop died; this message result will never be delivered',
         ),
       );
+    }
+
+    const abandoned = [...this.#pendingWorkWaiters];
+    this.#pendingWorkWaiters.clear();
+    for (const reject of abandoned) {
+      reject(this.#makeDeadRunLoopError(DEAD_RUN_LOOP_WORK));
     }
     return failure;
   }
@@ -540,6 +582,41 @@ export class KernelQueue {
       this.#enqueueRun(item);
     } else {
       this.#kernelStore.bufferCrankOutput(item);
+    }
+  }
+
+  /**
+   * Enqueue a request to replace a vat's worker.
+   *
+   * @param vatId - The vat whose worker is to be replaced.
+   */
+  enqueueRestartVat(vatId: VatId): void {
+    this.assertRunLoopAlive('restart a vat');
+    this.#enqueueRequest({ type: 'restartVat', vatId });
+  }
+
+  /**
+   * Enqueue a request from outside the run loop, holding it until the open
+   * crank, if any, has ended.
+   *
+   * @param item - The item to add.
+   */
+  #enqueueRequest(item: RunQueueItem): void {
+    if (this.#kernelStore.isInCrank()) {
+      this.#heldRequests.push(item);
+    } else {
+      this.#enqueueRun(item);
+    }
+  }
+
+  /**
+   * Write the requests held while the crank that just ended was open.
+   */
+  #enqueueHeldRequests(): void {
+    const held = this.#heldRequests;
+    this.#heldRequests = [];
+    for (const item of held) {
+      this.#enqueueRun(item);
     }
   }
 

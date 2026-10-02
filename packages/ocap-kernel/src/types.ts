@@ -376,11 +376,22 @@ export type RunQueueItemBringOutYourDead = Infer<
   typeof RunQueueItemBringOutYourDeadStruct
 >;
 
+/**
+ * A request to replace a vat's worker, queued so the run loop performs it.
+ */
+const RunQueueItemRestartVatStruct = object({
+  type: literal('restartVat'),
+  vatId: VatIdStruct,
+});
+
+export type RunQueueItemRestartVat = Infer<typeof RunQueueItemRestartVatStruct>;
+
 export const RunQueueItemStruct = union([
   RunQueueItemSendStruct,
   RunQueueItemNotifyStruct,
   RunQueueItemGCActionStruct,
   RunQueueItemBringOutYourDeadStruct,
+  RunQueueItemRestartVatStruct,
 ]);
 
 export type RunQueueItem = Infer<typeof RunQueueItemStruct>;
