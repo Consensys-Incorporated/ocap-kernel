@@ -30,7 +30,7 @@ describe('KernelRouter', () => {
   let kernelRouter: KernelRouter;
   let mockRestartVat: MockInstance<(vatId: VatId) => Promise<void>>;
   let mockTerminateVat: MockInstance<
-    (vatId: VatId, reason?: CapData<KRef>) => Promise<void>
+    (vatId: VatId, reason?: CapData<KRef>) => Promise<CrankResult | undefined>
   >;
 
   beforeEach(() => {
@@ -117,6 +117,8 @@ describe('KernelRouter', () => {
   describe('terminateVat', () => {
     it('hands a queued termination request to the vat manager', async () => {
       const reason = kser('because');
+      const crankResult = { irrevocable: true };
+      mockTerminateVat.mockResolvedValueOnce(crankResult);
 
       const result = await kernelRouter.deliver({
         type: 'terminateVat',
@@ -125,7 +127,7 @@ describe('KernelRouter', () => {
       });
 
       expect(mockTerminateVat).toHaveBeenCalledWith('v1', reason);
-      expect(result).toBeUndefined();
+      expect(result).toBe(crankResult);
     });
 
     it('passes no reason on when the request carried none', async () => {

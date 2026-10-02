@@ -437,6 +437,9 @@ export class KernelQueue {
         this.#deliveryRollbackAllowed = false;
       }
     }
+    if (crankResult?.irrevocable) {
+      this.#deliveryRollbackAllowed = false;
+    }
     this.#kernelStore.collectGarbage();
     // While a violation can still undo this crank, the audit goes first, so the
     // flush does not settle the promise `enqueueMessage` gave an external
@@ -632,7 +635,7 @@ export class KernelQueue {
    */
   enqueueTerminateVat(vatId: VatId, reason?: CapData<KRef>): void {
     this.assertRunLoopAlive('terminate a vat');
-    this.#enqueueRun({
+    this.#enqueueRequest({
       type: 'terminateVat',
       vatId,
       ...(reason && { reason }),
