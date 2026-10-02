@@ -923,6 +923,30 @@ describe('VatManager', () => {
       expect(mockKernelStore.markVatAsTerminated).not.toHaveBeenCalled();
     });
 
+    it('answers its caller only once the crank ends', async () => {
+      await vatManager.runVat('v1', createMockVatConfig());
+      mockKernelQueue.enqueueRestartVat.mockImplementationOnce(() => undefined);
+      let answered = false;
+      const restarting = vatManager.restartVat('v1').then(() => {
+        answered = true;
+        return undefined;
+      });
+      let endCrank = (): void => undefined;
+      mockKernelQueue.waitForCrank.mockReturnValueOnce(
+        new Promise<void>((resolve) => {
+          endCrank = resolve;
+        }),
+      );
+
+      await vatManager.performVatRestart('v1');
+      await delay(10);
+      const answeredDuringTheCrank = answered;
+      endCrank();
+      await restarting;
+
+      expect(answeredDuringTheCrank).toBe(false);
+    });
+
     it('aborts the crank and terminates the vat when the relaunch fails', async () => {
       await vatManager.runVat('v1', createMockVatConfig());
       mockKernelQueue.enqueueRestartVat.mockImplementationOnce(() => undefined);
