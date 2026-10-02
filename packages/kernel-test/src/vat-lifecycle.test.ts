@@ -6,6 +6,7 @@ import type { VatId } from '@metamask/ocap-kernel';
 import { describe, expect, it, beforeEach } from 'vitest';
 
 import {
+  extractTestLogs,
   getBundleSpec,
   makeKernel,
   makeTestLogger,
@@ -145,6 +146,44 @@ describe('Vat Lifecycle', { timeout: 30_000 }, () => {
 
     // The target root object should be cleaned up after GC
     expect(kernelStore.getRootObject(deadVatId)).toBeUndefined();
+  });
+
+  it('restarts one vat twice through the run loop', async () => {
+    const kernelDatabase = await makeSQLKernelDatabase({
+      dbFilename: ':memory:',
+    });
+    const { logger: restartLogger, entries } = makeTestLogger();
+    const kernel = await makeKernel(kernelDatabase, true, restartLogger);
+
+    await kernel.launchSubcluster({
+      bootstrap: 'alice',
+      forceReset: true,
+      vats: {
+        alice: {
+          bundleSpec: getBundleSpec('resume-vat'),
+          parameters: { name: 'Alice' },
+        },
+        // `resume-vat`'s bootstrap introduces its peers to each other, so the
+        // subcluster needs all three.
+        bob: {
+          bundleSpec: getBundleSpec('resume-vat'),
+          parameters: { name: 'Bob' },
+        },
+        carol: {
+          bundleSpec: getBundleSpec('resume-vat'),
+          parameters: { name: 'Carol' },
+        },
+      },
+    });
+    await waitUntilQuiescent();
+
+    // `start count` lives in the vat's baggage, so a restart that answered its
+    // caller without replacing the worker would not move it.
+    await kernel.restartVat('v1');
+    await kernel.restartVat('v1');
+    await waitUntilQuiescent(1000);
+
+    expect(extractTestLogs(entries, 'v1')).toContain('Alice: start count: 3');
   });
 
   it('leaves no record of a terminated vat for the next boot to restore', async () => {

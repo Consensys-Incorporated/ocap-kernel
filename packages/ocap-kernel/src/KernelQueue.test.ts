@@ -59,6 +59,7 @@ describe('KernelQueue', () => {
       createCrankSavepoint: vi.fn(),
       rollbackCrank: vi.fn(),
       waitForCrank: vi.fn(),
+      isInCrank: vi.fn().mockReturnValue(false),
       // Crank buffer methods
       bufferCrankOutput: vi.fn(),
       flushCrankBuffer: vi.fn().mockReturnValue([]),
@@ -762,6 +763,105 @@ describe('KernelQueue', () => {
         endpointId,
         kpid,
       });
+    });
+  });
+
+  describe('enqueueRestartVat', () => {
+    it('enqueues a restart request', () => {
+      kernelQueue.enqueueRestartVat('v1');
+
+      expect(kernelStore.enqueueRun).toHaveBeenCalledWith({
+        type: 'restartVat',
+        vatId: 'v1',
+      });
+    });
+
+    it('holds a request made during a crank until that crank ends', async () => {
+      const events: string[] = [];
+      (kernelStore.isInCrank as unknown as MockInstance).mockReturnValue(true);
+      (kernelStore.enqueueRun as unknown as MockInstance).mockImplementation(
+        () => events.push('enqueueRun'),
+      );
+      (kernelStore.rollbackCrank as unknown as MockInstance).mockImplementation(
+        () => events.push('rollbackCrank'),
+      );
+      (kernelStore.endCrank as unknown as MockInstance).mockImplementation(() =>
+        events.push('endCrank'),
+      );
+      (kernelStore.runQueueLength as unknown as MockInstance).mockReturnValue(
+        1,
+      );
+      (kernelStore.dequeueRun as unknown as MockInstance).mockReturnValue({
+        type: 'send',
+        target: 'ko123',
+        message: {} as KernelMessage,
+      });
+      const stop = new Error('test: stop run loop');
+      const deliver = vi
+        .fn()
+        .mockImplementationOnce(async () => {
+          kernelQueue.enqueueRestartVat('v1');
+          return { abort: true };
+        })
+        .mockRejectedValueOnce(stop);
+
+      await expect(kernelQueue.run(deliver)).rejects.toBe(stop);
+
+      // Written into the crank, the request would have been rolled back with it.
+      expect(events.slice(0, 3)).toStrictEqual([
+        'rollbackCrank',
+        'endCrank',
+        'enqueueRun',
+      ]);
+      expect(kernelStore.enqueueRun).toHaveBeenCalledWith({
+        type: 'restartVat',
+        vatId: 'v1',
+      });
+    });
+
+    it('refuses once the run loop is dead', async () => {
+      await killRunLoop(new Error('crank exploded'));
+
+      expect(() => kernelQueue.enqueueRestartVat('v1')).toThrow(
+        'Kernel run loop died; cannot restart a vat',
+      );
+      expect(kernelStore.enqueueRun).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('onRunLoopDeath', () => {
+    it('tells a waiter the work will never be done', async () => {
+      const reject = vi.fn();
+      kernelQueue.onRunLoopDeath(reject);
+      const failure = new Error('crank exploded');
+
+      await killRunLoop(failure);
+
+      expect(reject).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: 'Kernel run loop died; this work will never be carried out',
+          cause: failure,
+        }),
+      );
+    });
+
+    it('tells a waiter that arrives after the death', async () => {
+      await killRunLoop(new Error('crank exploded'));
+      const reject = vi.fn();
+
+      kernelQueue.onRunLoopDeath(reject);
+
+      expect(reject).toHaveBeenCalledOnce();
+    });
+
+    it('leaves an unregistered waiter alone', async () => {
+      const reject = vi.fn();
+      const stopWatching = kernelQueue.onRunLoopDeath(reject);
+      stopWatching();
+
+      await killRunLoop(new Error('crank exploded'));
+
+      expect(reject).not.toHaveBeenCalled();
     });
   });
 
