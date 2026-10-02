@@ -748,7 +748,9 @@ describe('VatManager', () => {
 
         // A termination is an instruction rather than a request: an item that
         // outlived its caller is one `initializeAllVats` has just undone.
-        await vatManager.performVatTermination('v1');
+        expect(await vatManager.performVatTermination('v1')).toStrictEqual({
+          irrevocable: true,
+        });
 
         expect(mockKernelStore.markVatAsTerminated).toHaveBeenCalledWith('v1');
       });
@@ -764,7 +766,36 @@ describe('VatManager', () => {
         await vatManager.stopVat('v1', true);
         mockKernelStore.isVatActive.mockReturnValue(false);
 
+        expect(await vatManager.performVatTermination('v1')).toBeUndefined();
+
+        expect(await terminating).toBeUndefined();
+      });
+
+      it('answers its caller when the run loop dies after the crank took the request', async () => {
+        await vatManager.runVat('v1', createMockVatConfig());
+        mockKernelQueue.enqueueTerminateVat.mockImplementationOnce(
+          () => undefined,
+        );
+        let killRunLoop = (_error: Error): void => undefined;
+        mockKernelQueue.onRunLoopDeath.mockImplementationOnce(
+          (reject: (error: Error) => void) => {
+            killRunLoop = reject;
+            return () => undefined;
+          },
+        );
+        const terminating = vatManager.terminateVat('v1');
+        let endCrank = (): void => undefined;
+        mockKernelQueue.waitForCrank.mockReturnValue(
+          new Promise<void>((resolve) => {
+            endCrank = resolve;
+          }),
+        );
+
+        // Irrevocable, so a failure later in the crank kills the loop without
+        // undoing the death.
         await vatManager.performVatTermination('v1');
+        killRunLoop(new Error('run loop died'));
+        endCrank();
 
         expect(await terminating).toBeUndefined();
       });
@@ -781,7 +812,9 @@ describe('VatManager', () => {
 
         // The run loop has no catch: a rejection there rolls the crank back,
         // undoing whatever of the death did get written.
-        expect(await vatManager.performVatTermination('v1')).toBeUndefined();
+        expect(await vatManager.performVatTermination('v1')).toStrictEqual({
+          irrevocable: true,
+        });
         await expect(terminating).rejects.toThrow('deleteVat failed');
       });
     });
