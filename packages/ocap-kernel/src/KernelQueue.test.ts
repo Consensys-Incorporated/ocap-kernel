@@ -766,17 +766,20 @@ describe('KernelQueue', () => {
     });
   });
 
-  describe('enqueueRestartVat', () => {
-    it('enqueues a restart request', () => {
-      kernelQueue.enqueueRestartVat('v1');
-
-      expect(kernelStore.enqueueRun).toHaveBeenCalledWith({
-        type: 'restartVat',
-        vatId: 'v1',
-      });
-    });
-
-    it('holds a request made during a crank until that crank ends', async () => {
+  it.each([
+    {
+      what: 'restart',
+      enqueue: (queue: KernelQueue): void => queue.enqueueRestartVat('v1'),
+      item: { type: 'restartVat', vatId: 'v1' },
+    },
+    {
+      what: 'termination',
+      enqueue: (queue: KernelQueue): void => queue.enqueueTerminateVat('v1'),
+      item: { type: 'terminateVat', vatId: 'v1' },
+    },
+  ])(
+    'holds a $what request made during a crank until that crank ends',
+    async ({ enqueue, item }) => {
       const events: string[] = [];
       (kernelStore.isInCrank as unknown as MockInstance).mockReturnValue(true);
       (kernelStore.enqueueRun as unknown as MockInstance).mockImplementation(
@@ -800,7 +803,7 @@ describe('KernelQueue', () => {
       const deliver = vi
         .fn()
         .mockImplementationOnce(async () => {
-          kernelQueue.enqueueRestartVat('v1');
+          enqueue(kernelQueue);
           return { abort: true };
         })
         .mockRejectedValueOnce(stop);
@@ -813,6 +816,14 @@ describe('KernelQueue', () => {
         'endCrank',
         'enqueueRun',
       ]);
+      expect(kernelStore.enqueueRun).toHaveBeenCalledWith(item);
+    },
+  );
+
+  describe('enqueueRestartVat', () => {
+    it('enqueues a restart request', () => {
+      kernelQueue.enqueueRestartVat('v1');
+
       expect(kernelStore.enqueueRun).toHaveBeenCalledWith({
         type: 'restartVat',
         vatId: 'v1',
@@ -824,6 +835,39 @@ describe('KernelQueue', () => {
 
       expect(() => kernelQueue.enqueueRestartVat('v1')).toThrow(
         'Kernel run loop died; cannot restart a vat',
+      );
+      expect(kernelStore.enqueueRun).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('enqueueTerminateVat', () => {
+    it('enqueues a termination request with its reason', () => {
+      const reason = { body: 'because', slots: [] } as CapData<KRef>;
+
+      kernelQueue.enqueueTerminateVat('v1', reason);
+
+      expect(kernelStore.enqueueRun).toHaveBeenCalledWith({
+        type: 'terminateVat',
+        vatId: 'v1',
+        reason,
+      });
+    });
+
+    it('leaves the reason out when there is none', () => {
+      kernelQueue.enqueueTerminateVat('v1');
+
+      // `toHaveBeenCalledWith` ignores an `undefined`-valued key, and the item
+      // struct's `reason` is `exactOptional`, so the key has to be absent.
+      expect(
+        (kernelStore.enqueueRun as unknown as MockInstance).mock.calls,
+      ).toStrictEqual([[{ type: 'terminateVat', vatId: 'v1' }]]);
+    });
+
+    it('refuses once the run loop is dead', async () => {
+      await killRunLoop(new Error('crank exploded'));
+
+      expect(() => kernelQueue.enqueueTerminateVat('v1')).toThrow(
+        'Kernel run loop died; cannot terminate a vat',
       );
       expect(kernelStore.enqueueRun).not.toHaveBeenCalled();
     });
@@ -1183,6 +1227,12 @@ describe('KernelQueue', () => {
           vi.fn().mockResolvedValue({ terminate: { vatId: 'v1', info: {} } }),
         ),
       ).rejects.toThrow('teardown exploded');
+
+      expect(kernelStore.rollbackCrank).not.toHaveBeenCalled();
+    });
+
+    it('keeps work a delivery marked irrevocable', async () => {
+      await deliverThenDie({ irrevocable: true });
 
       expect(kernelStore.rollbackCrank).not.toHaveBeenCalled();
     });

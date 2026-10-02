@@ -44,6 +44,7 @@ describe('a result promise whose delivery fails', () => {
       () => endpoint,
       () => undefined,
       async () => undefined,
+      async () => undefined,
       logger,
     );
 
