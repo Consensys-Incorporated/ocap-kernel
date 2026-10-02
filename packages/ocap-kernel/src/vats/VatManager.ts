@@ -434,17 +434,18 @@ export class VatManager {
    *
    * @param vatId - The ID of the vat.
    * @param reason - The reason for the termination, if any.
+   * @returns The crank outcome: irrevocable once the vat has been stopped.
    */
   async performVatTermination(
     vatId: VatId,
     reason?: CapData<KRef>,
-  ): Promise<void> {
+  ): Promise<CrankResult | undefined> {
     const settle = this.#takeWaiters(this.#terminationWaiters, vatId);
     if (!this.#vats.has(vatId) && !this.#kernelStore.isVatActive(vatId)) {
       // Already dead: the in-crank termination path or `terminateAllVats` got
       // here first, and this vat is exactly what the caller asked for.
       settle();
-      return;
+      return undefined;
     }
     if (settle.count === 0) {
       this.#logger.debug(
@@ -459,9 +460,10 @@ export class VatManager {
       // every later start would replay the same failing termination.
       this.#logger.error(`Termination of vat ${vatId} failed:`, error);
       settle(error instanceof Error ? error : new Error(String(error)));
-      return;
+      return { irrevocable: true };
     }
     settle();
+    return { irrevocable: true };
   }
 
   /**
@@ -501,10 +503,17 @@ export class VatManager {
     // than an unhandled one from a waiter nothing will ever await.
     enqueue();
     const { promise, resolve, reject } = makePromiseKit<void>();
-    waiters.set(vatId, [...(waiters.get(vatId) ?? []), { resolve, reject }]);
+    const waiter = { resolve, reject };
+    waiters.set(vatId, [...(waiters.get(vatId) ?? []), waiter]);
     // This work has no kernel promise behind it, so nothing else would settle
-    // this caller if the run loop dies.
-    const stopWatchingTheRunLoop = this.#kernelQueue.onRunLoopDeath(reject);
+    // this caller if the run loop dies. Only while the request is still queued:
+    // a crank that has taken it answers once it ends, and it may have
+    // committed the work before the loop died.
+    const stopWatchingTheRunLoop = this.#kernelQueue.onRunLoopDeath((error) => {
+      if (waiters.get(vatId)?.includes(waiter)) {
+        reject(error);
+      }
+    });
     try {
       await promise;
     } finally {
