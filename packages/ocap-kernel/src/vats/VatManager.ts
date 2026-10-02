@@ -450,14 +450,22 @@ export class VatManager {
   async performVatRestart(vatId: VatId): Promise<CrankResult | undefined> {
     const waiters = this.#restartWaiters.get(vatId) ?? [];
     this.#restartWaiters.delete(vatId);
-    const settle = (error?: Error): void => {
-      for (const waiter of waiters) {
-        if (error) {
-          waiter.reject(error);
-        } else {
-          waiter.resolve();
-        }
-      }
+    // Once the crank ends, so callers wake to what it committed: their own
+    // writes are not rolled back with it, nor queued ahead of what it flushes.
+    const settle = (failure?: Error): void => {
+      this.#kernelQueue
+        .waitForCrank()
+        .then(() => {
+          for (const waiter of waiters) {
+            if (failure) {
+              waiter.reject(failure);
+            } else {
+              waiter.resolve();
+            }
+          }
+          return undefined;
+        })
+        .catch(this.#logger.error);
     };
     if (waiters.length === 0) {
       // Nobody is waiting: an earlier crank answered every caller, this item
@@ -501,12 +509,7 @@ export class VatManager {
         error,
       );
       const failure = error instanceof Error ? error : new Error(String(error));
-      // Once the crank ends, so callers wake to a committed termination and
-      // their own writes are not rolled back with it.
-      this.#kernelQueue
-        .waitForCrank()
-        .then(() => settle(failure))
-        .catch(this.#logger.error);
+      settle(failure);
       // Through the crank result, so the run loop rolls back before retiring
       // the vat: what the failed `initVat` buffered would otherwise be flushed
       // for a vat that no longer exists. The rollback restores this request,
