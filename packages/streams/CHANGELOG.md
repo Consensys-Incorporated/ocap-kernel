@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `PostMessageDuplexStream` calls `onEnd` once per stream, and writes after the remote side ends return a done result instead of throwing when `onEnd` closes the transport ([#1137](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1137))
+
 ## [0.6.0]
 
 ### Changed

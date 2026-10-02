@@ -231,8 +231,53 @@ describe('PostMessageDuplexStream', () => {
     });
 
     await duplexStream.return();
-    // Once for the reader, once for the writer
-    expect(onEnd).toHaveBeenCalledTimes(2);
+    expect(onEnd).toHaveBeenCalledOnce();
+  });
+
+  it('calls onEnd once when the remote ends', async () => {
+    const onEnd = vi.fn();
+    const { duplexStream, postLocalMessage } = await makeDuplexStream({
+      onEnd,
+    });
+
+    postLocalMessage(makeStreamDoneSignal());
+    await delay(10);
+    expect(await duplexStream.next()).toStrictEqual(makeDoneResult());
+    expect(onEnd).toHaveBeenCalledOnce();
+  });
+
+  it('ends both sides when onEnd closes a BroadcastChannel', async () => {
+    const name = `test-channel-${Math.random()}`;
+    const channelA = new BroadcastChannel(name);
+    const channelB = new BroadcastChannel(name);
+    const makeTarget = (channel: BroadcastChannel): PostMessageTarget => ({
+      addEventListener: (_type, listener) =>
+        channel.addEventListener('message', listener),
+      removeEventListener: (_type, listener) =>
+        channel.removeEventListener('message', listener),
+      postMessage: (message) => channel.postMessage(message),
+    });
+    const onEndA = vi.fn(() => channelA.close());
+    const onEndB = vi.fn(() => channelB.close());
+
+    const [streamA, streamB] = await Promise.all([
+      PostMessageDuplexStream.make({
+        messageTarget: makeTarget(channelA),
+        onEnd: onEndA,
+      }),
+      PostMessageDuplexStream.make({
+        messageTarget: makeTarget(channelB),
+        onEnd: onEndB,
+      }),
+    ]);
+
+    await streamA.return();
+    await delay(50);
+
+    expect(onEndA).toHaveBeenCalledOnce();
+    expect(onEndB).toHaveBeenCalledOnce();
+    expect(await streamB.write({ x: 1 })).toStrictEqual(makeDoneResult());
+    expect(await streamB.next()).toStrictEqual(makeDoneResult());
   });
 
   it('ends the reader when the writer ends', async () => {
