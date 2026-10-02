@@ -7,6 +7,7 @@ import type { MethodGuardPayload } from './guard-algebra.ts';
 import {
   conjoinDeltas,
   disjoinDeltas,
+  makeAbsorbingDelta,
   narrowInterfaceGuard,
 } from './narrow-interface-guard.ts';
 import type { NarrowingDelta } from './narrow-interface-guard.ts';
@@ -184,6 +185,52 @@ describe('narrowInterfaceGuard, against a default-guarded base', () => {
 
     expect(getInterfaceMethodGuards(result)).toStrictEqual({});
   });
+
+  it('does not require a position behind a trailing hole', () => {
+    const result = narrowFrom(makePassableGuard(), {
+      read: [M.eq('x'), undefined],
+    });
+
+    expect(payloadOf(result, 'read').argGuards).toHaveLength(1);
+  });
+
+  // A join pads the shorter delta with holes, which must not demand arguments
+  // that operand never required.
+  it('requires no more arguments under a join than either operand', () => {
+    const joined = disjoinDeltas(
+      { read: [M.string()] },
+      { read: [M.string(), M.number()] },
+    );
+    const { argGuards, restArgGuard } = payloadOf(
+      narrowFrom(makePassableGuard(), joined),
+      'read',
+    );
+
+    expect(argGuards).toHaveLength(1);
+    expect(matches('x', argGuards[0])).toBe(true);
+    expect(matches('anything', restArgGuard)).toBe(true);
+  });
+});
+
+describe('makeAbsorbingDelta', () => {
+  it('leaves every method the base names unconstrained', () => {
+    expect(makeAbsorbingDelta('Joined', makeBaseGuard())).toStrictEqual({
+      read: [],
+      write: [],
+      drop: [],
+    });
+  });
+
+  it.each(['passable', 'raw'] as const)(
+    'refuses a base whose default guards are %s',
+    (defaultGuards) => {
+      expect(() =>
+        makeAbsorbingDelta('Joined', M.interface('Any', {}, { defaultGuards })),
+      ).toThrow(
+        'Cannot join "Joined": the base guards methods by default, so its methods cannot be enumerated for it to absorb.',
+      );
+    },
+  );
 });
 
 describe('conjoinDeltas', () => {

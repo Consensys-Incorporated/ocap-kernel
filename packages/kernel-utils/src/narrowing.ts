@@ -8,6 +8,7 @@ import { getInterfaceMethodGuards } from './guard-algebra.ts';
 import {
   conjoinDeltas,
   disjoinDeltas,
+  makeAbsorbingDelta,
   narrowInterfaceGuard,
 } from './narrow-interface-guard.ts';
 import type { NarrowingDelta } from './narrow-interface-guard.ts';
@@ -160,7 +161,9 @@ export const narrow = async <Narrowed extends Methods = Methods>({
  *
  * Every ref must be one this module minted from that base, or the base itself.
  * The base admits everything and so absorbs, which gives the lattice a
- * representable top and lets a fold over a list need no special case.
+ * representable top and lets a fold over a list need no special case. A base
+ * that guards methods by default, such as one built with `makeDefaultExo`,
+ * cannot absorb and throws as an operand, since no delta can name its methods.
  *
  * At least one ref must be a minted narrowing, so the base absorbs only in
  * company: the common base is discovered from a minted ref's record, and an
@@ -195,12 +198,6 @@ export const join = async <Joined extends Methods = Methods>({
     throw new Error(`Cannot join "${name}": the refs do not share a base.`);
   }
 
-  const unconstrained = Object.fromEntries(
-    Object.keys(getInterfaceMethodGuards(baseGuard)).map((methodName) => [
-      methodName,
-      [],
-    ]),
-  );
   const deltas = refs.map((ref, index) => {
     const record = records[index];
     if (record !== undefined) {
@@ -211,7 +208,7 @@ export const join = async <Joined extends Methods = Methods>({
         `Cannot join "${name}": ref ${index} was not minted by narrowing.`,
       );
     }
-    return unconstrained;
+    return makeAbsorbingDelta(name, baseGuard);
   });
 
   return mint<Joined>({

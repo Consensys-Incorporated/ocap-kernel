@@ -167,17 +167,60 @@ const narrowMethodGuard = (
  * indistinguishable from one it does, and no error can be raised here. The
  * forward rejects at call time instead.
  *
+ * Trailing holes are dropped rather than made required. Otherwise a join, which
+ * pads the shorter operand's delta with holes, would demand arguments that
+ * operand never required, and refuse calls it admitted.
+ *
  * @param patterns - The delta's patterns for this method.
  * @returns The synthesized guard.
  */
 const synthesizeMethodGuard = (
   patterns: (Pattern | undefined)[],
-): MethodGuard =>
-  buildMethodGuard({
-    base: M.callWhen(...patterns.map((pattern) => pattern ?? M.any())),
+): MethodGuard => {
+  let end = patterns.length;
+  while (end > 0 && patterns[end - 1] === undefined) {
+    end -= 1;
+  }
+  return buildMethodGuard({
+    base: M.callWhen(
+      ...patterns.slice(0, end).map((pattern) => pattern ?? M.any()),
+    ),
     restGuard: M.any(),
     returnGuard: M.any(),
   });
+};
+
+/**
+ * Return the delta a base contributes as an operand of a join: every method
+ * its guard names, unconstrained, so that it absorbs.
+ *
+ * A base that guards methods by default cannot absorb. Its methods cannot be
+ * enumerated, and a narrowing drops every method its delta does not name, so
+ * no delta represents it.
+ *
+ * @param name - The join's name, for error messages.
+ * @param baseGuard - The base's interface guard.
+ * @returns The base's delta.
+ */
+export const makeAbsorbingDelta = (
+  name: string,
+  baseGuard: InterfaceGuard,
+): NarrowingDelta => {
+  const { defaultGuards } = getInterfaceGuardPayload(baseGuard) as unknown as {
+    defaultGuards?: 'passable' | 'raw';
+  };
+  if (defaultGuards !== undefined) {
+    throw new Error(
+      `Cannot join "${name}": the base guards methods by default, so its methods cannot be enumerated for it to absorb.`,
+    );
+  }
+  return Object.fromEntries(
+    Object.keys(getInterfaceMethodGuards(baseGuard)).map((methodName) => [
+      methodName,
+      [],
+    ]),
+  );
+};
 
 /**
  * Derive the interface guard of a narrowing of a base capability.
