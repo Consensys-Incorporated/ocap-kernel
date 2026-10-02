@@ -417,10 +417,7 @@ export class VatManager {
     // it, so its caller is told now rather than left waiting on a crank that
     // will find nothing to restart. A restart asked for after this cannot be
     // ordered against the termination at all, and is not covered.
-    const supersedeRestart = VatManager.#takeWaiters(
-      this.#restartWaiters,
-      vatId,
-    );
+    const supersedeRestart = this.#takeWaiters(this.#restartWaiters, vatId);
     supersedeRestart(new VatDeletedError(vatId));
     await this.#awaitQueuedWork(this.#terminationWaiters, vatId, () =>
       this.#kernelQueue.enqueueTerminateVat(vatId, reason),
@@ -442,7 +439,7 @@ export class VatManager {
     vatId: VatId,
     reason?: CapData<KRef>,
   ): Promise<void> {
-    const settle = VatManager.#takeWaiters(this.#terminationWaiters, vatId);
+    const settle = this.#takeWaiters(this.#terminationWaiters, vatId);
     if (!this.#vats.has(vatId) && !this.#kernelStore.isVatActive(vatId)) {
       // Already dead: the in-crank termination path or `terminateAllVats` got
       // here first, and this vat is exactly what the caller asked for.
@@ -521,22 +518,31 @@ export class VatManager {
    *
    * @param waiters - The per-vat waiter lists for this kind of work.
    * @param vatId - The vat the work concerns.
-   * @returns A function that settles them, rejecting if given a reason.
+   * @returns A function that settles them once the crank ends, rejecting if
+   *   given a reason.
    */
-  static #takeWaiters(
+  #takeWaiters(
     waiters: Map<VatId, Settler[]>,
     vatId: VatId,
-  ): ((error?: Error) => void) & { count: number } {
+  ): ((failure?: Error) => void) & { count: number } {
     const taken = waiters.get(vatId) ?? [];
     waiters.delete(vatId);
-    const settle = (error?: Error): void => {
-      for (const waiter of taken) {
-        if (error) {
-          waiter.reject(error);
-        } else {
-          waiter.resolve();
-        }
-      }
+    // Once the crank ends, so callers wake to what it committed: their own
+    // writes are not rolled back with it, nor queued ahead of what it flushes.
+    const settle = (failure?: Error): void => {
+      this.#kernelQueue
+        .waitForCrank()
+        .then(() => {
+          for (const waiter of taken) {
+            if (failure) {
+              waiter.reject(failure);
+            } else {
+              waiter.resolve();
+            }
+          }
+          return undefined;
+        })
+        .catch(this.#logger.error);
     };
     return Object.assign(settle, { count: taken.length });
   }
@@ -550,7 +556,7 @@ export class VatManager {
    *   failed.
    */
   async performVatRestart(vatId: VatId): Promise<CrankResult | undefined> {
-    const settle = VatManager.#takeWaiters(this.#restartWaiters, vatId);
+    const settle = this.#takeWaiters(this.#restartWaiters, vatId);
     if (settle.count === 0) {
       // Nobody is waiting: an earlier crank answered every caller, this item
       // outlived the process that queued it, or an aborted restart put it back.
@@ -594,12 +600,7 @@ export class VatManager {
         error,
       );
       const failure = error instanceof Error ? error : new Error(String(error));
-      // Once the crank ends, so callers wake to a committed termination and
-      // their own writes are not rolled back with it.
-      this.#kernelQueue
-        .waitForCrank()
-        .then(() => settle(failure))
-        .catch(this.#logger.error);
+      settle(failure);
       // Through the crank result, so the run loop rolls back before retiring
       // the vat: what the failed `initVat` buffered would otherwise be flushed
       // for a vat that no longer exists. The rollback restores this request,
