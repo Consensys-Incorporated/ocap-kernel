@@ -1,4 +1,5 @@
 import type { CapData } from '@endo/marshal';
+import { makePromiseKit } from '@endo/promise-kit';
 import {
   VatAlreadyExistsError,
   VatDeletedError,
@@ -8,9 +9,13 @@ import { stringify } from '@metamask/kernel-utils';
 import { Logger, splitLoggerStream } from '@metamask/logger';
 
 import type { KernelQueue } from '../KernelQueue.ts';
-import { makeKernelError } from '../liveslots/kernel-marshal.ts';
+import {
+  makeFatalKernelError,
+  makeKernelError,
+} from '../liveslots/kernel-marshal.ts';
 import type { KernelStore } from '../store/index.ts';
 import type {
+  CrankResult,
   VatId,
   VatConfig,
   KRef,
@@ -45,6 +50,18 @@ export class VatManager {
   /** Currently running vats, by ID */
   readonly #vats: Map<VatId, VatHandle>;
 
+  /**
+   * Callers awaiting a queued restart, by vat.
+   *
+   * The first crank for a vat settles the whole list, so later items find it
+   * empty. Every request still queues its own item: one relying on another's
+   * would wait forever if that item were rolled away.
+   */
+  readonly #restartWaiters: Map<
+    VatId,
+    { resolve: () => void; reject: (error: Error) => void }[]
+  >;
+
   /** Service to spawn workers (in iframes) for vats to run in */
   readonly #platformServices: PlatformServices;
 
@@ -78,6 +95,7 @@ export class VatManager {
     allowedGlobalNames,
   }: VatManagerOptions) {
     this.#vats = new Map();
+    this.#restartWaiters = new Map();
     this.#platformServices = platformServices;
     this.#kernelStore = kernelStore;
     this.#kernelQueue = kernelQueue;
@@ -392,16 +410,118 @@ export class VatManager {
   /**
    * Restarts a vat.
    *
+   * Queued for the run loop, so no crank can observe the vat between workers.
+   *
    * @param vatId - The ID of the vat.
    * @returns A promise for the restarted vat.
    */
   async restartVat(vatId: VatId): Promise<VatHandle> {
-    await this.#kernelQueue.waitForCrank();
-    const vat = this.getVat(vatId);
-    const { config } = vat;
-    await this.stopVat(vatId, false);
-    await this.runVat(vatId, config);
+    // The store as well as the handle: a vat between workers has no handle on
+    // the books, and a request landing in that window is for a vat that is
+    // coming back.
+    if (!this.#vats.has(vatId) && !this.#kernelStore.isVatActive(vatId)) {
+      throw new VatNotFoundError(vatId);
+    }
+    // Ahead of the waiter, so a refusal is this call's own rejection rather
+    // than an unhandled one from a waiter nothing will ever await.
+    this.#kernelQueue.enqueueRestartVat(vatId);
+    const { promise, resolve, reject } = makePromiseKit<void>();
+    const waiters = this.#restartWaiters.get(vatId) ?? [];
+    this.#restartWaiters.set(vatId, [...waiters, { resolve, reject }]);
+    // A restart has no kernel promise behind it, so nothing else would settle
+    // this caller if the run loop dies.
+    const stopWatchingTheRunLoop = this.#kernelQueue.onRunLoopDeath(reject);
+    try {
+      await promise;
+    } finally {
+      stopWatchingTheRunLoop();
+    }
     return this.getVat(vatId);
+  }
+
+  /**
+   * Replace a vat's worker. Called by the run loop, for a queued restart
+   * request.
+   *
+   * @param vatId - The ID of the vat.
+   * @returns The crank outcome: an abort and a termination if the relaunch
+   *   failed.
+   */
+  async performVatRestart(vatId: VatId): Promise<CrankResult | undefined> {
+    const waiters = this.#restartWaiters.get(vatId) ?? [];
+    this.#restartWaiters.delete(vatId);
+    const settle = (error?: Error): void => {
+      for (const waiter of waiters) {
+        if (error) {
+          waiter.reject(error);
+        } else {
+          waiter.resolve();
+        }
+      }
+    };
+    if (waiters.length === 0) {
+      // Nobody is waiting: an earlier crank answered every caller, this item
+      // outlived the process that queued it, or an aborted restart put it back.
+      this.#logger.debug(`Dropping a stale restart request for vat ${vatId}`);
+      return undefined;
+    }
+    if (!this.#vats.has(vatId) && !this.#kernelStore.isVatActive(vatId)) {
+      // `terminateVat` does not go through the run queue, so it can land
+      // between the request and this crank. Dropped rather than thrown: the
+      // alternative is a dead run loop over work that is merely obsolete.
+      const error = new VatNotFoundError(vatId);
+      this.#logger.error(
+        `Restart of vat ${vatId} dropped; the vat is gone:`,
+        error,
+      );
+      settle(error);
+      return undefined;
+    }
+    try {
+      // From the handle where there is one, so the incarnation that comes back
+      // is configured like the one that left; from the store for a vat that is
+      // between workers, which has no handle to read.
+      const config =
+        this.#vats.get(vatId)?.config ?? this.#kernelStore.getVatConfig(vatId);
+      if (this.#vats.has(vatId)) {
+        // A channel that will not close does not stop the new worker coming:
+        // the handle is off the books and the old worker has been killed either
+        // way, so failing here would retire a vat that is merely untidy.
+        await this.stopVat(vatId, false).catch((stopError: unknown) =>
+          this.#logger.error(
+            `Old worker for vat ${vatId} would not shut down cleanly:`,
+            stopError,
+          ),
+        );
+      }
+      await this.runVat(vatId, config);
+    } catch (error) {
+      this.#logger.error(
+        `Restart of vat ${vatId} failed; terminating it:`,
+        error,
+      );
+      const failure = error instanceof Error ? error : new Error(String(error));
+      // Once the crank ends, so callers wake to a committed termination and
+      // their own writes are not rolled back with it.
+      this.#kernelQueue
+        .waitForCrank()
+        .then(() => settle(failure))
+        .catch(this.#logger.error);
+      // Through the crank result, so the run loop rolls back before retiring
+      // the vat: what the failed `initVat` buffered would otherwise be flushed
+      // for a vat that no longer exists. The rollback restores this request,
+      // which then finds no waiters and is dropped.
+      return {
+        abort: true,
+        terminate: {
+          vatId,
+          reject: true,
+          info: makeFatalKernelError('INTERNAL_ERROR', failure.message),
+        },
+      };
+    }
+    settle();
+    return undefined;
   }
 
   /**

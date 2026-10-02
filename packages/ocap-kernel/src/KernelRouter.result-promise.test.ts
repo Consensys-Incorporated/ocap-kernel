@@ -43,6 +43,7 @@ describe('a result promise whose delivery fails', () => {
       kernelQueue,
       () => endpoint,
       () => undefined,
+      async () => undefined,
       logger,
     );
 
