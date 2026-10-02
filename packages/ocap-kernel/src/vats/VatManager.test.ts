@@ -947,6 +947,26 @@ describe('VatManager', () => {
       expect(answeredDuringTheCrank).toBe(false);
     });
 
+    it('answers its caller with the vat it restarted', async () => {
+      await vatManager.runVat('v1', createMockVatConfig());
+      mockKernelQueue.enqueueRestartVat.mockImplementationOnce(() => undefined);
+      const restarting = vatManager.restartVat('v1');
+      let endCrank = (): void => undefined;
+      mockKernelQueue.waitForCrank.mockReturnValue(
+        new Promise<void>((resolve) => {
+          endCrank = resolve;
+        }),
+      );
+
+      await vatManager.performVatRestart('v1');
+      // The next crank, a second restart, takes the handle away before this
+      // caller wakes.
+      await vatManager.stopVat('v1', false);
+      endCrank();
+
+      expect(await restarting).toBe(vatHandles[1]);
+    });
+
     it('aborts the crank and terminates the vat when the relaunch fails', async () => {
       await vatManager.runVat('v1', createMockVatConfig());
       mockKernelQueue.enqueueRestartVat.mockImplementationOnce(() => undefined);
