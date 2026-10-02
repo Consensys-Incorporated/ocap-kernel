@@ -54,8 +54,10 @@ export const makePlatformFactory = <
   ): Promise<Platform<keyof typeof config>> => {
     validatePlatformConfig(config, knownCapabilities);
 
-    const capabilityEntries = Object.entries(config).map(
-      ([name, capabilityConfig]) => {
+    // A factory may be async — `fs` builds its exo and then narrows it, and
+    // `narrow` reads the base's guard over `E()`.
+    const capabilityEntries = await Promise.all(
+      Object.entries(config).map(async ([name, capabilityConfig]) => {
         const factory =
           capabilityFactories[name as (typeof knownCapabilities)[number]];
         if (!factory) {
@@ -69,7 +71,7 @@ export const makePlatformFactory = <
         // 2. The config for 'name' matches the factory's expected config type
         // 3. The generic constraints align between the factory and config
         // This is a limitation of TypeScript's type system with dynamic property access
-        const capability = factory(
+        const capability = await factory(
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
           capabilityConfig as any,
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -80,7 +82,7 @@ export const makePlatformFactory = <
           keyof typeof config,
           Capability<keyof typeof config>,
         ];
-      },
+      }),
     );
 
     const platform = Object.fromEntries(capabilityEntries) as Platform<
