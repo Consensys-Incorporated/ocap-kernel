@@ -1,6 +1,6 @@
 /**
- * This module provides a pair of classes for creating readable and writable streams
- * over a [postMessage](https://developer.mozilla.org/en-US/docs/Web/API/Window/postMessage).
+ * This module provides a duplex stream over a
+ * [postMessage](https://developer.mozilla.org/en-US/docs/Web/API/Window/postMessage)
  * function.
  *
  * @module PostMessage streams
@@ -9,15 +9,9 @@
 import { isObject } from '@metamask/utils';
 
 import type { OnMessage, PostMessage } from './utils.ts';
-import {
-  BaseDuplexStream,
-  isDuplexStreamSignal,
-  makeDuplexStreamInputValidator,
-} from '../BaseDuplexStream.ts';
-import type { BaseReaderArgs, BaseWriterArgs } from '../BaseStream.ts';
-import { BaseReader, BaseWriter } from '../BaseStream.ts';
+import { BaseDuplexStream, isDuplexStreamSignal } from '../BaseDuplexStream.ts';
+import type { OnEnd, ValidateInput } from '../BaseStream.ts';
 import { isSignalLike } from '../utils.ts';
-import type { Dispatchable } from '../utils.ts';
 
 export type PostMessageTarget = {
   addEventListener: (type: 'message', listener: OnMessage) => void;
@@ -25,67 +19,17 @@ export type PostMessageTarget = {
   postMessage: PostMessage;
 };
 
-type PostMessageReaderArgs<Read> = BaseReaderArgs<Read> & {
+type PostMessageDuplexStreamArgs<Read> = {
   messageTarget: PostMessageTarget;
+  validateInput?: ValidateInput<Read> | undefined;
+  onEnd?: OnEnd | undefined;
 } & (Read extends MessageEvent
-    ? {
-        messageEventMode: 'event';
-      }
-    : {
-        messageEventMode?: 'data' | undefined;
-      });
-
-/**
- * A readable stream over a {@link PostMessage} function.
- *
- * Ignores message events dispatched on its port that contain ports, but otherwise
- * expects {@link Dispatchable} values to be posted to its port.
- *
- * @see {@link PostMessageWriter} for the corresponding writable stream.
- */
-export class PostMessageReader<Read> extends BaseReader<Read> {
-  /**
-   * Constructs a new {@link PostMessageReader}.
-   *
-   * @param options - Options bag for configuring the reader.
-   * @param options.messageTarget - The target to listen for messages on.
-   * @param options.validateInput - A function that validates input from the transport.
-   * @param options.onEnd - A function that is called when the stream ends.
-   * @param options.messageEventMode - Whether to pass the message event or just the data to the stream.
-   */
-  constructor({
-    validateInput,
-    onEnd,
-    messageTarget,
-    messageEventMode = 'data',
-  }: PostMessageReaderArgs<Read>) {
-    // eslint-disable-next-line prefer-const
-    let onMessage: OnMessage;
-
-    super({
-      validateInput,
-      onEnd: async (error) => {
-        messageTarget.removeEventListener('message', onMessage);
-        await onEnd?.(error);
-      },
+  ? {
+      messageEventMode: 'event';
+    }
+  : {
+      messageEventMode?: 'data' | undefined;
     });
-
-    const receiveInput = super.getReceiveInput();
-    onMessage = (messageEvent) => {
-      const value =
-        messageEventMode === 'data' ||
-        isSignalLike(messageEvent.data) ||
-        isDuplexStreamSignal(messageEvent.data)
-          ? messageEvent.data
-          : messageEvent;
-      receiveInput(value).catch(async (error) => this.throw(error));
-    };
-    messageTarget.addEventListener('message', onMessage);
-
-    harden(this);
-  }
-}
-harden(PostMessageReader);
 
 export type PostMessageEnvelope<Write> = {
   payload: Write;
@@ -106,97 +50,49 @@ const isPostMessageEnvelope = <Write>(
   Array.isArray(value.transfer);
 
 /**
- * A writable stream over a {@link PostMessage} function.
- *
- * @see {@link PostMessageReader} for the corresponding readable stream.
- */
-export class PostMessageWriter<Write> extends BaseWriter<Write> {
-  /**
-   * Constructs a new {@link PostMessageWriter}.
-   *
-   * @param messageTarget - The target to post messages to.
-   * @param options - Options bag for configuring the writer.
-   * @param options.name - The name of the stream, for logging purposes.
-   * @param options.onEnd - A function that is called when the stream ends.
-   */
-  constructor(
-    messageTarget: PostMessageTarget,
-    { name, onEnd }: Omit<BaseWriterArgs<Write>, 'onDispatch'> = {},
-  ) {
-    super({
-      name,
-      onDispatch: (value: Dispatchable<Write>) => {
-        return isPostMessageEnvelope(value)
-          ? messageTarget.postMessage(value.payload, value.transfer)
-          : messageTarget.postMessage(value);
-      },
-      onEnd: async (error) => {
-        await onEnd?.(error);
-      },
-    });
-    harden(this);
-  }
-}
-harden(PostMessageWriter);
-
-type PostMessageDuplexStreamArgs<Read> = PostMessageReaderArgs<Read>;
-
-/**
- * A duplex stream over a {@link PostMessage} function.
- *
- * @see {@link PostMessageReader} for the corresponding readable stream.
- * @see {@link PostMessageWriter} for the corresponding writable stream.
+ * A duplex stream over a {@link PostMessage} function. Writes of a
+ * {@link PostMessageEnvelope} post its payload with its transfer list.
  */
 export class PostMessageDuplexStream<
   Read,
   Write = Read,
-> extends BaseDuplexStream<
-  Read,
-  PostMessageReader<Read>,
-  Write,
-  PostMessageWriter<Write>
-> {
+> extends BaseDuplexStream<Read, Write> {
   /**
    * Constructs a new {@link PostMessageDuplexStream}.
    *
    * @param options - Options bag for configuring the duplex stream.
    * @param options.messageTarget - The target for sending and receiving messages.
    * @param options.validateInput - A function that validates input from the transport.
-   * @param options.onEnd - A function that is called when the stream ends.
+   * @param options.onEnd - A function that is called once when the stream ends.
+   * @param options.messageEventMode - Whether to read whole message events or just their data.
    */
   constructor({
     messageTarget,
     validateInput,
     onEnd,
-    ...args
+    messageEventMode = 'data',
   }: PostMessageDuplexStreamArgs<Read>) {
-    let didCallOnEnd = false;
-    const callOnEndOnce = async (): Promise<void> => {
-      if (!didCallOnEnd) {
-        didCallOnEnd = true;
-        await onEnd?.();
-      }
-    };
-
-    let writer: PostMessageWriter<Write>; // eslint-disable-line prefer-const
-    const reader = new PostMessageReader<Read>({
-      ...args,
-      messageTarget,
-      validateInput: makeDuplexStreamInputValidator(validateInput),
-      // End the writer first, since onEnd may close the transport.
-      onEnd: async () => {
-        await writer.return();
-        await callOnEndOnce();
-      },
-    } as PostMessageReaderArgs<Read>);
-    writer = new PostMessageWriter<Write>(messageTarget, {
+    super({
       name: 'PostMessageDuplexStream',
-      onEnd: async () => {
-        await reader.return();
-        await callOnEndOnce();
+      validateInput,
+      onEnd,
+      listen: (receiveInput) => {
+        const onMessage: OnMessage = (messageEvent) =>
+          receiveInput(
+            messageEventMode === 'data' ||
+              isSignalLike(messageEvent.data) ||
+              isDuplexStreamSignal(messageEvent.data)
+              ? messageEvent.data
+              : messageEvent,
+          );
+        messageTarget.addEventListener('message', onMessage);
+        return () => messageTarget.removeEventListener('message', onMessage);
       },
+      onDispatch: (value) =>
+        isPostMessageEnvelope(value)
+          ? messageTarget.postMessage(value.payload, value.transfer)
+          : messageTarget.postMessage(value),
     });
-    super(reader, writer);
   }
 
   /**
