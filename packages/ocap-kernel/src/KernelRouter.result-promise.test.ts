@@ -38,15 +38,15 @@ describe('a result promise whose delivery fails', () => {
       deliverBringOutYourDead: vi.fn(),
     } as unknown as EndpointHandle;
     const logger = { error: vi.fn(), log: vi.fn() } as unknown as Logger;
-    const kernelRouter = new KernelRouter(
+    const kernelRouter = new KernelRouter({
       kernelStore,
       kernelQueue,
-      () => endpoint,
-      () => undefined,
-      async () => undefined,
-      async () => undefined,
+      getEndpoint: () => endpoint,
+      invokeKernelService: () => undefined,
+      restartVat: async () => undefined,
+      terminateVat: async () => undefined,
       logger,
-    );
+    });
 
     // The run loop's crank, minus the run loop.
     const runCrank = async (): Promise<void> => {

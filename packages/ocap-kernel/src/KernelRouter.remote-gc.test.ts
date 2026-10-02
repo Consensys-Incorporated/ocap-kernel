@@ -39,14 +39,14 @@ describe('a GC action a remote refused', () => {
         .fn()
         .mockRejectedValue(new Error('send queue full')),
     } as unknown as EndpointHandle;
-    const kernelRouter = new KernelRouter(
+    const kernelRouter = new KernelRouter({
       kernelStore,
       kernelQueue,
-      () => endpoint,
-      () => undefined,
-      async () => undefined,
-      async () => undefined,
-    );
+      getEndpoint: () => endpoint,
+      invokeKernelService: () => undefined,
+      restartVat: async () => undefined,
+      terminateVat: async () => undefined,
+    });
 
     // GC actions come before the run queue, so the first crank is the refusal
     // and the second is the send, which stops the loop.
