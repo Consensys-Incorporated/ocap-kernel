@@ -59,7 +59,7 @@ export class VatManager {
    */
   readonly #restartWaiters: Map<
     VatId,
-    { resolve: () => void; reject: (error: Error) => void }[]
+    { resolve: (handle: VatHandle) => void; reject: (error: Error) => void }[]
   >;
 
   /** Service to spawn workers (in iframes) for vats to run in */
@@ -425,18 +425,19 @@ export class VatManager {
     // Ahead of the waiter, so a refusal is this call's own rejection rather
     // than an unhandled one from a waiter nothing will ever await.
     this.#kernelQueue.enqueueRestartVat(vatId);
-    const { promise, resolve, reject } = makePromiseKit<void>();
+    const { promise, resolve, reject } = makePromiseKit<VatHandle>();
     const waiters = this.#restartWaiters.get(vatId) ?? [];
     this.#restartWaiters.set(vatId, [...waiters, { resolve, reject }]);
     // A restart has no kernel promise behind it, so nothing else would settle
     // this caller if the run loop dies.
     const stopWatchingTheRunLoop = this.#kernelQueue.onRunLoopDeath(reject);
     try {
-      await promise;
+      // The handle this restart made, rather than whatever `#vats` holds once
+      // the caller wakes: a later restart's crank may have started by then.
+      return await promise;
     } finally {
       stopWatchingTheRunLoop();
     }
-    return this.getVat(vatId);
   }
 
   /**
@@ -452,15 +453,15 @@ export class VatManager {
     this.#restartWaiters.delete(vatId);
     // Once the crank ends, so callers wake to what it committed: their own
     // writes are not rolled back with it, nor queued ahead of what it flushes.
-    const settle = (failure?: Error): void => {
+    const settle = (outcome: VatHandle | Error): void => {
       this.#kernelQueue
         .waitForCrank()
         .then(() => {
           for (const waiter of waiters) {
-            if (failure) {
-              waiter.reject(failure);
+            if (outcome instanceof Error) {
+              waiter.reject(outcome);
             } else {
-              waiter.resolve();
+              waiter.resolve(outcome);
             }
           }
           return undefined;
@@ -523,7 +524,7 @@ export class VatManager {
         },
       };
     }
-    settle();
+    settle(this.getVat(vatId));
     return undefined;
   }
 
