@@ -2388,12 +2388,12 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@metamask/design-system-react@npm:^0.45.1":
-  version: 0.45.3
-  resolution: "@metamask/design-system-react@npm:0.45.3"
+"@metamask/design-system-react@npm:^0.46.0":
+  version: 0.46.0
+  resolution: "@metamask/design-system-react@npm:0.46.0"
   dependencies:
     "@floating-ui/react-dom": "npm:^2.1.2"
-    "@metamask/design-system-shared": "npm:^0.39.0"
+    "@metamask/design-system-shared": "npm:^0.40.0"
     "@metamask/jazzicon": "npm:^2.0.0"
     "@radix-ui/react-slot": "npm:^1.1.0"
     blo: "npm:^2.0.0"
@@ -2405,18 +2405,18 @@ __metadata:
     "@metamask/utils": ^11.12.1
     react: ^17.0.0 || ^18.0.0 || ^19.0.0
     react-dom: ^17.0.0 || ^18.0.0 || ^19.0.0
-  checksum: 10/27bca569dd668d0da3033217bb316dfb87f346dcdd053f43bbb5085059a3e4808bf3ce2c609539493367ee56d0a683c1ce9c7d4bde38f2822e76d02630091958
+  checksum: 10/acfce1eead6ba25d389d9f5d70a7caac20569c70602bbbfec0cc3acab666548bbe6f8d55c782940d6761121d62efb25c017521b7e66595cbbfaa3159f1758320
   languageName: node
   linkType: hard
 
-"@metamask/design-system-shared@npm:^0.39.0":
-  version: 0.39.0
-  resolution: "@metamask/design-system-shared@npm:0.39.0"
+"@metamask/design-system-shared@npm:^0.40.0":
+  version: 0.40.0
+  resolution: "@metamask/design-system-shared@npm:0.40.0"
   dependencies:
     "@metamask/utils": "npm:^11.12.1"
   peerDependencies:
     react: ^17.0.0 || ^18.0.0 || ^19.0.0
-  checksum: 10/9f09c129326d2acd7d7d5c1b74843fa3bd5af8cf891affaeda56d02a3e24d6f1be761b75e2e1623b83d60165ebab99245cdaa3c14ee4c28041ba3206d47a2b32
+  checksum: 10/f0e6860498e56234c3376e2b62d1253e6992f35e41b42db3b35e332c63d7bcd5da7a13bef5b2cb1364634840615b011666b2d313bd78fb41a721d68f5698db19
   languageName: node
   linkType: hard
 
@@ -2954,7 +2954,7 @@ __metadata:
   dependencies:
     "@arethetypeswrong/cli": "npm:^0.17.4"
     "@metamask/auto-changelog": "npm:^6.2.1"
-    "@metamask/design-system-react": "npm:^0.45.1"
+    "@metamask/design-system-react": "npm:^0.46.0"
     "@metamask/design-system-tailwind-preset": "npm:^0.14.0"
     "@metamask/design-tokens": "npm:^8.7.0"
     "@metamask/eslint-config": "npm:^15.0.1"
@@ -3213,7 +3213,7 @@ __metadata:
     "@metamask/kernel-utils": "workspace:^"
     "@metamask/logger": "workspace:^"
     "@metamask/rpc-errors": "npm:^7.0.3"
-    "@metamask/snaps-execution-environments": "npm:^11.3.0"
+    "@metamask/snaps-execution-environments": "npm:^11.3.1"
     "@metamask/streams": "workspace:^"
     "@metamask/superstruct": "npm:^3.4.1"
     "@metamask/utils": "npm:^11.12.1"
@@ -3534,21 +3534,21 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@metamask/snaps-execution-environments@npm:^11.3.0":
-  version: 11.3.0
-  resolution: "@metamask/snaps-execution-environments@npm:11.3.0"
+"@metamask/snaps-execution-environments@npm:^11.3.1":
+  version: 11.3.1
+  resolution: "@metamask/snaps-execution-environments@npm:11.3.1"
   dependencies:
     "@metamask/json-rpc-engine": "npm:^10.5.0"
     "@metamask/object-multiplex": "npm:^2.1.0"
     "@metamask/post-message-stream": "npm:^10.0.0"
     "@metamask/providers": "npm:^22.1.1"
     "@metamask/rpc-errors": "npm:^7.0.3"
-    "@metamask/snaps-sdk": "npm:^12.0.0"
-    "@metamask/snaps-utils": "npm:^12.5.0"
+    "@metamask/snaps-sdk": "npm:^12.1.0"
+    "@metamask/snaps-utils": "npm:^12.6.0"
     "@metamask/superstruct": "npm:^3.3.0"
     "@metamask/utils": "npm:^11.11.0"
     readable-stream: "npm:^3.6.2"
-  checksum: 10/618a15af5470cb60bf33986f780b3be663a24e062d4fd6211eacf16b2256593eb0afae6403aeae12c5e366519abb231a6c3ba86c84873883a287dc692e7c599c
+  checksum: 10/3ee35804601777e1d9e8bd1eb3757a852b3c499c27c108577d9af5ed155a132ff800c31c855d7ac137ad027779de6a37a5a42f01a51b3fac41cd2265497b074b
   languageName: node
   linkType: hard
 
@@ -3564,7 +3564,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@metamask/snaps-sdk@npm:^12.0.0, @metamask/snaps-sdk@npm:^12.0.1":
+"@metamask/snaps-sdk@npm:^12.0.1":
   version: 12.0.1
   resolution: "@metamask/snaps-sdk@npm:12.0.1"
   dependencies:
@@ -3579,7 +3579,22 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@metamask/snaps-utils@npm:^12.5.0, @metamask/snaps-utils@npm:^12.6.0":
+"@metamask/snaps-sdk@npm:^12.1.0":
+  version: 12.1.0
+  resolution: "@metamask/snaps-sdk@npm:12.1.0"
+  dependencies:
+    "@metamask/key-tree": "npm:^10.1.1"
+    "@metamask/messenger": "npm:^2.0.0"
+    "@metamask/providers": "npm:^22.1.1"
+    "@metamask/rpc-errors": "npm:^7.0.3"
+    "@metamask/superstruct": "npm:^3.3.0"
+    "@metamask/utils": "npm:^11.11.0"
+    luxon: "npm:^3.5.0"
+  checksum: 10/760de9a18be43198a3ec7149de06637680cf2bd127dd040e2666ca8545c1d605291f7407e34dc32027038301c0d8807fce094562040f836c1637b4db275ffa1d
+  languageName: node
+  linkType: hard
+
+"@metamask/snaps-utils@npm:^12.6.0":
   version: 12.6.0
   resolution: "@metamask/snaps-utils@npm:12.6.0"
   dependencies:
