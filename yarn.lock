@@ -3564,22 +3564,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@metamask/snaps-sdk@npm:^12.0.1":
-  version: 12.0.1
-  resolution: "@metamask/snaps-sdk@npm:12.0.1"
-  dependencies:
-    "@metamask/key-tree": "npm:^10.1.1"
-    "@metamask/messenger": "npm:^2.0.0"
-    "@metamask/providers": "npm:^22.1.1"
-    "@metamask/rpc-errors": "npm:^7.0.3"
-    "@metamask/superstruct": "npm:^3.3.0"
-    "@metamask/utils": "npm:^11.11.0"
-    luxon: "npm:^3.5.0"
-  checksum: 10/dfcd6874da9e0f7cab531768f7f3ab1425a579bb7e925e6ceea8e8549ad0be239d24564d2450bc2b92f7f66c1eb4c18fb2c7f9c7262e6166dd55961808e35f6d
-  languageName: node
-  linkType: hard
-
-"@metamask/snaps-sdk@npm:^12.1.0":
+"@metamask/snaps-sdk@npm:^12.0.1, @metamask/snaps-sdk@npm:^12.1.0":
   version: 12.1.0
   resolution: "@metamask/snaps-sdk@npm:12.1.0"
   dependencies:
