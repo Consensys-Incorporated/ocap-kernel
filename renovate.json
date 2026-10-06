@@ -6,6 +6,7 @@
   "extends": ["config:recommended"],
   "enabledManagers": ["github-actions", "npm"],
   "dependencyDashboard": false,
+  "postUpdateOptions": ["yarnDedupeHighest"],
   "packageRules": [
     {
       "matchManagers": ["npm"],
