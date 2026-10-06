@@ -547,7 +547,9 @@ export class Kernel {
   }
 
   /**
-   * Terminates a named sub-cluster of vats.
+   * Terminates a named sub-cluster of vats, each by way of `terminateVat`.
+   * Refused on a dead run loop. A member that survives keeps the subcluster
+   * and its IO channels, and makes this reject.
    *
    * @param subclusterId - The id of the subcluster to terminate.
    * @returns A promise that resolves when termination is complete.
@@ -633,10 +635,14 @@ export class Kernel {
   }
 
   /**
-   * Terminate a vat with extreme prejudice.
+   * Terminate a vat with extreme prejudice. The run loop carries it out in a
+   * crank of its own, so this waits behind the run queue, and rejects if the
+   * run loop dies or the kernel is stopped, reset or has its storage cleared
+   * first.
    *
    * @param vatId - The ID of the vat to terminate.
-   * @param reason - The reason for the termination, if any.
+   * @param reason - The reason for the termination, if any. It must carry no
+   *   slots.
    * @returns A promise that resolves when the vat has been terminated.
    */
   async terminateVat(vatId: VatId, reason?: CapData<KRef>): Promise<void> {
@@ -877,7 +883,7 @@ export class Kernel {
     await this.#kernelQueue.waitForCrank();
     this.#vatManager.abandonQueuedWork(
       new Error(
-        'Kernel was stopped before answering; a queued termination still takes effect on its next start',
+        'Kernel was stopped before answering; queued terminations still take effect on its next start, restarts do not',
       ),
     );
     this.#kernelStore.recordLastActiveTime();

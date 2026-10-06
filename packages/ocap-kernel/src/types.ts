@@ -945,7 +945,8 @@ export type CrankResult = {
   terminate?: { vatId: VatId; reject: boolean; info: CapData<KRef> };
   /**
    * The delivery has done work a caller will be told of, so a later failure in
-   * this crank, from collection or the audit, must not roll it back.
+   * this crank, from collection or the audit, must not roll it back. Ignored
+   * alongside `abort`, which rolls back first.
    */
   irrevocable?: boolean;
   /**
