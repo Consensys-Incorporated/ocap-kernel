@@ -133,6 +133,7 @@ describe('VatManager', () => {
       }),
       onRunLoopDeath: vi.fn(() => () => undefined),
       assertRunLoopAlive: vi.fn(),
+      discardHeldRequests: vi.fn(),
     } as unknown as Mocked<KernelQueue>;
 
     mockLogger = new Logger('test');
@@ -1497,6 +1498,12 @@ describe('VatManager', () => {
       // Their items find nobody to answer.
       expect(await vatManager.performVatRestart('v1')).toBeUndefined();
       expect(mockPlatformServices.launch).toHaveBeenCalledTimes(3);
+    });
+
+    it('discards requests held for the open crank', () => {
+      vatManager.abandonQueuedWork(new Error('Kernel was reset'));
+
+      expect(mockKernelQueue.discardHeldRequests).toHaveBeenCalledOnce();
     });
   });
 

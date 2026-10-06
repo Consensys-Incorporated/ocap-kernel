@@ -833,6 +833,39 @@ describe('KernelQueue', () => {
       ['restart', (queue: KernelQueue) => queue.enqueueRestartVat('v1')],
       ['termination', (queue: KernelQueue) => queue.enqueueTerminateVat('v1')],
     ])(
+      'does not write a %s discarded before its crank ends',
+      async (_, request) => {
+        (kernelStore.isInCrank as unknown as MockInstance).mockReturnValue(
+          true,
+        );
+        (kernelStore.runQueueLength as unknown as MockInstance).mockReturnValue(
+          1,
+        );
+        (kernelStore.dequeueRun as unknown as MockInstance).mockReturnValue({
+          type: 'send',
+          target: 'ko123',
+          message: {} as KernelMessage,
+        });
+        const stop = new Error('test: stop run loop');
+        const deliver = vi
+          .fn()
+          .mockImplementationOnce(async () => {
+            request(kernelQueue);
+            kernelQueue.discardHeldRequests();
+            return undefined;
+          })
+          .mockRejectedValueOnce(stop);
+
+        await expect(kernelQueue.run(deliver)).rejects.toBe(stop);
+
+        expect(kernelStore.enqueueRun).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each([
+      ['restart', (queue: KernelQueue) => queue.enqueueRestartVat('v1')],
+      ['termination', (queue: KernelQueue) => queue.enqueueTerminateVat('v1')],
+    ])(
       'drops a %s held by a crank that kills the run loop',
       async (_, request) => {
         (kernelStore.isInCrank as unknown as MockInstance).mockReturnValue(

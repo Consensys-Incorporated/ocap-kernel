@@ -619,6 +619,15 @@ export class KernelQueue {
   }
 
   /**
+   * Forget the requests held for the open crank to write once it ends, for a
+   * kernel discarding its run queue: not in the store yet, they would outlive
+   * a wipe of it.
+   */
+  discardHeldRequests(): void {
+    this.#heldRequests = [];
+  }
+
+  /**
    * Write the requests held while the crank that just ended was open.
    */
   #enqueueHeldRequests(): void {
