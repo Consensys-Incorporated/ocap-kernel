@@ -872,7 +872,9 @@ export class Kernel {
   async stop(): Promise<void> {
     await this.#kernelQueue.waitForCrank();
     this.#vatManager.abandonQueuedWork(
-      new Error('Kernel was stopped; queued work was abandoned'),
+      new Error(
+        'Kernel was stopped before answering; a queued termination still takes effect on its next start',
+      ),
     );
     this.#kernelStore.recordLastActiveTime();
     await this.#platformServices.stopRemoteComms();

@@ -40,8 +40,8 @@ type Waiter<Value> = {
   resolve: (value: Value) => void;
   reject: (error: Error) => void;
   /**
-   * Set once a crank has taken the waiter and will answer it however the run
-   * loop fares, so the loop's death no longer needs to.
+   * Set once the waiter is promised an answer that does not depend on the run
+   * loop, so the loop's death no longer needs to give one.
    */
   answerDue: boolean;
 };

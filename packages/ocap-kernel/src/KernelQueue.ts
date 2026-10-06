@@ -227,7 +227,8 @@ export class KernelQueue {
   /**
    * Tell a caller waiting on queued work if the run loop dies before carrying
    * it out. `subscriptions` covers a message's result; a request with no kernel
-   * promise behind it — a vat restart — has nothing else that would settle it.
+   * promise behind it — a vat restart or termination — has nothing else that
+   * would settle it.
    *
    * @param reject - How to tell the caller.
    * @returns A function that unregisters it, for the caller's own `finally`.
