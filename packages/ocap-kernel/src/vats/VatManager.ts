@@ -769,8 +769,9 @@ export class VatManager {
   async performVatRestart(vatId: VatId): Promise<CrankResult | undefined> {
     const taken = this.#takeWaiters(this.#restartWaiters, vatId);
     if (taken.count === 0) {
-      // Nobody is waiting: an earlier crank answered every caller, this item
-      // outlived the process that queued it, or an aborted restart put it back.
+      // Nobody is waiting: a termination overtook the restart, an earlier crank
+      // answered every caller, this item outlived the process that queued it,
+      // or an aborted restart put it back.
       this.#logger.debug(`Dropping a stale restart request for vat ${vatId}`);
       return undefined;
     }
