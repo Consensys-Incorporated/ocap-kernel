@@ -1,17 +1,15 @@
 import { makePromiseKit } from '@endo/promise-kit';
-import type { Reader, Writer } from '@endo/stream';
 import { stringify } from '@metamask/kernel-utils';
 import type { PromiseCallbacks } from '@metamask/kernel-utils';
 
-import type { Dispatchable, Writable } from './utils.ts';
+import type { Dispatchable, Reader, Writer } from './utils.ts';
 import {
+  isSignalLike,
   makeDoneResult,
   makePendingResult,
   makeStreamDoneSignal,
   makeStreamErrorSignal,
-  marshal,
-  StreamDoneSymbol,
-  unmarshal,
+  parseSignal,
 } from './utils.ts';
 
 const makeStreamBuffer = <
@@ -100,12 +98,21 @@ export type OnEnd = (error?: Error) => void | Promise<void>;
 export type ValidateInput<Read> = (input: unknown) => input is Read;
 
 /**
- * A function that receives input from a transport mechanism to a readable stream.
- * Validates that the input is an {@link IteratorResult}, and throws if it is not.
+ * Forwards input from a transport to a reader. Never rejects; invalid input ends
+ * the reader with an error.
  */
 export type ReceiveInput = (input: unknown) => Promise<void>;
 
+/**
+ * Subscribes a reader to its transport. May return a function that unsubscribes it,
+ * which is called when the reader ends.
+ */
+export type Listen = (
+  receiveInput: (input: unknown) => void,
+) => (() => void) | void;
+
 export type BaseReaderArgs<Read> = {
+  listen: Listen;
   name?: string | undefined;
   onEnd?: OnEnd | undefined;
   validateInput?: ValidateInput<Read> | undefined;
@@ -113,10 +120,6 @@ export type BaseReaderArgs<Read> = {
 
 /**
  * The base of a readable async iterator stream.
- *
- * Subclasses must forward input received from the transport mechanism via the function
- * returned by `getReceiveInput()`. Any cleanup required by subclasses should be performed
- * in a callback passed to `setOnEnd()`.
  *
  * The result of any value received before the stream ends is guaranteed to be observable
  * by the consumer.
@@ -134,78 +137,52 @@ export class BaseReader<Read> implements Reader<Read> {
 
   #onEnd?: OnEnd | undefined;
 
-  #didExposeReceiveInput: boolean = false;
-
   /**
    * Constructs a {@link BaseReader}.
    *
    * @param options - Options bag for configuring the reader.
+   * @param options.listen - Subscribes the reader to its transport.
    * @param options.name - The name of the stream, for logging purposes. Defaults to the class name.
-   * @param options.onEnd - A function that is called when the stream ends. For any cleanup that
-   * should happen when the stream ends, such as closing a message port.
+   * @param options.onEnd - A function that is called when the stream ends.
    * @param options.validateInput - A function that validates input from the transport.
    */
-  constructor({ name, onEnd, validateInput }: BaseReaderArgs<Read>) {
+  constructor({ listen, name, onEnd, validateInput }: BaseReaderArgs<Read>) {
     this.#name = name ?? this.constructor.name;
-    this.#onEnd = onEnd;
     this.#validateInput = validateInput;
+    // eslint-disable-next-line @typescript-eslint/no-misused-promises -- Never rejects.
+    const unlisten = listen(this.#receiveInput);
+    this.#onEnd = async (error) => {
+      unlisten?.();
+      await onEnd?.(error);
+    };
     harden(this);
   }
 
-  /**
-   * Returns the `receiveInput()` method, which is used to receive input from the stream.
-   * Attempting to call this method more than once will throw an error.
-   *
-   * @returns The `receiveInput()` method.
-   */
-  protected getReceiveInput(): ReceiveInput {
-    if (this.#didExposeReceiveInput) {
-      throw new Error(
-        `${this.#name} received multiple calls to getReceiveInput()`,
-      );
-    }
-    this.#didExposeReceiveInput = true;
-    return this.#receiveInput.bind(this);
-  }
-
-  readonly #receiveInput = async (input: unknown): Promise<void> => {
+  readonly #receiveInput: ReceiveInput = async (input) => {
     // eslint-disable-next-line @typescript-eslint/await-thenable
     await null;
-
-    const unmarshaled = unmarshal(input);
-    if (unmarshaled instanceof Error) {
-      await this.#handleInputError(unmarshaled);
-      return;
+    try {
+      if (isSignalLike(input)) {
+        const error = parseSignal(input);
+        if (error) {
+          throw error;
+        }
+        await this.#end();
+        return;
+      }
+      if (this.#validateInput?.(input) === false) {
+        throw new Error(
+          `${this.#name}: Message failed type validation:\n${stringify(input)}`,
+        );
+      }
+      this.#buffer.put(makePendingResult(input));
+    } catch (error) {
+      if (!this.#buffer.hasPendingReads()) {
+        this.#buffer.put(error as Error);
+      }
+      await this.#end(error as Error).catch(() => undefined);
     }
-
-    if (unmarshaled === StreamDoneSymbol) {
-      await this.#end();
-      return;
-    }
-
-    if (this.#validateInput?.(unmarshaled) === false) {
-      await this.#handleInputError(
-        new Error(
-          `${this.#name}: Message failed type validation:\n${stringify(unmarshaled)}`,
-        ),
-      );
-      return;
-    }
-
-    this.#buffer.put(makePendingResult(unmarshaled));
   };
-
-  /**
-   * Handles an input error by putting it into the buffer and ending the stream.
-   *
-   * @param error - The error to handle.
-   */
-  async #handleInputError(error: Error): Promise<void> {
-    if (!this.#buffer.hasPendingReads()) {
-      this.#buffer.put(error);
-    }
-    await this.#end(error);
-  }
 
   /**
    * Ends the stream. Calls and then unsets the `#onEnd` method.
@@ -215,9 +192,9 @@ export class BaseReader<Read> implements Reader<Read> {
    */
   async #end(error?: Error): Promise<void> {
     this.#buffer.end(error);
-    const onEndP = this.#onEnd?.(error);
+    const onEnd = this.#onEnd;
     this.#onEnd = undefined;
-    await onEndP;
+    await onEnd?.(error);
   }
 
   /**
@@ -288,7 +265,7 @@ export type BaseWriterArgs<Write> = {
 export class BaseWriter<Write> implements Writer<Write> {
   #isDone: boolean = false;
 
-  readonly #name: string = 'BaseWriter';
+  readonly #name: string;
 
   readonly #onDispatch: Dispatch<Write>;
 
@@ -300,8 +277,7 @@ export class BaseWriter<Write> implements Writer<Write> {
    * @param options - Options bag for configuring the writer.
    * @param options.onDispatch - A function that dispatches messages over the underlying transport mechanism.
    * @param options.name - The name of the stream, for logging purposes. Defaults to the class name.
-   * @param options.onEnd - A function that is called when the stream ends. For any cleanup that
-   * should happen when the stream ends, such as closing a message port.
+   * @param options.onEnd - A function that is called when the stream ends.
    */
   constructor({ name, onDispatch, onEnd }: BaseWriterArgs<Write>) {
     this.#name = name ?? this.constructor.name;
@@ -311,59 +287,25 @@ export class BaseWriter<Write> implements Writer<Write> {
   }
 
   /**
-   * Dispatches the value, via the dispatch function registered in the constructor.
-   * If dispatching fails, calls `#throw()`, and is therefore mutually recursive with
-   * that method. For this reason, includes a flag indicating past failure to dispatch
-   * a value, which is used to avoid infinite recursion. If dispatching succeeds, returns a
-   * `{ done: true }` result if the value was an {@link Error} or itself a `done` result,
-   * otherwise returns `{ done: false }`.
-   *
-   * @param value - The value to dispatch.
-   * @param hasFailed - Whether dispatching has failed previously.
-   * @returns The result of dispatching the value.
-   */
-  async #dispatch(
-    value: Writable<Write>,
-    hasFailed = false,
-  ): Promise<IteratorResult<undefined, undefined>> {
-    try {
-      await this.#onDispatch(marshal(value));
-      return value === StreamDoneSymbol || value instanceof Error
-        ? makeDoneResult()
-        : makePendingResult(undefined);
-    } catch (error) {
-      if (hasFailed) {
-        // Break out of repeated failure to dispatch an error. It is unclear how this would occur
-        // in practice, but it's the kind of failure mode where it's better to be sure.
-        const repeatedFailureError = new Error(
-          `${this.#name} experienced repeated dispatch failures.`,
-          { cause: error },
-        );
-        await this.#onDispatch(makeStreamErrorSignal(repeatedFailureError));
-        throw repeatedFailureError;
-      } else {
-        await this.#throw(
-          /* istanbul ignore next: The ternary is mostly to please TypeScript */
-          error instanceof Error ? error : new Error(String(error)),
-          true,
-        );
-        throw new Error(`${this.#name} experienced a dispatch failure`, {
-          cause: error,
-        });
-      }
-    }
-  }
-
-  /**
-   * Ends the stream and calls the onEnd callback. Idempotent.
+   * Dispatches the final signal and calls `onEnd`. The writer ends even if
+   * either throws. Idempotent.
    *
    * @param error - The error to end the stream with.
    */
   async #end(error?: Error): Promise<void> {
+    if (this.#isDone) {
+      return;
+    }
     this.#isDone = true;
-    const onEndP = this.#onEnd?.(error);
+    const onEnd = this.#onEnd;
     this.#onEnd = undefined;
-    await onEndP;
+    try {
+      await this.#onDispatch(
+        error ? makeStreamErrorSignal(error) : makeStreamDoneSignal(),
+      );
+    } finally {
+      await onEnd?.(error);
+    }
   }
 
   /**
@@ -376,7 +318,8 @@ export class BaseWriter<Write> implements Writer<Write> {
   }
 
   /**
-   * Writes the next message to the transport.
+   * Writes the next message to the transport. If dispatching fails, forwards the
+   * failure to the transport (if possible) and ends the stream.
    *
    * @param value - The next message to write to the transport.
    * @returns The result of writing the message.
@@ -385,7 +328,18 @@ export class BaseWriter<Write> implements Writer<Write> {
     if (this.#isDone) {
       return makeDoneResult();
     }
-    return this.#dispatch(value);
+    try {
+      await this.#onDispatch(value);
+    } catch (cause) {
+      await this.#end(
+        /* istanbul ignore next: The ternary is mostly to please TypeScript */
+        cause instanceof Error ? cause : new Error(String(cause)),
+      ).catch(() => undefined);
+      throw new Error(`${this.#name} experienced a dispatch failure`, {
+        cause,
+      });
+    }
+    return makePendingResult(undefined);
   }
 
   /**
@@ -394,10 +348,7 @@ export class BaseWriter<Write> implements Writer<Write> {
    * @returns The final result for this stream.
    */
   async return(): Promise<IteratorResult<undefined, undefined>> {
-    if (!this.#isDone) {
-      await this.#onDispatch(makeStreamDoneSignal());
-      await this.#end();
-    }
+    await this.#end();
     return makeDoneResult();
   }
 
@@ -408,9 +359,7 @@ export class BaseWriter<Write> implements Writer<Write> {
    * @returns The final result for this stream.
    */
   async throw(error: Error): Promise<IteratorResult<undefined, undefined>> {
-    if (!this.#isDone) {
-      await this.#throw(error);
-    }
+    await this.#end(error);
     return makeDoneResult();
   }
 
@@ -422,26 +371,6 @@ export class BaseWriter<Write> implements Writer<Write> {
    */
   async end(error?: Error): Promise<IteratorResult<undefined, undefined>> {
     return error ? this.throw(error) : this.return();
-  }
-
-  /**
-   * Dispatches the error and calls `#end()`. Mutually recursive with `dispatch()`.
-   * For this reason, includes a flag indicating past failure, so that `dispatch()`
-   * can avoid infinite recursion. See `dispatch()` for more details.
-   *
-   * @param error - The error to forward.
-   * @param hasFailed - Whether dispatching has failed previously.
-   * @returns The final result for this stream.
-   */
-  async #throw(
-    error: Error,
-    hasFailed = false,
-  ): Promise<IteratorResult<undefined, undefined>> {
-    const result = this.#dispatch(error, hasFailed);
-    if (!this.#isDone) {
-      await this.#end(error);
-    }
-    return result;
   }
 }
 harden(BaseWriter);

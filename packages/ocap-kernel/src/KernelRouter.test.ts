@@ -1,7 +1,7 @@
 import type { CapData } from '@endo/marshal';
 import { VatNotFoundError } from '@metamask/kernel-errors';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { MockInstance } from 'vitest';
+import type { Mock, MockInstance } from 'vitest';
 
 import { KernelQueue } from './KernelQueue.ts';
 import { KernelRouter } from './KernelRouter.ts';
@@ -29,9 +29,9 @@ describe('KernelRouter', () => {
   let getEndpoint: (endpointId: EndpointId) => EndpointHandle;
   let endpointHandle: EndpointHandle;
   let kernelRouter: KernelRouter;
-  let mockRestartVat: MockInstance<(vatId: VatId) => Promise<void>>;
-  let mockTerminateVat: MockInstance<
-    (vatId: VatId, reason?: CapData<KRef>) => Promise<void>
+  let mockRestartVat: Mock<(vatId: VatId) => Promise<CrankResult | undefined>>;
+  let mockTerminateVat: Mock<
+    (vatId: VatId, reason?: CapData<KRef>) => Promise<CrankResult | undefined>
   >;
 
   beforeEach(() => {
@@ -103,42 +103,6 @@ describe('KernelRouter', () => {
       mockRestartVat,
       mockTerminateVat,
     );
-  });
-
-  describe('restartVat', () => {
-    it('hands a queued restart request to the vat manager', async () => {
-      const crankResult = { abort: true };
-      mockRestartVat.mockResolvedValueOnce(crankResult);
-
-      const result = await kernelRouter.deliver({
-        type: 'restartVat',
-        vatId: 'v1',
-      });
-
-      expect(mockRestartVat).toHaveBeenCalledWith('v1');
-      expect(result).toBe(crankResult);
-    });
-  });
-
-  describe('terminateVat', () => {
-    it('hands a queued termination request to the vat manager', async () => {
-      const reason = kser('because');
-
-      const result = await kernelRouter.deliver({
-        type: 'terminateVat',
-        vatId: 'v1',
-        reason,
-      });
-
-      expect(mockTerminateVat).toHaveBeenCalledWith('v1', reason);
-      expect(result).toBeUndefined();
-    });
-
-    it('passes no reason on when the request carried none', async () => {
-      await kernelRouter.deliver({ type: 'terminateVat', vatId: 'v1' });
-
-      expect(mockTerminateVat).toHaveBeenCalledWith('v1', undefined);
-    });
   });
 
   describe('deliver', () => {
@@ -1200,6 +1164,44 @@ describe('KernelRouter', () => {
       await expect(kernelRouter.deliver(invalidItem)).rejects.toThrow(
         'unsupported or unknown run queue item type',
       );
+    });
+
+    describe('restartVat', () => {
+      it('hands a queued restart request to the vat manager', async () => {
+        const crankResult = { abort: true };
+        mockRestartVat.mockResolvedValueOnce(crankResult);
+
+        const result = await kernelRouter.deliver({
+          type: 'restartVat',
+          vatId: 'v1',
+        });
+
+        expect(mockRestartVat).toHaveBeenCalledWith('v1');
+        expect(result).toBe(crankResult);
+      });
+    });
+
+    describe('terminateVat', () => {
+      it('hands a queued termination request to the vat manager', async () => {
+        const reason = kser('because');
+        const crankResult = { irrevocable: true };
+        mockTerminateVat.mockResolvedValueOnce(crankResult);
+
+        const result = await kernelRouter.deliver({
+          type: 'terminateVat',
+          vatId: 'v1',
+          reason,
+        });
+
+        expect(mockTerminateVat).toHaveBeenCalledWith('v1', reason);
+        expect(result).toBe(crankResult);
+      });
+
+      it('passes no reason on when the request carried none', async () => {
+        await kernelRouter.deliver({ type: 'terminateVat', vatId: 'v1' });
+
+        expect(mockTerminateVat).toHaveBeenCalledWith('v1', undefined);
+      });
     });
   });
 });
