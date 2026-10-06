@@ -957,6 +957,31 @@ describe('VatManager', () => {
         );
       });
 
+      it('holds a restart asked for during a failing teardown for the termination', async () => {
+        await vatManager.runVat('v1', createMockVatConfig());
+        mockKernelQueue.enqueueTerminateVat.mockImplementationOnce(
+          () => undefined,
+        );
+        const terminating = vatManager.terminateVat('v1');
+        mockKernelStore.deleteVat.mockImplementationOnce(() => {
+          throw new Error('deleteVat failed');
+        });
+        let restarting: Promise<VatHandle> | undefined;
+        mockPlatformServices.terminate.mockImplementationOnce(async () => {
+          restarting = vatManager.restartVat('v1');
+        });
+
+        await vatManager.performVatTermination('v1');
+
+        await expect(restarting).rejects.toThrow(
+          'Restart of vat v1 was overtaken by a termination that failed',
+        );
+        await expect(terminating).rejects.toThrow(
+          'Termination of vat v1 failed',
+        );
+        expect(mockKernelQueue.enqueueRestartVat).not.toHaveBeenCalled();
+      });
+
       it('tells an overtaken restart it was not carried out when the teardown fails', async () => {
         await vatManager.runVat('v1', createMockVatConfig());
         leaveRequestQueued();

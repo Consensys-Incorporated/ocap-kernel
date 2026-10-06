@@ -628,15 +628,17 @@ export class VatManager {
     vatId: VatId,
     reason?: CapData<KRef>,
   ): Promise<CrankResult | undefined> {
-    const pending = (this.#pendingTerminations.get(vatId) ?? 0) - 1;
-    if (pending > 0) {
-      this.#pendingTerminations.set(vatId, pending);
-    } else {
-      this.#pendingTerminations.delete(vatId);
-    }
     const taken = this.#takeWaiters(this.#terminationWaiters, vatId);
-    const superseded = this.#takeWaiters(this.#supersededRestarts, vatId);
+    // Not before the teardown ends: a restart asked for during it must still
+    // wait for this crank, whose failure can leave the vat known.
     const answerOnceCrankEnds = (failure?: Error): void => {
+      const pending = (this.#pendingTerminations.get(vatId) ?? 0) - 1;
+      if (pending > 0) {
+        this.#pendingTerminations.set(vatId, pending);
+      } else {
+        this.#pendingTerminations.delete(vatId);
+      }
+      const superseded = this.#takeWaiters(this.#supersededRestarts, vatId);
       taken.answerOnceCrankEnds(failure);
       superseded.answerOnceCrankEnds(
         failure
