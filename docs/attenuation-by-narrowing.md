@@ -157,12 +157,12 @@ delta cannot promote an optional argument to required, and cannot change arity.
 It is an error for a delta to name a method the base does not have, or a position
 beyond the base's maximum arity when the base has no rest guard.
 
-A position that lands in the rest guard conjoins onto it. Since a rest guard is
-one pattern over all trailing arguments, the conjunction constrains every one of
-them rather than only the position named, and several such positions conjoin onto
-the same guard. `guard(B) ≤ guard(A)` still holds and the forward is still
-unaltered, and the surprise runs in the safe direction: the author gets less
-authority than intended, never more.
+A position that lands in the rest guard still addresses its own argument. A rest
+guard is one pattern over the array of trailing arguments, so the patterns at
+rest positions are gathered into `M.splitArray([], [p, …])` over that array and
+conjoined onto the base's rest guard. They sit in optional slots, so each
+constrains its argument when present without making it required, and arguments
+past the last pattern are left as the base has them.
 
 ### Default-guarded bases
 

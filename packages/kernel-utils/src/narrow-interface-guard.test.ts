@@ -20,7 +20,7 @@ import type {
 const makeBaseGuard = (): InterfaceGuard =>
   M.interface('Store', {
     read: M.callWhen(M.string()).optional(M.number()).returns(M.any()),
-    write: M.callWhen(M.string()).rest(M.number()).returns(M.any()),
+    write: M.callWhen(M.string()).rest(M.arrayOf(M.number())).returns(M.any()),
     drop: M.callWhen(M.string()).returns(M.any()),
   });
 
@@ -123,15 +123,47 @@ describe('narrowInterfaceGuard', () => {
     expect(matches(20, optionalArgGuards![0])).toBe(false);
   });
 
-  it('conjoins onto the rest guard past the fixed arity', () => {
+  it.each([
+    { args: ['s'], expected: true },
+    { args: ['s', 5], expected: true },
+    { args: ['s', 50], expected: false },
+    { args: ['s', 5, 50], expected: true },
+    { args: ['s', 50, 5], expected: false },
+    { args: ['s', 5, 'x'], expected: false },
+  ])(
+    'conjoins a rest position onto its own argument: write$args is $expected',
+    ({ args, expected }) => {
+      const result = narrowFrom(makeBaseGuard(), {
+        write: [undefined, M.lte(10)],
+      });
+
+      expect(admits(result, 'write', args)).toBe(expected);
+    },
+  );
+
+  it.each([
+    { args: ['s', 5, 9, 99], expected: true },
+    { args: ['s', 5, 11], expected: false },
+    { args: ['s', 50, 9], expected: true },
+  ])(
+    'constrains each rest position separately: write$args is $expected',
+    ({ args, expected }) => {
+      const result = narrowFrom(makeBaseGuard(), {
+        write: [undefined, undefined, M.lte(10)],
+      });
+
+      expect(admits(result, 'write', args)).toBe(expected);
+    },
+  );
+
+  it('leaves the rest guard as the base has it when no pattern reaches it', () => {
     const baseGuard = makeBaseGuard();
 
-    const result = narrowFrom(baseGuard, { write: [undefined, M.lte(10)] });
-    const { argGuards, restArgGuard } = payloadOf(result, 'write');
+    const result = narrowFrom(baseGuard, { write: [M.eq('s'), undefined] });
 
-    expect(argGuards).toStrictEqual(payloadOf(baseGuard, 'write').argGuards);
-    expect(matches(5, restArgGuard)).toBe(true);
-    expect(matches(20, restArgGuard)).toBe(false);
+    expect(payloadOf(result, 'write').restArgGuard).toBe(
+      payloadOf(baseGuard, 'write').restArgGuard,
+    );
   });
 
   it('renders one row positionally', () => {
@@ -200,24 +232,20 @@ describe('narrowInterfaceGuard, against a default-guarded base', () => {
 
   it('synthesizes a guard from the delta alone', () => {
     const result = narrowFrom(makePassableGuard(), { read: [M.eq('a')] });
-    const { argGuards, restArgGuard } = payloadOf(result, 'read');
 
-    expect(matches('a', argGuards[0])).toBe(true);
-    expect(matches('b', argGuards[0])).toBe(false);
-    expect(matches('anything', restArgGuard)).toBe(true);
+    expect(admits(result, 'read', ['a'])).toBe(true);
+    expect(admits(result, 'read', ['a', 'anything', 42])).toBe(true);
+    expect(admits(result, 'read', ['b'])).toBe(false);
   });
 
   it('leaves a method unconstrained when its delta is empty', () => {
     const result = narrowFrom(makePassableGuard(), { read: [] });
-    const { argGuards, optionalArgGuards, restArgGuard } = payloadOf(
-      result,
-      'read',
-    );
+    const { argGuards, optionalArgGuards } = payloadOf(result, 'read');
 
     expect(argGuards).toStrictEqual([]);
     expect(optionalArgGuards ?? []).toStrictEqual([]);
-    expect(matches('anything', restArgGuard)).toBe(true);
-    expect(matches(42, restArgGuard)).toBe(true);
+    expect(admits(result, 'read', [])).toBe(true);
+    expect(admits(result, 'read', ['anything', 42])).toBe(true);
   });
 
   it('treats a hole as unconstrained', () => {
@@ -385,13 +413,11 @@ describe('narrowInterfaceGuard, with several rows', () => {
           .returns(M.any()),
       });
 
-    // A rest guard matches the trailing arguments as one array, so the third
-    // row's rest pattern is an array pattern.
     const result = narrowRowsFrom(makeMixedGuard(), {
       put: [
         [M.eq('a')],
         [M.eq('b'), M.lte(10)],
-        [M.eq('c'), undefined, M.arrayOf(M.eq('z'))],
+        [M.eq('c'), undefined, M.eq('z')],
       ],
     });
 
@@ -405,6 +431,7 @@ describe('narrowInterfaceGuard, with several rows', () => {
       { args: ['b', 50], expected: false },
       { args: ['c', 50], expected: true },
       { args: ['c', 50, 'z', 'z'], expected: true },
+      { args: ['c', 50, 'z', 'y'], expected: true },
       { args: ['c', 50, 'y'], expected: false },
       { args: ['a', 'not a number'], expected: false },
       { args: ['a', 1, 2], expected: false },

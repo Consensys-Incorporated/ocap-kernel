@@ -150,12 +150,28 @@ type RowGuards = {
 };
 
 /**
+ * Drop a row's trailing holes.
+ *
+ * @param row - The row.
+ * @returns The row up to its last pattern.
+ */
+const trimTrailingHoles = (row: DeltaRow): DeltaRow => {
+  let end = row.length;
+  while (end > 0 && row[end - 1] === undefined) {
+    end -= 1;
+  }
+  return row.slice(0, end);
+};
+
+/**
  * Conjoin one row onto the positions of a base method guard it addresses.
  *
  * Positions are walked as required arguments, then optionals, then the rest
- * guard, and each stays in the category it lands in. Every position past the
- * fixed arity conjoins onto the one rest guard, which is the only thing a rest
- * position can express.
+ * guard, and each stays in the category it lands in. A rest guard matches the
+ * trailing arguments as one array, so the patterns past the fixed arity are
+ * conjoined onto it as optional slots of an `M.splitArray`: each constrains its
+ * own argument when present, and arguments past the last are left as the base
+ * has them.
  *
  * @param methodName - The method being narrowed, for error messages.
  * @param baseMethodGuard - The guard to narrow.
@@ -187,9 +203,17 @@ const narrowRow = (
       conjoin(guard, row[argGuards.length + index]),
     ),
     rest:
-      restArgGuard === undefined
-        ? undefined
-        : row.slice(maxArity).reduce(conjoin, restArgGuard),
+      restArgGuard === undefined || beyondArity === -1
+        ? restArgGuard
+        : M.and(
+            restArgGuard,
+            M.splitArray(
+              [],
+              trimTrailingHoles(row.slice(maxArity)).map(
+                (pattern) => pattern ?? M.any(),
+              ),
+            ),
+          ),
   };
 };
 
@@ -215,12 +239,8 @@ const narrowRow = (
  * @returns The row's argument guards.
  */
 const synthesizeRow = (row: DeltaRow): RowGuards => {
-  let end = row.length;
-  while (end > 0 && row[end - 1] === undefined) {
-    end -= 1;
-  }
   return {
-    required: row.slice(0, end).map((pattern) => pattern ?? M.any()),
+    required: trimTrailingHoles(row).map((pattern) => pattern ?? M.any()),
     optionals: [],
     rest: M.any(),
   };
