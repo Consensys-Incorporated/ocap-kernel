@@ -73,7 +73,7 @@ describe('VatManager', () => {
 
     mockPlatformServices = {
       launch: vi.fn().mockResolvedValue({
-        end: vi.fn(),
+        end: vi.fn().mockResolvedValue(undefined),
       } as unknown as DuplexStream<JsonRpcMessage, JsonRpcMessage>),
       terminate: vi.fn().mockResolvedValue(undefined),
       terminateAll: vi.fn().mockResolvedValue(undefined),
@@ -1139,10 +1139,29 @@ describe('VatManager', () => {
         makeVatHandleMock.mockReturnValueOnce(handshake);
 
         await restartPastTheTimeout();
-        finishHandshake(createMockVatHandle('v1', createMockVatConfig()));
+        const lateHandle = createMockVatHandle('v1', createMockVatConfig());
+        finishHandshake(lateHandle);
         await delay();
 
         expect(vatManager.hasVat('v1')).toBe(false);
+        expect(lateHandle.terminate).toHaveBeenCalledWith(true);
+      });
+
+      it('closes the channel of a handshake still under way', async () => {
+        await vatManager.runVat('v1', createMockVatConfig());
+        const channel = {
+          end: vi.fn().mockResolvedValue(undefined),
+        } as unknown as DuplexStream<JsonRpcMessage, JsonRpcMessage>;
+        mockPlatformServices.launch.mockResolvedValueOnce(channel);
+        makeVatHandleMock.mockReturnValueOnce(new Promise(() => undefined));
+
+        await restartPastTheTimeout();
+
+        expect(channel.end).toHaveBeenCalledWith(
+          expect.objectContaining({
+            message: 'Vat v1 did not start within 1 ms',
+          }),
+        );
       });
 
       it('stops a worker whose launch finishes late', async () => {

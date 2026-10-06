@@ -57,7 +57,7 @@ async function setUp(
   );
   const platformServices = {
     launch: vi.fn().mockResolvedValue({
-      end: vi.fn(),
+      end: vi.fn().mockResolvedValue(undefined),
     } as unknown as DuplexStream<JsonRpcMessage, JsonRpcMessage>),
     terminate: vi.fn().mockResolvedValue(undefined),
   } as unknown as PlatformServices;

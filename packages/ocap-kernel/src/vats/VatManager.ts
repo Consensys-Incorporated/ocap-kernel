@@ -6,7 +6,9 @@ import {
   VatNotFoundError,
 } from '@metamask/kernel-errors';
 import { stringify } from '@metamask/kernel-utils';
+import type { JsonRpcMessage } from '@metamask/kernel-utils';
 import { Logger, splitLoggerStream } from '@metamask/logger';
+import type { DuplexStream } from '@metamask/streams';
 
 import type { KernelQueue } from '../KernelQueue.ts';
 import {
@@ -35,8 +37,14 @@ type StopVatOptions = { vatId: VatId } & (
 /** Set once `VatHandle.make` returns. */
 type RunningVat = { handle?: VatHandle };
 
-/** Set when a relaunch gives up on the worker it is starting. */
-type Launch = { abandoned: boolean };
+/**
+ * A relaunch's view of the worker it is starting: set abandoned when it gives
+ * up, and given the worker's channel once there is one, to close.
+ */
+type Launch = {
+  abandoned: boolean;
+  stream?: DuplexStream<JsonRpcMessage, JsonRpcMessage>;
+};
 
 /** How long a restart waits for the new worker before giving up on it. */
 export const DEFAULT_VAT_RELAUNCH_TIMEOUT_MS = 30_000;
@@ -251,6 +259,9 @@ export class VatManager {
         );
       return;
     }
+    if (launch) {
+      launch.stream = stream;
+    }
     const { kernelStream: vatStream, loggerStream } = splitLoggerStream(stream);
     const vatLogger = this.#logger.subLogger({ tags: [vatId] });
     vatLogger.injectStream(
@@ -287,6 +298,14 @@ export class VatManager {
     if (launch?.abandoned) {
       // The crank that gave up on this worker retires the vat, so a handle
       // registered now would bring it back.
+      vat
+        .terminate(true)
+        .catch((error: unknown) =>
+          this.#logger.error(
+            `Failed to close the channel of vat ${vatId} after its relaunch timed out:`,
+            error,
+          ),
+        );
       return;
     }
     running.handle = vat;
@@ -319,6 +338,16 @@ export class VatManager {
       if (error === timeoutError) {
         launch.abandoned = true;
         starting.catch(() => undefined);
+        // Closed so a handshake still under way fails rather than writing the
+        // vat's state after the crank has retired it.
+        launch.stream
+          ?.end(timeoutError)
+          .catch((closeError: unknown) =>
+            this.#logger.error(
+              `Failed to close the channel of vat ${vatId} after its relaunch timed out:`,
+              closeError,
+            ),
+          );
         // Not awaited: a platform that is stuck launching may be stuck
         // stopping too.
         this.#platformServices
