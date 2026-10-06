@@ -879,6 +879,7 @@ export class Kernel {
     this.#kernelStore.recordLastActiveTime();
     await this.#platformServices.stopRemoteComms();
     this.#remoteManager.cleanup();
+    this.#vatManager.expectWorkersToStop();
     await this.#platformServices.terminateAll();
     this.#kernelDatabase.close();
   }

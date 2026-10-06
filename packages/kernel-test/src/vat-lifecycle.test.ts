@@ -246,7 +246,7 @@ describe('Vat Lifecycle', { timeout: 30_000 }, () => {
     await waitUntilQuiescent();
     const vatId = kernel.getVats()[0]?.id as VatId;
 
-    // The kernel cannot see a killed worker, only a bad frame from a live one.
+    // A live worker sending a frame the kernel cannot read.
     platformServices.workers.get(vatId)?.worker.emit('message', NaN);
     await waitUntilQuiescent();
     kernel.collectGarbage();
@@ -255,5 +255,48 @@ describe('Vat Lifecycle', { timeout: 30_000 }, () => {
     expect(kernel.getVats()).toStrictEqual([]);
     expect(kernelStore.isVatActive(vatId)).toBe(false);
     expect([...kernelStore.getAllVatRecords()]).toStrictEqual([]);
+  });
+
+  it('retires a vat whose worker dies, and keeps serving the rest', async () => {
+    const kernelDatabase = await makeSQLKernelDatabase({
+      dbFilename: ':memory:',
+    });
+    const platformServices = new NodejsPlatformServices({
+      logger: logger.logger.subLogger({ tags: ['vat-worker-manager'] }),
+    });
+    const kernel = await makeKernel(
+      kernelDatabase,
+      true,
+      logger.logger.subLogger({ tags: ['test'] }),
+      undefined,
+      platformServices,
+    );
+    const kernelStore = makeKernelStore(kernelDatabase);
+
+    await runTestVats(kernel, {
+      bootstrap: 'main',
+      vats: {
+        main: {
+          bundleSpec: getBundleSpec('persistence-counter-vat'),
+          parameters: { name: 'Doomed' },
+        },
+        survivor: {
+          bundleSpec: getBundleSpec('persistence-counter-vat'),
+          parameters: { name: 'Survivor' },
+        },
+      },
+    });
+    await waitUntilQuiescent();
+    const survivorRoot = kernelStore.getRootObject('v2') as string;
+
+    // A worker that dies closes its channel rather than erroring on it.
+    await platformServices.workers.get('v1')?.worker.terminate();
+    await waitUntilQuiescent(2000);
+
+    expect(kernel.getVatIds()).not.toContain('v1');
+    expect(kernelStore.isVatActive('v1')).toBe(false);
+    expect(await runResume(kernel, survivorRoot)).toBe(
+      'Counter incremented to: 2',
+    );
   });
 });

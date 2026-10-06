@@ -200,6 +200,48 @@ describe('NodejsPlatformServices', () => {
     });
   });
 
+  describe('a worker that exits once online', () => {
+    it('is forgotten, and its channel closed', async () => {
+      const service = new NodejsPlatformServices({ workerFilePath });
+      const testVatId: VatId = getTestVatId();
+      const worker = mocks.createMockWorker();
+      vi.mocked(NodeWorker).mockImplementationOnce(function () {
+        return worker;
+      });
+      await service.launch(testVatId);
+      mocks.stream.return.mockClear();
+
+      worker.emit('exit', 1);
+
+      expect(service.workers.has(testVatId)).toBe(false);
+      // A worker thread that dies emits no port event, so this is how the
+      // kernel hears of it.
+      expect(mocks.stream.return).toHaveBeenCalledOnce();
+    });
+
+    it('leaves a replacement worker alone', async () => {
+      const service = new NodejsPlatformServices({ workerFilePath });
+      const testVatId: VatId = getTestVatId();
+      const firstWorker = mocks.createMockWorker();
+      const secondWorker = mocks.createMockWorker();
+      vi.mocked(NodeWorker)
+        .mockImplementationOnce(function () {
+          return firstWorker;
+        })
+        .mockImplementationOnce(function () {
+          return secondWorker;
+        });
+      await service.launch(testVatId);
+      // Kept listeners, as a worker whose terminate failed part-way would.
+      service.workers.delete(testVatId);
+      await service.launch(testVatId);
+
+      firstWorker.emit('exit', 1);
+
+      expect(service.workers.get(testVatId)?.worker).toBe(secondWorker);
+    });
+  });
+
   describe('terminate', () => {
     it('terminates the target vat', async () => {
       const service = new NodejsPlatformServices({
@@ -214,15 +256,14 @@ describe('NodejsPlatformServices', () => {
       expect(service.workers.has(testVatId)).toBe(false);
     });
 
-    it('throws when terminating an unknown vat', async () => {
+    it('tolerates terminating a vat with no worker', async () => {
       const service = new NodejsPlatformServices({
         workerFilePath,
       });
       const testVatId: VatId = getTestVatId();
 
-      await expect(service.terminate(testVatId)).rejects.toThrowError(
-        /No worker found/u,
-      );
+      // A worker that exited on its own has already taken its entry.
+      expect(await service.terminate(testVatId)).toBeUndefined();
     });
   });
 

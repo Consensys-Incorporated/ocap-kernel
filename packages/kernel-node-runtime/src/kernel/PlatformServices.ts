@@ -17,7 +17,6 @@ import type {
 import { initTransport } from '@metamask/ocap-kernel';
 import { NodeWorkerDuplexStream } from '@metamask/streams';
 import type { DuplexStream } from '@metamask/streams';
-import { strict as assert } from 'node:assert';
 import { Worker as NodeWorker } from 'node:worker_threads';
 
 // Worker file loads from the built dist directory, requires rebuild after change
@@ -128,6 +127,25 @@ export class NodejsPlatformServices implements PlatformServices {
       // Remove error and exit listeners now that worker is online
       worker.removeAllListeners('error');
       worker.removeAllListeners('exit');
+      worker.once('exit', (code) => {
+        // An orderly `terminate` removes this listener before killing the
+        // worker, so reaching it means the worker went away on its own. Guarded
+        // by identity in case a replacement is registered under this vat id.
+        const entry = this.workers.get(vatId);
+        if (entry?.worker !== worker) {
+          return;
+        }
+        this.workers.delete(vatId);
+        this.#logger.error(`Worker ${vatId} exited with code ${code}`);
+        // A worker thread that dies emits no port event, so closing the
+        // channel is the only way the kernel hears of it.
+        entry.stream.return().catch((error: unknown) => {
+          this.#logger.error(
+            `Failed to close the channel of exited worker ${vatId}:`,
+            error,
+          );
+        });
+      });
 
       const stream = new NodeWorkerDuplexStream<JsonRpcMessage, JsonRpcMessage>(
         worker,
@@ -163,12 +181,17 @@ export class NodejsPlatformServices implements PlatformServices {
    * Terminate a worker identified by its vat id.
    *
    * @param vatId - The vat id of the worker to terminate.
-   * @returns A promise that resolves when the worker has terminated
-   * or rejects if that worker does not exist.
+   * @returns A promise that resolves when the worker has terminated, or at
+   * once if there is no worker to terminate.
    */
   async terminate(vatId: VatId): Promise<undefined> {
     const workerEntry = this.workers.get(vatId);
-    assert(workerEntry, `No worker found for vatId ${vatId}`);
+    if (!workerEntry) {
+      // A worker that exited on its own took its entry with it, and its vat is
+      // being torn down because of that: there is nothing left to stop.
+      this.#logger.debug(`No worker to terminate for vat ${vatId}`);
+      return undefined;
+    }
     const { worker, stream } = workerEntry;
     await stream.return();
     worker.removeAllListeners();

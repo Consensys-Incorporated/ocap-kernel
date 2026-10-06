@@ -88,28 +88,23 @@ describe('VatHandle', () => {
       });
     });
 
-    it('throws if the stream throws', async () => {
-      const logger = {
-        error: vi.fn(),
-        subLogger: vi.fn(() => logger),
-      } as unknown as Logger;
-      const { stream } = await makeVat({ logger });
+    it('reports the failure if the stream throws', async () => {
+      const onStreamFailure = vi.fn();
+      const { stream } = await makeVat({ onStreamFailure });
       await stream.receiveInput(NaN);
       await delay(10);
-      expect(logger.error).toHaveBeenCalledWith(
-        'Unexpected read error',
+      expect(onStreamFailure).toHaveBeenCalledWith(
         expect.objectContaining({
-          message: expect.stringMatching(/Message failed type validation/u),
+          cause: expect.objectContaining({
+            message: expect.stringMatching(/Message failed type validation/u),
+          }),
         }),
       );
     });
 
-    it('throws if handleMessage throws', async () => {
-      const logger = {
-        error: vi.fn(),
-        subLogger: vi.fn(() => logger),
-      } as unknown as Logger;
-      const { stream } = await makeVat({ logger });
+    it('reports the failure if handleMessage throws', async () => {
+      const onStreamFailure = vi.fn();
+      const { stream } = await makeVat({ onStreamFailure });
       await stream.receiveInput({
         id: 'v0:1',
         method: 'ping',
@@ -117,10 +112,11 @@ describe('VatHandle', () => {
         jsonrpc: '2.0',
       });
       await delay(10);
-      expect(logger.error).toHaveBeenCalledWith(
-        'Unexpected read error',
+      expect(onStreamFailure).toHaveBeenCalledWith(
         expect.objectContaining({
-          message: expect.stringMatching(/^Received unexpected message/u),
+          cause: expect.objectContaining({
+            message: expect.stringMatching(/^Received unexpected message/u),
+          }),
         }),
       );
     });
@@ -137,6 +133,27 @@ describe('VatHandle', () => {
           message: 'Unexpected stream read error.',
         }),
       );
+    });
+
+    it('reports a channel that closes with no error', async () => {
+      const onStreamFailure = vi.fn();
+      const { stream } = await makeVat({ onStreamFailure });
+
+      // What a worker that exits produces: the drain ends rather than failing.
+      await stream.return();
+      await delay(10);
+
+      expect(onStreamFailure).toHaveBeenCalledOnce();
+    });
+
+    it('says nothing when the kernel closes the channel', async () => {
+      const onStreamFailure = vi.fn();
+      const { vat } = await makeVat({ onStreamFailure });
+
+      await vat.terminate(true);
+      await delay(10);
+
+      expect(onStreamFailure).not.toHaveBeenCalled();
     });
 
     it('rejects pending commands when the channel dies', async () => {

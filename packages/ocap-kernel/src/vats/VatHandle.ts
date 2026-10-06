@@ -76,6 +76,9 @@ export class VatHandle implements EndpointHandle {
   /** Told when the channel to the worker fails */
   readonly #onStreamFailure: (error: Error) => void;
 
+  /** Whether the kernel is closing the channel itself */
+  #closing: boolean = false;
+
   readonly #rpcClient: RpcClient<typeof vatMethodSpecs>;
 
   readonly #rpcService: RpcService<typeof vatSyscallHandlers>;
@@ -161,26 +164,18 @@ export class VatHandle implements EndpointHandle {
    * @returns A promise for the vat's initial delivery result.
    */
   async #init(): Promise<VatDeliveryResult> {
-    Promise.all([this.#vatStream.drain(this.#handleMessage.bind(this))]).catch(
-      (error) => {
-        this.#logger?.error(`Unexpected read error`, error);
-        const streamError = new StreamReadError({ vatId: this.vatId }, error);
-        try {
-          // Now, not in the retirement's `terminate`: that waits for the
-          // current crank, which may be blocked on a pending command.
-          this.#rpcClient.rejectAll(streamError);
-        } finally {
-          try {
-            this.#onStreamFailure(streamError);
-          } catch (reportError) {
-            this.#logger?.error(
-              `Failed to report the dead channel of vat ${this.vatId}`,
-              reportError,
-            );
-          }
-        }
-      },
-    );
+    this.#vatStream
+      .drain(this.#handleMessage.bind(this))
+      .then(() => {
+        // A worker that exits closes the channel rather than erroring on it,
+        // so the drain resolves. Silence from a vat nobody asked to close is
+        // the vat going away, not the vat behaving.
+        this.#reportStreamFailure(new Error('vat channel closed'));
+        return undefined;
+      })
+      .catch((error: Error) => {
+        this.#reportStreamFailure(error);
+      });
 
     return await this.sendVatCommand({
       method: 'initVat',
@@ -192,6 +187,36 @@ export class VatHandle implements EndpointHandle {
           : {}),
       },
     });
+  }
+
+  /**
+   * Fail the commands waiting on a channel that has gone, and tell the
+   * manager, unless the kernel is closing the channel itself.
+   *
+   * @param error - What the channel ended with.
+   */
+  #reportStreamFailure(error: Error): void {
+    if (this.#closing) {
+      return;
+    }
+    const streamError = new StreamReadError(
+      { vatId: this.vatId },
+      { cause: error },
+    );
+    try {
+      // Now, not in the retirement's `terminate`: that waits for the current
+      // crank, which may be blocked on a pending command.
+      this.#rpcClient.rejectAll(streamError);
+    } finally {
+      try {
+        this.#onStreamFailure(streamError);
+      } catch (reportError) {
+        this.#logger?.error(
+          `Failed to report the dead channel of vat ${this.vatId}`,
+          reportError,
+        );
+      }
+    }
   }
 
   /**
@@ -321,6 +346,7 @@ export class VatHandle implements EndpointHandle {
    * @param error - The error to terminate the vat with.
    */
   async terminate(terminating: boolean, error?: Error): Promise<void> {
+    this.#closing = true;
     if (terminating) {
       // Before `end`, which may never settle.
       this.#rpcClient.rejectAll(error ?? new VatDeletedError(this.vatId));
