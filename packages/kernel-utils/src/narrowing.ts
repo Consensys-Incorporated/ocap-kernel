@@ -93,6 +93,8 @@ const mint = <Minted extends Methods>({
   baseGuard: InterfaceGuard;
   delta: DisjunctiveDelta;
 }): Guarded<Minted> => {
+  // Recorded below, so a caller changing its delta later grants nothing.
+  harden(delta);
   const derivedGuard = narrowInterfaceGuard({ name, baseGuard, delta });
   const methods = Object.fromEntries(
     Object.keys(getInterfaceMethodGuards(derivedGuard)).map((methodName) => [

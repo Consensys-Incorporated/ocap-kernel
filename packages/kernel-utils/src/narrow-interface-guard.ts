@@ -39,7 +39,10 @@ export type DisjunctiveDelta = Record<string, DeltaRow[]>;
  */
 export const toDisjunctiveDelta = (delta: NarrowingDelta): DisjunctiveDelta =>
   Object.fromEntries(
-    Object.entries(delta).map(([methodName, row]) => [methodName, [row]]),
+    Object.entries(delta).map(([methodName, row]) => [
+      methodName,
+      [Array.from(row)],
+    ]),
   );
 
 /**
@@ -89,7 +92,9 @@ export const conjoinDeltas = (
 ): DisjunctiveDelta => {
   const combined: DisjunctiveDelta = {};
   for (const [methodName, row] of Object.entries(incoming)) {
-    const inherited = existing[methodName];
+    const inherited = Object.hasOwn(existing, methodName)
+      ? existing[methodName]
+      : undefined;
     if (inherited === undefined) {
       throw new Error(
         `Cannot narrow method "${methodName}": the base has no such method.`,
@@ -101,6 +106,16 @@ export const conjoinDeltas = (
   }
   return combined;
 };
+
+/**
+ * Read a method's rows, ignoring inherited properties.
+ *
+ * @param delta - The delta to read.
+ * @param methodName - The method.
+ * @returns The method's rows, or none if the delta does not name it.
+ */
+const rowsOf = (delta: DisjunctiveDelta, methodName: string): DeltaRow[] =>
+  (Object.hasOwn(delta, methodName) ? delta[methodName] : undefined) ?? [];
 
 /**
  * Disjoin two deltas, so that a join admits exactly what either operand admits.
@@ -129,7 +144,7 @@ export const disjoinDeltas = (
   ])) {
     // TODO: Two rows that differ at exactly one position can be merged into
     // one, disjoining that position, without changing what the method admits.
-    const rows = [...(left[methodName] ?? []), ...(right[methodName] ?? [])];
+    const rows = [...rowsOf(left, methodName), ...rowsOf(right, methodName)];
     disjoined[methodName] = rows.some((row) =>
       row.every((pattern) => pattern === undefined),
     )
@@ -162,6 +177,16 @@ const trimTrailingHoles = (row: DeltaRow): DeltaRow => {
   }
   return row.slice(0, end);
 };
+
+/**
+ * Replace a row's holes with `M.any()`, sparse holes included, which `map`
+ * would skip.
+ *
+ * @param row - The row.
+ * @returns The row's patterns, with no holes.
+ */
+const fillHoles = (row: DeltaRow): Pattern[] =>
+  Array.from(row, (pattern) => pattern ?? M.any());
 
 /**
  * Conjoin one row onto the positions of a base method guard it addresses.
@@ -207,12 +232,7 @@ const narrowRow = (
         ? restArgGuard
         : M.and(
             restArgGuard,
-            M.splitArray(
-              [],
-              trimTrailingHoles(row.slice(maxArity)).map(
-                (pattern) => pattern ?? M.any(),
-              ),
-            ),
+            M.splitArray([], fillHoles(trimTrailingHoles(row.slice(maxArity)))),
           ),
   };
 };
@@ -240,7 +260,7 @@ const narrowRow = (
  */
 const synthesizeRow = (row: DeltaRow): RowGuards => {
   return {
-    required: trimTrailingHoles(row).map((pattern) => pattern ?? M.any()),
+    required: fillHoles(trimTrailingHoles(row)),
     optionals: [],
     rest: M.any(),
   };
@@ -352,7 +372,9 @@ export const narrowInterfaceGuard = ({
 
   const narrowedMethodGuards: Record<string, MethodGuard> = {};
   for (const [methodName, rows] of Object.entries(delta)) {
-    const baseMethodGuard = baseMethodGuards[methodName];
+    const baseMethodGuard = Object.hasOwn(baseMethodGuards, methodName)
+      ? baseMethodGuards[methodName]
+      : undefined;
     if (baseMethodGuard === undefined) {
       if (defaultGuards === 'passable') {
         narrowedMethodGuards[methodName] = renderMethodGuard(

@@ -156,6 +156,16 @@ describe('narrowInterfaceGuard', () => {
     },
   );
 
+  it('reads a sparse hole at a rest position as unconstrained', () => {
+    const result = narrowFrom(makeBaseGuard(), {
+      // eslint-disable-next-line no-sparse-arrays
+      write: [undefined, , M.lte(10)],
+    });
+
+    expect(admits(result, 'write', ['s', 50, 5])).toBe(true);
+    expect(admits(result, 'write', ['s', 50, 50])).toBe(false);
+  });
+
   it('leaves the rest guard as the base has it when no pattern reaches it', () => {
     const baseGuard = makeBaseGuard();
 
@@ -221,6 +231,12 @@ describe('narrowInterfaceGuard', () => {
       delta: { read: [M.eq('a')] },
       message: 'there is no guard to conjoin onto',
     },
+    {
+      scenario: 'names an Object.prototype member the base does not have',
+      makeGuard: makeBaseGuard,
+      delta: { toString: [] },
+      message: 'the base has no such method',
+    },
   ])('rejects a delta that $scenario', ({ makeGuard, delta, message }) => {
     expect(() => narrowFrom(makeGuard(), delta)).toThrow(message);
   });
@@ -257,6 +273,21 @@ describe('narrowInterfaceGuard, against a default-guarded base', () => {
     expect(matches(42, argGuards[0])).toBe(true);
     expect(matches('x', argGuards[1])).toBe(true);
     expect(matches('y', argGuards[1])).toBe(false);
+  });
+
+  it('treats a sparse hole as unconstrained', () => {
+    // eslint-disable-next-line no-sparse-arrays
+    const result = narrowFrom(makePassableGuard(), { read: [, M.eq('x')] });
+
+    expect(admits(result, 'read', [42, 'x'])).toBe(true);
+    expect(admits(result, 'read', [42, 'y'])).toBe(false);
+  });
+
+  it('synthesizes a method named after an Object.prototype member', () => {
+    const result = narrowFrom(makePassableGuard(), { toString: [M.eq('x')] });
+
+    expect(admits(result, 'toString', ['x'])).toBe(true);
+    expect(admits(result, 'toString', ['y'])).toBe(false);
   });
 
   it('still drops methods the delta does not name', () => {
@@ -473,6 +504,15 @@ describe('makeAbsorbingDelta', () => {
 });
 
 describe('toDisjunctiveDelta', () => {
+  it('copies each row, so changing the input later changes nothing', () => {
+    const delta = { read: [M.eq('a')] };
+
+    const lifted = toDisjunctiveDelta(delta);
+    delta.read[0] = M.any();
+
+    expect(lifted.read![0]![0]).toStrictEqual(M.eq('a'));
+  });
+
   it('makes each method its own only row', () => {
     const pattern = M.eq('a');
 
@@ -493,6 +533,12 @@ describe('conjoinDeltas', () => {
   it('does not reinstate a method the existing delta dropped', () => {
     expect(() => conjoinDeltas({ read: [[]] }, { write: [] })).toThrow(
       'Cannot narrow method "write": the base has no such method.',
+    );
+  });
+
+  it('does not mistake an Object.prototype member for a method', () => {
+    expect(() => conjoinDeltas({ read: [[]] }, { toString: [] })).toThrow(
+      'Cannot narrow method "toString": the base has no such method.',
     );
   });
 
@@ -569,6 +615,15 @@ describe('disjoinDeltas', () => {
     expect(disjoinDeltas({ read: [[]] }, { stat: [row] })).toStrictEqual({
       read: [[]],
       stat: [row],
+    });
+  });
+
+  it('carries a method named after an Object.prototype member', () => {
+    const row = [M.eq('a')];
+
+    expect(disjoinDeltas({ read: [[]] }, { toString: [row] })).toStrictEqual({
+      read: [[]],
+      toString: [row],
     });
   });
 

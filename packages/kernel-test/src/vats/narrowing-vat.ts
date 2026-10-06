@@ -145,6 +145,14 @@ export function buildRootObject() {
       return probe(async () => E(flattened).copy(from, to));
     },
 
+    probeDeltaChangedAfterNarrowing: async (segments: string[]) => {
+      const delta = { read: [pathUnder(['srv', 'data'])] };
+      const scoped = await narrow<Store>({ name: 'DataStore', base, delta });
+      delta.read[0] = M.any();
+      const joined = await join<Store>({ name: 'Rejoined', refs: [scoped] });
+      return probe(async () => E(joined).read(segments));
+    },
+
     probeDefaultGuarded: async (segments: string[]) => {
       const scoped = await narrow<Store>({
         name: 'LooseDataStore',
