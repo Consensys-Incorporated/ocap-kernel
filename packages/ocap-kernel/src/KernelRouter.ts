@@ -49,7 +49,10 @@ type KernelRouterOptions = {
   getEndpoint: (endpointId: EndpointId) => EndpointHandle;
   invokeKernelService: (target: KRef, message: KernelMessage) => void;
   restartVat: (vatId: VatId) => Promise<CrankResult | undefined>;
-  terminateVat: (vatId: VatId, reason?: CapData<KRef>) => Promise<void>;
+  terminateVat: (
+    vatId: VatId,
+    reason?: CapData<KRef>,
+  ) => Promise<CrankResult | undefined>;
   logger?: Logger;
 };
 
