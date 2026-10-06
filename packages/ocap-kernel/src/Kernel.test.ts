@@ -230,7 +230,7 @@ describe('Kernel', () => {
           vatId,
           config: vatConfig,
           init: vi.fn(),
-          terminate: vi.fn(),
+          terminate: vi.fn().mockResolvedValue(undefined),
           handleMessage: vi.fn(),
           deliverMessage: vi.fn(),
           deliverNotify: vi.fn(),
