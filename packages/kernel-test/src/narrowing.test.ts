@@ -69,6 +69,65 @@ describe('narrowing', () => {
     );
   });
 
+  it.each([
+    { from: ['srv', 'data', 'x'], to: ['srv', 'data', 'y'] },
+    { from: ['srv', 'logs', 'x'], to: ['srv', 'logs', 'y'] },
+  ])(
+    'joins multi-argument narrowings: copy($from, $to)',
+    async ({ from, to }) => {
+      const kernel = await launchNarrowingVat();
+      expect(await probe(kernel, 'probeJoinedCopy', [from, to])).toBe(
+        `ok:copy:${from.join('/')}->${to.join('/')}`,
+      );
+    },
+  );
+
+  it('rejects a call combining the arguments of two joined narrowings', async () => {
+    const kernel = await launchNarrowingVat();
+    expect(
+      await probe(kernel, 'probeJoinedCopy', [
+        ['srv', 'data', 'x'],
+        ['srv', 'logs', 'y'],
+      ]),
+    ).toMatch(/^rejected:.*\bcopy\b/u);
+  });
+
+  it.each([
+    {
+      scenario: 'admits a call within one operand',
+      to: ['srv', 'logs', 'y'],
+      from: ['srv', 'logs', 'x'],
+      expected: /^ok:copy:srv\/logs\/x->srv\/logs\/y$/u,
+    },
+    {
+      scenario: 'rejects a call the narrowing excludes',
+      from: ['srv', 'logs', 'x'],
+      to: ['srv', 'logs', 'secret'],
+      expected: /^rejected:.*\bcopy\b/u,
+    },
+    {
+      scenario: 'rejects the cross-combination',
+      from: ['srv', 'data', 'x'],
+      to: ['srv', 'logs', 'y'],
+      expected: /^rejected:.*\bcopy\b/u,
+    },
+  ])('narrows a join: $scenario', async ({ from, to, expected }) => {
+    const kernel = await launchNarrowingVat();
+    expect(await probe(kernel, 'probeNarrowedJoin', [from, to])).toMatch(
+      expected,
+    );
+  });
+
+  it('flattens a narrowed join onto the original base', async () => {
+    const kernel = await launchNarrowingVat();
+    expect(
+      await probe(kernel, 'probeNarrowedJoinWithBase', [
+        ['srv', 'data', 'x'],
+        ['srv', 'logs', 'secret'],
+      ]),
+    ).toBe('ok:copy:srv/data/x->srv/logs/secret');
+  });
+
   it('narrows a default-guarded exo', async () => {
     const kernel = await launchNarrowingVat();
     expect(

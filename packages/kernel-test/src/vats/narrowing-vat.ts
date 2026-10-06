@@ -11,6 +11,7 @@ import { makeDefaultExo } from '@metamask/kernel-utils/exo';
 type Store = {
   read: (segments: string[]) => Promise<string>;
   stat: (segments: string[]) => Promise<string>;
+  copy: (from: string[], to: string[]) => Promise<string>;
 };
 
 /**
@@ -40,10 +41,15 @@ export function buildRootObject() {
     M.interface('Store', {
       read: M.call(M.arrayOf(M.string())).returns(M.string()),
       stat: M.call(M.arrayOf(M.string())).returns(M.string()),
+      copy: M.call(M.arrayOf(M.string()), M.arrayOf(M.string())).returns(
+        M.string(),
+      ),
     }),
     {
       read: (segments: string[]) => `read:${segments.join('/')}`,
       stat: (segments: string[]) => `stat:${segments.join('/')}`,
+      copy: (from: string[], to: string[]) =>
+        `copy:${from.join('/')}->${to.join('/')}`,
     },
   );
 
@@ -52,6 +58,42 @@ export function buildRootObject() {
   });
 
   const underData = { read: [pathUnder(['srv', 'data'])] };
+
+  /**
+   * Join a narrowing that copies within `srv/data` with one that copies within
+   * `srv/logs`.
+   *
+   * @returns The join.
+   */
+  const joinCopies = async (): Promise<Store> => {
+    const within = async (name: string, prefix: string[]): Promise<Store> =>
+      narrow<Store>({
+        name,
+        base,
+        delta: { copy: [pathUnder(prefix), pathUnder(prefix)] },
+      });
+    return join<Store>({
+      name: 'DataOrLogCopier',
+      refs: [
+        await within('DataCopier', ['srv', 'data']),
+        await within('LogCopier', ['srv', 'logs']),
+      ],
+    });
+  };
+
+  /**
+   * Narrow the join of copiers so that no destination segment is `secret`.
+   *
+   * @returns The narrowed join.
+   */
+  const narrowJoinedCopies = async (): Promise<Store> =>
+    narrow<Store>({
+      name: 'DataOrLogCopierNoSecrets',
+      base: await joinCopies(),
+      delta: {
+        copy: [undefined, M.arrayOf(M.not(M.eq('secret')))],
+      },
+    });
 
   return makeDefaultExo('root', {
     bootstrap: () => 'narrowing-vat',
@@ -81,6 +123,26 @@ export function buildRootObject() {
         refs: [data, logs],
       });
       return probe(async () => E(both).read(segments));
+    },
+
+    probeJoinedCopy: async (from: string[], to: string[]) => {
+      const both = await joinCopies();
+      return probe(async () => E(both).copy(from, to));
+    },
+
+    probeNarrowedJoin: async (from: string[], to: string[]) => {
+      const narrowed = await narrowJoinedCopies();
+      return probe(async () => E(narrowed).copy(from, to));
+    },
+
+    // Joining with `base` succeeds only if the narrowed join's record names
+    // `base` itself rather than the join it narrowed, and `base` then absorbs.
+    probeNarrowedJoinWithBase: async (from: string[], to: string[]) => {
+      const flattened = await join<Store>({
+        name: 'Flattened',
+        refs: [await narrowJoinedCopies(), base],
+      });
+      return probe(async () => E(flattened).copy(from, to));
     },
 
     probeDefaultGuarded: async (segments: string[]) => {
