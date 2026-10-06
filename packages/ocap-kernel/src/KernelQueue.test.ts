@@ -8,7 +8,12 @@ import * as gc from './garbage-collection/garbage-collection.ts';
 import { KernelQueue } from './KernelQueue.ts';
 import type { KernelStore } from './store/index.ts';
 import * as types from './types.ts';
-import type { KRef, KernelMessage, RunQueueItem } from './types.ts';
+import type {
+  KRef,
+  KernelMessage,
+  RunLoopItem,
+  RunQueueItem,
+} from './types.ts';
 
 vi.mock('./garbage-collection/garbage-collection.ts', () => ({
   processGCActionSet: vi.fn().mockReturnValue(null),
@@ -860,8 +865,8 @@ describe('KernelQueue', () => {
       kernelQueue.acceptPeerIncarnation('peer-1', 'incarnation-B');
       kernelQueue.acceptRemoteInbound('r1' as RemoteId, '{"seq":1}');
 
-      const delivered: RunQueueItem[] = [];
-      const deliver = vi.fn().mockImplementation((item: RunQueueItem) => {
+      const delivered: RunLoopItem[] = [];
+      const deliver = vi.fn().mockImplementation((item: RunLoopItem) => {
         delivered.push(item);
         if (delivered.length === 3) {
           throw new Error(STOP_RUN_LOOP);
@@ -877,6 +882,73 @@ describe('KernelQueue', () => {
         'remoteInbound',
         'peerIncarnation',
         'remoteInbound',
+      ]);
+    });
+
+    // A parked run loop with work waiting is a permanent wedge, and an arrival
+    // is the one kind of work that does not go through `#enqueueRun`.
+    it('wakes a parked run loop when a message arrives', async () => {
+      (kernelStore.runQueueLength as unknown as MockInstance).mockReturnValue(
+        0,
+      );
+      let turns = 0;
+      (kernelStore.endCrank as unknown as MockInstance).mockImplementation(
+        () => {
+          turns += 1;
+          if (turns === 1) {
+            // The loop found nothing and has armed its wake.
+            kernelQueue.acceptRemoteInbound('r1' as RemoteId, '{"seq":1}');
+          } else if (turns > 2) {
+            throw new Error(STOP_RUN_LOOP);
+          }
+        },
+      );
+      const deliver = vi.fn().mockResolvedValue({});
+
+      await expect(kernelQueue.run(deliver)).rejects.toThrow(STOP_RUN_LOOP);
+
+      expect(mockPromiseKit.resolve).toHaveBeenCalled();
+      expect(deliver).toHaveBeenCalledOnce();
+    });
+
+    it('refuses an arrival from a remote with 200 already waiting', () => {
+      for (let seq = 1; seq <= 200; seq += 1) {
+        kernelQueue.acceptRemoteInbound('r1' as RemoteId, `{"seq":${seq}}`);
+      }
+
+      expect(
+        kernelQueue.acceptRemoteInbound('r1' as RemoteId, '{"seq":201}'),
+      ).toBe(false);
+      expect(
+        kernelQueue.acceptRemoteInbound('r2' as RemoteId, '{"seq":1}'),
+      ).toBe(true);
+    });
+
+    it('takes arrivals and run queue items in turns', async () => {
+      kernelQueue.acceptRemoteInbound('r1' as RemoteId, '{"seq":1}');
+      kernelQueue.acceptRemoteInbound('r1' as RemoteId, '{"seq":2}');
+      (kernelStore.runQueueLength as unknown as MockInstance).mockReturnValue(
+        1,
+      );
+      (kernelStore.dequeueRun as unknown as MockInstance)
+        .mockReturnValueOnce({ type: 'send', target: 'ko1', message: {} })
+        .mockReturnValueOnce({ type: 'send', target: 'ko2', message: {} });
+      const delivered: RunLoopItem['type'][] = [];
+      const deliver = vi.fn().mockImplementation(async (item: RunLoopItem) => {
+        delivered.push(item.type);
+        if (delivered.length === 4) {
+          throw new Error(STOP_RUN_LOOP);
+        }
+        return {};
+      });
+
+      await expect(kernelQueue.run(deliver)).rejects.toThrow(STOP_RUN_LOOP);
+
+      expect(delivered).toStrictEqual([
+        'remoteInbound',
+        'send',
+        'remoteInbound',
+        'send',
       ]);
     });
   });

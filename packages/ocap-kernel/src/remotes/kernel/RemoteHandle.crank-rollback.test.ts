@@ -71,6 +71,23 @@ function sentSeqs(remoteComms: RemoteComms): number[] {
 }
 
 /**
+ * Hold the next send up, the way a cold channel's dial and handshake hold up
+ * the first message to a peer.
+ *
+ * @param remoteComms - The comms the send goes through.
+ * @returns A function that lets that send finish.
+ */
+function holdTheNextSend(remoteComms: RemoteComms): () => void {
+  let letItFinish = (): void => undefined;
+  vi.mocked(remoteComms.sendRemoteMessage).mockReturnValueOnce(
+    new Promise((resolve) => {
+      letItFinish = () => resolve(undefined);
+    }),
+  );
+  return letItFinish;
+}
+
+/**
  * Let the outbound chain run to a standstill. Every send waits on the one
  * before it, whether a flush or a retransmission issued it, so a queue costs
  * several microtasks per message.
@@ -139,6 +156,56 @@ async function deliverAndDie(
   kernelStore.createCrankSavepoint('delivery');
   await remote.deliverBringOutYourDead();
   kernelStore.endCrank();
+}
+
+/**
+ * A message from the peer, as it arrives on the wire.
+ *
+ * @param seq - Its sequence number.
+ * @returns The message.
+ */
+function fromPeer(seq: number): string {
+  return JSON.stringify({
+    seq,
+    method: 'deliver',
+    params: ['bringOutYourDead'],
+  });
+}
+
+/**
+ * Take delivery of a message from the peer in a crank of its own, the way the
+ * run loop does.
+ *
+ * @param options - Options bag.
+ * @param options.remote - The handle taking delivery.
+ * @param options.kernelStore - The store the crank runs against.
+ * @param options.message - The message, as it arrived.
+ * @param options.rollBack - Whether the crank rolls back instead of committing.
+ * @returns Whether the crank took the message rather than discarding it.
+ */
+async function takeInbound({
+  remote,
+  kernelStore,
+  message,
+  rollBack = false,
+}: {
+  remote: RemoteHandle;
+  kernelStore: ReturnType<typeof makeKernelStore>;
+  message: string;
+  rollBack?: boolean;
+}): Promise<boolean> {
+  kernelStore.startCrank();
+  kernelStore.createCrankSavepoint('crank');
+  kernelStore.createCrankSavepoint('delivery');
+  const { afterCommit } = await remote.deliverInbound(message);
+  if (rollBack) {
+    kernelStore.rollbackCrank('delivery');
+    kernelStore.endCrank();
+  } else {
+    kernelStore.endCrank();
+    await afterCommit?.();
+  }
+  return afterCommit !== undefined;
 }
 
 describe('RemoteHandle across a crank boundary', () => {
@@ -228,6 +295,137 @@ describe('RemoteHandle across a crank boundary', () => {
       await deliverAndCommit(remote, kernelStore);
 
       expect(sentSeqs(remoteComms)).toStrictEqual([1]);
+    });
+  });
+
+  describe('an ACK whose crank rolls back', () => {
+    /**
+     * Take the peer's ACK of seq 1 inside a crank that then rolls back, as one
+     * arriving on the transport's flow while a vat delivery is awaited can be.
+     *
+     * @param remote - The handle the ACK reaches.
+     * @param kernelStore - The store the crank runs against.
+     */
+    function ackAndRollBack(
+      remote: RemoteHandle,
+      kernelStore: ReturnType<typeof makeKernelStore>,
+    ): void {
+      kernelStore.startCrank();
+      kernelStore.createCrankSavepoint('crank');
+      kernelStore.createCrankSavepoint('delivery');
+      remote.receiveFromPeer(JSON.stringify({ ack: 1 }));
+      kernelStore.rollbackCrank('delivery');
+      kernelStore.endCrank();
+    }
+
+    it('is written down again by the next ACK', async () => {
+      const { remote, kernelStore } = await makeRemoteOverRealStore();
+
+      await deliverAndCommit(remote, kernelStore);
+      ackAndRollBack(remote, kernelStore);
+
+      expect(kernelStore.getPendingMessage(REMOTE_ID, 1)).toBeDefined();
+
+      // Nothing new for the peer to acknowledge, so memory has nothing to move.
+      remote.receiveFromPeer(JSON.stringify({ ack: 1 }));
+
+      expect(kernelStore.getPendingMessage(REMOTE_ID, 1)).toBeUndefined();
+      expect(kernelStore.getRemoteSeqState(REMOTE_ID)).toMatchObject({
+        startSeq: 2,
+        nextSendSeq: 1,
+      });
+    });
+
+    it('is written down by the crank that numbers the next message', async () => {
+      const { remote, kernelStore } = await makeRemoteOverRealStore();
+
+      await deliverAndCommit(remote, kernelStore);
+      ackAndRollBack(remote, kernelStore);
+      await deliverAndCommit(remote, kernelStore);
+
+      expect(kernelStore.getPendingMessage(REMOTE_ID, 1)).toBeUndefined();
+    });
+
+    it('is written down by the crank of a message it takes for a duplicate', async () => {
+      const { remote, kernelStore } = await makeRemoteOverRealStore();
+
+      await deliverAndCommit(remote, kernelStore);
+      await takeInbound({ remote, kernelStore, message: fromPeer(1) });
+      ackAndRollBack(remote, kernelStore);
+
+      expect(
+        await takeInbound({ remote, kernelStore, message: fromPeer(1) }),
+      ).toBe(false);
+      expect(kernelStore.getPendingMessage(REMOTE_ID, 1)).toBeUndefined();
+    });
+
+    it('is written down by the crank of the message that carried it', async () => {
+      const { remote, kernelStore } = await makeRemoteOverRealStore();
+
+      await deliverAndCommit(remote, kernelStore);
+      const message = JSON.stringify({
+        seq: 1,
+        ack: 1,
+        method: 'deliver',
+        params: ['bringOutYourDead'],
+      });
+      kernelStore.startCrank();
+      kernelStore.createCrankSavepoint('crank');
+      kernelStore.createCrankSavepoint('delivery');
+      remote.receiveFromPeer(message);
+      kernelStore.rollbackCrank('delivery');
+      kernelStore.endCrank();
+
+      kernelStore.startCrank();
+      kernelStore.createCrankSavepoint('crank');
+      kernelStore.createCrankSavepoint('delivery');
+      await remote.deliverInbound(message);
+      kernelStore.endCrank();
+
+      // A restart retransmits whatever the store still holds.
+      const { remote: restarted, remoteComms } = startOver(kernelStore);
+      await deliverAndCommit(restarted, kernelStore);
+
+      expect(sentSeqs(remoteComms)).toStrictEqual([2]);
+    });
+  });
+
+  describe('an inbound message whose crank rolls back', () => {
+    it('is not acknowledged to the peer', async () => {
+      const { remote, kernelStore, remoteComms } =
+        await makeRemoteOverRealStore();
+
+      await takeInbound({
+        remote,
+        kernelStore,
+        message: fromPeer(1),
+        rollBack: true,
+      });
+      await deliverAndCommit(remote, kernelStore);
+
+      const [, sent] = vi.mocked(remoteComms.sendRemoteMessage).mock.calls[0]!;
+      expect(JSON.parse(sent).ack).toBeUndefined();
+    });
+  });
+
+  describe('a peer restart whose crank rolls back', () => {
+    it('takes the new incarnation’s first message', async () => {
+      const { remote, kernelStore } = await makeRemoteOverRealStore();
+
+      await takeInbound({ remote, kernelStore, message: fromPeer(1) });
+      // The handshake runs on the transport's flow, so its reset can land in a
+      // crank that then aborts, and the store gets the old receipts back.
+      kernelStore.startCrank();
+      kernelStore.createCrankSavepoint('crank');
+      kernelStore.createCrankSavepoint('delivery');
+      remote.persistPeerRestart();
+      remote.finalizePeerRestart();
+      kernelStore.rollbackCrank('delivery');
+      kernelStore.endCrank();
+
+      expect(
+        await takeInbound({ remote, kernelStore, message: fromPeer(1) }),
+      ).toBe(true);
     });
   });
 
@@ -545,15 +743,7 @@ describe('RemoteHandle across a crank boundary', () => {
       await deliverAndDie(remote, kernelStore);
 
       const { remote: restarted, remoteComms } = startOver(kernelStore);
-      // The transport dials and shakes hands on the first message of a cold
-      // channel, which a restart always has. A second sent meanwhile finds
-      // that channel registered and writes first.
-      let letTheFirstSendFinish = (): void => undefined;
-      vi.mocked(remoteComms.sendRemoteMessage).mockReturnValueOnce(
-        new Promise((resolve) => {
-          letTheFirstSendFinish = () => resolve(undefined);
-        }),
-      );
+      const letTheFirstSendFinish = holdTheNextSend(remoteComms);
 
       await deliverAndCommit(restarted, kernelStore);
 
@@ -584,6 +774,58 @@ describe('RemoteHandle across a crank boundary', () => {
       // Nothing is owed at seq 1 and nothing will take that number, so seq 2
       // must not wait behind it.
       expect(sentSeqs(remoteComms)).toStrictEqual([2]);
+    });
+  });
+
+  describe('a send still waiting its turn on the wire', () => {
+    it('does not reach the incarnation that replaced the one it was for', async () => {
+      const { remote, kernelStore, remoteComms } =
+        await makeRemoteOverRealStore();
+      const letTheFirstSendFinish = holdTheNextSend(remoteComms);
+
+      await deliverAndCommit(remote, kernelStore);
+      await deliverAndCommit(remote, kernelStore);
+      remote.persistPeerRestart();
+      remote.finalizePeerRestart();
+      letTheFirstSendFinish();
+      await drainMicrotasks();
+
+      expect(sentSeqs(remoteComms)).toStrictEqual([1]);
+    });
+
+    it('does not reach a peer whose promises a give-up has rejected', async () => {
+      const { remote, kernelStore, remoteComms } =
+        await makeRemoteOverRealStore();
+      const letTheFirstSendFinish = holdTheNextSend(remoteComms);
+
+      await deliverAndCommit(remote, kernelStore);
+      await deliverAndCommit(remote, kernelStore);
+      remote.giveUp('not acknowledged after 3 retries');
+      letTheFirstSendFinish();
+      await drainMicrotasks();
+
+      expect(sentSeqs(remoteComms)).toStrictEqual([1]);
+    });
+
+    it('is told from a message of the incarnation that replaced it', async () => {
+      const { remote, kernelStore, remoteComms } =
+        await makeRemoteOverRealStore();
+      const letTheFirstSendFinish = holdTheNextSend(remoteComms);
+
+      await deliverAndCommit(remote, kernelStore);
+      await deliverAndCommit(remote, kernelStore);
+      remote.persistPeerRestart();
+      remote.finalizePeerRestart();
+      // The new incarnation numbers from 1 again, so the store holds a real
+      // message at the sequence number the stale send carries.
+      await deliverAndCommit(remote, kernelStore);
+      await deliverAndCommit(remote, kernelStore);
+      letTheFirstSendFinish();
+      await drainMicrotasks();
+
+      // The new incarnation's two, and not the old seq 2 ahead of them, which
+      // would have made the peer drop them both as duplicates.
+      expect(sentSeqs(remoteComms)).toStrictEqual([1, 1, 2]);
     });
   });
 });
