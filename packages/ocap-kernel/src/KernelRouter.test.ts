@@ -1111,6 +1111,66 @@ describe('KernelRouter', () => {
       );
     });
 
+    describe('a vat lost while a delivery is in flight', () => {
+      const endpointId = 'v2' as EndpointId;
+      let lost: boolean;
+
+      beforeEach(() => {
+        lost = false;
+        (getEndpoint as unknown as MockInstance).mockImplementation(
+          (requested: EndpointId) => {
+            if (lost) {
+              throw new VatNotFoundError(requested as VatId);
+            }
+            return endpointHandle;
+          },
+        );
+      });
+
+      it.each([
+        [
+          'dropExports',
+          'deliverDropExports' as const,
+          (): RunQueueItem => ({
+            type: 'dropExports' as GCRunQueueType,
+            endpointId,
+            krefs: ['ko1'],
+          }),
+        ],
+        [
+          'bringOutYourDead',
+          'deliverBringOutYourDead' as const,
+          (): RunQueueItem => ({ type: 'bringOutYourDead', endpointId }),
+        ],
+      ])(
+        'skips a %s whose vat dies under it',
+        async (_what, deliverMethod, makeItem) => {
+          (
+            endpointHandle[deliverMethod] as unknown as MockInstance
+          ).mockImplementationOnce(async () => {
+            // What the manager does when the channel dies: the handle goes in
+            // the same step that rejects the pending command.
+            lost = true;
+            throw new Error('Unexpected stream read error.');
+          });
+
+          expect(await kernelRouter.deliver(makeItem())).toStrictEqual({
+            didDelivery: endpointId,
+          });
+        },
+      );
+
+      it('still throws when the vat is running', async () => {
+        (
+          endpointHandle.deliverBringOutYourDead as unknown as MockInstance
+        ).mockRejectedValueOnce(new Error('kernel fault'));
+
+        await expect(
+          kernelRouter.deliver({ type: 'bringOutYourDead', endpointId }),
+        ).rejects.toThrow('kernel fault');
+      });
+    });
+
     it('throws on unknown run queue item type', async () => {
       // @ts-expect-error - deliberately using an invalid type
       const invalidItem: RunQueueItem = { type: 'invalid' };

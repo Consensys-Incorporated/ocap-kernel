@@ -127,12 +127,27 @@ export class NodejsPlatformServices implements PlatformServices {
       // Remove error and exit listeners now that worker is online
       worker.removeAllListeners('error');
       worker.removeAllListeners('exit');
+      // Without a listener, a worker's uncaught exception is rethrown in the
+      // kernel's own thread. Its `exit` follows.
+      worker.on('error', (error) => {
+        this.#logger.error(`Worker ${vatId} errored:`, error);
+      });
       worker.once('exit', (code) => {
         // An orderly `terminate` removes this listener before killing the
-        // worker, so reaching it means the worker went away on its own. Guarded
-        // by identity in case a replacement is registered under this vat id.
+        // worker, so reaching it means the worker went away on its own.
         const entry = this.workers.get(vatId);
-        if (entry?.worker !== worker) {
+        if (!entry) {
+          // Still shaking hands: nothing else would settle the launch.
+          reject(
+            new Error(
+              `Worker ${vatId} exited during startup with code ${code}`,
+            ),
+          );
+          return;
+        }
+        // Guarded by identity in case a replacement is registered under this
+        // vat id.
+        if (entry.worker !== worker) {
           return;
         }
         this.workers.delete(vatId);

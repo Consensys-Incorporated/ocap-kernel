@@ -1,5 +1,7 @@
 import { makeCounter } from '@metamask/kernel-utils';
+import { Logger } from '@metamask/logger';
 import type { VatId } from '@metamask/ocap-kernel';
+import { delay } from '@ocap/repo-tools/test-utils';
 import { Worker as NodeWorker } from 'node:worker_threads';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
@@ -32,6 +34,12 @@ const mocks = vi.hoisted(() => {
           queueMicrotask(() => callback());
         }
         // Don't emit 'error' or 'exit' events unless we want to test error cases
+      },
+      on: (event: string, callback: (...args: unknown[]) => unknown) => {
+        eventHandlers.set(event, [
+          ...(eventHandlers.get(event) ?? []),
+          callback,
+        ]);
       },
       removeAllListeners: vi.fn((event?: string) => {
         if (event) {
@@ -201,6 +209,46 @@ describe('NodejsPlatformServices', () => {
   });
 
   describe('a worker that exits once online', () => {
+    it('fails a launch still shaking hands', async () => {
+      const service = new NodejsPlatformServices({ workerFilePath });
+      const testVatId: VatId = getTestVatId();
+      const worker = mocks.createMockWorker();
+      vi.mocked(NodeWorker).mockImplementationOnce(function () {
+        return worker;
+      });
+      mocks.stream.synchronize.mockReturnValueOnce(
+        new Promise(() => undefined),
+      );
+      const launching = service.launch(testVatId);
+      await delay(0);
+
+      worker.emit('exit', 1);
+
+      await expect(launching).rejects.toThrowError(
+        `Worker ${testVatId} exited during startup with code 1`,
+      );
+    });
+
+    it('logs an error the worker raises rather than rethrowing it', async () => {
+      const logger = new Logger('test');
+      const logError = vi.spyOn(logger, 'error').mockReturnValue();
+      const service = new NodejsPlatformServices({ workerFilePath, logger });
+      const testVatId: VatId = getTestVatId();
+      const worker = mocks.createMockWorker();
+      vi.mocked(NodeWorker).mockImplementationOnce(function () {
+        return worker;
+      });
+      await service.launch(testVatId);
+      const failure = new Error('uncaught in the vat');
+
+      worker.emit('error', failure);
+
+      expect(logError).toHaveBeenCalledWith(
+        `Worker ${testVatId} errored:`,
+        failure,
+      );
+    });
+
     it('is forgotten, and its channel closed', async () => {
       const service = new NodejsPlatformServices({ workerFilePath });
       const testVatId: VatId = getTestVatId();

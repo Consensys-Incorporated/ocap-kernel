@@ -269,7 +269,8 @@ describe('VatManager', () => {
         vatManager.launchVat(createMockVatConfig(), 'bob', 's1'),
       ).rejects.toThrow('Failed to launch vat v1 (bob)');
 
-      // Both runtimes throw for an unknown worker, burying the launch failure.
+      // The browser runtime throws for an unknown worker, burying the launch
+      // failure.
       expect(mockPlatformServices.terminate).not.toHaveBeenCalled();
     });
 

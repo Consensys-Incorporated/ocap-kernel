@@ -24,7 +24,7 @@ import type {
   GCRunQueueType,
   VatId,
 } from './types.ts';
-import { isRemoteId } from './types.ts';
+import { isRemoteId, isVatId } from './types.ts';
 import { assert, Fail } from './utils/assert.ts';
 
 /**
@@ -538,7 +538,9 @@ export class KernelRouter {
     // promise in the batch here, since the endpoint can never refer to a
     // settled promise by that eref again. Left alone for now because the
     // debug UI discovers exported ocap URLs by scanning these entries.
-    return await endpoint.deliverNotify(resolutions);
+    return await this.#deliverUnlessLost(endpointId, 'notify', async () =>
+      endpoint.deliverNotify(resolutions),
+    );
   }
 
   /**
@@ -591,8 +593,9 @@ export class KernelRouter {
     if (!endpoint) {
       return { didDelivery: endpointId };
     }
-    const crankResult = await endpoint[GC_DELIVERY[type]](erefs);
-    return crankResult;
+    return await this.#deliverUnlessLost(endpointId, type, async () =>
+      endpoint[GC_DELIVERY[type]](erefs),
+    );
   }
 
   /**
@@ -613,7 +616,59 @@ export class KernelRouter {
     if (!endpoint) {
       return { didDelivery: endpointId };
     }
-    const crankResult = await endpoint.deliverBringOutYourDead();
-    return crankResult;
+    return await this.#deliverUnlessLost(
+      endpointId,
+      'bringOutYourDead',
+      async () => endpoint.deliverBringOutYourDead(),
+    );
+  }
+
+  /**
+   * Make a delivery that has nobody to report to, treating a vat lost while it
+   * was in flight like one that was already gone.
+   *
+   * @param endpointId - The endpoint the delivery is addressed to.
+   * @param what - What is being delivered, for the log.
+   * @param deliver - Makes the delivery.
+   * @returns The crank outcome.
+   */
+  async #deliverUnlessLost(
+    endpointId: EndpointId,
+    what: string,
+    deliver: () => Promise<CrankResult>,
+  ): Promise<CrankResult> {
+    try {
+      return await deliver();
+    } catch (error) {
+      // A vat whose channel dies mid-delivery has its pending commands
+      // rejected and its handle taken in one step, so a vat with no handle by
+      // now is what tells that apart from a kernel fault.
+      if (!isVatId(endpointId) || this.#isVatRunning(endpointId)) {
+        throw error;
+      }
+      this.#logger?.warn(
+        `Skipped ${what} for ${endpointId}, which was lost during the delivery:`,
+        error,
+      );
+      return { didDelivery: endpointId };
+    }
+  }
+
+  /**
+   * Whether a vat still has a handle.
+   *
+   * @param vatId - The vat.
+   * @returns False if the vat has none.
+   */
+  #isVatRunning(vatId: EndpointId): boolean {
+    try {
+      this.#getEndpoint(vatId);
+      return true;
+    } catch (error) {
+      if (error instanceof VatNotFoundError) {
+        return false;
+      }
+      throw error;
+    }
   }
 }
