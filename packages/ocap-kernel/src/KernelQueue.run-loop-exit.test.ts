@@ -26,8 +26,8 @@ import { VatSyscall } from './vats/VatSyscall.ts';
 
 /**
  * A kernel over a real store, running two mocked vats that answer `bootstrap`
- * and nothing else. A vat sent `explode` exits with a channel that will not
- * close, which kills the run loop.
+ * and nothing else. A vat sent `explode` asks for the termination of a vat
+ * that does not exist, which throws out of the crank and kills the run loop.
  *
  * @returns The kernel, the root of each vat, and the methods vats were sent.
  */
@@ -52,7 +52,6 @@ async function setUp() {
   vi.spyOn(VatHandle, 'make').mockImplementation(
     async ({ vatId, vatConfig, kernelQueue, kernelStore }) => {
       const vatSyscall = new VatSyscall({ vatId, kernelQueue, kernelStore });
-      let exploded = false;
       return {
         vatId,
         config: vatConfig,
@@ -69,11 +68,10 @@ async function setUp() {
             ]);
           }
           if (method === 'explode') {
-            exploded = true;
             return {
               didDelivery: vatId,
               terminate: {
-                vatId,
+                vatId: 'v404',
                 reject: true,
                 info: makeFatalKernelError('INTERNAL_ERROR', 'exploded'),
               },
@@ -81,11 +79,7 @@ async function setUp() {
           }
           return { didDelivery: vatId };
         },
-        terminate: async (): Promise<void> => {
-          if (exploded) {
-            throw new Error('channel would not close');
-          }
-        },
+        terminate: async (): Promise<void> => undefined,
       } as unknown as VatHandle;
     },
   );
