@@ -11,13 +11,24 @@ import type {
   KRef,
   KernelMessage,
   KernelOneResolution,
+  RemoteId,
   RunLoopStatus,
+  RunLoopItem,
   RunQueueItem,
+  RunQueueItemRemoteInbound,
   RunQueueItemNotify,
   RunQueueItemSend,
   VatId,
 } from './types.ts';
 import { Fail } from './utils/assert.ts';
+
+/**
+ * The most arrivals held for one remote at once. A peer keeps about this many
+ * messages unacknowledged, and retransmits all of them on a timeout, so a
+ * refusal is usually a copy of one already waiting; any other is
+ * unacknowledged, and sent again.
+ */
+const MAX_ARRIVALS_PER_REMOTE = 200;
 
 type RunLoopState =
   | Exclude<RunLoopStatus, { state: 'failed' }>
@@ -84,6 +95,12 @@ export class KernelQueue {
    */
   #runLoopState: RunLoopState = { state: 'idle' };
 
+  /** Messages from peers, waiting for a crank to take delivery of them. */
+  #arrivedFromRemotes: RunQueueItemRemoteInbound[] = [];
+
+  /** Whether the last crank took an arrival, so the run queue goes next. */
+  #tookArrivalLast = false;
+
   /**
    * Construct a new KernelQueue instance.
    *
@@ -109,7 +126,7 @@ export class KernelQueue {
    * @returns A promise that rejects with the `Error` that killed the run loop.
    */
   async run(
-    deliver: (item: RunQueueItem) => Promise<CrankResult | undefined>,
+    deliver: (item: RunLoopItem) => Promise<CrankResult | undefined>,
   ): Promise<never> {
     this.#runLoopState.state === 'idle' || Fail`run loop already started`;
     this.#runLoopState = { state: 'running' };
@@ -128,7 +145,7 @@ export class KernelQueue {
    * @param deliver - A function that delivers an item to the kernel.
    */
   async #runLoop(
-    deliver: (item: RunQueueItem) => Promise<CrankResult | undefined>,
+    deliver: (item: RunLoopItem) => Promise<CrankResult | undefined>,
   ): Promise<never> {
     for (;;) {
       let wakeUpPromise: Promise<void> | undefined;
@@ -294,7 +311,7 @@ export class KernelQueue {
    *
    * @returns The next item in the run queue, or undefined if the queue is empty.
    */
-  #getNextRunQueueItem(): RunQueueItem | undefined {
+  #getNextRunQueueItem(): RunLoopItem | undefined {
     const gcAction = processGCActionSet(this.#kernelStore);
     if (gcAction) {
       return gcAction;
@@ -305,13 +322,36 @@ export class KernelQueue {
       return reapAction;
     }
 
+    // Arrivals and the run queue take turns, so a peer that sends faster than
+    // cranks finish cannot hold up the kernel's own work.
+    const arrivalFirst =
+      !this.#tookArrivalLast || this.#kernelStore.runQueueLength() === 0;
+    this.#tookArrivalLast = false;
+    if (arrivalFirst) {
+      const arrival = this.#takeArrival();
+      if (arrival) {
+        return arrival;
+      }
+    }
+
     if (this.#kernelStore.runQueueLength() > 0) {
       const item = this.#kernelStore.dequeueRun();
       if (item) {
         return item;
       }
     }
-    return undefined;
+    return this.#takeArrival();
+  }
+
+  /**
+   * Take the oldest arrival, if there is one.
+   *
+   * @returns The arrival, or undefined if none is waiting.
+   */
+  #takeArrival(): RunQueueItemRemoteInbound | undefined {
+    const arrival = this.#arrivedFromRemotes.shift();
+    this.#tookArrivalLast = arrival !== undefined;
+    return arrival;
   }
 
   /**
@@ -344,7 +384,7 @@ export class KernelQueue {
    */
   async #processCrankResult(
     crankResult: CrankResult | undefined,
-    queueItem: RunQueueItem,
+    queueItem: RunLoopItem,
   ): Promise<void> {
     if (crankResult?.abort) {
       // Rollback the kernel state to before the failed delivery attempt.
@@ -422,11 +462,21 @@ export class KernelQueue {
    */
   #enqueueRun(item: RunQueueItem): void {
     this.#kernelStore.enqueueRun(item);
-    // Wake on any non-empty queue rather than only on the empty->1
-    // transition. A sleeping run loop plus a non-empty queue is a
-    // permanent wedge, so err towards a spurious wake: the resolver is
-    // cleared as it fires, and the loop re-checks the queue on waking.
-    if (this.#kernelStore.runQueueLength() > 0 && this.#wakeUpTheRunQueue) {
+    if (this.#kernelStore.runQueueLength() > 0) {
+      this.#wakeTheRunLoop();
+    }
+  }
+
+  /**
+   * Wake a sleeping run loop, if one is sleeping.
+   *
+   * Woken on any work at all rather than only on the empty-to-one transition.
+   * A sleeping run loop with work waiting is a permanent wedge, so err towards
+   * a spurious wake: the resolver is cleared as it fires, and the loop
+   * re-checks for work on waking.
+   */
+  #wakeTheRunLoop(): void {
+    if (this.#wakeUpTheRunQueue) {
       const wakeUpTheRunQueue = this.#wakeUpTheRunQueue;
       this.#wakeUpTheRunQueue = null;
       wakeUpTheRunQueue();
@@ -541,6 +591,62 @@ export class KernelQueue {
     } else {
       this.#kernelStore.bufferCrankOutput(item);
     }
+  }
+
+  /**
+   * Accept a message from a remote peer, for the run loop to take delivery of
+   * in a crank of its own.
+   *
+   * Held in memory rather than written to the run queue: a message arrives
+   * whenever the transport says so, which is usually while a crank is open,
+   * and writing it there would put it inside that crank's transaction — an
+   * abort would swallow it, which is the defect this whole shape exists to
+   * remove. Nothing is lost by not persisting it, because the peer is not
+   * acknowledged until the crank that takes it commits, so an arrival this
+   * kernel forgets is one the peer sends again.
+   *
+   * @param remoteId - The remote the message came from.
+   * @param message - The message, as it arrived.
+   * @returns False if the remote already has `MAX_ARRIVALS_PER_REMOTE`
+   * arrivals waiting and this one was refused.
+   */
+  acceptRemoteInbound(remoteId: RemoteId, message: string): boolean {
+    this.assertRunLoopAlive('accept a remote message');
+    const held = this.#arrivedFromRemotes.filter(
+      (item) => item.remoteId === remoteId,
+    ).length;
+    if (held >= MAX_ARRIVALS_PER_REMOTE) {
+      return false;
+    }
+    this.#arrivedFromRemotes.push({
+      type: 'remoteInbound',
+      remoteId,
+      message,
+    });
+    this.#wakeTheRunLoop();
+    return true;
+  }
+
+  /**
+   * Forget what a remote sent before an incarnation change, none of which the
+   * peer that sent it is still waiting on.
+   *
+   * Left queued, a message from the old incarnation would record its sequence
+   * number against the new one, and the new incarnation's first message would
+   * then be discarded as a duplicate.
+   *
+   * Reaches only what is still waiting. An arrival already handed to a crank
+   * has been shifted off this list, and a restart detected while that crank is
+   * suspended still records the old incarnation's sequence number — the
+   * handshake runs on the transport's flow, with nothing serializing it
+   * against an open crank.
+   *
+   * @param remoteId - The remote whose arrivals to discard.
+   */
+  discardRemoteInbound(remoteId: RemoteId): void {
+    this.#arrivedFromRemotes = this.#arrivedFromRemotes.filter(
+      (item) => item.remoteId !== remoteId,
+    );
   }
 
   /**

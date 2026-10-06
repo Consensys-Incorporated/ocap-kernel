@@ -376,6 +376,12 @@ export type RunQueueItemBringOutYourDead = Infer<
   typeof RunQueueItemBringOutYourDeadStruct
 >;
 
+export type RunQueueItemRemoteInbound = {
+  type: 'remoteInbound';
+  remoteId: RemoteId;
+  message: string;
+};
+
 export const RunQueueItemStruct = union([
   RunQueueItemSendStruct,
   RunQueueItemNotifyStruct,
@@ -384,6 +390,13 @@ export const RunQueueItemStruct = union([
 ]);
 
 export type RunQueueItem = Infer<typeof RunQueueItemStruct>;
+
+/**
+ * Everything the run loop takes a crank for. An arrival from a peer is held in
+ * memory and never written to the run queue, so it is not a {@link RunQueueItem}
+ * and the store's queue methods do not accept one.
+ */
+export type RunLoopItem = RunQueueItem | RunQueueItemRemoteInbound;
 
 /**
  * Assert that a value is a valid kernel message.
@@ -945,6 +958,11 @@ export type EndpointHandle = {
   deliverRetireExports: (erefs: ERef[]) => Promise<CrankResult>;
   deliverRetireImports: (erefs: ERef[]) => Promise<CrankResult>;
   deliverBringOutYourDead: () => Promise<CrankResult>;
+};
+
+/** An endpoint that peers send messages to, as opposed to a vat. */
+export type RemoteEndpointHandle = EndpointHandle & {
+  deliverInbound: (message: string) => Promise<CrankResult>;
 };
 
 /**

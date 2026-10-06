@@ -14,9 +14,11 @@ import type {
   ERef,
   KRef,
   KernelMessage,
-  RunQueueItem,
+  RunLoopItem,
   RunQueueItemSend,
+  RemoteEndpointHandle,
   RunQueueItemBringOutYourDead,
+  RunQueueItemRemoteInbound,
   RunQueueItemNotify,
   RunQueueItemGCAction,
   CrankResult,
@@ -91,7 +93,7 @@ export class KernelRouter {
    * @param item - The message/notification to deliver.
    * @returns The crank outcome.
    */
-  async deliver(item: RunQueueItem): Promise<CrankResult | undefined> {
+  async deliver(item: RunLoopItem): Promise<CrankResult | undefined> {
     switch (item.type) {
       case 'send':
         return await this.#deliverSend(item);
@@ -103,6 +105,8 @@ export class KernelRouter {
         return await this.#deliverGCAction(item);
       case 'bringOutYourDead':
         return await this.#deliverBringOutYourDead(item);
+      case 'remoteInbound':
+        return await this.#deliverRemoteInbound(item);
       default:
         // @ts-expect-error Runtime does not respect "never".
         Fail`unsupported or unknown run queue item type ${item.type}`;
@@ -478,6 +482,49 @@ export class KernelRouter {
         | 'deliverRetireImports';
     const crankResult = await endpoint[method](erefs);
     return crankResult;
+  }
+
+  /**
+   * Take delivery of a message from a remote peer, in a crank of its own.
+   *
+   * The remote can be gone by the time its turn comes: the message was
+   * accepted while it was live and the queue outlives it. Throwing here would
+   * escape the crank and kill the run loop, so the message is dropped and said
+   * so. Absence of a handle is the whole test — a remote can have no handle
+   * without being recorded as terminated.
+   *
+   * @param item - The inbound message.
+   * @returns The crank outcome.
+   */
+  async #deliverRemoteInbound(
+    item: RunQueueItemRemoteInbound,
+  ): Promise<CrankResult> {
+    const { remoteId, message } = item;
+    let remote: RemoteEndpointHandle;
+    try {
+      remote = this.#getEndpoint(remoteId) as RemoteEndpointHandle;
+    } catch (error) {
+      // Above the per-delivery trace channel: a message dropped on the floor is
+      // the only trace of a peer whose remote went away under it.
+      this.#logger?.warn(
+        `Skipped an inbound message for ${remoteId}, which is not running:`,
+        error,
+      );
+      return { didDelivery: remoteId };
+    }
+    try {
+      return await remote.deliverInbound(message);
+    } catch (error) {
+      // What a peer sends is a peer's to get wrong: an unknown method, a
+      // reference that does not resolve, a reply to a redemption that has
+      // already timed out. None of that is the kernel's to die of, and the
+      // crank has rolled back whatever the attempt started.
+      this.#logger?.error(
+        `Discarded an inbound message from ${remoteId} that could not be delivered:`,
+        error,
+      );
+      return { didDelivery: remoteId, abort: true };
+    }
   }
 
   /**
