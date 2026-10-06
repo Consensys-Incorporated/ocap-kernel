@@ -59,12 +59,22 @@ type TakenWaiters<Value> = {
   answerOnceCrankEnds: (outcome: Value | Error) => void;
 };
 
+/** Set when a relaunch gives up on the worker it is starting. */
+type Launch = { abandoned: boolean };
+
+/** How long a restart waits for the new worker before giving up on it. */
+export const DEFAULT_VAT_RELAUNCH_TIMEOUT_MS = 30_000;
+
+/** The longest delay `setTimeout` honours; it treats anything above as 1 ms. */
+const MAX_TIMER_DELAY_MS = 2 ** 31 - 1;
+
 type VatManagerOptions = {
   platformServices: PlatformServices;
   kernelStore: KernelStore;
   kernelQueue: KernelQueue;
   logger?: Logger;
   allowedGlobalNames?: AllowedGlobalName[] | undefined;
+  vatRelaunchTimeoutMs?: number | undefined;
 };
 
 /**
@@ -104,6 +114,8 @@ export class VatManager {
   /** Optional list of allowed global names for vat endowments */
   readonly #allowedGlobalNames: AllowedGlobalName[] | undefined;
 
+  readonly #vatRelaunchTimeoutMs: number;
+
   /**
    * Creates a new VatManager instance.
    *
@@ -113,6 +125,7 @@ export class VatManager {
    * @param options.kernelQueue - The kernel's message queue for scheduling deliveries.
    * @param options.logger - Logger instance for debugging and diagnostics.
    * @param options.allowedGlobalNames - Optional list of allowed global names for vat endowments.
+   * @param options.vatRelaunchTimeoutMs - How long a restart waits for the new worker.
    */
   constructor({
     platformServices,
@@ -120,6 +133,7 @@ export class VatManager {
     kernelQueue,
     logger,
     allowedGlobalNames,
+    vatRelaunchTimeoutMs = DEFAULT_VAT_RELAUNCH_TIMEOUT_MS,
   }: VatManagerOptions) {
     this.#vats = new Map();
     this.#restartWaiters = new Map();
@@ -129,6 +143,14 @@ export class VatManager {
     this.#kernelQueue = kernelQueue;
     this.#logger = logger ?? new Logger('VatManager');
     this.#allowedGlobalNames = allowedGlobalNames;
+    if (
+      !(vatRelaunchTimeoutMs > 0 && vatRelaunchTimeoutMs <= MAX_TIMER_DELAY_MS)
+    ) {
+      throw new RangeError(
+        `vatRelaunchTimeoutMs must be more than 0 and at most ${MAX_TIMER_DELAY_MS}; got ${String(vatRelaunchTimeoutMs)}`,
+      );
+    }
+    this.#vatRelaunchTimeoutMs = vatRelaunchTimeoutMs;
     harden(this);
   }
 
@@ -221,10 +243,42 @@ export class VatManager {
    * @param vatConfig - Its configuration.
    */
   async runVat(vatId: VatId, vatConfig: VatConfig): Promise<void> {
+    await this.#startVat({ vatId, vatConfig });
+  }
+
+  /**
+   * Start a vat running, unless the launch is abandoned before it finishes.
+   *
+   * @param options - Named options.
+   * @param options.vatId - The ID of the vat to start.
+   * @param options.vatConfig - Its configuration.
+   * @param options.launch - Abandoned by a relaunch that gave up waiting.
+   */
+  async #startVat({
+    vatId,
+    vatConfig,
+    launch,
+  }: {
+    vatId: VatId;
+    vatConfig: VatConfig;
+    launch?: Launch;
+  }): Promise<void> {
     if (this.#vats.has(vatId)) {
       throw new VatAlreadyExistsError(vatId);
     }
     const stream = await this.#platformServices.launch(vatId, vatConfig);
+    if (launch?.abandoned) {
+      // Started after the timeout's stop found nothing to stop.
+      await this.#platformServices
+        .terminate(vatId)
+        .catch((error: unknown) =>
+          this.#logger.error(
+            `Failed to stop the worker for vat ${vatId} after its relaunch timed out:`,
+            error,
+          ),
+        );
+      return;
+    }
     const { kernelStream: vatStream, loggerStream } = splitLoggerStream(stream);
     const vatLogger = this.#logger.subLogger({ tags: [vatId] });
     vatLogger.injectStream(
@@ -258,8 +312,56 @@ export class VatManager {
         );
       throw error;
     }
+    if (launch?.abandoned) {
+      // The crank that gave up on this worker retires the vat, so a handle
+      // registered now would bring it back.
+      return;
+    }
     running.handle = vat;
     this.#vats.set(vatId, vat);
+  }
+
+  /**
+   * Start a restarted vat, giving up if its worker is not ready in time. The
+   * restart's crank waits on this, and so does the whole run loop.
+   *
+   * @param vatId - The ID of the vat to start.
+   * @param vatConfig - Its configuration.
+   */
+  async #relaunchVat(vatId: VatId, vatConfig: VatConfig): Promise<void> {
+    const launch: Launch = { abandoned: false };
+    const starting = this.#startVat({ vatId, vatConfig, launch });
+    const timeoutError = new Error(
+      `Vat ${vatId} did not start within ${this.#vatRelaunchTimeoutMs} ms`,
+    );
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    const timedOut = new Promise<never>((_resolve, reject) => {
+      timeoutId = setTimeout(
+        () => reject(timeoutError),
+        this.#vatRelaunchTimeoutMs,
+      );
+    });
+    try {
+      await Promise.race([starting, timedOut]);
+    } catch (error) {
+      if (error === timeoutError) {
+        launch.abandoned = true;
+        starting.catch(() => undefined);
+        // Not awaited: a platform that is stuck launching may be stuck
+        // stopping too.
+        this.#platformServices
+          .terminate(vatId)
+          .catch((stopError: unknown) =>
+            this.#logger.error(
+              `Failed to stop the worker for vat ${vatId} after its relaunch timed out:`,
+              stopError,
+            ),
+          );
+      }
+      throw error;
+    } finally {
+      clearTimeout(timeoutId);
+    }
   }
 
   /**
@@ -382,38 +484,32 @@ export class VatManager {
       // Rethrown below, once the worker is stopped.
       recordFailure = error as Error;
     }
-    // Boxed, so a worker that failed with `undefined` still counts as failed.
-    let workerFailure: { error: unknown } | undefined;
+    // Logged rather than thrown, so a restart still relaunches: the platform
+    // forgets a worker even when stopping it fails.
     await this.#platformServices
       .terminate(vatId, terminationError)
-      .catch((error: unknown) => {
-        workerFailure = { error };
-      });
-    try {
-      await vat?.terminate(terminating, terminationError);
-    } catch (error) {
-      // The store failure takes precedence. A restart goes on regardless: a
-      // channel that will not close does not stop the new worker coming.
-      if (terminating && recordFailure === undefined) {
-        throw error;
-      }
-      this.#logger.error(`Channel to vat ${vatId} would not close:`, error);
-    }
-    if (workerFailure && terminating) {
-      this.#logger.error(
-        `Worker for vat ${vatId} would not stop:`,
-        workerFailure.error,
+      .catch((error: unknown) =>
+        this.#logger.error(`Worker for vat ${vatId} would not stop:`, error),
       );
+    const logUnclosedChannel = (error: unknown): void =>
+      this.#logger.error(`Channel to vat ${vatId} would not close:`, error);
+    if (terminating) {
+      try {
+        await vat?.terminate(true, terminationError);
+      } catch (error) {
+        // The store failure takes precedence.
+        if (recordFailure === undefined) {
+          throw error;
+        }
+        logUnclosedChannel(error);
+      }
+    } else {
+      // Not awaited: an end that never settles would hold the restart's crank,
+      // and with it the run loop, open.
+      vat?.terminate(false).catch(logUnclosedChannel);
     }
     if (recordFailure !== undefined) {
       throw recordFailure;
-    }
-    if (workerFailure && !terminating) {
-      // A worker still registered refuses its replacement as a duplicate, so a
-      // restart has to fail here, with the cause, rather than at the launch.
-      throw new Error(`Worker for vat ${vatId} would not stop`, {
-        cause: workerFailure.error,
-      });
     }
   }
 
@@ -649,7 +745,7 @@ export class VatManager {
       if (oldHandle) {
         await this.stopVat(vatId, false);
       }
-      await this.runVat(vatId, config);
+      await this.#relaunchVat(vatId, config);
     } catch (error) {
       const failure = new Error(
         `Vat ${vatId} was terminated after its restart failed: ${error instanceof Error ? error.message : String(error)}`,
