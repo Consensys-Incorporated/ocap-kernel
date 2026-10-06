@@ -733,6 +733,22 @@ describe('VatManager', () => {
       await expect(restarting).rejects.toThrow(VatDeletedError);
     });
 
+    it('leaves a queued restart in place when the termination is refused', async () => {
+      await vatManager.runVat('v1', createMockVatConfig());
+      mockKernelQueue.enqueueRestartVat.mockImplementationOnce(() => undefined);
+      const restarting = vatManager.restartVat('v1');
+      mockKernelQueue.enqueueTerminateVat.mockImplementationOnce(() => {
+        throw new Error('run loop is dead');
+      });
+
+      await expect(vatManager.terminateVat('v1')).rejects.toThrow(
+        'run loop is dead',
+      );
+
+      expect(await vatManager.performVatRestart('v1')).toBeUndefined();
+      expect(await restarting).toBe(vatHandles[1]);
+    });
+
     it('throws for a vat that is neither running nor persisted', async () => {
       mockKernelStore.isVatActive.mockReturnValue(false);
 

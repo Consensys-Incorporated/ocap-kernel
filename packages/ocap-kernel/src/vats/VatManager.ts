@@ -419,12 +419,16 @@ export class VatManager {
     // A restart outstanding when the termination is asked for is overtaken by
     // it, so its caller is told now rather than left waiting on a crank that
     // will find nothing to restart. A restart asked for after this cannot be
-    // ordered against the termination at all, and is not covered.
-    const supersedeRestart = this.#takeWaiters(this.#restartWaiters, vatId);
-    supersedeRestart(new VatDeletedError(vatId));
-    await this.#awaitQueuedWork(this.#terminationWaiters, vatId, () =>
-      this.#kernelQueue.enqueueTerminateVat(vatId, reason),
-    );
+    // ordered against the termination at all, and is not covered. Only once
+    // the termination is queued: a refused one leaves the vat running and the
+    // restart still due.
+    await this.#awaitQueuedWork(this.#terminationWaiters, vatId, () => {
+      this.#kernelQueue.enqueueTerminateVat(vatId, reason);
+      this.#takeWaiters(
+        this.#restartWaiters,
+        vatId,
+      )(new VatDeletedError(vatId));
+    });
   }
 
   /**
