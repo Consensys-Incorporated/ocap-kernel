@@ -21,6 +21,7 @@ export type StoreContext = {
   reapQueue: StoredValue; // Holds ReapAction[]
   terminatedVats: StoredValue; // Holds VatId[]
   inCrank: boolean;
+  runLoopRunning: boolean;
   crankSettled?: Promise<void>;
   resolveCrank?: (() => void) | undefined;
   savepoints: Savepoint[];

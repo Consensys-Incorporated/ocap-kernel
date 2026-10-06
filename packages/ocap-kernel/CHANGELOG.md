@@ -49,6 +49,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `KernelStore.createSavepoint` refuses one taken while the run loop is running. Such a savepoint is the outermost on the connection, so it either nests inside whatever crank is open or opens a transaction the next crank nests inside, and either way the run loop decides whether its caller's writes survive. Callers work between cranks instead ([#1106](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1106))
 - **BREAKING:** `RunLoopStatus` gains a `stopped` state, reported while the control plane holds the loop still to write the store directly. A consumer matching exhaustively on `runLoop.state` has a new case ([#1105](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1105))
 - **BREAKING:** `Kernel.make`'s `ioChannelFactory` option is now `ioListenerFactory`, and the exported `IOChannelFactory` type is replaced by `IOListener` and `IOListenerFactory`. A cluster config's `io` entries now create listeners; vats call `accept()` to obtain a channel instead of reading and writing the endowment directly ([#1007](https://github.com/MetaMask/ocap-kernel/pull/1007))
 - Attribute a failed subcluster vat launch to the specific vat by kernel id and `ClusterConfig` name (e.g. `Failed to launch vat v3 (bob)`), preserving the original error as the `cause` ([#975](https://github.com/MetaMask/ocap-kernel/pull/975))
