@@ -153,6 +153,31 @@ export function buildRootObject() {
       return probe(async () => E(joined).read(segments));
     },
 
+    probeNarrowedPromise: async (segments: string[]) => {
+      const data = await narrow<Store>({
+        name: 'DataStore',
+        base,
+        delta: underData,
+      });
+      const narrowed = await narrow<Store>({
+        name: 'DataStoreX',
+        base: Promise.resolve(data),
+        delta: {
+          read: [M.splitArray([], [], M.arrayOf(M.not(M.eq('secret'))))],
+        },
+      });
+      const logs = await narrow<Store>({
+        name: 'LogStore',
+        base,
+        delta: { read: [pathUnder(['srv', 'logs'])] },
+      });
+      const both = await join<Store>({
+        name: 'Joined',
+        refs: [Promise.resolve(narrowed), logs],
+      });
+      return probe(async () => E(both).read(segments));
+    },
+
     probeDefaultGuarded: async (segments: string[]) => {
       const scoped = await narrow<Store>({
         name: 'LooseDataStore',

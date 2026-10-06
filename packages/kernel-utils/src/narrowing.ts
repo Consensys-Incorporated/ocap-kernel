@@ -19,8 +19,9 @@ import type {
 
 /**
  * `base` is `object` rather than `Methods` because an `@endo/exo` carries no
- * index signature and so does not satisfy `Methods`. A promise for a base is
- * acceptable too, since the forward goes through `E()`.
+ * index signature and so does not satisfy `Methods`. A promise for a base, or
+ * for a ref to join, is acceptable too. It is awaited before its provenance is
+ * looked up, so a promise for a narrowing still flattens and joins.
  */
 export type NarrowOptions = {
   name: string;
@@ -142,9 +143,10 @@ const mint = <Minted extends Methods>({
  */
 export const narrow = async <Narrowed extends Methods = Methods>({
   name,
-  base,
+  base: baseOrPromise,
   delta,
 }: NarrowOptions): Promise<Guarded<Narrowed>> => {
+  const base = await Promise.resolve(baseOrPromise);
   const inherited = provenance.get(base);
   const target = inherited?.base ?? base;
   const combined = inherited
@@ -198,8 +200,9 @@ export const narrow = async <Narrowed extends Methods = Methods>({
  */
 export const join = async <Joined extends Methods = Methods>({
   name,
-  refs,
+  refs: refsOrPromises,
 }: JoinOptions): Promise<Guarded<Joined>> => {
+  const refs = await Promise.all(refsOrPromises);
   const records = refs.map((ref) => provenance.get(ref));
   const minted = records.filter(
     (record): record is Provenance => record !== undefined,

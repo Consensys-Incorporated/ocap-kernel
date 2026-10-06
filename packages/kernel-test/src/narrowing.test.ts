@@ -137,6 +137,20 @@ describe('narrowing', () => {
     ).toMatch(/^rejected:.*\bread\b/u);
   });
 
+  it.each([
+    { segments: ['srv', 'data', 'x'], expected: /^ok:read:srv\/data\/x$/u },
+    { segments: ['srv', 'logs', 'y'], expected: /^ok:read:srv\/logs\/y$/u },
+    { segments: ['srv', 'data', 'secret'], expected: /^rejected:.*\bread\b/u },
+  ])(
+    'flattens and joins narrowings given as promises: read($segments)',
+    async ({ segments, expected }) => {
+      const kernel = await launchNarrowingVat();
+      expect(await probe(kernel, 'probeNarrowedPromise', [segments])).toMatch(
+        expected,
+      );
+    },
+  );
+
   it('narrows a default-guarded exo', async () => {
     const kernel = await launchNarrowingVat();
     expect(
