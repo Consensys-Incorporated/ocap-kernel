@@ -884,6 +884,15 @@ describe('KernelQueue', () => {
       ).toStrictEqual([[{ type: 'terminateVat', vatId: 'v1' }]]);
     });
 
+    it('refuses a reason that carries slots', () => {
+      const reason = { body: 'because', slots: ['ko1'] } as CapData<KRef>;
+
+      expect(() => kernelQueue.enqueueTerminateVat('v1', reason)).toThrow(
+        'a termination reason cannot carry slots',
+      );
+      expect(kernelStore.enqueueRun).not.toHaveBeenCalled();
+    });
+
     it('refuses once the run loop is dead', async () => {
       await killRunLoop(new Error('crank exploded'));
 
