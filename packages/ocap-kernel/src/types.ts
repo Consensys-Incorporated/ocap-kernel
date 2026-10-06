@@ -387,12 +387,9 @@ const RunQueueItemRestartVatStruct = object({
 export type RunQueueItemRestartVat = Infer<typeof RunQueueItemRestartVatStruct>;
 
 /**
- * A request to terminate a vat, queued so the run loop performs it.
- *
- * Queued for the same reason a restart is, and for one more: a vat's death is
- * a set of store writes, and made from outside the run loop they land in
- * whichever crank happens to be open, for an unrelated rollback to undo after
- * the caller was told they had succeeded.
+ * A request to terminate a vat, queued so the run loop performs it. Made from
+ * outside the run loop, a vat's death landed in whichever crank was open, for
+ * an unrelated rollback to undo after the caller was told it had succeeded.
  */
 const RunQueueItemTerminateVatStruct = object({
   type: literal('terminateVat'),
@@ -948,7 +945,8 @@ export type CrankResult = {
   terminate?: { vatId: VatId; reject: boolean; info: CapData<KRef> };
   /**
    * The delivery has done work a caller will be told of, so a later failure in
-   * this crank, from collection or the audit, must not roll it back.
+   * this crank, from collection or the audit, must not roll it back. Ignored
+   * alongside `abort`, which rolls back first.
    */
   irrevocable?: boolean;
   /**

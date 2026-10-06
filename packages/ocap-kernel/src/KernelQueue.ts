@@ -22,6 +22,8 @@ import type {
 } from './types.ts';
 import { Fail } from './utils/assert.ts';
 
+type HeldRequest = RunQueueItemRestartVat | RunQueueItemTerminateVat;
+
 /** What a caller awaiting queued work is told when the run loop dies. */
 const DEAD_RUN_LOOP_WORK =
   'Kernel run loop died; this work will never be carried out';
@@ -72,7 +74,7 @@ export class KernelQueue {
    * would be rolled back with it if it aborts, and their callers would wait on
    * work nothing is going to do.
    */
-  #heldRequests: (RunQueueItemRestartVat | RunQueueItemTerminateVat)[] = [];
+  #heldRequests: HeldRequest[] = [];
 
   /** Thunk to signal run queue transition from empty to non-empty */
   #wakeUpTheRunQueue: (() => void) | null;
@@ -95,8 +97,8 @@ export class KernelQueue {
    * False once the savepoint has been handed to `rollbackCrank` — attempted,
    * not necessarily succeeded, since it is forgotten either way and asking
    * twice could only report "no such savepoint" over the real error — and
-   * false once a vat's death has been recorded, which must outlive whatever
-   * throws after it.
+   * false once a vat's death has been recorded, or a crank result reports
+   * itself `irrevocable`, which must outlive whatever throws after it.
    *
    * A field rather than a return value from `#processCrankResult`, because that
    * method can throw after rolling back (`#terminateVat`, `collectGarbage`).
@@ -636,9 +638,7 @@ export class KernelQueue {
    *
    * @param item - The item to add.
    */
-  #enqueueRequest(
-    item: RunQueueItemRestartVat | RunQueueItemTerminateVat,
-  ): void {
+  #enqueueRequest(item: HeldRequest): void {
     if (this.#kernelStore.isInCrank()) {
       this.#heldRequests.push(item);
     } else {
@@ -660,15 +660,13 @@ export class KernelQueue {
   /**
    * Enqueue a request to terminate a vat.
    *
-   * The work belongs to the run loop, so that a vat's death is written inside
-   * the crank that performs it rather than in whichever crank happens to be
-   * open when the control plane asks.
-   *
    * @param vatId - The vat to terminate.
-   * @param reason - Why, if there is a reason to pass on.
+   * @param reason - The reason, if any. It must carry no slots.
    */
   enqueueTerminateVat(vatId: VatId, reason?: CapData<KRef>): void {
     this.assertRunLoopAlive('terminate a vat');
+    // A queued row takes no reference count on what it names.
+    !reason?.slots.length || Fail`a termination reason cannot carry slots`;
     this.#enqueueRequest({
       type: 'terminateVat',
       vatId,

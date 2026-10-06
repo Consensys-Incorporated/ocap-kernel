@@ -146,25 +146,19 @@ export class SubclusterManager {
       // up IO channels and the persisted subcluster record.
       // Each step is best-effort — cleanup errors must not mask the original
       // failure.
-      const survivors: VatId[] = [];
+      // Unknown if teardown itself threw, and then the record stays too.
+      let survivors: Map<VatId, unknown> | undefined;
       try {
-        const vatIds = this.#kernelStore.getSubclusterVats(subclusterId);
-        for (const vatId of vatIds.reverse()) {
-          if (!(await this.#terminateVatQuietly(vatId))) {
-            survivors.push(vatId);
-          }
-        }
+        survivors = await this.#terminateMembers(subclusterId);
       } catch (vatCleanupError) {
         this.#logger.error(
           'Error during vat cleanup on failed launch:',
           vatCleanupError,
         );
       }
-      if (survivors.length > 0) {
-        // Kept, IO channels included, for the reason `terminateSubcluster`
-        // keeps them.
+      if (survivors === undefined || survivors.size > 0) {
         this.#logger.error(
-          `Keeping subcluster ${subclusterId} after its failed launch; vats still running: ${survivors.join(', ')}`,
+          `Keeping subcluster ${subclusterId} after its failed launch; vats not retired: ${survivors ? [...survivors.keys()].join(', ') : 'unknown'}`,
         );
       } else {
         try {
@@ -178,7 +172,6 @@ export class SubclusterManager {
           );
         }
         try {
-          // Waits for the reason `terminateSubcluster` does.
           await this.#kernelQueue.waitForCrank();
           this.#kernelStore.deleteSubcluster(subclusterId);
         } catch (cleanupError) {
@@ -193,38 +186,63 @@ export class SubclusterManager {
   }
 
   /**
-   * Terminate one vat as part of cleanup, absorbing any failure.
+   * Terminate every member of a subcluster, last launched first, going on past
+   * any that will not die.
    *
-   * Teardown of a single vat must not strand its siblings: a caller cleaning
-   * up several vats keeps going after one of them fails to die, and reports
-   * the failure rather than propagating it over whatever error prompted the
-   * cleanup in the first place.
+   * Persisted membership, so a vat the kernel has no handle for is still
+   * retired. A vat with neither a handle nor a record is skipped: that covers a
+   * vat whose launch failed before either existed.
    *
-   * A vat with neither a handle nor a record is skipped. That covers a vat
-   * whose launch failed before either existed; one the store still lists is
-   * retired on its records alone.
-   *
-   * @param vatId - The id of the vat to terminate.
-   * @returns True if the vat is gone.
+   * @param subclusterId - The subcluster.
+   * @returns The members still there afterwards, each with what its
+   *   termination threw.
    */
-  async #terminateVatQuietly(vatId: VatId): Promise<boolean> {
-    if (
-      !this.#vatManager.hasVat(vatId) &&
-      !this.#kernelStore.isVatActive(vatId)
-    ) {
-      return true;
-    }
+  async #terminateMembers(
+    subclusterId: SubclusterId,
+  ): Promise<Map<VatId, unknown>> {
+    const isGone = (vatId: VatId): boolean =>
+      !this.#vatManager.hasVat(vatId) && !this.#kernelStore.isVatActive(vatId);
+    const survivors = new Map<VatId, unknown>();
+    let vatIds: VatId[];
     try {
-      await this.#vatManager.terminateVat(vatId);
-      this.#vatManager.collectGarbage();
-      return true;
+      vatIds = this.#kernelStore.getSubclusterVats(subclusterId);
     } catch (error) {
-      this.#logger.error(
-        `Error terminating vat ${vatId} during cleanup:`,
-        error,
-      );
-      return false;
+      // Collection drops a record with no members, as it can between a launch
+      // creating one and adding its first vat.
+      if (error instanceof SubclusterNotFoundError) {
+        return survivors;
+      }
+      throw error;
     }
+    for (const vatId of vatIds.reverse()) {
+      if (isGone(vatId)) {
+        continue;
+      }
+      let failure: unknown;
+      try {
+        await this.#vatManager.terminateVat(vatId);
+      } catch (error) {
+        failure = error;
+        this.#logger.error(`Error terminating vat ${vatId}:`, error);
+      }
+      try {
+        this.#vatManager.collectGarbage();
+      } catch (error) {
+        this.#logger.error(
+          `Error collecting garbage after vat ${vatId}:`,
+          error,
+        );
+      }
+      // By what is left rather than what threw: a vat can be gone even though
+      // something after its death failed.
+      if (!isGone(vatId)) {
+        survivors.set(
+          vatId,
+          failure ?? new Error(`Vat ${vatId} outlived its termination`),
+        );
+      }
+    }
+    return survivors;
   }
 
   /**
@@ -234,8 +252,7 @@ export class SubclusterManager {
    * @returns A promise that resolves when termination is complete.
    */
   async terminateSubcluster(subclusterId: SubclusterId): Promise<void> {
-    // The run loop is what ends each member now, so a dead one cannot end any
-    // of them — and the record deletion below must not go ahead regardless.
+    // A dead run loop ends no member, and the record must not go without them.
     this.#kernelQueue.assertRunLoopAlive('terminate a subcluster');
     const subcluster = this.#kernelStore.getSubcluster(subclusterId);
     if (!subcluster) {
@@ -243,28 +260,21 @@ export class SubclusterManager {
     }
     const bootstrapVatId = subcluster.vats[subcluster.config.bootstrap];
 
-    // Persisted membership, so a vat the kernel has no handle for is still
-    // retired rather than stranding the rest of the subcluster.
-    const vatIdsToTerminate = this.#kernelStore.getSubclusterVats(subclusterId);
-    const survivors: VatId[] = [];
-    for (const vatId of vatIdsToTerminate.reverse()) {
-      if (!(await this.#terminateVatQuietly(vatId))) {
-        survivors.push(vatId);
-      }
-    }
-    if (survivors.length > 0) {
+    const survivors = await this.#terminateMembers(subclusterId);
+    if (survivors.size > 0) {
       // The survivors keep their IO channels, and the system name while its
       // root lives: a kept record whose bootstrap vat is gone fails the next
       // boot's restore. The record stays regardless: `deleteSubcluster` drops
       // every member's vat-to-subcluster mapping, and `getVatSubcluster` is a
       // `Fail`, so deleting it over a live member breaks `getStatus` for the
       // whole kernel.
-      if (!bootstrapVatId || !survivors.includes(bootstrapVatId)) {
+      if (!bootstrapVatId || !survivors.has(bootstrapVatId)) {
         await this.#kernelQueue.waitForCrank();
         this.#dropSystemSubclusterMapping(subclusterId);
       }
-      throw Error(
-        `subcluster ${subclusterId} still has running vats: ${survivors.join(', ')}`,
+      throw new AggregateError(
+        [...survivors.values()],
+        `subcluster ${subclusterId} still has vats: ${[...survivors.keys()].join(', ')}`,
       );
     }
 
@@ -278,8 +288,9 @@ export class SubclusterManager {
       this.#logger.error('Error during IO cleanup on termination:', error);
     }
 
-    // Each member's termination resolves from inside its own crank, so this
-    // waits rather than writing into whichever one is open.
+    // Resumes inside the next crank if more work is queued, where these writes
+    // roll back with it. The record goes anyway with the last member's
+    // collection, and boot drops a mapping to a subcluster that is gone.
     await this.#kernelQueue.waitForCrank();
     this.#dropSystemSubclusterMapping(subclusterId);
     this.#kernelStore.deleteSubcluster(subclusterId);
