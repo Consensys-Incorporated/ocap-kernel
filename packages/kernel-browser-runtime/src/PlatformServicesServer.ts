@@ -264,8 +264,11 @@ export class PlatformServicesServer {
     if (!vatWorker) {
       throw new VatNotFoundError(vatId);
     }
-    await vatWorker.terminate();
-    this.#vatWorkers.delete(vatId);
+    try {
+      await vatWorker.terminate();
+    } finally {
+      this.#vatWorkers.delete(vatId);
+    }
     return null;
   }
 
