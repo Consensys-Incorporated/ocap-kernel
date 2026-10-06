@@ -1,8 +1,12 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "customEnvVariables": {
+    "COREPACK_ENABLE_DOWNLOAD_PROMPT": "0"
+  },
   "extends": ["config:recommended"],
   "enabledManagers": ["github-actions", "npm"],
   "dependencyDashboard": false,
+  "postUpdateOptions": ["yarnDedupeHighest"],
   "packageRules": [
     {
       "matchManagers": ["npm"],

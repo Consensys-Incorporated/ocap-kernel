@@ -495,11 +495,16 @@ describe('getSubclusterMethods', () => {
       expect(map[vatId2]).toBe(scId);
     });
 
-    it('should throw an error if the vat is not in any subcluster', () => {
+    it('leaves a vat that is in no subcluster alone', () => {
       const nonMappedVat = 'vNonMapped' as VatId;
+
       expect(() =>
         subclusterMethods.removeVatFromSubcluster(nonMappedVat),
-      ).toThrow('Vat "vNonMapped" has no subcluster');
+      ).not.toThrow();
+      expect(subclusterMethods.getSubcluster(scId)?.vats).toStrictEqual({
+        vat1: vatId1,
+        vat2: vatId2,
+      });
     });
 
     it('should handle removing the last vat from a subcluster', () => {

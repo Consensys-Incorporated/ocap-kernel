@@ -158,6 +158,56 @@ async function deliverAndDie(
   kernelStore.endCrank();
 }
 
+/**
+ * A message from the peer, as it arrives on the wire.
+ *
+ * @param seq - Its sequence number.
+ * @returns The message.
+ */
+function fromPeer(seq: number): string {
+  return JSON.stringify({
+    seq,
+    method: 'deliver',
+    params: ['bringOutYourDead'],
+  });
+}
+
+/**
+ * Take delivery of a message from the peer in a crank of its own, the way the
+ * run loop does.
+ *
+ * @param options - Options bag.
+ * @param options.remote - The handle taking delivery.
+ * @param options.kernelStore - The store the crank runs against.
+ * @param options.message - The message, as it arrived.
+ * @param options.rollBack - Whether the crank rolls back instead of committing.
+ * @returns Whether the crank took the message rather than discarding it.
+ */
+async function takeInbound({
+  remote,
+  kernelStore,
+  message,
+  rollBack = false,
+}: {
+  remote: RemoteHandle;
+  kernelStore: ReturnType<typeof makeKernelStore>;
+  message: string;
+  rollBack?: boolean;
+}): Promise<boolean> {
+  kernelStore.startCrank();
+  kernelStore.createCrankSavepoint('crank');
+  kernelStore.createCrankSavepoint('delivery');
+  const { afterCommit } = await remote.deliverInbound(message);
+  if (rollBack) {
+    kernelStore.rollbackCrank('delivery');
+    kernelStore.endCrank();
+  } else {
+    kernelStore.endCrank();
+    await afterCommit?.();
+  }
+  return afterCommit !== undefined;
+}
+
 describe('RemoteHandle across a crank boundary', () => {
   // SES lockdown freezes Date, so vi.useFakeTimers() cannot be used here.
   const pendingTimers: (() => void)[] = [];
@@ -286,6 +336,29 @@ describe('RemoteHandle across a crank boundary', () => {
       });
     });
 
+    it('is written down by the crank that numbers the next message', async () => {
+      const { remote, kernelStore } = await makeRemoteOverRealStore();
+
+      await deliverAndCommit(remote, kernelStore);
+      ackAndRollBack(remote, kernelStore);
+      await deliverAndCommit(remote, kernelStore);
+
+      expect(kernelStore.getPendingMessage(REMOTE_ID, 1)).toBeUndefined();
+    });
+
+    it('is written down by the crank of a message it takes for a duplicate', async () => {
+      const { remote, kernelStore } = await makeRemoteOverRealStore();
+
+      await deliverAndCommit(remote, kernelStore);
+      await takeInbound({ remote, kernelStore, message: fromPeer(1) });
+      ackAndRollBack(remote, kernelStore);
+
+      expect(
+        await takeInbound({ remote, kernelStore, message: fromPeer(1) }),
+      ).toBe(false);
+      expect(kernelStore.getPendingMessage(REMOTE_ID, 1)).toBeUndefined();
+    });
+
     it('is written down by the crank of the message that carried it', async () => {
       const { remote, kernelStore } = await makeRemoteOverRealStore();
 
@@ -314,6 +387,45 @@ describe('RemoteHandle across a crank boundary', () => {
       await deliverAndCommit(restarted, kernelStore);
 
       expect(sentSeqs(remoteComms)).toStrictEqual([2]);
+    });
+  });
+
+  describe('an inbound message whose crank rolls back', () => {
+    it('is not acknowledged to the peer', async () => {
+      const { remote, kernelStore, remoteComms } =
+        await makeRemoteOverRealStore();
+
+      await takeInbound({
+        remote,
+        kernelStore,
+        message: fromPeer(1),
+        rollBack: true,
+      });
+      await deliverAndCommit(remote, kernelStore);
+
+      const [, sent] = vi.mocked(remoteComms.sendRemoteMessage).mock.calls[0]!;
+      expect(JSON.parse(sent).ack).toBeUndefined();
+    });
+  });
+
+  describe('a peer restart whose crank rolls back', () => {
+    it('takes the new incarnation’s first message', async () => {
+      const { remote, kernelStore } = await makeRemoteOverRealStore();
+
+      await takeInbound({ remote, kernelStore, message: fromPeer(1) });
+      // The handshake runs on the transport's flow, so its reset can land in a
+      // crank that then aborts, and the store gets the old receipts back.
+      kernelStore.startCrank();
+      kernelStore.createCrankSavepoint('crank');
+      kernelStore.createCrankSavepoint('delivery');
+      remote.persistPeerRestart();
+      remote.finalizePeerRestart();
+      kernelStore.rollbackCrank('delivery');
+      kernelStore.endCrank();
+
+      expect(
+        await takeInbound({ remote, kernelStore, message: fromPeer(1) }),
+      ).toBe(true);
     });
   });
 

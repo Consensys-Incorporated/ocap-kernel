@@ -15,7 +15,7 @@ import type {
   RemoteId,
   ERef,
   KRef,
-  EndpointHandle,
+  RemoteEndpointHandle,
   EndpointMessage,
   KernelOneResolution,
   CrankResult,
@@ -130,7 +130,7 @@ type RemoteCommand = {
 /**
  * Handles communication with a remote kernel endpoint over the network.
  */
-export class RemoteHandle implements EndpointHandle {
+export class RemoteHandle implements RemoteEndpointHandle {
   /** The ID of the remote connection this is the RemoteHandle for. */
   readonly remoteId: RemoteId;
 
@@ -468,8 +468,8 @@ export class RemoteHandle implements EndpointHandle {
    * crank that then rolls back: the store gets back messages the peer already
    * has, and memory, which has moved past them, would otherwise never write
    * them off again. So this catches up from the store's start rather than
-   * memory's, and runs on every ACK and in every crank that writes this
-   * peer's queue or receipts.
+   * memory's, on every ACK and in each crank that takes a message from the peer
+   * or numbers one for it.
    */
   #persistAcknowledged(): void {
     const stored = this.#storedSeqWindow;
@@ -755,16 +755,11 @@ export class RemoteHandle implements EndpointHandle {
    * the caller awaits the peer's reply, not the send.
    *
    * @param messageBase - The message, before its sequence number and ack.
-   * @param exemptFromCapacityLimit - Whether the pending queue's capacity limit
-   * does not apply, for a reply that must not fail.
    */
   async #sendRemoteCommand(
     messageBase: Delivery | RedeemURLRequest | RedeemURLReply,
-    exemptFromCapacityLimit = false,
   ): Promise<void> {
-    this.#transmitRemoteCommand(
-      this.#persistRemoteCommand(messageBase, { exemptFromCapacityLimit }),
-    );
+    this.#transmitRemoteCommand(this.#persistRemoteCommand(messageBase));
   }
 
   /**
@@ -1219,8 +1214,7 @@ export class RemoteHandle implements EndpointHandle {
       }
       case 'bringOutYourDead': {
         // Queue work like the arms above: `scheduleReap` is consumed only by the
-        // run loop, via `nextReapAction`. The other GC arms need no guard — they
-        // only touch refcounts, which the caller's crank commits by itself.
+        // run loop, via `nextReapAction`.
         this.#kernelStore.scheduleReap(this.remoteId);
         break;
       }
@@ -1363,14 +1357,19 @@ export class RemoteHandle implements EndpointHandle {
     // acknowledgement, and it has to provoke another one.
     this.#startDelayedAck();
 
-    // Validate seq value. Here rather than in the crank, because a run queue
-    // item that throws on delivery kills the run loop and is rolled back onto
-    // the queue to kill the next boot too.
+    // Validate seq value. Here rather than in the crank, which would not refuse
+    // it: a seq that is not a number fails every comparison, so it passes the
+    // duplicate check and is then recorded as the highest received, and no
+    // later message from this peer is ever taken for a duplicate again.
     if (typeof seq !== 'number' || !Number.isInteger(seq) || seq < 1) {
       throw Error(`invalid message seq: ${seq}`);
     }
 
-    this.#kernelQueue.acceptRemoteInbound(this.remoteId, message);
+    if (!this.#kernelQueue.acceptRemoteInbound(this.remoteId, message)) {
+      this.#logger.log(
+        `${this.#peerId.slice(0, 8)}:: refused message seq=${seq}: too many already waiting their turn`,
+      );
+    }
   }
 
   /**
@@ -1382,16 +1381,15 @@ export class RemoteHandle implements EndpointHandle {
   async deliverInbound(message: string): Promise<CrankResult> {
     const command = JSON.parse(message) as RemoteCommand;
 
-    // Against the store, not `#highestReceivedSeq`: several messages from this
-    // peer can be waiting their turn in the run queue at once, and the
-    // in-memory value only catches up as each one's crank commits.
-    const highestReceived =
-      this.#kernelStore.getRemoteSeqState(this.remoteId)?.highestReceivedSeq ??
-      0;
-    if (command.seq <= highestReceived) {
+    // Against memory, not the store. The run loop finishes a crank's
+    // post-commit work, which moves memory, before it starts the next, so the
+    // two agree here except where a peer restart's reset was rolled back: the
+    // store then has the old incarnation's receipts back, and would take the
+    // new incarnation's first messages for duplicates.
+    if (command.seq <= this.#highestReceivedSeq) {
       this.#persistAcknowledged();
       this.#logger.log(
-        `${this.#peerId.slice(0, 8)}:: ignoring duplicate message seq=${command.seq} (highestReceived=${highestReceived})`,
+        `${this.#peerId.slice(0, 8)}:: ignoring duplicate message seq=${command.seq} (highestReceived=${this.#highestReceivedSeq})`,
       );
       return { didDelivery: this.remoteId };
     }

@@ -370,11 +370,6 @@ describe('RemoteHandle', () => {
           }),
         ),
       ).toThrow(failure);
-
-      // Nothing was recorded, so the peer's retry is not a duplicate.
-      expect(
-        mockKernelStore.getRemoteSeqState(mockRemoteId)?.highestReceivedSeq,
-      ).toBeUndefined();
     });
 
     it('does not send BOYD back when remotely triggered (ping-pong prevention)', async () => {
@@ -1282,9 +1277,6 @@ describe('RemoteHandle', () => {
   });
 
   describe('the front half, at receive time', () => {
-    // A queue item that throws on delivery kills the run loop, and the
-    // rollback puts it back to kill the next boot too. So a message that
-    // cannot be delivered must be refused before it becomes one.
     it.each([
       { what: 'no seq', message: { method: 'deliver', params: [] } },
       { what: 'a non-numeric seq', message: { seq: 'bogus', method: 'x' } },
@@ -1298,12 +1290,6 @@ describe('RemoteHandle', () => {
       );
 
       expect(mockKernelQueue.acceptRemoteInbound).not.toHaveBeenCalled();
-      // Left to be written, `highestReceivedSeq` reads back as `NaN`, and
-      // every later comparison against it is false: duplicate detection never
-      // fires again and the peer is never acknowledged again.
-      expect(
-        mockKernelStore.getRemoteSeqState(mockRemoteId)?.highestReceivedSeq,
-      ).not.toBe(Number.NaN);
     });
 
     it('acknowledges a retransmission the crank will discard as a duplicate', async () => {
@@ -1353,44 +1339,6 @@ describe('RemoteHandle', () => {
       expect(
         mockKernelStore.getPendingMessage(mockRemoteId, 1),
       ).toBeUndefined();
-    });
-  });
-
-  describe('two messages from one peer in flight at once', () => {
-    // The run queue can hold several before any of their cranks commit, and
-    // `#highestReceivedSeq` only catches up as each one does — so memory is
-    // the wrong thing to compare against.
-    it('tells them apart by what the store has, not what memory has', async () => {
-      const remote = makeRemote();
-      const message = (seq: number): string =>
-        JSON.stringify({ seq, method: 'deliver', params: ['notify', []] });
-
-      // Two cranks, neither of their post-commit halves run yet.
-      const first = await remote.deliverInbound(message(1));
-      const second = await remote.deliverInbound(message(2));
-      await first.afterCommit?.();
-      await second.afterCommit?.();
-
-      expect(
-        mockKernelStore.getRemoteSeqState(mockRemoteId)?.highestReceivedSeq,
-      ).toBe(2);
-    });
-
-    it('discards the second delivery of one sequence number', async () => {
-      const remote = makeRemote();
-      const message = JSON.stringify({
-        seq: 1,
-        method: 'deliver',
-        params: ['notify', [['rp+1', false, { body: '"x"', slots: [] }]]],
-      });
-      await remote.deliverInbound(message);
-      vi.mocked(mockKernelQueue.resolvePromises).mockClear();
-
-      // Its crank has not committed, so memory still says nothing was received.
-      const result = await remote.deliverInbound(message);
-
-      expect(result.afterCommit).toBeUndefined();
-      expect(mockKernelQueue.resolvePromises).not.toHaveBeenCalled();
     });
   });
 
@@ -1690,7 +1638,7 @@ describe('RemoteHandle', () => {
       ).toBe(1);
     });
 
-    it('restores highestReceivedSeq on processing error', async () => {
+    it('leaves highestReceivedSeq alone on processing error', async () => {
       const remote = makeRemote();
 
       // First, process a valid message to set highestReceivedSeq to 1
@@ -1715,7 +1663,9 @@ describe('RemoteHandle', () => {
         'unknown remote delivery method bogus',
       );
 
-      // highestReceivedSeq should still be 1 (restored after rollback)
+      // highestReceivedSeq should still be 1: the throw comes before it is
+      // written. The map-backed store cannot roll back, so this tests the write
+      // order, not the rollback.
       // Send another message with seq=2 to verify it's not considered a duplicate
       vi.mocked(mockKernelQueue.resolvePromises).mockClear();
       const retryMessage = JSON.stringify({

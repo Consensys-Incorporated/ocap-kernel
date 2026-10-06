@@ -157,6 +157,15 @@ The process of invalidating an object reference, preventing further access to th
 Revoked objects return errors when accessed. See the [revocation
 methods](../packages/ocap-kernel/src/store/methods/revocation.ts) for implementation.
 
+### narrowing
+
+A form of attenuation in which every method of the derived [exo](#exo) is an unaltered
+forward to the same method of the exo it narrows, admitting a subset of that method's
+arguments. Narrowings of a common capability form a lattice whose join is
+computable syntactically, which is what separates narrowing from attenuations that
+rewrite arguments or add behavior. See [Attenuation by
+narrowing](../docs/attenuation-by-narrowing.md).
+
 ### channel
 
 A communication pathway between different components, such as between a [vat](#vat) and

@@ -151,10 +151,8 @@ export class Kernel {
     // which would deadlock — this callback is invoked from within a crank.
     this.#kernelQueue = new KernelQueue(
       this.#kernelStore,
-      async (vatId, reason) => {
-        await this.#vatManager.stopVat(vatId, true, reason);
-        this.#kernelStore.markVatAsTerminated(vatId);
-      },
+      async (vatId, reason) =>
+        await this.#vatManager.stopVat(vatId, true, reason),
     );
 
     this.#vatManager = new VatManager({
