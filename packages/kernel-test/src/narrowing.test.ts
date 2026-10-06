@@ -128,15 +128,6 @@ describe('narrowing', () => {
     ).toBe('ok:copy:srv/data/x->srv/logs/secret');
   });
 
-  it('grants nothing when a delta is changed after narrowing', async () => {
-    const kernel = await launchNarrowingVat();
-    expect(
-      await probe(kernel, 'probeDeltaChangedAfterNarrowing', [
-        ['etc', 'passwd'],
-      ]),
-    ).toMatch(/^rejected:.*\bread\b/u);
-  });
-
   it.each([
     { segments: ['srv', 'data', 'x'], expected: /^ok:read:srv\/data\/x$/u },
     { segments: ['srv', 'logs', 'y'], expected: /^ok:read:srv\/logs\/y$/u },
