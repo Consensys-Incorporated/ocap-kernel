@@ -354,13 +354,13 @@ export class VatManager {
       // Rethrown below, once the worker is stopped.
       recordFailure = error as Error;
     }
-    // Boxed, so a worker that failed with `undefined` still counts as failed.
-    let workerFailure: { error: unknown } | undefined;
+    // Logged rather than thrown, so a restart still relaunches: the platform
+    // forgets a worker even when stopping it fails.
     await this.#platformServices
       .terminate(vatId, terminationError)
-      .catch((error: unknown) => {
-        workerFailure = { error };
-      });
+      .catch((error: unknown) =>
+        this.#logger.error(`Worker for vat ${vatId} would not stop:`, error),
+      );
     try {
       await vat?.terminate(terminating, terminationError);
     } catch (error) {
@@ -371,21 +371,8 @@ export class VatManager {
       }
       this.#logger.error(`Channel to vat ${vatId} would not close:`, error);
     }
-    if (workerFailure && terminating) {
-      this.#logger.error(
-        `Worker for vat ${vatId} would not stop:`,
-        workerFailure.error,
-      );
-    }
     if (recordFailure !== undefined) {
       throw recordFailure;
-    }
-    if (workerFailure && !terminating) {
-      // A worker still registered refuses its replacement as a duplicate, so a
-      // restart has to fail here, with the cause, rather than at the launch.
-      throw new Error(`Worker for vat ${vatId} would not stop`, {
-        cause: workerFailure.error,
-      });
     }
   }
 

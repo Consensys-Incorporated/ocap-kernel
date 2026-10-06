@@ -692,17 +692,14 @@ describe('VatManager', () => {
       expect(mockKernelStore.markVatAsTerminated).toHaveBeenCalledWith('v1');
     });
 
-    it('closes the channel but rejects a restart whose worker will not stop', async () => {
+    it('stops a restarting vat whose worker will not stop', async () => {
       await vatManager.runVat('v1', createMockVatConfig());
-      const platformError = new Error('Platform error');
-      mockPlatformServices.terminate.mockRejectedValueOnce(platformError);
-
-      await expect(vatManager.stopVat('v1', false)).rejects.toThrow(
-        expect.objectContaining({
-          message: 'Worker for vat v1 would not stop',
-          cause: platformError,
-        }),
+      mockPlatformServices.terminate.mockRejectedValueOnce(
+        new Error('Platform error'),
       );
+
+      await vatManager.stopVat('v1', false);
+
       expect(vatHandles[0]?.terminate).toHaveBeenCalled();
       expect(vatManager.hasVat('v1')).toBe(false);
     });
@@ -966,24 +963,16 @@ describe('VatManager', () => {
       expect(mockKernelStore.markVatAsTerminated).not.toHaveBeenCalled();
     });
 
-    it('fails the restart before relaunching when the old worker will not stop', async () => {
+    it('relaunches even when the old worker will not stop', async () => {
       await vatManager.runVat('v1', createMockVatConfig());
-      leaveRequestQueued();
-      const restarting = vatManager.restartVat('v1');
       mockPlatformServices.terminate.mockRejectedValueOnce(
         new Error('worker.terminate failed'),
       );
 
-      const crankResult = await vatManager.performVatRestart('v1');
+      await vatManager.restartVat('v1');
 
-      expect(crankResult).toMatchObject({
-        abort: true,
-        terminate: { vatId: 'v1', reject: true },
-      });
-      expect(mockPlatformServices.launch).toHaveBeenCalledTimes(1);
-      await expect(restarting).rejects.toThrow(
-        'Vat v1 was terminated after its restart failed: Worker for vat v1 would not stop',
-      );
+      expect(mockPlatformServices.launch).toHaveBeenCalledTimes(2);
+      expect(mockKernelStore.markVatAsTerminated).not.toHaveBeenCalled();
     });
 
     it('answers its caller only once the crank commits', async () => {
