@@ -80,6 +80,7 @@ async function setUp() {
           return { didDelivery: vatId };
         },
         terminate: async (): Promise<void> => undefined,
+        expectClose: (): void => undefined,
       } as unknown as VatHandle;
     },
   );

@@ -134,6 +134,7 @@ async function setUp() {
   return {
     kernelStore,
     kernelQueue,
+    vatManager,
     vatSyscall,
     remoteManager,
     remote,
@@ -159,7 +160,7 @@ async function abortACrankWhile(
   harness: Harness,
   act: () => Promise<void>,
 ): Promise<RunQueueItem[]> {
-  const { kernelQueue, doomed, sentinel } = harness;
+  const { kernelQueue, vatManager, doomed, sentinel } = harness;
   kernelQueue.enqueueSend(doomed, {
     methargs: kser(['work', []]),
     result: null,
@@ -195,6 +196,9 @@ async function abortACrankWhile(
     }
     if (item.type === 'send' && item.target === sentinel) {
       throw new Error(STOP_RUN_LOOP);
+    }
+    if (item.type === 'terminateVat') {
+      return await vatManager.performVatTermination(item.vatId, item.reason);
     }
     // Recorded only for the types the rows observe; anything new must be wired
     // to its real handler before a row can say what it did.
