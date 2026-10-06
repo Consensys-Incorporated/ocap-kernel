@@ -767,8 +767,8 @@ describe('VatManager', () => {
 
       await vatManager.terminateVat('v1');
 
-      // The crank that reaches the restart will find nothing to restart, so
-      // its caller is told now rather than left waiting on it.
+      // The termination's crank answers the restart it overtook; the
+      // restart's own crank then finds no caller and relaunches nothing.
       await expect(restarting).rejects.toThrow(VatDeletedError);
     });
 
@@ -1371,12 +1371,15 @@ describe('VatManager', () => {
       await vatManager.runVat('v3', createMockVatConfig());
       leaveRequestQueued();
       leaveRequestQueued();
+      leaveRequestQueued();
       mockKernelQueue.enqueueTerminateVat.mockImplementationOnce(
         () => undefined,
       );
       const waiting = [
         vatManager.restartVat('v1'),
         vatManager.restartVat('v2'),
+        // Overtaken by the termination after it.
+        vatManager.restartVat('v3'),
         vatManager.terminateVat('v3'),
       ];
       const reset = new Error('Kernel was reset');
