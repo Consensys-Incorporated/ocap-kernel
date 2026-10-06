@@ -68,7 +68,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Vats keep access to both, and `allowedGlobalNames` can no longer withhold them
 - **BREAKING:** `restartVat` is carried out by the run loop in a crank of its own, so a crank can no longer observe a vat between workers as dead. It now waits behind the run queue, and rejects if the run loop dies or the kernel is stopped, reset or has its storage cleared first. Concurrent restarts of one vat are carried out once ([#1096](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1096))
 - **BREAKING:** A vat whose relaunch fails, or whose new worker does not start within `vatRelaunchTimeoutMs`, is terminated rather than left persisted with no worker ([#1096](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1096))
-- **BREAKING:** `terminateVat` is carried out by the run loop, as a run queue item, so a vat's death no longer lands in whichever crank happened to be open, for an unrelated rollback to undo after the caller was told it succeeded. It now waits behind the run queue, and rejects if the run loop dies or the kernel is stopped, reset or has its storage cleared first ([#1097](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1097))
+- **BREAKING:** `terminateVat` is carried out by the run loop as a run queue item, so an unrelated rollback can no longer undo a death its caller was told succeeded. It now waits behind the run queue, and rejects if the run loop dies or the kernel is stopped, reset or has its storage cleared first ([#1097](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1097))
 
 ### Fixed
 

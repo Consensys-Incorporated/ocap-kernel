@@ -767,8 +767,6 @@ describe('VatManager', () => {
 
       await vatManager.terminateVat('v1');
 
-      // The termination's crank answers the restart it overtook; the
-      // restart's own crank then finds no caller and relaunches nothing.
       await expect(restarting).rejects.toThrow(VatDeletedError);
     });
 
@@ -827,8 +825,6 @@ describe('VatManager', () => {
       it('carries out a request nobody is waiting for', async () => {
         await vatManager.runVat('v1', createMockVatConfig());
 
-        // A termination is an instruction rather than a request: an item that
-        // outlived its caller is one `initializeAllVats` has just undone.
         expect(await vatManager.performVatTermination('v1')).toStrictEqual({
           irrevocable: true,
         });
@@ -842,8 +838,6 @@ describe('VatManager', () => {
           () => undefined,
         );
         const terminating = vatManager.terminateVat('v1');
-        // The in-crank termination path, or `terminateAllVats`, gets there
-        // first — which is exactly what this caller asked for.
         await vatManager.stopVat('v1', true);
         mockKernelStore.isVatActive.mockReturnValue(false);
 
@@ -872,8 +866,6 @@ describe('VatManager', () => {
           }),
         );
 
-        // Irrevocable, so a failure later in the crank kills the loop without
-        // undoing the death.
         await vatManager.performVatTermination('v1');
         killRunLoop(new Error('run loop died'));
         endCrank();
@@ -891,8 +883,6 @@ describe('VatManager', () => {
           throw new Error('deleteVat failed');
         });
 
-        // The run loop has no catch: a rejection there rolls the crank back,
-        // undoing whatever of the death did get written.
         expect(await vatManager.performVatTermination('v1')).toStrictEqual({
           irrevocable: true,
         });
@@ -1567,8 +1557,6 @@ describe('VatManager', () => {
 
       await vatManager.terminateAllVats();
 
-      // Part of tearing the kernel down: `reset` has to work on a kernel whose
-      // run loop has died, and a queued request never would be.
       expect(mockKernelQueue.enqueueTerminateVat).not.toHaveBeenCalled();
       expect(mockKernelStore.markVatAsTerminated).toHaveBeenCalledWith('v1');
     });

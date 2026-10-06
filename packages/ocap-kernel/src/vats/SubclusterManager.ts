@@ -161,8 +161,6 @@ export class SubclusterManager {
         );
       }
       if (survivors.length > 0) {
-        // Kept, IO channels included, for the reason `terminateSubcluster`
-        // keeps them.
         this.#logger.error(
           `Keeping subcluster ${subclusterId} after its failed launch; vats still running: ${survivors.join(', ')}`,
         );
@@ -178,7 +176,6 @@ export class SubclusterManager {
           );
         }
         try {
-          // Waits for the reason `terminateSubcluster` does.
           await this.#kernelQueue.waitForCrank();
           this.#kernelStore.deleteSubcluster(subclusterId);
         } catch (cleanupError) {
@@ -234,8 +231,7 @@ export class SubclusterManager {
    * @returns A promise that resolves when termination is complete.
    */
   async terminateSubcluster(subclusterId: SubclusterId): Promise<void> {
-    // The run loop is what ends each member now, so a dead one cannot end any
-    // of them — and the record deletion below must not go ahead regardless.
+    // A dead run loop ends no member, and the record must not go without them.
     this.#kernelQueue.assertRunLoopAlive('terminate a subcluster');
     const subcluster = this.#kernelStore.getSubcluster(subclusterId);
     if (!subcluster) {

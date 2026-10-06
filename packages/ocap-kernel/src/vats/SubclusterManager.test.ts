@@ -288,8 +288,6 @@ describe('SubclusterManager', () => {
         'carol exploded',
       );
 
-      // alice is still torn down despite bob's failure, and the record stays
-      // while bob is alive.
       expect(mockVatManager.terminateVat).toHaveBeenCalledWith('v2');
       expect(mockVatManager.terminateVat).toHaveBeenCalledWith('v1');
       expect(mockKernelStore.deleteSubcluster).not.toHaveBeenCalled();
@@ -733,8 +731,6 @@ describe('SubclusterManager', () => {
 
       await subclusterManager.terminateSubcluster('s1');
 
-      // Membership is persisted, so a vat left behind by a failed relaunch
-      // would otherwise strand the rest of the subcluster.
       expect(mockVatManager.terminateVat).toHaveBeenCalledWith('v1');
       expect(mockKernelStore.deleteSubcluster).toHaveBeenCalledWith('s1');
     });
@@ -754,9 +750,6 @@ describe('SubclusterManager', () => {
         'subcluster s1 still has running vats: v2',
       );
 
-      // One member that will not die must not strand the others, and must not
-      // let the record go: `deleteSubcluster` drops every member's
-      // vat-to-subcluster mapping, and `getVatSubcluster` is a `Fail`.
       expect(mockVatManager.terminateVat).toHaveBeenCalledWith('v1');
       expect(mockKernelStore.deleteSubcluster).not.toHaveBeenCalled();
     });
@@ -1203,7 +1196,6 @@ describe('SubclusterManager', () => {
         'subcluster s1 still has running vats: v2',
       );
 
-      // Restoring a name whose bootstrap vat is gone fails the next boot.
       expect(
         mockKernelStore.deleteSystemSubclusterMapping,
       ).toHaveBeenCalledWith('sys');

@@ -101,10 +101,7 @@ export class VatManager {
    */
   readonly #restartWaiters: Map<VatId, Waiter<VatHandle>[]>;
 
-  /**
-   * Callers awaiting a queued termination, by vat. Same shape as
-   * {@link VatManager.#restartWaiters}.
-   */
+  /** Callers awaiting a queued termination, by vat. */
   readonly #terminationWaiters: Map<VatId, Waiter<undefined>[]>;
 
   /**
@@ -605,10 +602,9 @@ export class VatManager {
   /**
    * End a vat. Called by the run loop, for a queued termination request.
    *
-   * Carried out whether or not anyone is still waiting: unlike a restart, a
-   * termination is an instruction rather than a request, and a request that
-   * outlived the process that made it is one `initializeAllVats` has just
-   * undone by relaunching the vat.
+   * Carried out whether or not anyone is still waiting: a termination is an
+   * instruction, and one that outlived its process names a vat the boot has
+   * just relaunched.
    *
    * @param vatId - The ID of the vat.
    * @param reason - The reason for the termination, if any.
@@ -968,9 +964,7 @@ export class VatManager {
    *
    * `stopVat` rather than `terminateVat`: this is part of tearing the kernel
    * down, and `reset` has to work on a kernel whose run loop has died, which a
-   * queued request could never be carried out on. The narrow "run loop is not
-   * running, so direct writes are legal" mode that makes this safe is the last
-   * of the control-plane moves, not this one.
+   * queued request could never be carried out on.
    */
   async terminateAllVats(): Promise<void> {
     await this.#kernelQueue.waitForCrank();

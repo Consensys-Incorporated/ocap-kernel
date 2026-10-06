@@ -754,8 +754,6 @@ describe('Kernel', () => {
 
       await kernel.terminateVat('v1');
 
-      // The death is written inside the crank that performs it, rather than in
-      // whichever crank happens to be open when the control plane asks.
       expect(
         mocks.KernelQueue.lastInstance.enqueueTerminateVat,
       ).toHaveBeenCalledWith('v1', undefined);

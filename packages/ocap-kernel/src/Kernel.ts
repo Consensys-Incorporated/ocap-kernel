@@ -149,9 +149,8 @@ export class Kernel {
       this.#resetKernelState({ resetIdentity: Boolean(options.mnemonic) });
     }
 
-    // `stopVat` rather than `terminateVat`: this runs inside the crank that
-    // decided the vat has to go, and `terminateVat` would queue a request for
-    // the run loop and wait for a crank that cannot start until this one ends.
+    // `stopVat`, not `terminateVat`: this runs inside a crank, and
+    // `terminateVat` would wait for a crank that cannot start until it ends.
     this.#kernelQueue = new KernelQueue(
       this.#kernelStore,
       async (vatId, reason) =>
