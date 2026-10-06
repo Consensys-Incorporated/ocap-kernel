@@ -617,7 +617,9 @@ export class Kernel {
   }
 
   /**
-   * Restarts a vat.
+   * Restarts a vat. The run loop carries the restart out, so this waits behind
+   * the run queue and rejects if the run loop dies. A vat whose relaunch fails
+   * is terminated.
    *
    * @param vatId - The ID of the vat to restart.
    * @returns A promise for the restarted vat handle.
@@ -643,6 +645,9 @@ export class Kernel {
   async clearStorage(): Promise<void> {
     await this.#kernelQueue.waitForCrank();
     this.#kernelStore.clear();
+    this.#vatManager.abandonQueuedWork(
+      new Error('Kernel storage was cleared; queued work was abandoned'),
+    );
   }
 
   /**
@@ -844,6 +849,9 @@ export class Kernel {
       await this.terminateAllVats();
       this.#subclusterManager.clearSystemSubclusters();
       this.#resetKernelState();
+      this.#vatManager.abandonQueuedWork(
+        new Error('Kernel was reset; queued work was abandoned'),
+      );
     } catch (error) {
       this.#logger.error('Error resetting kernel:', error);
       throw error;
@@ -863,6 +871,9 @@ export class Kernel {
    */
   async stop(): Promise<void> {
     await this.#kernelQueue.waitForCrank();
+    this.#vatManager.abandonQueuedWork(
+      new Error('Kernel was stopped; queued work was abandoned'),
+    );
     this.#kernelStore.recordLastActiveTime();
     await this.#platformServices.stopRemoteComms();
     this.#remoteManager.cleanup();

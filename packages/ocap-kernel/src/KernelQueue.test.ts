@@ -810,7 +810,6 @@ describe('KernelQueue', () => {
 
       await expect(kernelQueue.run(deliver)).rejects.toBe(stop);
 
-      // Written into the crank, the request would have been rolled back with it.
       expect(events.slice(0, 3)).toStrictEqual([
         'rollbackCrank',
         'endCrank',
@@ -828,6 +827,28 @@ describe('KernelQueue', () => {
         type: 'restartVat',
         vatId: 'v1',
       });
+    });
+
+    it('drops a request held by a crank that kills the run loop', async () => {
+      (kernelStore.isInCrank as unknown as MockInstance).mockReturnValue(true);
+      (kernelStore.runQueueLength as unknown as MockInstance).mockReturnValue(
+        1,
+      );
+      (kernelStore.dequeueRun as unknown as MockInstance).mockReturnValue({
+        type: 'send',
+        target: 'ko123',
+        message: {} as KernelMessage,
+      });
+      const failure = new Error('crank exploded');
+      const deliver = vi.fn().mockImplementationOnce(async () => {
+        kernelQueue.enqueueRestartVat('v1');
+        throw failure;
+      });
+
+      await expect(kernelQueue.run(deliver)).rejects.toBe(failure);
+
+      // Its caller hears of the death through `onRunLoopDeath` instead.
+      expect(kernelStore.enqueueRun).not.toHaveBeenCalled();
     });
 
     it('refuses once the run loop is dead', async () => {
