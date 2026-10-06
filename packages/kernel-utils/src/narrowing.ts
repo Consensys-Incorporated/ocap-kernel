@@ -94,8 +94,6 @@ const mint = <Minted extends Methods>({
   baseGuard: InterfaceGuard;
   delta: DisjunctiveDelta;
 }): Guarded<Minted> => {
-  // Recorded below, so a caller changing its delta later grants nothing.
-  harden(delta);
   const derivedGuard = narrowInterfaceGuard({ name, baseGuard, delta });
   const methods = Object.fromEntries(
     Object.keys(getInterfaceMethodGuards(derivedGuard)).map((methodName) => [
@@ -128,7 +126,8 @@ const mint = <Minted extends Methods>({
  * `join` reaches across the whole narrowing tree rather than between siblings
  * only.
  *
- * Nothing checks arguments beyond the returned exo's own guard.
+ * Nothing checks arguments beyond the returned exo's own guard. `delta` is
+ * hardened.
  *
  * `Narrowed` describes the resulting method set, which is derived at runtime and
  * so cannot be inferred; supply it to call the result through `E()`. Every
@@ -146,6 +145,8 @@ export const narrow = async <Narrowed extends Methods = Methods>({
   base: baseOrPromise,
   delta,
 }: NarrowOptions): Promise<Guarded<Narrowed>> => {
+  // Before the first await, so a caller cannot change it while this is pending.
+  harden(delta);
   const base = await Promise.resolve(baseOrPromise);
   const inherited = provenance.get(base);
   const target = inherited?.base ?? base;
