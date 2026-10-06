@@ -41,6 +41,9 @@ type Launch = { abandoned: boolean };
 /** How long a restart waits for the new worker before giving up on it. */
 export const DEFAULT_VAT_RELAUNCH_TIMEOUT_MS = 30_000;
 
+/** The longest delay `setTimeout` honours; it treats anything above as 1 ms. */
+const MAX_TIMER_DELAY_MS = 2 ** 31 - 1;
+
 type VatManagerOptions = {
   platformServices: PlatformServices;
   kernelStore: KernelStore;
@@ -112,6 +115,13 @@ export class VatManager {
     this.#kernelQueue = kernelQueue;
     this.#logger = logger ?? new Logger('VatManager');
     this.#allowedGlobalNames = allowedGlobalNames;
+    if (
+      !(vatRelaunchTimeoutMs > 0 && vatRelaunchTimeoutMs <= MAX_TIMER_DELAY_MS)
+    ) {
+      throw new RangeError(
+        `vatRelaunchTimeoutMs must be more than 0 and at most ${MAX_TIMER_DELAY_MS}; got ${String(vatRelaunchTimeoutMs)}`,
+      );
+    }
     this.#vatRelaunchTimeoutMs = vatRelaunchTimeoutMs;
     harden(this);
   }
@@ -309,7 +319,9 @@ export class VatManager {
       if (error === timeoutError) {
         launch.abandoned = true;
         starting.catch(() => undefined);
-        await this.#platformServices
+        // Not awaited: a platform that is stuck launching may be stuck
+        // stopping too.
+        this.#platformServices
           .terminate(vatId)
           .catch((stopError: unknown) =>
             this.#logger.error(

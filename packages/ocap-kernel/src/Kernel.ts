@@ -260,7 +260,7 @@ export class Kernel {
    * @param options.systemSubclusters - Optional array of system subcluster configurations.
    * @param options.allowedGlobalNames - Optional list of allowed global names for vat endowments. When set, only these names from the `VatSupervisor`'s configured endowments (see `createDefaultEndowments`) are available to vats.
    * @param options.onRunLoopFailure - Optional handler called if the run loop dies. The kernel must be restarted after that, so an embedder that outlives it (e.g. a daemon) should use this to terminate or restart.
-   * @param options.vatRelaunchTimeoutMs - How long a vat restart waits for the new worker before terminating the vat. Defaults to 30 seconds.
+   * @param options.vatRelaunchTimeoutMs - How long a vat restart waits for the new worker before terminating the vat, in milliseconds: more than 0 and at most 2^31 - 1. Defaults to 30 seconds.
    * @param options.auditRefCounts - If true, verify reference counts against
    * ground truth at the end of each crank and throw on any mismatch.
    * @returns A promise for the new kernel instance.

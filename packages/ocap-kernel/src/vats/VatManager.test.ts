@@ -156,6 +156,21 @@ describe('VatManager', () => {
     });
   });
 
+  it.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY, 2 ** 31])(
+    'refuses a relaunch timeout of %s ms',
+    (vatRelaunchTimeoutMs) => {
+      expect(
+        () =>
+          new VatManager({
+            platformServices: mockPlatformServices,
+            kernelStore: mockKernelStore,
+            kernelQueue: mockKernelQueue,
+            vatRelaunchTimeoutMs,
+          }),
+      ).toThrow(RangeError);
+    },
+  );
+
   describe('initializeAllVats', () => {
     it('initializes all vats from storage', async () => {
       const vatRecords = [
@@ -1101,6 +1116,19 @@ describe('VatManager', () => {
           },
         });
         expect(mockPlatformServices.terminate).toHaveBeenLastCalledWith('v1');
+        await expect(restarting).rejects.toThrow(timeoutMessage);
+      });
+
+      it('does not wait for the platform to stop the worker', async () => {
+        await vatManager.runVat('v1', createMockVatConfig());
+        makeVatHandleMock.mockReturnValueOnce(new Promise(() => undefined));
+        mockPlatformServices.terminate
+          .mockResolvedValueOnce(undefined)
+          .mockReturnValueOnce(new Promise(() => undefined));
+
+        const { restarting, crankResult } = await restartPastTheTimeout();
+
+        expect(crankResult).toMatchObject({ abort: true });
         await expect(restarting).rejects.toThrow(timeoutMessage);
       });
 
