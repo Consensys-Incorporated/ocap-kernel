@@ -15,6 +15,7 @@ import type {
   RunLoopStatus,
   RunLoopItem,
   RunQueueItem,
+  RunQueueItemPeerIncarnation,
   RunQueueItemRemoteInbound,
   RunQueueItemNotify,
   RunQueueItemSend,
@@ -95,8 +96,11 @@ export class KernelQueue {
    */
   #runLoopState: RunLoopState = { state: 'idle' };
 
-  /** Messages from peers, waiting for a crank to take delivery of them. */
-  #arrivedFromRemotes: RunQueueItemRemoteInbound[] = [];
+  /** What peers have sent, waiting for a crank to take delivery of it. */
+  readonly #arrivedFromRemotes: (
+    | RunQueueItemRemoteInbound
+    | RunQueueItemPeerIncarnation
+  )[] = [];
 
   /** Whether the last crank took an arrival, so the run queue goes next. */
   #tookArrivalLast = false;
@@ -348,7 +352,10 @@ export class KernelQueue {
    *
    * @returns The arrival, or undefined if none is waiting.
    */
-  #takeArrival(): RunQueueItemRemoteInbound | undefined {
+  #takeArrival():
+    | RunQueueItemRemoteInbound
+    | RunQueueItemPeerIncarnation
+    | undefined {
     const arrival = this.#arrivedFromRemotes.shift();
     this.#tookArrivalLast = arrival !== undefined;
     return arrival;
@@ -613,7 +620,7 @@ export class KernelQueue {
   acceptRemoteInbound(remoteId: RemoteId, message: string): boolean {
     this.assertRunLoopAlive('accept a remote message');
     const held = this.#arrivedFromRemotes.filter(
-      (item) => item.remoteId === remoteId,
+      (item) => item.type === 'remoteInbound' && item.remoteId === remoteId,
     ).length;
     if (held >= MAX_ARRIVALS_PER_REMOTE) {
       return false;
@@ -628,25 +635,25 @@ export class KernelQueue {
   }
 
   /**
-   * Forget what a remote sent before an incarnation change, none of which the
-   * peer that sent it is still waiting on.
+   * Accept a peer's incarnation change, for the run loop to carry out in a
+   * crank of its own.
    *
-   * Left queued, a message from the old incarnation would record its sequence
-   * number against the new one, and the new incarnation's first message would
-   * then be discarded as a duplicate.
+   * Held with the arrivals, and behind any this peer has already sent: the
+   * messages ahead of it belong to the incarnation that is ending and are its
+   * to account for, and the ones behind it to the incarnation that is
+   * starting.
    *
-   * Reaches only what is still waiting. An arrival already handed to a crank
-   * has been shifted off this list, and a restart detected while that crank is
-   * suspended still records the old incarnation's sequence number — the
-   * handshake runs on the transport's flow, with nothing serializing it
-   * against an open crank.
-   *
-   * @param remoteId - The remote whose arrivals to discard.
+   * @param peerId - The peer that restarted.
+   * @param incarnation - The incarnation it now reports.
    */
-  discardRemoteInbound(remoteId: RemoteId): void {
-    this.#arrivedFromRemotes = this.#arrivedFromRemotes.filter(
-      (item) => item.remoteId !== remoteId,
-    );
+  acceptPeerIncarnation(peerId: string, incarnation: string): void {
+    this.assertRunLoopAlive('accept a peer incarnation change');
+    this.#arrivedFromRemotes.push({
+      type: 'peerIncarnation',
+      peerId,
+      incarnation,
+    });
+    this.#wakeTheRunLoop();
   }
 
   /**

@@ -382,6 +382,12 @@ export type RunQueueItemRemoteInbound = {
   message: string;
 };
 
+export type RunQueueItemPeerIncarnation = {
+  type: 'peerIncarnation';
+  peerId: string;
+  incarnation: string;
+};
+
 export const RunQueueItemStruct = union([
   RunQueueItemSendStruct,
   RunQueueItemNotifyStruct,
@@ -392,11 +398,15 @@ export const RunQueueItemStruct = union([
 export type RunQueueItem = Infer<typeof RunQueueItemStruct>;
 
 /**
- * Everything the run loop takes a crank for. An arrival from a peer is held in
- * memory and never written to the run queue, so it is not a {@link RunQueueItem}
- * and the store's queue methods do not accept one.
+ * Everything the run loop takes a crank for. What a peer sends, a message or an
+ * incarnation change, is held in memory and never written to the run queue, so
+ * it is not a {@link RunQueueItem} and the store's queue methods do not accept
+ * one.
  */
-export type RunLoopItem = RunQueueItem | RunQueueItemRemoteInbound;
+export type RunLoopItem =
+  | RunQueueItem
+  | RunQueueItemRemoteInbound
+  | RunQueueItemPeerIncarnation;
 
 /**
  * Assert that a value is a valid kernel message.
