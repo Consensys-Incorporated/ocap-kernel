@@ -51,10 +51,9 @@ export async function initDB(
  * Makes a {@link KVStore} on top of a SQLite database
  *
  * @param db - The (open) database to use.
- * @param logger - A logger object for recording activity.
  * @returns A key/value store using the given database.
  */
-function makeKVStore(db: Database, logger?: Logger): KVStore {
+function makeKVStore(db: Database): KVStore {
   db.exec(SQL_QUERIES.CREATE_TABLE);
 
   const sqlKVGet = db.prepare(SQL_QUERIES.GET);
@@ -72,7 +71,6 @@ function makeKVStore(db: Database, logger?: Logger): KVStore {
       const result = sqlKVGet.getString(0);
       if (result) {
         sqlKVGet.reset();
-        logger?.debug(`kv get '${key}' as '${result}'`);
         return result;
       }
     }
@@ -99,7 +97,6 @@ function makeKVStore(db: Database, logger?: Logger): KVStore {
       const result = sqlKVGetNextKey.getString(0);
       if (result) {
         sqlKVGetNextKey.reset();
-        logger?.debug(`kv getNextKey '${previousKey}' as '${result}'`);
         return result;
       }
     }
@@ -116,7 +113,6 @@ function makeKVStore(db: Database, logger?: Logger): KVStore {
    * @param value - The value to assign to it.
    */
   function kvSet(key: string, value: string): void {
-    logger?.debug(`kv set '${key}' to '${value}'`);
     sqlKVSet.bind([key, value]);
     sqlKVSet.step();
     sqlKVSet.reset();
@@ -130,7 +126,6 @@ function makeKVStore(db: Database, logger?: Logger): KVStore {
    * @param key - The key to remove.
    */
   function kvDelete(key: string): void {
-    logger?.debug(`kv delete '${key}'`);
     sqlKVDelete.bind([key]);
     sqlKVDelete.step();
     sqlKVDelete.reset();
@@ -165,7 +160,7 @@ export async function makeSQLKernelDatabase({
   const db = await initDB(dbFilename ?? DEFAULT_DB_FILENAME, logger);
 
   logger?.debug('Initializing kernel store');
-  const kvStore = makeKVStore(db, logger?.subLogger({ tags: ['kv'] }));
+  const kvStore = makeKVStore(db);
 
   db.exec(SQL_QUERIES.CREATE_TABLE_VS);
 

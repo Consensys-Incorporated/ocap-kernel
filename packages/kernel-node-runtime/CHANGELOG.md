@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `makeKernel` gives the kernel store a `kernel-store`-tagged sub-logger. The SQLite driver's only diagnostic is the database path, at `debug`, so a daemon has to be run at that level to see it ([#1086](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1086))
 - **BREAKING:** `startRpcSocketServer` and `startDaemon` no longer serve `executeDBQuery`, `clearState`, or `terminateAllVats` by default; pass `devMode: true` to restore them ([#1034](https://github.com/MetaMask/ocap-kernel/pull/1034))
   - In default mode the handlers are withheld rather than merely refused by name, so the `executeDBQuery` hook is never constructed and no handler can reach `kernelDatabase.executeQuery`. The exported `DEV_ONLY_METHODS` names the withheld set.
   - This is not a security boundary on its own: `launchSubcluster` and `queueMessage` remain reachable and either suffices to drive the kernel arbitrarily. Anyone able to open the socket controls the kernel — see the trust model in `@metamask/kernel-cli`'s README.
@@ -23,7 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- A vat worker that dies is reported to the kernel. The startup `exit` listener was dropped once the worker came online, and a worker thread that exits emits no port event, so its channel stayed open: the vat kept its handle, the store kept calling it active, and the next delivery to it never returned — taking the run loop, and so every other vat, with it. The listener is now replaced rather than dropped, and closes the channel, which is what the kernel notices ([#1100](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1100))
+- A vat worker that exits after coming online closes its channel, which is how the kernel notices. The startup `exit` listener was dropped once the worker came online, and a worker thread that exits emits no port event ([#1100](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1100))
 - `terminate` no longer reports a vat whose worker has already exited as a failure to stop it ([#1100](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1100))
 - The RPC socket server refuses to bind a Unix socket that has a live listener, rather than unlinking it and orphaning the previous owner; stale socket files with no listener are still cleaned up automatically ([#952](https://github.com/MetaMask/ocap-kernel/pull/952))
 

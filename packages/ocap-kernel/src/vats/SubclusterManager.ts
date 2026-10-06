@@ -146,10 +146,13 @@ export class SubclusterManager {
       // up IO channels and the persisted subcluster record.
       // Each step is best-effort — cleanup errors must not mask the original
       // failure.
+      const survivors: VatId[] = [];
       try {
         const vatIds = this.#kernelStore.getSubclusterVats(subclusterId);
         for (const vatId of vatIds.reverse()) {
-          await this.#terminateVatQuietly(vatId);
+          if (!(await this.#terminateVatQuietly(vatId))) {
+            survivors.push(vatId);
+          }
         }
       } catch (vatCleanupError) {
         this.#logger.error(
@@ -157,17 +160,34 @@ export class SubclusterManager {
           vatCleanupError,
         );
       }
-      try {
-        if (this.#ioManager) {
-          await this.#ioManager.destroyChannels(subclusterId);
-        }
-      } catch (cleanupError) {
+      if (survivors.length > 0) {
+        // Kept, IO channels included, for the reason `terminateSubcluster`
+        // keeps them.
         this.#logger.error(
-          'Error during IO cleanup on failed launch:',
-          cleanupError,
+          `Keeping subcluster ${subclusterId} after its failed launch; vats still running: ${survivors.join(', ')}`,
         );
+      } else {
+        try {
+          if (this.#ioManager) {
+            await this.#ioManager.destroyChannels(subclusterId);
+          }
+        } catch (cleanupError) {
+          this.#logger.error(
+            'Error during IO cleanup on failed launch:',
+            cleanupError,
+          );
+        }
+        try {
+          // Waits for the reason `terminateSubcluster` does.
+          await this.#kernelQueue.waitForCrank();
+          this.#kernelStore.deleteSubcluster(subclusterId);
+        } catch (cleanupError) {
+          this.#logger.error(
+            'Error deleting the subcluster record on failed launch:',
+            cleanupError,
+          );
+        }
       }
-      this.#kernelStore.deleteSubcluster(subclusterId);
       throw error;
     }
   }
@@ -217,20 +237,11 @@ export class SubclusterManager {
     // The run loop is what ends each member now, so a dead one cannot end any
     // of them — and the record deletion below must not go ahead regardless.
     this.#kernelQueue.assertRunLoopAlive('terminate a subcluster');
-    if (!this.#kernelStore.getSubcluster(subclusterId)) {
+    const subcluster = this.#kernelStore.getSubcluster(subclusterId);
+    if (!subcluster) {
       throw new SubclusterNotFoundError(subclusterId);
     }
-
-    // Clean up system subcluster mapping if this is a system subcluster
-    const mappings = this.#kernelStore.getAllSystemSubclusterMappings();
-    for (const [name, mappedSubclusterId] of mappings) {
-      if (mappedSubclusterId === subclusterId) {
-        this.#systemSubclusterRoots.delete(name);
-        this.#kernelStore.deleteSystemSubclusterMapping(name);
-        this.#logger.info(`Cleaned up system subcluster mapping "${name}"`);
-        break;
-      }
-    }
+    const bootstrapVatId = subcluster.vats[subcluster.config.bootstrap];
 
     // Persisted membership, so a vat the kernel has no handle for is still
     // retired rather than stranding the rest of the subcluster.
@@ -240,6 +251,21 @@ export class SubclusterManager {
       if (!(await this.#terminateVatQuietly(vatId))) {
         survivors.push(vatId);
       }
+    }
+    if (survivors.length > 0) {
+      // The survivors keep their IO channels, and the system name while its
+      // root lives: a kept record whose bootstrap vat is gone fails the next
+      // boot's restore. The record stays regardless: `deleteSubcluster` drops
+      // every member's vat-to-subcluster mapping, and `getVatSubcluster` is a
+      // `Fail`, so deleting it over a live member breaks `getStatus` for the
+      // whole kernel.
+      if (!bootstrapVatId || !survivors.includes(bootstrapVatId)) {
+        await this.#kernelQueue.waitForCrank();
+        this.#dropSystemSubclusterMapping(subclusterId);
+      }
+      throw Error(
+        `subcluster ${subclusterId} still has running vats: ${survivors.join(', ')}`,
+      );
     }
 
     // Destroy IO channels after terminating vats so that any queued
@@ -251,18 +277,29 @@ export class SubclusterManager {
     } catch (error) {
       this.#logger.error('Error during IO cleanup on termination:', error);
     }
-    if (survivors.length > 0) {
-      // `deleteSubcluster` drops every member's vat-to-subcluster mapping, and
-      // `getVatSubcluster` is a `Fail` — so deleting the record over a live
-      // member breaks `getStatus` for the whole kernel from then on.
-      throw Error(
-        `subcluster ${subclusterId} still has running vats: ${survivors.join(', ')}`,
-      );
-    }
+
     // Each member's termination resolves from inside its own crank, so this
-    // waits rather than writing the record into whichever one is open.
+    // waits rather than writing into whichever one is open.
     await this.#kernelQueue.waitForCrank();
+    this.#dropSystemSubclusterMapping(subclusterId);
     this.#kernelStore.deleteSubcluster(subclusterId);
+  }
+
+  /**
+   * Forget the system name a subcluster is registered under, if it has one.
+   *
+   * @param subclusterId - The subcluster.
+   */
+  #dropSystemSubclusterMapping(subclusterId: SubclusterId): void {
+    const mappings = this.#kernelStore.getAllSystemSubclusterMappings();
+    for (const [name, mappedSubclusterId] of mappings) {
+      if (mappedSubclusterId === subclusterId) {
+        this.#systemSubclusterRoots.delete(name);
+        this.#kernelStore.deleteSystemSubclusterMapping(name);
+        this.#logger.info(`Cleaned up system subcluster mapping "${name}"`);
+        break;
+      }
+    }
   }
 
   /**
@@ -376,7 +413,6 @@ export class SubclusterManager {
   }> {
     const vatEntries = Object.entries(config.vats);
 
-    const services: Record<string, SlotValue> = {};
     const ioNames = config.io
       ? new Set(Object.keys(config.io))
       : new Set<string>();
@@ -384,19 +420,21 @@ export class SubclusterManager {
     // Collect all service names: explicit services plus IO channel names
     const allServiceNames = new Set([...(config.services ?? []), ...ioNames]);
 
-    for (const name of allServiceNames) {
-      // IO services are registered under scoped names to avoid collisions
-      const lookupName = ioNames.has(name)
-        ? `io:${subclusterId}:${name}`
-        : name;
-      const possibleService = this.#getKernelService(lookupName);
-      if (possibleService) {
-        const { kref } = possibleService;
-        services[name] = kslot(kref);
-      } else {
-        throw Error(`no registered kernel service '${lookupName}'`);
-      }
-    }
+    // Object.fromEntries so that a name like `__proto__` becomes an own
+    // property instead of replacing the prototype.
+    const services: Record<string, SlotValue> = Object.fromEntries(
+      [...allServiceNames].map((name) => {
+        // IO services are registered under scoped names to avoid collisions
+        const lookupName = ioNames.has(name)
+          ? `io:${subclusterId}:${name}`
+          : name;
+        const possibleService = this.#getKernelService(lookupName);
+        if (!possibleService) {
+          throw Error(`no registered kernel service '${lookupName}'`);
+        }
+        return [name, kslot(possibleService.kref)];
+      }),
+    );
 
     // Launch all vats concurrently. getNextVatId() runs synchronously before
     // each launchVat's first await, so vat-ID allocation order is deterministic.

@@ -33,11 +33,11 @@ let mockKernelStore: KernelStore;
 const makeVat = async ({
   logger,
   dispatch,
-  onCriticalFailure = () => undefined,
+  onStreamFailure = () => undefined,
 }: {
   logger?: Logger;
   dispatch?: (input: unknown) => void | Promise<void>;
-  onCriticalFailure?: (error: Error, vat: VatHandle) => void;
+  onStreamFailure?: (error: Error) => void;
 } = {}): Promise<{
   vat: VatHandle;
   stream: TestDuplexStream<JsonRpcMessage, JsonRpcMessage>;
@@ -55,8 +55,8 @@ const makeVat = async ({
       vatId: 'v0',
       vatConfig: { sourceSpec: 'not-really-there.js' },
       vatStream,
-      onCriticalFailure,
       logger,
+      onStreamFailure,
     }),
     stream: vatStream,
   };
@@ -88,72 +88,23 @@ describe('VatHandle', () => {
       });
     });
 
-    it('throws if the stream throws', async () => {
-      const logger = {
-        error: vi.fn(),
-        subLogger: vi.fn(() => logger),
-      } as unknown as Logger;
-      const { stream } = await makeVat({ logger });
+    it('reports the failure if the stream throws', async () => {
+      const onStreamFailure = vi.fn();
+      const { stream } = await makeVat({ onStreamFailure });
       await stream.receiveInput(NaN);
       await delay(10);
-      expect(logger.error).toHaveBeenCalledWith(
-        'Unexpected read error',
+      expect(onStreamFailure).toHaveBeenCalledWith(
         expect.objectContaining({
-          message: expect.stringMatching(/Message failed type validation/u),
+          cause: expect.objectContaining({
+            message: expect.stringMatching(/Message failed type validation/u),
+          }),
         }),
       );
     });
 
-    it('hands a broken channel to the manager rather than ending itself', async () => {
-      const onCriticalFailure = vi.fn();
-      const { vat, stream } = await makeVat({ onCriticalFailure });
-      const settled = vi.fn();
-      // eslint-disable-next-line promise/catch-or-return
-      vat
-        .sendVatCommand({ method: 'ping' as const, params: [] })
-        .then(settled, settled);
-
-      await stream.receiveInput(NaN);
-      await delay(10);
-
-      expect(onCriticalFailure).toHaveBeenCalledWith(
-        expect.objectContaining({ name: 'StreamReadError' }),
-        vat,
-      );
-      // Ending itself would reject these, leaving the manager still holding
-      // the handle and the store still calling the vat live. Only the manager
-      // may decide that.
-      expect(settled).not.toHaveBeenCalled();
-    });
-
-    it('reports a channel that closes with no error', async () => {
-      const onCriticalFailure = vi.fn();
-      const { stream } = await makeVat({ onCriticalFailure });
-
-      await stream.return();
-      await delay(10);
-
-      // A worker that exits closes the channel rather than erroring on it, so
-      // the drain resolves and the vat's death would otherwise go unreported.
-      expect(onCriticalFailure).toHaveBeenCalledOnce();
-    });
-
-    it('says nothing when the channel is closed on purpose', async () => {
-      const onCriticalFailure = vi.fn();
-      const { vat } = await makeVat({ onCriticalFailure });
-
-      await vat.terminate(true);
-      await delay(10);
-
-      expect(onCriticalFailure).not.toHaveBeenCalled();
-    });
-
-    it('throws if handleMessage throws', async () => {
-      const logger = {
-        error: vi.fn(),
-        subLogger: vi.fn(() => logger),
-      } as unknown as Logger;
-      const { stream } = await makeVat({ logger });
+    it('reports the failure if handleMessage throws', async () => {
+      const onStreamFailure = vi.fn();
+      const { stream } = await makeVat({ onStreamFailure });
       await stream.receiveInput({
         id: 'v0:1',
         method: 'ping',
@@ -161,11 +112,62 @@ describe('VatHandle', () => {
         jsonrpc: '2.0',
       });
       await delay(10);
-      expect(logger.error).toHaveBeenCalledWith(
-        'Unexpected read error',
+      expect(onStreamFailure).toHaveBeenCalledWith(
         expect.objectContaining({
-          message: expect.stringMatching(/^Received unexpected message/u),
+          cause: expect.objectContaining({
+            message: expect.stringMatching(/^Received unexpected message/u),
+          }),
         }),
+      );
+    });
+
+    it('reports a dead channel to its owner', async () => {
+      const onStreamFailure = vi.fn();
+      const { stream } = await makeVat({ onStreamFailure });
+
+      await stream.receiveInput(NaN);
+      await delay(10);
+
+      expect(onStreamFailure).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: 'Unexpected stream read error.',
+        }),
+      );
+    });
+
+    it('reports a channel that closes with no error', async () => {
+      const onStreamFailure = vi.fn();
+      const { stream } = await makeVat({ onStreamFailure });
+
+      // What a worker that exits produces: the drain ends rather than failing.
+      await stream.return();
+      await delay(10);
+
+      expect(onStreamFailure).toHaveBeenCalledOnce();
+    });
+
+    it('says nothing when the kernel closes the channel', async () => {
+      const onStreamFailure = vi.fn();
+      const { vat } = await makeVat({ onStreamFailure });
+
+      await vat.terminate(true);
+      await delay(10);
+
+      expect(onStreamFailure).not.toHaveBeenCalled();
+    });
+
+    it('rejects pending commands when the channel dies', async () => {
+      const { vat, stream } = await makeVat();
+      sendVatCommandMock.mockRestore();
+      const messagePromise = vat.sendVatCommand({
+        method: 'ping' as const,
+        params: [],
+      });
+
+      await stream.receiveInput(NaN);
+
+      await expect(messagePromise).rejects.toThrow(
+        'Unexpected stream read error.',
       );
     });
   });
@@ -355,7 +357,6 @@ describe('VatHandle', () => {
       const vat = await VatHandle.make({
         kernelQueue: null as unknown as KernelQueue,
         kernelStore: mockKernelStore,
-        onCriticalFailure: () => undefined,
         vatId: 'v0',
         vatConfig: { sourceSpec: 'not-really-there.js' },
         // `end` never settles until released, so a rejection that arrives
@@ -365,6 +366,7 @@ describe('VatHandle', () => {
           write: inner.write.bind(inner),
           end: async () => stalling,
         } as unknown as typeof inner,
+        onStreamFailure: () => undefined,
       });
       sendVatCommandMock.mockRestore();
       const messagePromise = vat.sendVatCommand({
@@ -390,7 +392,6 @@ describe('VatHandle', () => {
       await vat.terminate(false);
       await delay(10);
 
-      // The same vat is coming back, and its answer with it.
       expect(settled).not.toHaveBeenCalled();
     });
   });

@@ -498,9 +498,6 @@ describe('getSubclusterMethods', () => {
     it('leaves a vat that is in no subcluster alone', () => {
       const nonMappedVat = 'vNonMapped' as VatId;
 
-      // Already in the state this asks for. Reporting it instead strands the
-      // teardown that called it — `deleteVat` reaches here while discarding a
-      // vat, which is the one moment a failure cannot be retried past.
       expect(() =>
         subclusterMethods.removeVatFromSubcluster(nonMappedVat),
       ).not.toThrow();

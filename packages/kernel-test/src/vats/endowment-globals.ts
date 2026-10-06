@@ -105,7 +105,7 @@ export function buildRootObject(vatPowers: TestPowers) {
       // In a SES compartment, globalThis points to the compartment's own
       // global object, so this correctly detects whether an endowment was
       // provided. Intrinsics (e.g. ArrayBuffer) are always present;
-      // host/Web APIs (e.g. TextEncoder) are only present if endowed.
+      // host/Web APIs (e.g. URL) are only present if endowed.
       const exists = name in globalThis;
       tlog(`checkGlobal: ${name}=${String(exists)}`);
       return exists;

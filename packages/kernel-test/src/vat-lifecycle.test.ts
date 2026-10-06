@@ -2,6 +2,7 @@ import { NodejsPlatformServices } from '@metamask/kernel-node-runtime';
 import { makeSQLKernelDatabase } from '@metamask/kernel-store/sqlite/nodejs';
 import { waitUntilQuiescent } from '@metamask/kernel-utils';
 import { makeKernelStore } from '@metamask/ocap-kernel';
+import type { VatId } from '@metamask/ocap-kernel';
 import { describe, expect, it, beforeEach } from 'vitest';
 
 import {
@@ -176,15 +177,84 @@ describe('Vat Lifecycle', { timeout: 30_000 }, () => {
     });
     await waitUntilQuiescent();
 
-    // The request is a run queue item, so each of these resolves only once the
-    // run loop has taken it and the new worker has answered. `start count`
-    // comes from the vat's own baggage, so it counts incarnations: a restart
-    // that settled its caller without replacing the worker would not move it.
+    // `start count` lives in the vat's baggage, so a restart that answered its
+    // caller without replacing the worker would not move it.
     await kernel.restartVat('v1');
     await kernel.restartVat('v1');
     await waitUntilQuiescent(1000);
 
     expect(extractTestLogs(entries, 'v1')).toContain('Alice: start count: 3');
+  });
+
+  it('leaves no record of a terminated vat for the next boot to restore', async () => {
+    const kernelDatabase = await makeSQLKernelDatabase({
+      dbFilename: ':memory:',
+    });
+    const kernel = await makeKernel(
+      kernelDatabase,
+      true,
+      logger.logger.subLogger({ tags: ['test'] }),
+    );
+    const kernelStore = makeKernelStore(kernelDatabase);
+
+    await runTestVats(kernel, {
+      bootstrap: 'main',
+      vats: {
+        main: {
+          bundleSpec: getBundleSpec('logger-vat'),
+          parameters: { name: 'DoomedVat' },
+        },
+      },
+    });
+    await waitUntilQuiescent();
+    const vatId = kernel.getVats()[0]?.id as string;
+
+    await kernel.terminateVat(vatId);
+    await waitUntilQuiescent();
+    kernel.collectGarbage();
+    await waitUntilQuiescent();
+
+    expect(kernelStore.isVatActive(vatId)).toBe(false);
+    expect([...kernelStore.getAllVatRecords()]).toStrictEqual([]);
+  });
+
+  it('retires a vat whose channel to its worker fails', async () => {
+    const kernelDatabase = await makeSQLKernelDatabase({
+      dbFilename: ':memory:',
+    });
+    const platformServices = new NodejsPlatformServices({
+      logger: logger.logger.subLogger({ tags: ['vat-worker-manager'] }),
+    });
+    const kernel = await makeKernel(
+      kernelDatabase,
+      true,
+      logger.logger.subLogger({ tags: ['test'] }),
+      undefined,
+      platformServices,
+    );
+    const kernelStore = makeKernelStore(kernelDatabase);
+
+    await runTestVats(kernel, {
+      bootstrap: 'main',
+      vats: {
+        main: {
+          bundleSpec: getBundleSpec('logger-vat'),
+          parameters: { name: 'DoomedVat' },
+        },
+      },
+    });
+    await waitUntilQuiescent();
+    const vatId = kernel.getVats()[0]?.id as VatId;
+
+    // A live worker sending a frame the kernel cannot read.
+    platformServices.workers.get(vatId)?.worker.emit('message', NaN);
+    await waitUntilQuiescent();
+    kernel.collectGarbage();
+    await waitUntilQuiescent();
+
+    expect(kernel.getVats()).toStrictEqual([]);
+    expect(kernelStore.isVatActive(vatId)).toBe(false);
+    expect([...kernelStore.getAllVatRecords()]).toStrictEqual([]);
   });
 
   it('retires a vat whose worker dies, and keeps serving the rest', async () => {
@@ -219,51 +289,14 @@ describe('Vat Lifecycle', { timeout: 30_000 }, () => {
     await waitUntilQuiescent();
     const survivorRoot = kernelStore.getRootObject('v2') as string;
 
-    // A worker that dies closes its channel rather than erroring on it, which
-    // is the shape the kernel has to notice.
+    // A worker that dies closes its channel rather than erroring on it.
     await platformServices.workers.get('v1')?.worker.terminate();
     await waitUntilQuiescent(2000);
 
     expect(kernel.getVatIds()).not.toContain('v1');
-    // The kernel keeps working: before, the dead vat's handle stayed on the
-    // books and the first delivery to it hung the run loop for everyone.
+    expect(kernelStore.isVatActive('v1')).toBe(false);
     expect(await runResume(kernel, survivorRoot)).toBe(
       'Counter incremented to: 2',
     );
-  });
-
-  it('leaves no record of a terminated vat for the next boot to restore', async () => {
-    const kernelDatabase = await makeSQLKernelDatabase({
-      dbFilename: ':memory:',
-    });
-    const kernel = await makeKernel(
-      kernelDatabase,
-      true,
-      logger.logger.subLogger({ tags: ['test'] }),
-    );
-    const kernelStore = makeKernelStore(kernelDatabase);
-
-    await runTestVats(kernel, {
-      bootstrap: 'main',
-      vats: {
-        main: {
-          bundleSpec: getBundleSpec('logger-vat'),
-          parameters: { name: 'DoomedVat' },
-        },
-      },
-    });
-    await waitUntilQuiescent();
-    const vatId = kernel.getVats()[0]?.id as string;
-
-    await kernel.terminateVat(vatId);
-    await waitUntilQuiescent();
-    // The mark is what schedules this, and it is dropped once the sweep is
-    // done — so the `vatConfig` row it never touches is the thing that decides
-    // whether the vat is active after it.
-    kernel.collectGarbage();
-    await waitUntilQuiescent();
-
-    expect(kernelStore.isVatActive(vatId)).toBe(false);
-    expect([...kernelStore.getAllVatRecords()]).toStrictEqual([]);
   });
 });

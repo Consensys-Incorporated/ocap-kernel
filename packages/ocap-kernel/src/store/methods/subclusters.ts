@@ -239,9 +239,8 @@ export function getSubclusterMethods(ctx: StoreContext) {
   /**
    * Removes a vat from its subcluster.
    *
-   * A vat that belongs to no subcluster is already in the state this asks for,
-   * so it is left alone rather than reported: `deleteVat` reaches here while
-   * discarding a vat, which is the one moment a failure cannot be retried past.
+   * A no-op for a vat in no subcluster, since `deleteVat` calls this for every
+   * vat it discards.
    *
    * @param vatId - The ID of the vat to remove.
    */

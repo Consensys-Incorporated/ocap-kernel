@@ -42,14 +42,10 @@ type VatConstructorProps = {
   vatStream: VatStream;
   kernelStore: KernelStore;
   kernelQueue: KernelQueue;
-  /**
-   * Called when this vat has failed in a way it cannot come back from, so the
-   * manager can end it. Handed the handle, because the failure can come before
-   * `make` has returned it.
-   */
-  onCriticalFailure: (error: Error, vat: VatHandle) => void;
   logger?: Logger | undefined;
   allowedGlobalNames?: AllowedGlobalName[] | undefined;
+  /** Called when the channel to the worker fails. */
+  onStreamFailure: (error: Error) => void;
 };
 
 /**
@@ -77,10 +73,10 @@ export class VatHandle implements EndpointHandle {
   /** The vat's syscall */
   readonly #vatSyscall: VatSyscall;
 
-  /** Tells the manager this vat cannot be delivered to again */
-  readonly #onCriticalFailure: (error: Error, vat: VatHandle) => void;
+  /** Told when the channel to the worker fails */
+  readonly #onStreamFailure: (error: Error) => void;
 
-  /** Whether the channel is being closed on purpose */
+  /** Whether the kernel is closing the channel itself */
   #closing: boolean = false;
 
   readonly #rpcClient: RpcClient<typeof vatMethodSpecs>;
@@ -96,9 +92,9 @@ export class VatHandle implements EndpointHandle {
    * @param params.vatStream - Communications channel connected to the vat worker.
    * @param params.kernelStore - The kernel's persistent state store.
    * @param params.kernelQueue - The kernel's queue.
-   * @param params.onCriticalFailure - Called when the vat has failed unrecoverably.
    * @param params.logger - Optional logger for error and diagnostic output.
    * @param params.allowedGlobalNames - Optional list of allowed global names for vat endowments.
+   * @param params.onStreamFailure - Called when the channel to the worker fails.
    */
   // eslint-disable-next-line no-restricted-syntax
   private constructor({
@@ -107,17 +103,17 @@ export class VatHandle implements EndpointHandle {
     vatStream,
     kernelStore,
     kernelQueue,
-    onCriticalFailure,
     logger,
     allowedGlobalNames,
+    onStreamFailure,
   }: VatConstructorProps) {
     this.vatId = vatId;
     this.config = vatConfig;
     this.#logger = logger;
     this.#allowedGlobalNames = allowedGlobalNames;
     this.#vatStream = vatStream;
+    this.#onStreamFailure = onStreamFailure;
     this.#vatStore = kernelStore.makeVatStore(vatId);
-    this.#onCriticalFailure = onCriticalFailure;
     this.#vatSyscall = new VatSyscall({
       vatId,
       kernelQueue,
@@ -148,7 +144,6 @@ export class VatHandle implements EndpointHandle {
    * @param params.vatStream - Communications channel connected to the vat worker.
    * @param params.kernelStore - The kernel's persistent state store.
    * @param params.kernelQueue - The kernel's queue.
-   * @param params.onCriticalFailure - Called when the vat has failed unrecoverably.
    * @param params.logger - Optional logger for error and diagnostic output.
    * @returns A promise for the new VatHandle instance.
    */
@@ -175,13 +170,11 @@ export class VatHandle implements EndpointHandle {
         // A worker that exits closes the channel rather than erroring on it,
         // so the drain resolves. Silence from a vat nobody asked to close is
         // the vat going away, not the vat behaving.
-        if (!this.#closing) {
-          this.#reportCriticalFailure(Error('vat channel closed'));
-        }
+        this.#reportStreamFailure(new Error('vat channel closed'));
         return undefined;
       })
       .catch((error: Error) => {
-        this.#reportCriticalFailure(error);
+        this.#reportStreamFailure(error);
       });
 
     return await this.sendVatCommand({
@@ -194,6 +187,36 @@ export class VatHandle implements EndpointHandle {
           : {}),
       },
     });
+  }
+
+  /**
+   * Fail the commands waiting on a channel that has gone, and tell the
+   * manager, unless the kernel is closing the channel itself.
+   *
+   * @param error - What the channel ended with.
+   */
+  #reportStreamFailure(error: Error): void {
+    if (this.#closing) {
+      return;
+    }
+    const streamError = new StreamReadError(
+      { vatId: this.vatId },
+      { cause: error },
+    );
+    try {
+      // Now, not in the retirement's `terminate`: that waits for the current
+      // crank, which may be blocked on a pending command.
+      this.#rpcClient.rejectAll(streamError);
+    } finally {
+      try {
+        this.#onStreamFailure(streamError);
+      } catch (reportError) {
+        this.#logger?.error(
+          `Failed to report the dead channel of vat ${this.vatId}`,
+          reportError,
+        );
+      }
+    }
   }
 
   /**
@@ -316,43 +339,16 @@ export class VatHandle implements EndpointHandle {
   }
 
   /**
-   * Tell the manager this vat cannot be delivered to again.
+   * Closes this handle's channel to the vat worker. The store side of a vat's
+   * death is `VatManager`'s.
    *
-   * Handed over rather than torn down here: a handle that retires itself leaves
-   * the manager still holding it and the store still calling the vat live, so
-   * the next delivery goes to a worker that cannot answer and its crank never
-   * completes.
-   *
-   * @param cause - What broke.
-   */
-  #reportCriticalFailure(cause: Error): void {
-    this.#logger?.error(`Unexpected read error`, cause);
-    this.#onCriticalFailure(
-      new StreamReadError({ vatId: this.vatId }, { cause }),
-      this,
-    );
-  }
-
-  /**
-   * Closes this handle's channel to the vat worker.
-   *
-   * Only the handle's own business: the store side of a vat's death belongs to
-   * `VatManager`, which writes it in one synchronous step. Split that way
-   * because the two have opposite failure requirements — ending a stream can
-   * fail and it does not matter, since the worker is already being killed,
-   * while a store left half-told about a vat is a state nothing recovers from.
-   *
-   * @param terminating - If true, the vat is being killed permanently, so
-   *   callers waiting on a command it will never answer are told now.
+   * @param terminating - If true, the vat is being killed permanently.
    * @param error - The error to terminate the vat with.
    */
   async terminate(terminating: boolean, error?: Error): Promise<void> {
-    // Read by the drain below, so an ordinary close is not mistaken for the vat
-    // going away.
     this.#closing = true;
     if (terminating) {
-      // Ahead of the stream, so a stream that refuses to close does not leave
-      // these callers waiting on a worker that is already dead.
+      // Before `end`, which may never settle.
       this.#rpcClient.rejectAll(error ?? new VatDeletedError(this.vatId));
     }
     await this.#vatStream.end(error);

@@ -24,7 +24,7 @@
     "lint:dependencies:fix": "yarn dedupe >/dev/null && yarn depcheck --quiet && yarn workspaces foreach --all --parallel --verbose run lint:dependencies",
     "lint:eslint": "yarn eslint . --cache",
     "lint:fix": "yarn constraints --fix && yarn lint:eslint --fix && yarn lint:misc --write && yarn lint:dependencies:fix",
-    "lint:misc": "prettier --no-error-on-unmatched-pattern '**/*.json' '**/*.md' '**/*.html'  '**/*.yml' '!**/CHANGELOG.old.md' '!.yarnrc.yml' '!CLAUDE.md' '!merged-packages/**' --ignore-path .gitignore  --log-level error",
+    "lint:misc": "prettier --no-error-on-unmatched-pattern '**/*.json' '**/*.md' '**/*.html'  '**/*.yml' '!**/CHANGELOG.old.md' '!.yarnrc.yml' '!CLAUDE.md' '!merged-packages/**' --ignore-path .gitignore  --log-level warn",
     "postinstall": "patch-package && simple-git-hooks && yarn rebuild:native",
     "prepack": "./scripts/prepack.sh",
     "rebuild:native": "./scripts/rebuild-native.sh",
@@ -52,16 +52,16 @@
     ]
   },
   "devDependencies": {
-    "@agoric/internal": "0.4.0-u21.0.1",
+    "@agoric/internal": "0.4.0",
     "@arethetypeswrong/cli": "^0.17.4",
     "@lavamoat/allow-scripts": "^3.3.2",
     "@lavamoat/preinstall-always-fail": "^2.1.0",
-    "@metamask/auto-changelog": "^5.3.0",
-    "@metamask/create-release-branch": "^4.1.4",
-    "@metamask/eslint-config": "^15.0.0",
-    "@metamask/eslint-config-nodejs": "^15.0.0",
-    "@metamask/eslint-config-typescript": "^15.0.0",
-    "@metamask/eslint-config-vitest": "^15.0.0",
+    "@metamask/auto-changelog": "^6.2.1",
+    "@metamask/create-release-branch": "^4.2.2",
+    "@metamask/eslint-config": "^15.0.1",
+    "@metamask/eslint-config-nodejs": "^15.0.1",
+    "@metamask/eslint-config-typescript": "^15.0.1",
+    "@metamask/eslint-config-vitest": "^15.0.1",
     "@metamask/kernel-cli": "workspace:^",
     "@ts-bridge/cli": "^0.6.3",
     "@ts-bridge/shims": "^0.1.1",
@@ -138,9 +138,10 @@
     "@radix-ui/react-slot@npm:^1.1.0": "1.2.4",
     "cookie": "^0.7.0",
     "@chainsafe/libp2p-noise": "17.0.0",
-    "@libp2p/interface": "3.1.1",
+    "@libp2p/interface": "3.3.0",
     "@multiformats/multiaddr": "13.0.1",
     "@multiformats/multiaddr-to-uri": "12.0.0",
-    "@multiformats/dns": "1.0.9"
+    "@multiformats/dns": "1.0.9",
+    "bn.js@npm:5.2.1": "^5.2.3"
   }
 }

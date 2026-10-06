@@ -124,32 +124,27 @@ export class NodejsPlatformServices implements PlatformServices {
     });
 
     worker.once('online', () => {
-      // The startup listeners reject the launch, which is no longer what an
-      // error or exit means; they are replaced rather than simply dropped,
-      // because a worker that dies later is otherwise noticed only through the
-      // stream, and the exit code is the only place the reason appears.
+      // Remove error and exit listeners now that worker is online
       worker.removeAllListeners('error');
       worker.removeAllListeners('exit');
       worker.once('exit', (code) => {
         // An orderly `terminate` removes this listener before killing the
-        // worker, so reaching it here means the worker went away on its own.
-        // The identity check is belt and braces: it would matter if a
-        // replacement were ever registered without the old one's listeners
-        // being removed.
+        // worker, so reaching it means the worker went away on its own. Guarded
+        // by identity in case a replacement is registered under this vat id.
         const entry = this.workers.get(vatId);
-        if (entry?.worker === worker) {
-          this.workers.delete(vatId);
-          this.#logger.error(`Worker ${vatId} exited with code ${code}`);
-          // A worker thread that dies emits no port event, so this is the only
-          // thing that tells the kernel. Without it the stream stays open, the
-          // vat keeps its handle, and the next delivery to it never returns.
-          entry.stream.return().catch((error: unknown) => {
-            this.#logger.error(
-              `Failed to close the channel of exited worker ${vatId}:`,
-              error,
-            );
-          });
+        if (entry?.worker !== worker) {
+          return;
         }
+        this.workers.delete(vatId);
+        this.#logger.error(`Worker ${vatId} exited with code ${code}`);
+        // A worker thread that dies emits no port event, so closing the
+        // channel is the only way the kernel hears of it.
+        entry.stream.return().catch((error: unknown) => {
+          this.#logger.error(
+            `Failed to close the channel of exited worker ${vatId}:`,
+            error,
+          );
+        });
       });
 
       const stream = new NodeWorkerDuplexStream<JsonRpcMessage, JsonRpcMessage>(
@@ -186,15 +181,14 @@ export class NodejsPlatformServices implements PlatformServices {
    * Terminate a worker identified by its vat id.
    *
    * @param vatId - The vat id of the worker to terminate.
-   * @returns A promise that resolves when the worker has terminated
-   * or rejects if that worker does not exist.
+   * @returns A promise that resolves when the worker has terminated, or at
+   * once if there is no worker to terminate.
    */
   async terminate(vatId: VatId): Promise<undefined> {
     const workerEntry = this.workers.get(vatId);
     if (!workerEntry) {
-      // A worker that exited on its own took its own entry, and its vat is
-      // being torn down on the strength of that: there is nothing left to stop
-      // and saying so would report every crash as a failure to clean up.
+      // A worker that exited on its own took its entry with it, and its vat is
+      // being torn down because of that: there is nothing left to stop.
       this.#logger.debug(`No worker to terminate for vat ${vatId}`);
       return undefined;
     }

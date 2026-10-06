@@ -175,24 +175,6 @@ describe('NodejsPlatformServices', () => {
       expect(worker.terminate).toHaveBeenCalled();
     });
 
-    it('forgets a worker that exits after coming online', async () => {
-      const service = new NodejsPlatformServices({ workerFilePath });
-      const testVatId: VatId = getTestVatId();
-      const worker = mocks.createMockWorker();
-      vi.mocked(NodeWorker).mockImplementationOnce(function () {
-        return worker;
-      });
-
-      await service.launch(testVatId);
-      expect(service.workers.has(testVatId)).toBe(true);
-      worker.emit('exit', 1);
-
-      // The startup listeners are replaced rather than dropped: a worker that
-      // dies later is otherwise noticed only through the stream, and its exit
-      // code appears nowhere.
-      expect(service.workers.has(testVatId)).toBe(false);
-    });
-
     it('rejects if worker exits during startup', async () => {
       const service = new NodejsPlatformServices({ workerFilePath });
       const testVatId: VatId = getTestVatId();
@@ -218,6 +200,48 @@ describe('NodejsPlatformServices', () => {
     });
   });
 
+  describe('a worker that exits once online', () => {
+    it('is forgotten, and its channel closed', async () => {
+      const service = new NodejsPlatformServices({ workerFilePath });
+      const testVatId: VatId = getTestVatId();
+      const worker = mocks.createMockWorker();
+      vi.mocked(NodeWorker).mockImplementationOnce(function () {
+        return worker;
+      });
+      await service.launch(testVatId);
+      mocks.stream.return.mockClear();
+
+      worker.emit('exit', 1);
+
+      expect(service.workers.has(testVatId)).toBe(false);
+      // A worker thread that dies emits no port event, so this is how the
+      // kernel hears of it.
+      expect(mocks.stream.return).toHaveBeenCalledOnce();
+    });
+
+    it('leaves a replacement worker alone', async () => {
+      const service = new NodejsPlatformServices({ workerFilePath });
+      const testVatId: VatId = getTestVatId();
+      const firstWorker = mocks.createMockWorker();
+      const secondWorker = mocks.createMockWorker();
+      vi.mocked(NodeWorker)
+        .mockImplementationOnce(function () {
+          return firstWorker;
+        })
+        .mockImplementationOnce(function () {
+          return secondWorker;
+        });
+      await service.launch(testVatId);
+      // Kept listeners, as a worker whose terminate failed part-way would.
+      service.workers.delete(testVatId);
+      await service.launch(testVatId);
+
+      firstWorker.emit('exit', 1);
+
+      expect(service.workers.get(testVatId)?.worker).toBe(secondWorker);
+    });
+  });
+
   describe('terminate', () => {
     it('terminates the target vat', async () => {
       const service = new NodejsPlatformServices({
@@ -238,9 +262,7 @@ describe('NodejsPlatformServices', () => {
       });
       const testVatId: VatId = getTestVatId();
 
-      // A worker that exited on its own took its own entry, and its vat is
-      // torn down on the strength of that: reporting it would make every
-      // crash look like a failure to clean up.
+      // A worker that exited on its own has already taken its entry.
       expect(await service.terminate(testVatId)).toBeUndefined();
     });
   });

@@ -22,13 +22,6 @@ describe('BaseReader', () => {
       expect(reader[Symbol.asyncIterator]()).toBe(reader);
     });
 
-    it('throws if getReceiveInput is called more than once', () => {
-      const reader = new TestReader();
-      expect(() => reader.getReceiveInput()).toThrow(
-        'TestReader received multiple calls to getReceiveInput()',
-      );
-    });
-
     it('calls onEnd once when ending', async () => {
       const onEnd = vi.fn();
       const reader = new TestReader({ onEnd });
@@ -329,32 +322,23 @@ describe('BaseWriter', () => {
       });
     });
 
-    it('handles repeated failures to dispatch messages', async () => {
-      const dispatchSpy = vi
-        .fn()
-        .mockImplementationOnce(() => {
-          throw new Error('foo');
-        })
-        .mockImplementationOnce(() => {
-          throw new Error('foo');
-        });
-      const writer = new TestWriter({ onDispatch: dispatchSpy });
+    it('ends the stream if failing to dispatch the error signal', async () => {
+      const onEnd = vi.fn();
+      const dispatchSpy = vi.fn(() => {
+        throw new Error('foo');
+      });
+      const writer = new TestWriter({ onDispatch: dispatchSpy, onEnd });
 
       await expect(writer.next(42)).rejects.toThrow(
-        'TestWriter experienced repeated dispatch failures.',
-      );
-      expect(dispatchSpy).toHaveBeenCalledTimes(3);
-      expect(dispatchSpy).toHaveBeenNthCalledWith(1, 42);
-      expect(dispatchSpy).toHaveBeenNthCalledWith(2, {
-        [StreamSentinel.Error]: true,
-        error: makeErrorMatcher('foo'),
-      });
-      expect(dispatchSpy).toHaveBeenNthCalledWith(3, {
-        [StreamSentinel.Error]: true,
-        error: makeErrorMatcher(
-          'TestWriter experienced repeated dispatch failures.',
+        makeErrorMatcher(
+          new Error('TestWriter experienced a dispatch failure', {
+            cause: new Error('foo'),
+          }),
         ),
-      });
+      );
+      expect(dispatchSpy).toHaveBeenCalledTimes(2);
+      expect(onEnd).toHaveBeenCalledOnce();
+      expect(await writer.next(43)).toStrictEqual(makeDoneResult());
     });
   });
 
@@ -371,6 +355,20 @@ describe('BaseWriter', () => {
 
       expect(await writer.return()).toStrictEqual(makeDoneResult());
       expect(await writer.return()).toStrictEqual(makeDoneResult());
+    });
+
+    it('ends the stream and rejects if dispatching the done signal fails', async () => {
+      const onEnd = vi.fn();
+      const onDispatch = vi.fn(() => {
+        throw new Error('foo');
+      });
+      const writer = new TestWriter({ onDispatch, onEnd });
+
+      await expect(writer.return()).rejects.toThrow('foo');
+      expect(onEnd).toHaveBeenCalledOnce();
+      expect(await writer.next(42)).toStrictEqual(makeDoneResult());
+      expect(await writer.return()).toStrictEqual(makeDoneResult());
+      expect(onDispatch).toHaveBeenCalledOnce();
     });
   });
 

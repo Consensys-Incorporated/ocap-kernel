@@ -14,6 +14,8 @@ import type {
   RunLoopStatus,
   RunQueueItem,
   RunQueueItemNotify,
+  RunQueueItemRestartVat,
+  RunQueueItemTerminateVat,
   RunQueueItemSend,
   VatId,
 } from './types.ts';
@@ -52,27 +54,41 @@ export class KernelQueue {
     }
   > = new Map();
 
-  /** Promises resolved during this crank that have kernel subscriptions */
-  #resolvedWithKernelSubscription: KRef[] = [];
+  /**
+   * Resolutions made during this crank of promises that have kernel
+   * subscriptions. Each carries its value because `collectGarbage` runs before
+   * the flush and a subscription takes no reference count, so the promise may
+   * be gone from the store by the time its subscriber is answered.
+   */
+  #resolvedWithKernelSubscription: KernelOneResolution[] = [];
 
   /** Callers awaiting work the run loop has been asked for but not yet done. */
   readonly #pendingWorkWaiters: Set<(error: Error) => void> = new Set();
+
+  /**
+   * Requests made while a crank was open, for the run loop to write once it
+   * ends, unless it ends by killing the loop. Written into the crank, they
+   * would be rolled back with it if it aborts, and their callers would wait on
+   * work nothing is going to do.
+   */
+  #heldRequests: (RunQueueItemRestartVat | RunQueueItemTerminateVat)[] = [];
 
   /** Thunk to signal run queue transition from empty to non-empty */
   #wakeUpTheRunQueue: (() => void) | null;
 
   /**
-   * Whether this crank's savepoint has already been handed to `rollbackCrank`.
-   * Attempted, not necessarily succeeded: `rollbackCrank` forgets the savepoint
-   * whether or not the database call throws, so after either outcome a second
-   * attempt can only report "no such savepoint" over the real error.
+   * Whether the run loop's catch may still roll this crank's delivery back.
    *
-   * This has to be recorded at the moment of the attempt rather than returned
-   * from `#processCrankResult`, because that method can throw after rolling back
-   * (`#terminateVat`, `collectGarbage`), and the catch below must still know not
-   * to ask twice.
+   * False once the savepoint has been handed to `rollbackCrank` — attempted,
+   * not necessarily succeeded, since it is forgotten either way and asking
+   * twice could only report "no such savepoint" over the real error — and
+   * false once a vat's death has been recorded, which must outlive whatever
+   * throws after it.
+   *
+   * A field rather than a return value from `#processCrankResult`, because that
+   * method can throw after rolling back (`#terminateVat`, `collectGarbage`).
    */
-  #crankRollbackAttempted: boolean = false;
+  #deliveryRollbackAllowed: boolean = true;
 
   /**
    * The run loop's state, as one value so that a failure recorded for a loop
@@ -133,11 +149,21 @@ export class KernelQueue {
   ): Promise<never> {
     for (;;) {
       let wakeUpPromise: Promise<void> | undefined;
+      let afterCommit: (() => Promise<void>) | undefined;
+      // Boxed, so a crank that threw `undefined` stays distinguishable from one
+      // that did not throw.
+      let crankFailure: { error: unknown } | undefined;
 
       this.#kernelStore.startCrank();
-      this.#crankRollbackAttempted = false;
+      this.#deliveryRollbackAllowed = true;
       try {
-        this.#kernelStore.createCrankSavepoint('start');
+        // Two savepoints, because rolling back the outermost one discards the
+        // enclosing transaction (see `rollbackSavepoint`) and an aborted crank
+        // still has writes to make — a vat's death, the collection that follows
+        // it. Only `delivery` is ever rolled back; releasing `crank` in
+        // `endCrank` is this crank's one commit point.
+        this.#kernelStore.createCrankSavepoint('crank');
+        this.#kernelStore.createCrankSavepoint('delivery');
 
         // The savepoint exists from here on, so a throw can be undone. Without
         // this, `endCrank`'s savepoint release commits the half-finished crank:
@@ -150,6 +176,9 @@ export class KernelQueue {
             this.#kernelStore.nextTerminatedVatCleanup();
             const crankResult = await deliver(queueItem);
             await this.#processCrankResult(crankResult, queueItem);
+            if (!crankResult?.abort) {
+              afterCommit = crankResult?.afterCommit;
+            }
           } else {
             if (this.#wakeUpTheRunQueue !== null) {
               Fail`run queue already waiting to be woken; cannot sleep again before the previous wake handler is consumed`;
@@ -160,12 +189,9 @@ export class KernelQueue {
             wakeUpPromise = promise;
           }
         } catch (error) {
-          // An aborted crank already asked, and `rollbackCrank` discards the
-          // savepoint either way; asking again could only throw "no such
-          // savepoint" over the real error.
-          if (!this.#crankRollbackAttempted) {
+          if (this.#deliveryRollbackAllowed) {
             try {
-              this.#kernelStore.rollbackCrank('start');
+              this.#kernelStore.rollbackCrank('delivery');
             } catch (rollbackError) {
               // The original failure stays the `cause`, since that is the root
               // cause an operator needs; the rollback failure is named here.
@@ -177,11 +203,23 @@ export class KernelQueue {
           }
           throw error;
         }
+      } catch (error) {
+        crankFailure = { error };
+        throw error;
       } finally {
-        this.#kernelStore.endCrank();
+        this.#endCrank(crankFailure);
+        if (!crankFailure) {
+          this.#enqueueHeldRequests();
+        }
         if (wakeUpPromise) {
           await wakeUpPromise;
         }
+      }
+      // Outside the `finally`, so a crank that threw never reaches it: the
+      // writes this reports on are not there to report. Guarded rather than
+      // `await afterCommit?.()`, which would yield a microtask on every crank.
+      if (afterCommit) {
+        await afterCommit();
       }
     }
   }
@@ -189,7 +227,8 @@ export class KernelQueue {
   /**
    * Tell a caller waiting on queued work if the run loop dies before carrying
    * it out. `subscriptions` covers a message's result; a request with no kernel
-   * promise behind it — a vat restart — has nothing else that would settle it.
+   * promise behind it — a vat restart or termination — has nothing else that
+   * would settle it.
    *
    * @param reject - How to tell the caller.
    * @returns A function that unregisters it, for the caller's own `finally`.
@@ -322,6 +361,28 @@ export class KernelQueue {
   }
 
   /**
+   * End the crank without losing the error that is already unwinding. Now that
+   * the delivery rollback spares `crank`, `endCrank` is a real release and
+   * commit on the dying path where it used to be a no-op.
+   *
+   * @param crankFailure - The error already in flight, if the crank threw.
+   * @param crankFailure.error - That error.
+   */
+  #endCrank(crankFailure?: { error: unknown }): void {
+    try {
+      this.#kernelStore.endCrank();
+    } catch (endCrankError) {
+      if (!crankFailure) {
+        throw endCrankError;
+      }
+      throw new Error(
+        `Run loop died and its crank could not be ended: ${String(endCrankError)}`,
+        { cause: crankFailure.error },
+      );
+    }
+  }
+
+  /**
    * Process the results of a crank.
    *
    * @param crankResult - The crank result.
@@ -336,14 +397,11 @@ export class KernelQueue {
       // For active vats, this allows the message to be retried in a future crank.
       // For terminated vats, the message will just go splat.
       try {
-        this.#kernelStore.rollbackCrank('start');
+        this.#kernelStore.rollbackCrank('delivery');
       } finally {
-        // Set even when the rollback threw. `rollbackCrank` forgets the
-        // savepoint in its own `finally`, so "attempted" and "the savepoint is
-        // gone" now coincide exactly — and a second attempt from the run loop's
-        // catch would report a missing savepoint as the reason the kernel died,
-        // burying the database error that actually killed it.
-        this.#crankRollbackAttempted = true;
+        // Cleared even when the rollback threw: the savepoint is gone either
+        // way.
+        this.#deliveryRollbackAllowed = false;
       }
       // Discard kernel subscriptions that were queued for invocation
       this.#resolvedWithKernelSubscription = [];
@@ -365,18 +423,45 @@ export class KernelQueue {
       // TODO: Currently all errors terminate the vat, but instead we could
       // restart it and terminate the vat only after a certain number of failed
       // retries. This is probably where we should implement the vat restart logic.
-    } else {
-      // Upon on successful crank completion, enqueue buffered vat outputs for delivery.
-      this.#flushCrankBuffer();
     }
     // Vat termination during delivery is triggered by an illegal syscall
     // or by syscall.exit().
     if (crankResult?.terminate) {
       const { vatId, info } = crankResult.terminate;
-      await this.#terminateVat(vatId, info);
+      try {
+        await this.#terminateVat(vatId, info);
+      } finally {
+        // Withheld even when terminating threw partway: it kills the worker on
+        // its first line, so a store still believing the vat was alive would
+        // relaunch one whose callers have already been answered. The abort path
+        // above has rolled back and has nothing left worth keeping, and
+        // `vatPowers.exitVat` terminates without aborting, so on neither path
+        // does a later throw have a delivery to undo. All of it stays inside
+        // the crank's transaction regardless.
+        this.#deliveryRollbackAllowed = false;
+      }
+    }
+    if (crankResult?.irrevocable) {
+      this.#deliveryRollbackAllowed = false;
     }
     this.#kernelStore.collectGarbage();
-    this.#kernelStore.assertRefCountsIfAuditing();
+    // While a violation can still undo this crank, the audit goes first, so the
+    // flush does not settle the promise `enqueueMessage` gave an external
+    // caller out of state that is about to be rolled back. It can see the
+    // buffered items at all because `computeExpectedRefCounts` credits the
+    // crank buffer. Once a vat's death has committed the crank there is nothing
+    // left to undo, and flushing first is instead what keeps each queue row
+    // with the reference count charge it was given.
+    const auditBeforeFlush = this.#deliveryRollbackAllowed;
+    if (auditBeforeFlush) {
+      this.#kernelStore.assertRefCountsIfAuditing();
+    }
+    if (!crankResult?.abort) {
+      this.#flushCrankBuffer();
+    }
+    if (!auditBeforeFlush) {
+      this.#kernelStore.assertRefCountsIfAuditing();
+    }
   }
 
   /**
@@ -414,8 +499,8 @@ export class KernelQueue {
 
     // Invoke kernel subscriptions for promises resolved during this crank
     // that don't have kernel-level subscribers (e.g., promises from enqueueMessage)
-    for (const kpid of this.#resolvedWithKernelSubscription) {
-      this.#invokeKernelSubscription(kpid);
+    for (const resolution of this.#resolvedWithKernelSubscription) {
+      this.#settleKernelSubscription(resolution);
     }
     this.#resolvedWithKernelSubscription = [];
   }
@@ -426,14 +511,31 @@ export class KernelQueue {
    * @param kpid - The promise ID to check for subscriptions.
    */
   #invokeKernelSubscription(kpid: KRef): void {
+    if (this.subscriptions.has(kpid)) {
+      const promise = this.#kernelStore.getKernelPromise(kpid);
+      this.#settleKernelSubscription([
+        kpid,
+        promise.state === 'rejected',
+        promise.value as CapData<KRef>,
+      ]);
+    }
+  }
+
+  /**
+   * Settle the kernel subscription for a promise, if any, with a resolution
+   * the caller already has.
+   *
+   * @param resolution - The promise and how it was resolved.
+   */
+  #settleKernelSubscription(resolution: KernelOneResolution): void {
+    const [kpid, rejected, data] = resolution;
     const subscription = this.subscriptions.get(kpid);
     if (subscription) {
       this.subscriptions.delete(kpid);
-      const promise = this.#kernelStore.getKernelPromise(kpid);
-      if (promise.state === 'rejected') {
-        subscription.reject(promise.value);
+      if (rejected) {
+        subscription.reject(data);
       } else {
-        subscription.resolve(promise.value as CapData<KRef>);
+        subscription.resolve(data);
       }
     }
   }
@@ -493,16 +595,38 @@ export class KernelQueue {
   /**
    * Enqueue a request to replace a vat's worker.
    *
-   * The work belongs to the run loop, which is the point: a restart done where
-   * it is asked for takes the vat out of the kernel's reach while cranks
-   * continue, and a crank landing in that window reads a live vat as a dead one.
-   *
    * @param vatId - The vat whose worker is to be replaced.
    */
   enqueueRestartVat(vatId: VatId): void {
-    // A dead loop will never do it, and the caller would wait forever.
     this.assertRunLoopAlive('restart a vat');
-    this.#enqueueRun({ type: 'restartVat', vatId });
+    this.#enqueueRequest({ type: 'restartVat', vatId });
+  }
+
+  /**
+   * Enqueue a request from outside the run loop, holding it until the open
+   * crank, if any, has ended.
+   *
+   * @param item - The item to add.
+   */
+  #enqueueRequest(
+    item: RunQueueItemRestartVat | RunQueueItemTerminateVat,
+  ): void {
+    if (this.#kernelStore.isInCrank()) {
+      this.#heldRequests.push(item);
+    } else {
+      this.#enqueueRun(item);
+    }
+  }
+
+  /**
+   * Write the requests held while the crank that just ended was open.
+   */
+  #enqueueHeldRequests(): void {
+    const held = this.#heldRequests;
+    this.#heldRequests = [];
+    for (const item of held) {
+      this.#enqueueRun(item);
+    }
   }
 
   /**
@@ -517,7 +641,7 @@ export class KernelQueue {
    */
   enqueueTerminateVat(vatId: VatId, reason?: CapData<KRef>): void {
     this.assertRunLoopAlive('terminate a vat');
-    this.#enqueueRun({
+    this.#enqueueRequest({
       type: 'terminateVat',
       vatId,
       ...(reason && { reason }),
@@ -614,7 +738,7 @@ export class KernelQueue {
         this.#invokeKernelSubscription(kpid);
       } else if (this.subscriptions.has(kpid)) {
         // Track resolved promises that have kernel subscriptions for invocation at flush time
-        this.#resolvedWithKernelSubscription.push(kpid);
+        this.#resolvedWithKernelSubscription.push(resolution);
       }
     }
   }
