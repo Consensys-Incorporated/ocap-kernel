@@ -109,6 +109,7 @@ export class Kernel {
    * @param options.ioListenerFactory - Optional factory for creating IO listeners.
    * @param options.allowedGlobalNames - Optional list of allowed global names for vat endowments.
    * @param options.onRunLoopFailure - Optional handler called if the run loop dies.
+   * @param options.vatRelaunchTimeoutMs - How long a vat restart waits for the new worker before terminating the vat.
    * @param options.auditRefCounts - If true, verify every kref's reference
    * counts against the references the kernel actually holds at the end of each
    * crank, and throw on any mismatch. Intended for tests and debugging; the
@@ -126,6 +127,7 @@ export class Kernel {
       ioListenerFactory?: IOListenerFactory;
       allowedGlobalNames?: AllowedGlobalName[];
       onRunLoopFailure?: OnRunLoopFailure;
+      vatRelaunchTimeoutMs?: number;
       auditRefCounts?: boolean;
     } = {},
   ) {
@@ -162,6 +164,7 @@ export class Kernel {
       kernelQueue: this.#kernelQueue,
       logger: this.#logger.subLogger({ tags: ['VatManager'] }),
       allowedGlobalNames: options.allowedGlobalNames,
+      vatRelaunchTimeoutMs: options.vatRelaunchTimeoutMs,
     });
 
     this.#remoteManager = new RemoteManager({
@@ -261,6 +264,7 @@ export class Kernel {
    * @param options.systemSubclusters - Optional array of system subcluster configurations.
    * @param options.allowedGlobalNames - Optional list of allowed global names for vat endowments. When set, only these names from the `VatSupervisor`'s configured endowments (see `createDefaultEndowments`) are available to vats.
    * @param options.onRunLoopFailure - Optional handler called if the run loop dies. The kernel must be restarted after that, so an embedder that outlives it (e.g. a daemon) should use this to terminate or restart.
+   * @param options.vatRelaunchTimeoutMs - How long a vat restart waits for the new worker before terminating the vat, in milliseconds: more than 0 and at most 2^31 - 1. Defaults to 30 seconds.
    * @param options.auditRefCounts - If true, verify reference counts against
    * ground truth at the end of each crank and throw on any mismatch.
    * @returns A promise for the new kernel instance.
@@ -277,6 +281,7 @@ export class Kernel {
       systemSubclusters?: SystemSubclusterConfig[];
       allowedGlobalNames?: AllowedGlobalName[];
       onRunLoopFailure?: OnRunLoopFailure;
+      vatRelaunchTimeoutMs?: number;
       auditRefCounts?: boolean;
     } = {},
   ): Promise<Kernel> {
