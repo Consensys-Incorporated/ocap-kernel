@@ -1698,6 +1698,24 @@ describe('VatManager', () => {
       expect(vatManager.getVatIds()).toStrictEqual([]);
     });
 
+    it('skips a vat something else retired while an earlier one stopped', async () => {
+      await vatManager.runVat('v1', createMockVatConfig());
+      await vatManager.runVat('v2', createMockVatConfig());
+      mockPlatformServices.terminate.mockImplementationOnce(async () => {
+        // A queued termination of v1 runs while v2's worker stops.
+        await vatManager.stopVat('v1', true);
+        mockKernelStore.isVatActive.mockReturnValue(false);
+      });
+
+      await vatManager.terminateAllVats();
+
+      expect(mockKernelStore.markVatAsTerminated.mock.calls).toStrictEqual([
+        ['v2'],
+        ['v1'],
+      ]);
+      expect(vatManager.getVatIds()).toStrictEqual([]);
+    });
+
     it('handles empty vat list', async () => {
       await vatManager.terminateAllVats();
 
