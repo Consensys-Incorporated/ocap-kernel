@@ -40,6 +40,7 @@ describe('VatManager', () => {
       vatId,
       config,
       terminate: vi.fn().mockResolvedValue(undefined),
+      expectClose: vi.fn(),
       ping: vi.fn().mockResolvedValue({ pong: true }),
     } as unknown as Mocked<VatHandle>;
     vatHandles.push(handle);
@@ -501,6 +502,7 @@ describe('VatManager', () => {
 
         expect(vatManager.hasVat('v1')).toBe(true);
         expect(mockKernelQueue.enqueueTerminateVat).not.toHaveBeenCalled();
+        expect(vatHandles[0]?.expectClose).toHaveBeenCalledOnce();
       });
 
       it('is left alone when a restart has replaced its handle', async () => {

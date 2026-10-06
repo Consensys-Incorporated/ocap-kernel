@@ -280,7 +280,8 @@ describe('NodejsPlatformServices', () => {
           return secondWorker;
         });
       await service.launch(testVatId);
-      // Kept listeners, as a worker whose terminate failed part-way would.
+      // Forgotten with its listeners still attached, so its `exit` arrives after
+      // a replacement holds the vat id.
       service.workers.delete(testVatId);
       await service.launch(testVatId);
 

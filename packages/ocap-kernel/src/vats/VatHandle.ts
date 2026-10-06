@@ -339,6 +339,16 @@ export class VatHandle implements EndpointHandle {
   }
 
   /**
+   * Treat the channel's end as the kernel's own doing, for a kernel about to
+   * stop every worker. A command still waiting is left waiting rather than
+   * failed, so the crank that sent it never commits and its item is delivered
+   * again on the next start.
+   */
+  expectClose(): void {
+    this.#closing = true;
+  }
+
+  /**
    * Closes this handle's channel to the vat worker. The store side of a vat's
    * death is `VatManager`'s.
    *

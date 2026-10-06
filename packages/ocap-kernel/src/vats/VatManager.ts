@@ -438,6 +438,9 @@ export class VatManager {
    */
   expectWorkersToStop(): void {
     this.#workersStopping = true;
+    for (const vat of this.#vats.values()) {
+      vat.expectClose();
+    }
   }
 
   /**

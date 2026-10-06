@@ -156,6 +156,24 @@ describe('VatHandle', () => {
       expect(onStreamFailure).not.toHaveBeenCalled();
     });
 
+    it('leaves a pending command waiting once the kernel will close the channel', async () => {
+      const onStreamFailure = vi.fn();
+      const { vat, stream } = await makeVat({ onStreamFailure });
+      sendVatCommandMock.mockRestore();
+      const settled = vi.fn();
+      vat
+        .sendVatCommand({ method: 'ping' as const, params: [] })
+        .then(settled)
+        .catch(settled);
+
+      vat.expectClose();
+      await stream.return();
+      await delay(10);
+
+      expect(settled).not.toHaveBeenCalled();
+      expect(onStreamFailure).not.toHaveBeenCalled();
+    });
+
     it('rejects pending commands when the channel dies', async () => {
       const { vat, stream } = await makeVat();
       sendVatCommandMock.mockRestore();
