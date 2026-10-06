@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { MockInstance } from 'vitest';
+import type { Mock, MockInstance } from 'vitest';
 
 import { KernelQueue } from './KernelQueue.ts';
 import { KernelRouter } from './KernelRouter.ts';
@@ -26,7 +26,7 @@ describe('KernelRouter', () => {
   let getEndpoint: (endpointId: EndpointId) => EndpointHandle;
   let endpointHandle: EndpointHandle;
   let kernelRouter: KernelRouter;
-  let mockRestartVat: MockInstance<(vatId: VatId) => Promise<void>>;
+  let mockRestartVat: Mock<(vatId: VatId) => Promise<CrankResult | undefined>>;
 
   beforeEach(() => {
     // Mock EndpointHandle with more detailed return values
@@ -90,21 +90,6 @@ describe('KernelRouter', () => {
       mockInvokeKernelService,
       mockRestartVat,
     );
-  });
-
-  describe('restartVat', () => {
-    it('hands a queued restart request to the vat manager', async () => {
-      const crankResult = { abort: true };
-      mockRestartVat.mockResolvedValueOnce(crankResult);
-
-      const result = await kernelRouter.deliver({
-        type: 'restartVat',
-        vatId: 'v1',
-      });
-
-      expect(mockRestartVat).toHaveBeenCalledWith('v1');
-      expect(result).toBe(crankResult);
-    });
   });
 
   describe('deliver', () => {
@@ -864,6 +849,21 @@ describe('KernelRouter', () => {
       await expect(kernelRouter.deliver(invalidItem)).rejects.toThrow(
         'unsupported or unknown run queue item type',
       );
+    });
+
+    describe('restartVat', () => {
+      it('hands a queued restart request to the vat manager', async () => {
+        const crankResult = { abort: true };
+        mockRestartVat.mockResolvedValueOnce(crankResult);
+
+        const result = await kernelRouter.deliver({
+          type: 'restartVat',
+          vatId: 'v1',
+        });
+
+        expect(mockRestartVat).toHaveBeenCalledWith('v1');
+        expect(result).toBe(crankResult);
+      });
     });
   });
 });

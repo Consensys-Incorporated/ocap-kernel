@@ -14,6 +14,7 @@ import type {
   RunLoopStatus,
   RunQueueItem,
   RunQueueItemNotify,
+  RunQueueItemRestartVat,
   RunQueueItemSend,
   VatId,
 } from './types.ts';
@@ -65,10 +66,11 @@ export class KernelQueue {
 
   /**
    * Requests made while a crank was open, for the run loop to write once it
-   * ends. Written into the crank, they would be rolled back with it if it
-   * aborts, and their callers would wait on work nothing is going to do.
+   * ends, unless it ends by killing the loop. Written into the crank, they
+   * would be rolled back with it if it aborts, and their callers would wait on
+   * work nothing is going to do.
    */
-  #heldRequests: RunQueueItem[] = [];
+  #heldRequests: RunQueueItemRestartVat[] = [];
 
   /** Thunk to signal run queue transition from empty to non-empty */
   #wakeUpTheRunQueue: (() => void) | null;
@@ -601,7 +603,7 @@ export class KernelQueue {
    *
    * @param item - The item to add.
    */
-  #enqueueRequest(item: RunQueueItem): void {
+  #enqueueRequest(item: RunQueueItemRestartVat): void {
     if (this.#kernelStore.isInCrank()) {
       this.#heldRequests.push(item);
     } else {
