@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add a `vatRelaunchTimeoutMs` option to `Kernel.make`: how long a vat restart waits for the new worker before giving up, 30 seconds by default ([#1096](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1096))
 - A `CrankResult` may carry `afterCommit`, work the run loop runs once the crank has committed and skips if it aborts, for what a rollback could not undo anyway: in-memory state, and sending a message the crank has already written down. While it runs it may not write the kernel store, since by then there is no transaction to write into ([#1101](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1101))
 - Add `orphanKernelObject` to the kernel store, which gives up the kernel's record of who owns an object ([#1091](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1091))
 - Add `IOListener`, an endpoint peers connect to that yields one `IOChannel` per connection via `accept()`, replacing the previous one-client-at-a-time channel. Each accepted connection is a distinct object, so holding one conveys no way to reach another, and `direction` is enforced per connection. `accept()` resolves `null` once the listener is closed so an accept loop can terminate rather than hang ([#1007](https://github.com/MetaMask/ocap-kernel/pull/1007))
@@ -65,6 +66,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Migrate to `DataView`, whose `setFloat*` methods lockdown repairs to write only canonical `NaN`s. This applies to bundled dependencies as much as to vat code: a library reaching for `Float64Array` at module scope will now throw on vat startup
 - **BREAKING:** Remove `TextEncoder` and `TextDecoder` from `AllowedGlobalName`, since SES 2 permits them in every compartment and the kernel no longer endows them. A `VatConfig.globals` still naming either now fails validation, rejecting the whole launch with `invalid cluster config`, so drop them from cluster configs ([#1112](https://github.com/MetaMask/ocap-kernel/pull/1112))
   - Vats keep access to both, and `allowedGlobalNames` can no longer withhold them
+- **BREAKING:** `restartVat` is carried out by the run loop in a crank of its own, so a crank can no longer observe a vat between workers as dead. It now waits behind the run queue, and rejects if the run loop dies or the kernel is stopped, reset or has its storage cleared first. Concurrent restarts of one vat are carried out once ([#1096](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1096))
+- **BREAKING:** A vat whose relaunch fails, or whose new worker does not start within `vatRelaunchTimeoutMs`, is terminated rather than left persisted with no worker ([#1096](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1096))
 
 ### Fixed
 
