@@ -878,6 +878,7 @@ describe('Kernel', () => {
     it.each([
       { method: 'clearStorage', message: 'Kernel storage was cleared' },
       { method: 'reset', message: 'Kernel was reset' },
+      { method: 'stop', message: 'Kernel was stopped' },
     ] as const)(
       'rejects a queued restart on $method',
       async ({ method, message }) => {
