@@ -19,21 +19,20 @@ import { VatSyscall } from './vats/VatSyscall.ts';
  * Invariant M2: each kind of caller waiting on queued work is rejected, not
  * left hanging, whichever way the run loop exits.
  *
- * `it.fails` rows are known gaps on main. A PR that closes one must flip its
- * row to `it`.
+ * Rows titled "(gap, ...)" assert what main does today, which breaks the
+ * invariant. A PR that closes a gap turns its row red and must rewrite it to
+ * assert the invariant.
  */
-
-/** How long a caller may stay pending before it counts as hung. */
-const HANG_MS = 100;
 
 /**
  * A kernel over a real store, running two mocked vats that answer `bootstrap`
  * and nothing else. A vat sent `explode` exits with a channel that will not
  * close, which kills the run loop.
  *
- * @returns The kernel and the root of each vat.
+ * @returns The kernel, the root of each vat, and the methods vats were sent.
  */
 async function setUp() {
+  const received: string[] = [];
   const logger = new Logger('test');
   for (const level of ['log', 'info', 'warn', 'error', 'debug'] as const) {
     vi.spyOn(logger, level).mockImplementation(() => undefined);
@@ -62,6 +61,7 @@ async function setUp() {
           message: EndpointMessage,
         ): Promise<CrankResult> => {
           const [method] = JSON.parse(message.methargs.body.slice(1));
+          received.push(method);
           if (method === 'bootstrap' && message.result) {
             vatSyscall.handleSyscall([
               'resolve',
@@ -106,77 +106,76 @@ async function setUp() {
     kernel,
     waiterRoot: vatRootKrefs.waiter as string,
     doomedRoot: vatRootKrefs.doomed as string,
+    received,
   };
 }
 
-/**
- * @param promise - A caller's promise.
- * @returns How it settled, or `hung` if it had not within {@link HANG_MS}.
- */
-async function outcome(
-  promise: Promise<unknown>,
-): Promise<'fulfilled' | 'rejected' | 'hung'> {
-  return Promise.race([
-    promise.then(
-      () => 'fulfilled' as const,
-      () => 'rejected' as const,
-    ),
-    delay(HANG_MS).then(() => 'hung' as const),
-  ]);
-}
-
 type Harness = Awaited<ReturnType<typeof setUp>>;
+type Settlement = 'pending' | 'fulfilled' | 'rejected';
 
 /**
  * Leave a caller waiting on a message its vat has taken but not answered, end
- * the run loop by `exit`, and report how the caller settled.
+ * the run loop by `exit`, and report how the caller has settled.
  *
  * @param exit - How the run loop ends.
- * @returns How the caller settled.
+ * @returns How the caller has settled once the exit is done.
  */
 async function waitThrough(
   exit: (harness: Harness) => Promise<void>,
-): Promise<'fulfilled' | 'rejected' | 'hung'> {
+): Promise<Settlement> {
   const harness = await setUp();
-  const caller = harness.kernel.queueMessage(harness.waiterRoot, 'work', []);
-  expect(await outcome(caller)).toBe('hung');
+  let settlement: Settlement = 'pending';
+  harness.kernel
+    .queueMessage(harness.waiterRoot, 'work', [])
+    .then(() => {
+      settlement = 'fulfilled';
+      return undefined;
+    })
+    .catch(() => {
+      settlement = 'rejected';
+    });
+  await vi.waitFor(() => expect(harness.received).toContain('work'));
+  await harness.kernel.getStatus();
+  await delay(0);
+  expect(settlement).toBe('pending');
+
   await exit(harness);
-  return outcome(caller);
+  // Flushes the caller's settlement; not a timeout.
+  await delay(0);
+  return settlement;
 }
 
 describe('a queueMessage caller the vat has not answered', () => {
   it.each([
-    {
-      exit: 'a crank failure',
-      run: async ({ kernel, doomedRoot }: Harness): Promise<void> => {
+    [
+      'is rejected when the run loop dies in a crank',
+      async ({ kernel, doomedRoot }: Harness): Promise<void> => {
         kernel.queueMessage(doomedRoot, 'explode', []).catch(() => undefined);
-        // `getStatus` waits out the crank in progress.
-        while ((await kernel.getStatus()).runLoop.state !== 'failed') {
-          await delay(1);
-        }
+        await vi.waitFor(async () =>
+          expect((await kernel.getStatus()).runLoop.state).toBe('failed'),
+        );
       },
-    },
-    // Only because terminating the vat rejects the promises it decides; reset
-    // does not fail the kernel's waiters itself.
-    {
-      exit: 'reset',
-      run: async ({ kernel }: Harness): Promise<void> => kernel.reset(),
-    },
-  ])('is rejected when the run loop exits by $exit', async ({ run }) => {
-    expect(await waitThrough(run)).toBe('rejected');
-  });
-
-  it.fails.each([
-    {
-      exit: 'stop',
-      run: async ({ kernel }: Harness): Promise<void> => kernel.stop(),
-    },
-    {
-      exit: 'clearStorage',
-      run: async ({ kernel }: Harness): Promise<void> => kernel.clearStorage(),
-    },
-  ])('is rejected when the run loop exits by $exit', async ({ run }) => {
-    expect(await waitThrough(run)).toBe('rejected');
+      'rejected',
+    ],
+    // Only because terminating the vat rejects the promises it decides;
+    // reset does not fail the kernel's waiters itself.
+    [
+      'is rejected when the kernel is reset',
+      async ({ kernel }: Harness): Promise<void> => kernel.reset(),
+      'rejected',
+    ],
+    [
+      'is left pending when the kernel stops (gap, #1105)',
+      async ({ kernel }: Harness): Promise<void> => kernel.stop(),
+      'pending',
+    ],
+    [
+      'is left pending when the storage is cleared (gap, #1105)',
+      async ({ kernel }: Harness): Promise<void> => kernel.clearStorage(),
+      'pending',
+    ],
+  ] as const)('%s', async (_title, exit, settlement) => {
+    expect(await waitThrough(exit)).toBe(settlement);
   });
 
   // No caller on main waits for a vat by id: `restartVat` hands back its
