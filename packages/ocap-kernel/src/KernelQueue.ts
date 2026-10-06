@@ -14,6 +14,8 @@ import type {
   RunLoopStatus,
   RunQueueItem,
   RunQueueItemNotify,
+  RunQueueItemRestartVat,
+  RunQueueItemTerminateVat,
   RunQueueItemSend,
   VatId,
 } from './types.ts';
@@ -62,6 +64,14 @@ export class KernelQueue {
 
   /** Callers awaiting work the run loop has been asked for but not yet done. */
   readonly #pendingWorkWaiters: Set<(error: Error) => void> = new Set();
+
+  /**
+   * Requests made while a crank was open, for the run loop to write once it
+   * ends, unless it ends by killing the loop. Written into the crank, they
+   * would be rolled back with it if it aborts, and their callers would wait on
+   * work nothing is going to do.
+   */
+  #heldRequests: (RunQueueItemRestartVat | RunQueueItemTerminateVat)[] = [];
 
   /** Thunk to signal run queue transition from empty to non-empty */
   #wakeUpTheRunQueue: (() => void) | null;
@@ -198,6 +208,9 @@ export class KernelQueue {
         throw error;
       } finally {
         this.#endCrank(crankFailure);
+        if (!crankFailure) {
+          this.#enqueueHeldRequests();
+        }
         if (wakeUpPromise) {
           await wakeUpPromise;
         }
@@ -214,7 +227,8 @@ export class KernelQueue {
   /**
    * Tell a caller waiting on queued work if the run loop dies before carrying
    * it out. `subscriptions` covers a message's result; a request with no kernel
-   * promise behind it — a vat restart — has nothing else that would settle it.
+   * promise behind it — a vat restart or termination — has nothing else that
+   * would settle it.
    *
    * @param reject - How to tell the caller.
    * @returns A function that unregisters it, for the caller's own `finally`.
@@ -427,6 +441,9 @@ export class KernelQueue {
         this.#deliveryRollbackAllowed = false;
       }
     }
+    if (crankResult?.irrevocable) {
+      this.#deliveryRollbackAllowed = false;
+    }
     this.#kernelStore.collectGarbage();
     // While a violation can still undo this crank, the audit goes first, so the
     // flush does not settle the promise `enqueueMessage` gave an external
@@ -582,7 +599,34 @@ export class KernelQueue {
    */
   enqueueRestartVat(vatId: VatId): void {
     this.assertRunLoopAlive('restart a vat');
-    this.#enqueueRun({ type: 'restartVat', vatId });
+    this.#enqueueRequest({ type: 'restartVat', vatId });
+  }
+
+  /**
+   * Enqueue a request from outside the run loop, holding it until the open
+   * crank, if any, has ended.
+   *
+   * @param item - The item to add.
+   */
+  #enqueueRequest(
+    item: RunQueueItemRestartVat | RunQueueItemTerminateVat,
+  ): void {
+    if (this.#kernelStore.isInCrank()) {
+      this.#heldRequests.push(item);
+    } else {
+      this.#enqueueRun(item);
+    }
+  }
+
+  /**
+   * Write the requests held while the crank that just ended was open.
+   */
+  #enqueueHeldRequests(): void {
+    const held = this.#heldRequests;
+    this.#heldRequests = [];
+    for (const item of held) {
+      this.#enqueueRun(item);
+    }
   }
 
   /**
@@ -597,7 +641,7 @@ export class KernelQueue {
    */
   enqueueTerminateVat(vatId: VatId, reason?: CapData<KRef>): void {
     this.assertRunLoopAlive('terminate a vat');
-    this.#enqueueRun({
+    this.#enqueueRequest({
       type: 'terminateVat',
       vatId,
       ...(reason && { reason }),

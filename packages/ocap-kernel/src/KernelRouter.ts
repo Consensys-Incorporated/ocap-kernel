@@ -74,7 +74,7 @@ export class KernelRouter {
   readonly #terminateVat: (
     vatId: VatId,
     reason?: CapData<KRef>,
-  ) => Promise<void>;
+  ) => Promise<CrankResult | undefined>;
 
   /** The logger, if any. */
   readonly #logger: Logger | undefined;
@@ -96,7 +96,10 @@ export class KernelRouter {
     getEndpoint: (endpointId: EndpointId) => EndpointHandle,
     invokeKernelService: (target: KRef, message: KernelMessage) => void,
     restartVat: (vatId: VatId) => Promise<CrankResult | undefined>,
-    terminateVat: (vatId: VatId, reason?: CapData<KRef>) => Promise<void>,
+    terminateVat: (
+      vatId: VatId,
+      reason?: CapData<KRef>,
+    ) => Promise<CrankResult | undefined>,
     logger?: Logger,
   ) {
     this.#kernelStore = kernelStore;
@@ -141,8 +144,7 @@ export class KernelRouter {
       case 'restartVat':
         return await this.#restartVat(item.vatId);
       case 'terminateVat':
-        await this.#terminateVat(item.vatId, item.reason);
-        return undefined;
+        return await this.#terminateVat(item.vatId, item.reason);
       default:
         // @ts-expect-error Runtime does not respect "never".
         Fail`unsupported or unknown run queue item type ${item.type}`;
