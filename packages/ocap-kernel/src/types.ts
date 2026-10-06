@@ -376,36 +376,37 @@ export type RunQueueItemBringOutYourDead = Infer<
   typeof RunQueueItemBringOutYourDeadStruct
 >;
 
-const RunQueueItemRemoteInboundStruct = object({
-  type: literal('remoteInbound'),
-  remoteId: RemoteIdStruct,
-  message: string(),
-});
+export type RunQueueItemRemoteInbound = {
+  type: 'remoteInbound';
+  remoteId: RemoteId;
+  message: string;
+};
 
-export type RunQueueItemRemoteInbound = Infer<
-  typeof RunQueueItemRemoteInboundStruct
->;
-
-const RunQueueItemPeerIncarnationStruct = object({
-  type: literal('peerIncarnation'),
-  peerId: string(),
-  incarnation: string(),
-});
-
-export type RunQueueItemPeerIncarnation = Infer<
-  typeof RunQueueItemPeerIncarnationStruct
->;
+export type RunQueueItemPeerIncarnation = {
+  type: 'peerIncarnation';
+  peerId: string;
+  incarnation: string;
+};
 
 export const RunQueueItemStruct = union([
   RunQueueItemSendStruct,
   RunQueueItemNotifyStruct,
   RunQueueItemGCActionStruct,
   RunQueueItemBringOutYourDeadStruct,
-  RunQueueItemRemoteInboundStruct,
-  RunQueueItemPeerIncarnationStruct,
 ]);
 
 export type RunQueueItem = Infer<typeof RunQueueItemStruct>;
+
+/**
+ * Everything the run loop takes a crank for. What a peer sends, a message or an
+ * incarnation change, is held in memory and never written to the run queue, so
+ * it is not a {@link RunQueueItem} and the store's queue methods do not accept
+ * one.
+ */
+export type RunLoopItem =
+  | RunQueueItem
+  | RunQueueItemRemoteInbound
+  | RunQueueItemPeerIncarnation;
 
 /**
  * Assert that a value is a valid kernel message.

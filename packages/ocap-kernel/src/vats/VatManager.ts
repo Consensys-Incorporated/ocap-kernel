@@ -8,6 +8,7 @@ import { stringify } from '@metamask/kernel-utils';
 import { Logger, splitLoggerStream } from '@metamask/logger';
 
 import type { KernelQueue } from '../KernelQueue.ts';
+import { makeKernelError } from '../liveslots/kernel-marshal.ts';
 import type { KernelStore } from '../store/index.ts';
 import type {
   VatId,
@@ -20,6 +21,14 @@ import { ROOT_OBJECT_VREF } from '../types.ts';
 import type { AllowedGlobalName } from './endowments.ts';
 import { VatHandle } from './VatHandle.ts';
 import type { PingVatResult } from '../rpc/index.ts';
+
+type StopVatOptions = { vatId: VatId } & (
+  | { terminating: true; terminationError: Error }
+  | { terminating: false; terminationError?: never }
+);
+
+/** Set once `VatHandle.make` returns. */
+type RunningVat = { handle?: VatHandle };
 
 type VatManagerOptions = {
   platformServices: PlatformServices;
@@ -123,22 +132,44 @@ export class VatManager {
         cause: error,
       });
     }
-    this.#kernelStore.initEndpoint(vatId);
-    const rootRef = this.#kernelStore.exportFromEndpoint(
-      vatId,
-      ROOT_OBJECT_VREF,
-    );
-    // A root is addressable for as long as its vat lives, whether or not
-    // anyone currently imports it: the kernel's own API hands out root krefs
-    // and `getRootObject` resolves them through this c-list entry. Without a
-    // pin, GC would retire the entry the moment the last importer let go.
-    this.#kernelStore.pinObject(rootRef);
-    this.#kernelStore.setVatConfig(vatId, vatConfig);
-    return rootRef;
+    try {
+      this.#kernelStore.initEndpoint(vatId);
+      const rootRef = this.#kernelStore.exportFromEndpoint(
+        vatId,
+        ROOT_OBJECT_VREF,
+      );
+      // A root is addressable for as long as its vat lives, whether or not
+      // anyone currently imports it: the kernel's own API hands out root krefs
+      // and `getRootObject` resolves them through this c-list entry. Without a
+      // pin, GC would retire the entry the moment the last importer let go.
+      this.#kernelStore.pinObject(rootRef);
+      this.#kernelStore.setVatConfig(vatId, vatConfig);
+      return rootRef;
+    } catch (error) {
+      // No mark here: `stopVat` marks before `deleteVat`, so marking after it
+      // failed could schedule a cleanup for a vat `deleteVat` never reached.
+      let stopFailure: unknown;
+      try {
+        await this.stopVat(vatId, true);
+      } catch (caught) {
+        stopFailure = caught;
+        this.#logger.error(
+          `Failed to stop vat ${vatId} after incomplete launch; its worker may still be running:`,
+          caught,
+        );
+      }
+      throw new Error(
+        `Failed to launch vat ${vatId} (${vatName})${stopFailure ? ' (cleanup also failed)' : ''}`,
+        { cause: error },
+      );
+    }
   }
 
   /**
    * Start a new or resurrected vat running.
+   *
+   * Stops the worker if the handshake fails, since no handle is left to stop
+   * it by.
    *
    * @param vatId - The ID of the vat to start.
    * @param vatConfig - Its configuration.
@@ -154,16 +185,92 @@ export class VatManager {
       loggerStream as unknown as Parameters<typeof vatLogger.injectStream>[0],
       (error) => this.#logger.error(`Vat ${vatId} error: ${stringify(error)}`),
     );
-    const vat = await VatHandle.make({
-      vatId,
-      vatConfig,
-      vatStream,
-      kernelStore: this.#kernelStore,
-      kernelQueue: this.#kernelQueue,
-      logger: vatLogger,
-      allowedGlobalNames: this.#allowedGlobalNames,
-    });
+    // Matches a report to the handle that made it, since a restart reuses the
+    // vat id. Until `make` returns, the catch below covers a failed channel.
+    const running: RunningVat = {};
+    let vat: VatHandle;
+    try {
+      vat = await VatHandle.make({
+        vatId,
+        vatConfig,
+        vatStream,
+        kernelStore: this.#kernelStore,
+        kernelQueue: this.#kernelQueue,
+        logger: vatLogger,
+        allowedGlobalNames: this.#allowedGlobalNames,
+        onStreamFailure: (error) =>
+          this.#reportLostVat({ vatId, running, error }),
+      });
+    } catch (error) {
+      await this.#platformServices
+        .terminate(vatId)
+        .catch((stopError: unknown) =>
+          this.#logger.error(
+            `Failed to stop the worker for vat ${vatId} after a failed handshake:`,
+            stopError,
+          ),
+        );
+      throw error;
+    }
+    running.handle = vat;
     this.#vats.set(vatId, vat);
+  }
+
+  /**
+   * Retire a vat whose handle reports a failed channel.
+   *
+   * @param options - Named options.
+   * @param options.vatId - The vat whose channel failed.
+   * @param options.running - The handle that reported, once there is one.
+   * @param options.error - What the channel failed with.
+   */
+  #reportLostVat({
+    vatId,
+    running,
+    error,
+  }: {
+    vatId: VatId;
+    running: RunningVat;
+    error: Error;
+  }): void {
+    const { handle } = running;
+    if (!handle) {
+      return;
+    }
+    this.#retireLostVat({ vatId, handle, error }).catch((failure) =>
+      this.#logger.error(
+        `Vat ${vatId} lost its worker and could not be retired, so the kernel still holds it as running; terminate it to try again:`,
+        failure,
+      ),
+    );
+  }
+
+  /**
+   * Retire a vat whose channel to its worker has failed.
+   *
+   * Waits for the current crank, since an aborting crank would roll back the
+   * retirement but not the handle's removal from `#vats`. Skips a handle that
+   * is no longer the vat's: the kernel may have stopped or restarted it.
+   *
+   * @param options - Named options.
+   * @param options.vatId - The vat whose channel failed.
+   * @param options.handle - The handle that reported it.
+   * @param options.error - What the channel failed with.
+   */
+  async #retireLostVat({
+    vatId,
+    handle,
+    error,
+  }: {
+    vatId: VatId;
+    handle: VatHandle;
+    error: Error;
+  }): Promise<void> {
+    await this.#kernelQueue.waitForCrank();
+    if (this.#vats.get(vatId) !== handle) {
+      return;
+    }
+    await this.#stopVat({ vatId, terminating: true, terminationError: error });
   }
 
   /**
@@ -184,22 +291,91 @@ export class VatManager {
     terminating: boolean,
     reason?: CapData<KRef>,
   ): Promise<void> {
-    const vat = this.getVat(vatId);
-    let terminationError: Error | undefined;
-    if (reason) {
-      terminationError = new Error(`Vat termination: ${reason.body}`);
-    } else if (terminating) {
-      terminationError = new VatDeletedError(vatId);
+    await this.#stopVat(
+      terminating
+        ? {
+            vatId,
+            terminating: true,
+            terminationError: reason
+              ? new Error(`Vat termination: ${reason.body}`)
+              : new VatDeletedError(vatId),
+          }
+        : { vatId, terminating: false },
+    );
+  }
+
+  /**
+   * Stop a vat, given an error rather than a serialized reason.
+   *
+   * @param options - The vat to stop, and how.
+   * @param options.vatId - The ID of the vat.
+   * @param options.terminating - If true, the vat is being killed, if false,
+   *   it's being restarted.
+   * @param options.terminationError - Why it is ending, if terminating.
+   */
+  async #stopVat({
+    vatId,
+    terminating,
+    terminationError,
+  }: StopVatOptions): Promise<void> {
+    // A terminating vat may have no handle: a failed relaunch leaves one
+    // persisted but not running.
+    const vat = terminating ? this.#vats.get(vatId) : this.getVat(vatId);
+    if (terminating && !vat && !this.#kernelStore.isVatActive(vatId)) {
+      throw new VatNotFoundError(vatId);
     }
-    if (terminating) {
-      // A restart keeps the pin: the same root comes back.
-      this.releaseVatRootPin(vatId);
+    let recordFailure: Error | undefined;
+    try {
+      if (terminating) {
+        this.#retireVat(vatId, terminationError);
+      } else {
+        // A restart keeps the pin and the records.
+        this.#vats.delete(vatId);
+      }
+    } catch (error) {
+      // Rethrown below, once the worker is stopped.
+      recordFailure = error as Error;
     }
     await this.#platformServices
       .terminate(vatId, terminationError)
       .catch(this.#logger.error);
-    await vat.terminate(terminating, terminationError);
+    try {
+      await vat?.terminate(terminating, terminationError);
+    } catch (error) {
+      // The store failure takes precedence.
+      if (recordFailure === undefined) {
+        throw error;
+      }
+      this.#logger.error(`Channel to vat ${vatId} would not close:`, error);
+    }
+    if (recordFailure !== undefined) {
+      throw recordFailure;
+    }
+  }
+
+  /**
+   * Record a vat's death in one synchronous step, so no crank sees it half
+   * done.
+   *
+   * The mark follows the rejections, which the cleanup it schedules assumes
+   * happened, and precedes `deleteVat`, which drops the `vatConfig` row a retry
+   * needs to find the vat. The guard keeps a retry from unpinning twice and
+   * spending an embedder's pin.
+   *
+   * @param vatId - The vat being retired.
+   * @param error - Why it is being retired.
+   */
+  #retireVat(vatId: VatId, error: Error): void {
     this.#vats.delete(vatId);
+    if (!this.#kernelStore.isVatTerminated(vatId)) {
+      const failure = makeKernelError('VAT_TERMINATED', error.message);
+      for (const kpid of this.#kernelStore.getPromisesByDecider(vatId)) {
+        this.#kernelQueue.resolvePromises(vatId, [[kpid, true, failure]]);
+      }
+      this.releaseVatRootPin(vatId);
+      this.#kernelStore.markVatAsTerminated(vatId);
+    }
+    this.#kernelStore.deleteVat(vatId);
   }
 
   /**
@@ -211,8 +387,6 @@ export class VatManager {
   async terminateVat(vatId: VatId, reason?: CapData<KRef>): Promise<void> {
     await this.#kernelQueue.waitForCrank();
     await this.stopVat(vatId, true, reason);
-    // Mark for deletion (which will happen later, in vat-cleanup events)
-    this.#kernelStore.markVatAsTerminated(vatId);
   }
 
   /**

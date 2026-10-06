@@ -252,9 +252,10 @@ export function makeKernelStore(kdb: KernelDatabase, logger?: Logger) {
    * @param vatId - The vat whose state is to be deleted.
    */
   function deleteVat(vatId: VatId): void {
-    vat.deleteVatConfig(vatId);
     kdb.deleteVatStore(vatId);
     subclusters.removeVatFromSubcluster(vatId);
+    // Last: a retry finds the vat by this row.
+    vat.deleteVatConfig(vatId);
   }
 
   /**

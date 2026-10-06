@@ -7,7 +7,6 @@ import {
   makeArrayTransport,
 } from '@metamask/logger';
 import type { LogEntry } from '@metamask/logger';
-import { Kernel } from '@metamask/ocap-kernel';
 import type { AllowedGlobalName, KRef, VatId } from '@metamask/ocap-kernel';
 import { getWorkerFile } from '@ocap/nodejs-test-workers';
 import { describe, expect, it } from 'vitest';
@@ -16,6 +15,7 @@ import {
   extractTestLogs,
   getBundleSpec,
   makeAuditedKernelOptions,
+  makeTrackedKernel,
 } from './utils.ts';
 
 describe('global endowments', () => {
@@ -38,7 +38,7 @@ describe('global endowments', () => {
       logger: logger.subLogger({ tags: ['vat-worker-manager'] }),
       workerFilePath: getWorkerFile('mock-fetch'),
     });
-    const kernel = await Kernel.make(platformServices, database, {
+    const kernel = await makeTrackedKernel(platformServices, database, {
       resetStorage: true,
       logger,
       allowedGlobalNames,

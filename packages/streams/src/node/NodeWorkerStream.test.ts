@@ -2,11 +2,7 @@ import { delay } from '@metamask/kernel-utils';
 import { describe, it, expect, vi } from 'vitest';
 import type { Mocked } from 'vitest';
 
-import {
-  NodeWorkerDuplexStream,
-  NodeWorkerReader,
-  NodeWorkerWriter,
-} from './NodeWorkerStream.ts';
+import { NodeWorkerDuplexStream } from './NodeWorkerStream.ts';
 import type { NodePort, OnMessage } from './NodeWorkerStream.ts';
 import { makeAck } from '../BaseDuplexStream.ts';
 import type { ValidateInput } from '../BaseStream.ts';
@@ -23,103 +19,14 @@ const makeMockNodePort = (): Mocked<NodePort> & {
     on: vi.fn((_event, listener) => {
       port.messageHandler = listener;
     }),
+    off: vi.fn(() => {
+      port.messageHandler = undefined;
+    }),
     postMessage: vi.fn(),
-    messageHandler: undefined,
+    messageHandler: undefined as OnMessage | undefined,
   };
   return port;
 };
-
-describe('NodeWorkerReader', () => {
-  it('constructs a NodeWorkerReader', () => {
-    const port = makeMockNodePort();
-    const reader = new NodeWorkerReader(port);
-
-    expect(reader).toBeInstanceOf(NodeWorkerReader);
-    expect(reader[Symbol.asyncIterator]()).toBe(reader);
-    expect(port.on).toHaveBeenCalledOnce();
-  });
-
-  it('emits messages received from port', async () => {
-    const port = makeMockNodePort();
-    const reader = new NodeWorkerReader(port);
-
-    const message = { foo: 'bar' };
-    port.messageHandler?.(message);
-
-    expect(await reader.next()).toStrictEqual(makePendingResult(message));
-  });
-
-  it('calls validateInput with received input if specified', async () => {
-    const port = makeMockNodePort();
-    const validateInput = vi
-      .fn()
-      .mockReturnValue(true) as unknown as ValidateInput<number>;
-    const reader = new NodeWorkerReader(port, { validateInput });
-
-    const message = { foo: 'bar' };
-    port.messageHandler?.(message);
-
-    expect(await reader.next()).toStrictEqual(makePendingResult(message));
-    expect(validateInput).toHaveBeenCalledWith(message);
-  });
-
-  it('throws if validateInput throws', async () => {
-    const port = makeMockNodePort();
-    const validateInput = (() => {
-      throw new Error('foo');
-    }) as unknown as ValidateInput<number>;
-    const reader = new NodeWorkerReader(port, { validateInput });
-
-    port.messageHandler?.(42);
-    await expect(reader.next()).rejects.toThrow('foo');
-    expect(await reader.next()).toStrictEqual(makeDoneResult());
-  });
-
-  it('calls onEnd once when ending', async () => {
-    const port = makeMockNodePort();
-    const onEnd = vi.fn();
-    const reader = new NodeWorkerReader(port, { onEnd });
-
-    port.messageHandler?.(makeStreamDoneSignal());
-
-    expect(await reader.next()).toStrictEqual(makeDoneResult());
-    expect(onEnd).toHaveBeenCalledTimes(1);
-    expect(await reader.next()).toStrictEqual(makeDoneResult());
-    expect(onEnd).toHaveBeenCalledTimes(1);
-  });
-});
-
-describe('NodeWorkerWriter', () => {
-  it('constructs a NodeWorkerWriter', () => {
-    const port = makeMockNodePort();
-    const writer = new NodeWorkerWriter(port);
-
-    expect(writer).toBeInstanceOf(NodeWorkerWriter);
-    expect(writer[Symbol.asyncIterator]()).toBe(writer);
-  });
-
-  it('writes messages to the port', async () => {
-    const port = makeMockNodePort();
-    const writer = new NodeWorkerWriter(port);
-
-    const message = { foo: 'bar' };
-    const nextP = writer.next(message);
-
-    expect(await nextP).toStrictEqual(makePendingResult(undefined));
-    expect(port.postMessage).toHaveBeenCalledWith(message);
-  });
-
-  it('calls onEnd once when ending', async () => {
-    const port = makeMockNodePort();
-    const onEnd = vi.fn();
-    const writer = new NodeWorkerWriter(port, { onEnd });
-
-    expect(await writer.return()).toStrictEqual(makeDoneResult());
-    expect(onEnd).toHaveBeenCalledTimes(1);
-    expect(await writer.return()).toStrictEqual(makeDoneResult());
-    expect(onEnd).toHaveBeenCalledTimes(1);
-  });
-});
 
 describe('NodeWorkerDuplexStream', () => {
   const makeDuplexStream = async (
@@ -135,10 +42,24 @@ describe('NodeWorkerDuplexStream', () => {
   };
 
   it('constructs a NodeWorkerDuplexStream', async () => {
-    const duplexStream = await makeDuplexStream();
+    const port = makeMockNodePort();
+    const duplexStream = await makeDuplexStream(port);
 
     expect(duplexStream).toBeInstanceOf(NodeWorkerDuplexStream);
     expect(duplexStream[Symbol.asyncIterator]()).toBe(duplexStream);
+    expect(port.on).toHaveBeenCalledOnce();
+  });
+
+  it('reads messages from and writes messages to the port', async () => {
+    const port = makeMockNodePort();
+    const duplexStream = await makeDuplexStream(port);
+
+    port.messageHandler?.(42);
+    expect(await duplexStream.next()).toStrictEqual(makePendingResult(42));
+    expect(await duplexStream.write(43)).toStrictEqual(
+      makePendingResult(undefined),
+    );
+    expect(port.postMessage).toHaveBeenLastCalledWith(43);
   });
 
   it('calls validateInput with received input if specified', async () => {
@@ -170,14 +91,16 @@ describe('NodeWorkerDuplexStream', () => {
     expect(await duplexStream.next()).toStrictEqual(makeDoneResult());
   });
 
-  it('ends the writer when the reader ends', async () => {
+  it('ends the writer and removes its listener when the reader ends', async () => {
     const port = makeMockNodePort();
     const duplexStream = await makeDuplexStream(port);
+    const listener = port.messageHandler;
 
     const readP = duplexStream.next();
     port.messageHandler?.(makeStreamDoneSignal());
     await delay(10);
     expect(await duplexStream.write(42)).toStrictEqual(makeDoneResult());
     expect(await readP).toStrictEqual(makeDoneResult());
+    expect(port.off).toHaveBeenCalledWith('message', listener);
   });
 });

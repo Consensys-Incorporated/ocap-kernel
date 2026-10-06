@@ -1,5 +1,5 @@
 import type { KernelDatabase } from '@metamask/kernel-store';
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 import { makeKernelStore } from './index.ts';
 import { makeMapKernelDatabase } from '../../test/storage.ts';
@@ -614,6 +614,37 @@ describe('kernel store', () => {
       expect(ks.getNextVatId()).toBe('v1');
       expect(ks.getOwner(koId)).toBeUndefined();
       expect(mockKernelDatabase.kernelKVStore.get('customKey')).toBeUndefined();
+    });
+  });
+
+  describe('deleteVat', () => {
+    it('keeps the config until the rest of the vat is gone', () => {
+      const ks = makeKernelStore(mockKernelDatabase);
+      ks.setVatConfig('v1', { sourceSpec: 'vat.js' });
+      vi.spyOn(mockKernelDatabase, 'deleteVatStore').mockImplementationOnce(
+        () => {
+          throw new Error('deleteVatStore failed');
+        },
+      );
+
+      expect(() => ks.deleteVat('v1')).toThrow('deleteVatStore failed');
+      expect(ks.isVatActive('v1')).toBe(true);
+
+      ks.deleteVat('v1');
+      expect(ks.isVatActive('v1')).toBe(false);
+    });
+  });
+
+  describe('cleanupTerminatedVat', () => {
+    it('discards the config of a vat whose retirement did not', () => {
+      const ks = makeKernelStore(mockKernelDatabase);
+      ks.setVatConfig('v1', { sourceSpec: 'vat.js' });
+      ks.markVatAsTerminated('v1');
+
+      ks.cleanupTerminatedVat('v1');
+
+      expect(ks.isVatActive('v1')).toBe(false);
+      expect(ks.isVatTerminated('v1')).toBe(false);
     });
   });
 

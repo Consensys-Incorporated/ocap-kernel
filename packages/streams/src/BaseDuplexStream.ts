@@ -1,11 +1,12 @@
 import type { PromiseKit } from '@endo/promise-kit';
 import { makePromiseKit } from '@endo/promise-kit';
-import type { Reader } from '@endo/stream';
 import { stringify } from '@metamask/kernel-utils';
 import { is, literal, object } from '@metamask/superstruct';
 import type { Infer } from '@metamask/superstruct';
 
-import type { BaseReader, BaseWriter, ValidateInput } from './BaseStream.ts';
+import { BaseReader, BaseWriter } from './BaseStream.ts';
+import type { Dispatch, Listen, OnEnd, ValidateInput } from './BaseStream.ts';
+import type { Reader } from './utils.ts';
 import { makeDoneResult } from './utils.ts';
 
 export const DuplexStreamSentinel = {
@@ -46,19 +47,15 @@ export const isDuplexStreamSignal = (
 ): value is DuplexStreamSignal => isSyn(value) || isAck(value);
 
 /**
- * Make a validator for input to a duplex stream. Constructor helper for concrete
- * duplex stream implementations.
- *
- * Validators passed in by consumers must be augmented such that errors aren't
- * thrown for {@link DuplexStreamSignal} values.
+ * Augments a consumer-provided validator so that it accepts
+ * {@link DuplexStreamSignal} values.
  *
  * @param validateInput - The validator for the stream's input type.
- * @returns A validator for the stream's input type, or `undefined` if no
- * validation is desired.
+ * @returns The augmented validator, or `undefined` if none was provided.
  */
-export const makeDuplexStreamInputValidator = <Read>(
+const makeDuplexStreamInputValidator = <Read>(
   validateInput?: ValidateInput<Read>,
-): ((value: unknown) => value is Read) | undefined =>
+): ValidateInput<Read> | undefined =>
   validateInput &&
   ((value: unknown): value is Read =>
     isDuplexStreamSignal(value) || validateInput(value));
@@ -77,26 +74,28 @@ const isEnded = (status: SynchronizationStatus): boolean =>
   status === SynchronizationStatus.Complete ||
   status === SynchronizationStatus.Failed;
 
-/**
- * The base of a duplex stream. Essentially a {@link BaseReader} with a `write()` method.
- * Backed up by separate {@link BaseReader} and {@link BaseWriter} instances under the hood.
- */
-export abstract class BaseDuplexStream<
-  Read,
-  ReadStream extends BaseReader<Read>,
-  Write = Read,
-  WriteStream extends BaseWriter<Write> = BaseWriter<Write>,
-> implements Reader<Read>
-{
+export type BaseDuplexStreamArgs<Read, Write> = {
+  name: string;
+  listen: Listen;
+  onDispatch: Dispatch<Write>;
+  validateInput?: ValidateInput<Read> | undefined;
   /**
-   * The underlying reader for the duplex stream.
+   * Called once when the stream ends, after the final signal has been dispatched.
+   * For cleanup such as closing the transport.
    */
-  readonly #reader: ReadStream;
+  onEnd?: OnEnd | undefined;
+};
 
-  /**
-   * The underlying writer for the duplex stream.
-   */
-  readonly #writer: WriteStream;
+/**
+ * The base of a duplex stream over some transport. Essentially a
+ * {@link BaseReader} with a `write()` method. Backed up by separate
+ * {@link BaseReader} and {@link BaseWriter} instances under the hood, each of
+ * which ends the other.
+ */
+export class BaseDuplexStream<Read, Write = Read> implements Reader<Read> {
+  readonly #reader: BaseReader<Read>;
+
+  readonly #writer: BaseWriter<Write>;
 
   /**
    * The promise for the synchronization of the stream with its remote
@@ -127,10 +126,39 @@ export abstract class BaseDuplexStream<
   /**
    * Constructs a new {@link BaseDuplexStream}.
    *
-   * @param reader - The underlying reader for the duplex stream.
-   * @param writer - The underlying writer for the duplex stream.
+   * @param options - Options bag for configuring the duplex stream.
+   * @param options.name - The name of the stream, for logging purposes.
+   * @param options.listen - Subscribes the stream to its transport.
+   * @param options.onDispatch - Dispatches messages over the transport.
+   * @param options.validateInput - A function that validates input from the transport.
+   * @param options.onEnd - A function that is called once when the stream ends.
    */
-  constructor(reader: ReadStream, writer: WriteStream) {
+  constructor({
+    name,
+    listen,
+    onDispatch,
+    validateInput,
+    onEnd,
+  }: BaseDuplexStreamArgs<Read, Write>) {
+    // The writer ends last, so that its final signal is dispatched before onEnd.
+    const writer: BaseWriter<Write> = new BaseWriter({
+      name,
+      onDispatch,
+      onEnd: async (error) => {
+        // eslint-disable-next-line @typescript-eslint/no-use-before-define
+        await reader.return();
+        await onEnd?.(error);
+      },
+    });
+    const reader = new BaseReader<Read>({
+      name,
+      listen,
+      validateInput: makeDuplexStreamInputValidator(validateInput),
+      onEnd: async () => {
+        await writer.return();
+      },
+    });
+
     // Set a catch handler to avoid unhandled rejection errors. The promise may
     // reject before reads or writes occur, in which case there are no handlers.
     this.#syncKit.promise.catch(() => undefined);
@@ -348,7 +376,7 @@ harden(BaseDuplexStream);
  * A duplex stream. Essentially a {@link Reader} with a `write()` method.
  */
 export type DuplexStream<Read, Write = Read> = Pick<
-  BaseDuplexStream<Read, BaseReader<Read>, Write, BaseWriter<Write>>,
+  BaseDuplexStream<Read, Write>,
   'next' | 'write' | 'drain' | 'pipe' | 'return' | 'throw' | 'end'
 > & {
   [Symbol.asyncIterator]: () => DuplexStream<Read, Write>;
