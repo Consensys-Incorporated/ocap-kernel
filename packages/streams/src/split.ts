@@ -2,83 +2,27 @@ import { stringify } from '@metamask/kernel-utils';
 
 import type { DuplexStream } from './BaseDuplexStream.ts';
 import { BaseReader } from './BaseStream.ts';
-import type { BaseReaderArgs, ReceiveInput } from './BaseStream.ts';
+import type { ReceiveInput } from './BaseStream.ts';
 
 /**
- * A reader for use within {@link split} that reads from a reader and forwards
- * writes to a parent. The reader should output a subset of the parent stream's values based
- * on some predicate.
+ * A {@link DuplexStream} for use within {@link split} that reads a subset of its
+ * parent's values and forwards writes to its parent.
  */
-class SplitReader<Read> extends BaseReader<Read> {
-  /**
-   * Constructs a new {@link SplitReader}.
-   *
-   * @param args - The arguments to pass to the base reader.
-   */
-  // eslint-disable-next-line no-restricted-syntax
-  private constructor(args: BaseReaderArgs<Read>) {
-    super(args);
-  }
+class SplitStream<Read, Write> implements DuplexStream<Read, Write> {
+  readonly #parent: DuplexStream<unknown, Write>;
 
-  /**
-   * Creates a new {@link SplitReader}.
-   *
-   * @param args - The arguments to pass to the base reader.
-   * @returns A new {@link SplitReader} and the receive input function.
-   */
-  static make<Read>(
-    args: BaseReaderArgs<Read>,
-  ): [SplitReader<Read>, ReceiveInput] {
-    const reader = new SplitReader<Read>(args);
-    return [reader, reader.getReceiveInput()] as const;
-  }
-}
-harden(SplitReader);
-
-/**
- * A {@link DuplexStream} for use within {@link split} that reads from a reader and forwards
- * writes to a parent. The reader should output a subset of the parent stream's values based
- * on some predicate.
- */
-class SplitStream<ParentRead, Read extends ParentRead, Write>
-  implements DuplexStream<Read, Write>
-{
-  readonly #parent: DuplexStream<ParentRead, Write>;
-
-  readonly #reader: SplitReader<Read>;
+  readonly #reader: BaseReader<Read>;
 
   /**
    * Constructs a new {@link SplitStream}.
    *
-   * @param parent - The parent stream to read from.
-   * @param reader - The reader to use to read from the parent stream.
+   * @param parent - The parent stream.
+   * @param reader - The reader that receives this split's subset of the parent's values.
    */
-  constructor(
-    parent: DuplexStream<ParentRead, Write>,
-    reader: SplitReader<Read>,
-  ) {
+  constructor(parent: DuplexStream<unknown, Write>, reader: BaseReader<Read>) {
     this.#parent = parent;
     this.#reader = reader;
     harden(this);
-  }
-
-  /**
-   * Constructs a new {@link SplitStream}.
-   *
-   * @param parent - The parent stream to read from.
-   * @returns A new {@link SplitStream} and the receive input function.
-   */
-  static make<ParentRead, Read extends ParentRead, Write>(
-    parent: DuplexStream<ParentRead, Write>,
-  ): {
-    stream: SplitStream<ParentRead, Read, Write>;
-    receiveInput: ReceiveInput;
-  } {
-    const [reader, receiveInput] = SplitReader.make<Read>({
-      name: this.constructor.name,
-    });
-    const stream = new SplitStream(parent, reader);
-    return { stream, receiveInput };
   }
 
   /**
@@ -91,9 +35,9 @@ class SplitStream<ParentRead, Read extends ParentRead, Write>
   }
 
   /**
-   * Writes a value to the stream.
+   * Writes a value to the parent stream.
    *
-   * @param value - The value to write to the stream.
+   * @param value - The value to write.
    * @returns The result of writing the value.
    */
   async write(value: Write): Promise<IteratorResult<undefined, undefined>> {
@@ -123,28 +67,26 @@ class SplitStream<ParentRead, Read extends ParentRead, Write>
   }
 
   /**
-   * Closes the stream. Idempotent.
+   * Closes the stream and its parent. Idempotent.
    *
    * @returns The final result for this stream.
    */
   async return(): Promise<IteratorResult<Read, undefined>> {
-    await this.#parent.return();
-    return this.#reader.return();
+    return this.end();
   }
 
   /**
-   * Closes the stream with an error. Idempotent.
+   * Closes the stream and its parent with an error. Idempotent.
    *
    * @param error - The error to close the stream with.
    * @returns The final result for this stream.
    */
   async throw(error: Error): Promise<IteratorResult<Read, undefined>> {
-    await this.#parent.throw(error);
-    return this.#reader.throw(error);
+    return this.end(error);
   }
 
   /**
-   * Closes the stream. Syntactic sugar for `throw(error)` or `return()`. Idempotent.
+   * Closes the stream and its parent. Idempotent.
    *
    * @param error - The error to close the stream with.
    * @returns The final result for this stream.
@@ -165,97 +107,67 @@ class SplitStream<ParentRead, Read extends ParentRead, Write>
 }
 harden(SplitStream);
 
-// There's no reason to do this but we leave it in for the sake of completeness.
-export function split<Read, Write, ReadA extends Read>(
-  stream: DuplexStream<Read, Write>,
-  predicateA: (value: Read) => value is ReadA,
-): [DuplexStream<ReadA, Write>];
-
-export function split<Read, Write, ReadA extends Read, ReadB extends Read>(
-  stream: DuplexStream<Read, Write>,
-  predicateA: (value: Read) => value is ReadA,
-  predicateB: (value: Read) => value is ReadB,
-): [DuplexStream<ReadA, Write>, DuplexStream<ReadB, Write>];
-
-export function split<
-  Read,
-  Write,
-  ReadA extends Read,
-  ReadB extends Read,
-  ReadC extends Read,
->(
-  stream: DuplexStream<Read, Write>,
-  predicateA: (value: Read) => value is ReadA,
-  predicateB: (value: Read) => value is ReadB,
-  predicateC: (value: Read) => value is ReadC,
-): [
-  DuplexStream<ReadA, Write>,
-  DuplexStream<ReadB, Write>,
-  DuplexStream<ReadC, Write>,
-];
-
-export function split<
-  Read,
-  Write,
-  ReadA extends Read,
-  ReadB extends Read,
-  ReadC extends Read,
-  ReadD extends Read,
->(
-  stream: DuplexStream<Read, Write>,
-  predicateA: (value: Read) => value is ReadA,
-  predicateB: (value: Read) => value is ReadB,
-  predicateC: (value: Read) => value is ReadC,
-  predicateD: (value: Read) => value is ReadD,
-): [
-  DuplexStream<ReadA, Write>,
-  DuplexStream<ReadB, Write>,
-  DuplexStream<ReadC, Write>,
-  DuplexStream<ReadD, Write>,
-];
+type Splits<Read, Write, Predicates> = {
+  [Index in keyof Predicates]: DuplexStream<
+    Predicates[Index] extends ((
+      value: Read,
+    ) => value is infer Narrowed extends Read)
+      ? Narrowed
+      : Read,
+    Write
+  >;
+};
 
 /**
- * Splits a stream into multiple streams based on a list of predicates.
- * Supports up to 4 predicates with type checking, and any number without!
+ * Splits a stream into one stream per predicate. Each value read from the parent
+ * goes to the first split whose predicate it matches; a value that matches none
+ * ends all splits with an error. Writes to any split go to the parent, and ending
+ * any split ends the parent and therefore all splits.
  *
  * @param parentStream - The stream to split.
  * @param predicates - The predicates to use to split the stream.
  * @returns An array of "splits" of the parent stream.
  */
-export function split<Read, Write>(
+export function split<
+  Read,
+  Write,
+  Predicates extends ((value: Read) => boolean)[],
+>(
   parentStream: DuplexStream<Read, Write>,
-  ...predicates: ((value: Read) => boolean)[]
-): DuplexStream<Read, Write>[] {
-  const splits = predicates.map(
-    (predicate) => [predicate, SplitStream.make(parentStream)] as const,
-  );
+  ...predicates: Predicates
+): Splits<Read, Write, Predicates> {
+  const splits = predicates.map((predicate) => {
+    let receiveInput!: ReceiveInput;
+    const reader = new BaseReader<Read>({
+      name: 'SplitStream',
+      listen: (receive) => {
+        receiveInput = receive as ReceiveInput;
+      },
+    });
+    const stream = new SplitStream(parentStream, reader);
+    return { predicate, receiveInput, stream };
+  });
 
   // eslint-disable-next-line no-void
   void (async () => {
     let error: Error | undefined;
     try {
       for await (const value of parentStream) {
-        let matched = false;
-        for (const [predicate, { receiveInput }] of splits) {
-          if (predicate(value)) {
-            matched = true;
-            await receiveInput(value);
-            break;
-          }
-        }
-
-        if (!matched) {
+        const match = splits.find(({ predicate }) => predicate(value));
+        if (!match) {
           throw new Error(
             `Failed to match any predicate for value: ${stringify(value)}`,
           );
         }
+        // Awaited so that every value is received before the splits end.
+        await match.receiveInput(value);
       }
     } catch (caughtError) {
       error = caughtError as Error;
     }
 
-    await Promise.all(splits.map(async ([, { stream }]) => stream.end(error)));
+    await Promise.all(splits.map(async ({ stream }) => stream.end(error)));
   })();
 
-  return splits.map(([, { stream }]) => stream);
+  return splits.map(({ stream }) => stream) as Splits<Read, Write, Predicates>;
 }
