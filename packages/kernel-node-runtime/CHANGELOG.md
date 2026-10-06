@@ -24,7 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- `NodejsPlatformServices.terminate` forgets a worker that fails to stop, so the vat's next worker is no longer refused as a duplicate, and kills the worker even when its channel will not close ([#0000](https://github.com/Consensys-Incorporated/ocap-kernel/pull/0000))
+- `NodejsPlatformServices.terminate` forgets a worker that fails to stop, so the vat's next worker is no longer refused as a duplicate, and kills the worker even when its channel will not close ([#1149](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1149))
 - The RPC socket server refuses to bind a Unix socket that has a live listener, rather than unlinking it and orphaning the previous owner; stale socket files with no listener are still cleaned up automatically ([#952](https://github.com/MetaMask/ocap-kernel/pull/952))
 
 ## [0.1.0]
