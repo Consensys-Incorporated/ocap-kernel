@@ -183,16 +183,19 @@ This is sound on the same grounds as the general case: the synthesized guard
 admits no more calls than the base's own, and the method still forwards
 unaltered. Because the interface names no methods, a delta naming a method the
 base does not implement is caught at call time rather than at narrowing time.
+A method with several rows after a [join](#join) renders by the same rule, with
+each row synthesized this way.
 
 ### Provenance and flattening
 
 `narrow` records `{ base, delta, baseGuard }` in a `WeakMap` keyed by the exo it
-returns. Caching `baseGuard` matters because narrowing a narrowing then needs no
+returns, with `delta` lifted to one row per method (see [join](#join)). Caching `baseGuard` matters because narrowing a narrowing then needs no
 guard fetch, so a chain of any depth costs one fetch in total.
 
 Narrowing a narrowing **flattens**: `narrow(B, Y)` where `B` is
 `{ base: A, delta: X }` records `{ base: A, delta: AND(X, Y) }`, and the returned
-exo forwards directly to `A`.
+exo forwards directly to `A`. When `X` has several rows for a method, as after a
+[join](#join), `Y` is conjoined onto each.
 
 ```js
 const b = await narrow({ name: 'B', base: a, delta: x });
@@ -219,7 +222,7 @@ admitting exactly what any of them admits.
 // b:  { readFile: [pathUnder(['srv', 'data'])] }
 // b': { readFile: [pathUnder(['srv', 'logs'])], access: [pathUnder(['srv', 'logs'])] }
 await join({ name: 'DataAndLogs', refs: [b, bPrime] });
-// -> { readFile: [OR(data, logs)], access: [pathUnder(['srv', 'logs'])] }
+// -> { readFile: [[data], [logs]], access: [[pathUnder(['srv', 'logs'])]] }
 ```
 
 - Every ref must carry a provenance record naming the same base. A ref the
@@ -227,13 +230,44 @@ await join({ name: 'DataAndLogs', refs: [b, bPrime] });
 - The unnarrowed base is a legal operand and absorbs, so the lattice has a
   representable top and a fold over a list needs no special case.
 - The result's method set is the union of the operands'.
-- Where two operands name the same method, each argument position is disjoined.
+- Where two operands name the same method, their rows are concatenated.
+
+A recorded delta is in disjunctive normal form: each method maps to a non-empty
+list of positional rows, each shaped like a `NarrowingDelta` entry, and the
+method admits a call that any one row admits. The delta passed to `narrow` is the
+one-row case. Disjoining position by position instead would be unsound with
+respect to the operands. For
+
+```js
+const a = await narrow({ name: 'A', base: fs, delta: { copy: [data, data] } });
+const b = await narrow({ name: 'B', base: fs, delta: { copy: [logs, logs] } });
+```
+
+it would give `copy: [OR(data, logs), OR(data, logs)]`, which admits
+`copy(data/x, logs/y)` though neither operand does. Concatenating rows gives
+`copy: [[data, data], [logs, logs]]`, which admits exactly the union.
 
 A missing method and a hole behave differently, which is easier to read as one
 rule than two: the join is a union of authority, a method absent from an operand
-contributes the empty set, and a hole contributes everything. So a method only
-one operand names appears at that operand's delta, while a hole on either side
-leaves that position unconstrained in the result.
+contributes no rows, and a hole contributes everything. So a method only one
+operand names appears at that operand's rows, while a row of holes absorbs every
+other row of its method. Beyond that absorption, rows are kept as they are, not
+deduplicated or merged.
+
+Narrowing a join distributes over its rows:
+`(r1 ∪ … ∪ rn) ∧ x = (r1 ∧ x) ∪ … ∪ (rn ∧ x)`, so the incoming delta is conjoined
+onto every row.
+
+A method with one row renders as a positional guard, as `narrow` produces.
+Positional guards have no disjunction across positions, so a method with several
+rows renders as a guard with no fixed arguments whose rest guard is
+`M.or(M.splitArray(required, optional, rest), …)`, one per row, each conjoined
+with the base's guard at every position. A rest guard matches the trailing
+arguments as one array, so with no fixed arguments it sees the whole argument
+array and each row checks arity in full. A row whose base has no rest guard gets
+`[]` as its rest, since `M.splitArray` would otherwise default it to `M.any()`
+and admit trailing arguments. The rows survive only in the provenance record: a
+receiver in another vat sees the rendered guard, not the positional form.
 
 ### Guard algebra
 
