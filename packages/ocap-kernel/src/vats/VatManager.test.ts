@@ -772,6 +772,31 @@ describe('VatManager', () => {
       await expect(restarting).rejects.toThrow(VatDeletedError);
     });
 
+    it('rejects a superseded restart with the run loop death that drops its termination', async () => {
+      const deathHandlers: ((error: Error) => void)[] = [];
+      mockKernelQueue.onRunLoopDeath.mockImplementation((reject) => {
+        deathHandlers.push(reject);
+        return () => undefined;
+      });
+      await vatManager.runVat('v1', createMockVatConfig());
+      mockKernelQueue.enqueueRestartVat.mockImplementationOnce(() => undefined);
+      const restarting = vatManager.restartVat('v1');
+      // Held during a crank that then kills the run loop, so never written.
+      mockKernelQueue.enqueueTerminateVat.mockImplementationOnce(
+        () => undefined,
+      );
+      const terminating = vatManager.terminateVat('v1');
+      await delay();
+
+      const death = new Error('Kernel run loop died');
+      for (const reject of deathHandlers) {
+        reject(death);
+      }
+
+      await expect(restarting).rejects.toBe(death);
+      await expect(terminating).rejects.toBe(death);
+    });
+
     it('leaves a queued restart in place when the termination is refused', async () => {
       await vatManager.runVat('v1', createMockVatConfig());
       mockKernelQueue.enqueueRestartVat.mockImplementationOnce(() => undefined);

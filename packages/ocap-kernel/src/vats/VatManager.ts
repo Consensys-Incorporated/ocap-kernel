@@ -107,6 +107,13 @@ export class VatManager {
    */
   readonly #terminationWaiters: Map<VatId, Waiter<undefined>[]>;
 
+  /**
+   * Restart callers a queued termination has overtaken, by vat, for its crank
+   * to answer. Not answered sooner: a termination held during a crank that
+   * kills the run loop is never written, and they must hear of the death.
+   */
+  readonly #supersededRestarts: Map<VatId, Waiter<VatHandle>[]>;
+
   /** Service to spawn workers (in iframes) for vats to run in */
   readonly #platformServices: PlatformServices;
 
@@ -146,6 +153,7 @@ export class VatManager {
     this.#vats = new Map();
     this.#restartWaiters = new Map();
     this.#terminationWaiters = new Map();
+    this.#supersededRestarts = new Map();
     this.#platformServices = platformServices;
     this.#kernelStore = kernelStore;
     this.#kernelQueue = kernelQueue;
@@ -578,16 +586,19 @@ export class VatManager {
       throw new VatNotFoundError(vatId);
     }
     // A restart outstanding when the termination is asked for is overtaken by
-    // it, so its caller is told now rather than left waiting on a crank that
-    // will find nothing to restart. A restart asked for after this cannot be
-    // ordered against the termination at all, and is not covered. Only once
-    // the termination is queued: a refused one leaves the vat running and the
-    // restart still due.
+    // it: its own crank finds no caller and relaunches nothing, and the
+    // termination's crank tells the caller. A restart asked for after this
+    // cannot be ordered against the termination at all, and is not covered.
+    // Only once the termination is queued: a refused one leaves the vat
+    // running and the restart still due.
     await this.#awaitQueuedWork(this.#terminationWaiters, vatId, () => {
       this.#kernelQueue.enqueueTerminateVat(vatId, reason);
-      this.#takeWaiters(this.#restartWaiters, vatId).answerOnceCrankEnds(
-        new VatDeletedError(vatId),
-      );
+      const overtaken = this.#restartWaiters.get(vatId) ?? [];
+      this.#restartWaiters.delete(vatId);
+      this.#supersededRestarts.set(vatId, [
+        ...(this.#supersededRestarts.get(vatId) ?? []),
+        ...overtaken,
+      ]);
     });
   }
 
@@ -608,10 +619,12 @@ export class VatManager {
     reason?: CapData<KRef>,
   ): Promise<CrankResult | undefined> {
     const taken = this.#takeWaiters(this.#terminationWaiters, vatId);
+    const superseded = this.#takeWaiters(this.#supersededRestarts, vatId);
     if (!this.#isVatKnown(vatId)) {
       // Already dead: the in-crank termination path or `terminateAllVats` got
       // here first, and this vat is exactly what the caller asked for.
       taken.answerOnceCrankEnds(undefined);
+      superseded.answerOnceCrankEnds(new VatDeletedError(vatId));
       return undefined;
     }
     if (taken.count === 0) {
@@ -626,12 +639,13 @@ export class VatManager {
       // whatever of the death did get written and restoring the request, so
       // every later start would replay the same failing termination.
       this.#logger.error(`Termination of vat ${vatId} failed:`, error);
-      taken.answerOnceCrankEnds(
-        error instanceof Error ? error : new Error(String(error)),
-      );
+      const failure = error instanceof Error ? error : new Error(String(error));
+      taken.answerOnceCrankEnds(failure);
+      superseded.answerOnceCrankEnds(failure);
       return { irrevocable: true };
     }
     taken.answerOnceCrankEnds(undefined);
+    superseded.answerOnceCrankEnds(new VatDeletedError(vatId));
     return { irrevocable: true };
   }
 
@@ -731,7 +745,11 @@ export class VatManager {
    * @param error - What to reject them with.
    */
   abandonQueuedWork(error: Error): void {
-    for (const waiters of [this.#restartWaiters, this.#terminationWaiters]) {
+    for (const waiters of [
+      this.#restartWaiters,
+      this.#terminationWaiters,
+      this.#supersededRestarts,
+    ]) {
       const abandoned = [...waiters.values()].flat();
       waiters.clear();
       for (const waiter of abandoned) {
