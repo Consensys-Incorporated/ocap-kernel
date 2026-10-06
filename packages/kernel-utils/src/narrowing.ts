@@ -10,8 +10,12 @@ import {
   disjoinDeltas,
   makeAbsorbingDelta,
   narrowInterfaceGuard,
+  toDisjunctiveDelta,
 } from './narrow-interface-guard.ts';
-import type { NarrowingDelta } from './narrow-interface-guard.ts';
+import type {
+  DisjunctiveDelta,
+  NarrowingDelta,
+} from './narrow-interface-guard.ts';
 
 /**
  * `base` is `object` rather than `Methods` because an `@endo/exo` carries no
@@ -37,7 +41,7 @@ type Forwardable = Record<string, (...args: unknown[]) => unknown>;
 
 type Provenance = {
   base: object;
-  delta: NarrowingDelta;
+  delta: DisjunctiveDelta;
   baseGuard: InterfaceGuard;
 };
 
@@ -75,7 +79,7 @@ const makeForwarder =
  * @param options.name - The name for the derived exo and its interface guard.
  * @param options.base - The capability to forward to.
  * @param options.baseGuard - That capability's interface guard.
- * @param options.delta - The patterns to conjoin, by method and position.
+ * @param options.delta - The patterns to conjoin, by method, row, and position.
  * @returns The minted narrowing.
  */
 const mint = <Minted extends Methods>({
@@ -87,7 +91,7 @@ const mint = <Minted extends Methods>({
   name: string;
   base: object;
   baseGuard: InterfaceGuard;
-  delta: NarrowingDelta;
+  delta: DisjunctiveDelta;
 }): Guarded<Minted> => {
   const derivedGuard = narrowInterfaceGuard({ name, baseGuard, delta });
   const methods = Object.fromEntries(
@@ -141,7 +145,9 @@ export const narrow = async <Narrowed extends Methods = Methods>({
 }: NarrowOptions): Promise<Guarded<Narrowed>> => {
   const inherited = provenance.get(base);
   const target = inherited?.base ?? base;
-  const combined = inherited ? conjoinDeltas(inherited.delta, delta) : delta;
+  const combined = inherited
+    ? conjoinDeltas(inherited.delta, delta)
+    : toDisjunctiveDelta(delta);
   const baseGuard =
     inherited?.baseGuard ??
     (await E(base as GuardBearer)[GET_INTERFACE_GUARD]());
@@ -156,8 +162,13 @@ export const narrow = async <Narrowed extends Methods = Methods>({
 
 /**
  * Return a narrowing of `refs`' common base admitting exactly what any of them
- * admits, with the operands' deltas disjoined method by method and position by
- * position.
+ * admits.
+ *
+ * A narrowing records its delta as a list of positional rows per method, and
+ * admits a call that any row admits. The join's methods are the union of the
+ * operands', and each method's rows are the concatenation of the operands'
+ * rows for it. Disjoining position by position instead would admit every
+ * cross-combination of the operands' positions, which no operand admits.
  *
  * Every ref must be one this module minted from that base, or the base itself.
  * The base admits everything and so absorbs, which gives the lattice a
@@ -174,7 +185,9 @@ export const narrow = async <Narrowed extends Methods = Methods>({
  * reason, and is not worth a guard fetch to support.
  *
  * The result carries a record of its own, naming the same base and the
- * disjoined delta, so a join can be narrowed or joined again.
+ * disjoined delta, so a join can be narrowed or joined again. A method with
+ * more than one row loses its positional form in the result's guard (see
+ * `narrowInterfaceGuard`).
  *
  * @param options - The join to mint.
  * @param options.name - The name for the derived exo and its interface guard.

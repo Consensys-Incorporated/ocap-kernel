@@ -16,7 +16,31 @@ import {
  * position as the base has it, and an empty array leaves every position as the
  * base has it.
  */
-export type NarrowingDelta = Record<string, (Pattern | undefined)[]>;
+export type NarrowingDelta = Record<string, DeltaRow>;
+
+/**
+ * One method's patterns, addressed by argument position, with `undefined` at a
+ * hole.
+ */
+export type DeltaRow = (Pattern | undefined)[];
+
+/**
+ * A delta in disjunctive normal form: each method maps to a non-empty list of
+ * rows, and admits a call that any one of its rows admits. A `NarrowingDelta`
+ * is the one-row case.
+ */
+export type DisjunctiveDelta = Record<string, DeltaRow[]>;
+
+/**
+ * Lift a delta into disjunctive normal form, as one row per method.
+ *
+ * @param delta - The delta to lift.
+ * @returns The delta with each method's patterns as its only row.
+ */
+export const toDisjunctiveDelta = (delta: NarrowingDelta): DisjunctiveDelta =>
+  Object.fromEntries(
+    Object.entries(delta).map(([methodName, row]) => [methodName, [row]]),
+  );
 
 /**
  * Conjoin a delta pattern onto a base guard.
@@ -29,51 +53,62 @@ const conjoin = (base: Pattern, pattern: Pattern | undefined): Pattern =>
   pattern === undefined ? base : M.and(base, pattern);
 
 /**
- * Conjoin two deltas, so that narrowing a narrowing is one delta against the
- * original base.
+ * Conjoin two rows position by position. A hole on either side leaves the other
+ * in place.
+ *
+ * @param left - One row.
+ * @param right - The other row.
+ * @returns The conjoined row.
+ */
+const conjoinRows = (left: DeltaRow, right: DeltaRow): DeltaRow =>
+  Array.from({ length: Math.max(left.length, right.length) }, (_, index) => {
+    const leftPattern = left[index];
+    const rightPattern = right[index];
+    if (leftPattern === undefined) {
+      return rightPattern;
+    }
+    return conjoin(leftPattern, rightPattern);
+  });
+
+/**
+ * Conjoin a delta onto a recorded one, so that narrowing a narrowing is one
+ * delta against the original base.
  *
  * Keys come from `incoming` alone, since it drops what it does not name, and a
  * key it names that `existing` does not is a method the narrowing being
- * narrowed no longer has. At each position a hole on either side leaves the
- * other in place.
+ * narrowed no longer has. Conjunction distributes over the existing rows:
+ * `(r1 ∪ … ∪ rn) ∧ x = (r1 ∧ x) ∪ … ∪ (rn ∧ x)`.
  *
  * @param existing - The delta the base was narrowed by.
  * @param incoming - The delta narrowing it further.
  * @returns The combined delta.
  */
 export const conjoinDeltas = (
-  existing: NarrowingDelta,
+  existing: DisjunctiveDelta,
   incoming: NarrowingDelta,
-): NarrowingDelta => {
-  const combined: NarrowingDelta = {};
-  for (const [methodName, patterns] of Object.entries(incoming)) {
+): DisjunctiveDelta => {
+  const combined: DisjunctiveDelta = {};
+  for (const [methodName, row] of Object.entries(incoming)) {
     const inherited = existing[methodName];
     if (inherited === undefined) {
       throw new Error(
         `Cannot narrow method "${methodName}": the base has no such method.`,
       );
     }
-    const length = Math.max(inherited.length, patterns.length);
-    combined[methodName] = Array.from({ length }, (_, index) => {
-      const left = inherited[index];
-      const right = patterns[index];
-      if (left === undefined) {
-        return right;
-      }
-      return conjoin(left, right);
-    });
+    combined[methodName] = inherited.map((inheritedRow) =>
+      conjoinRows(inheritedRow, row),
+    );
   }
   return combined;
 };
 
 /**
- * Disjoin two deltas, so that a join admits whatever either operand admits.
+ * Disjoin two deltas, so that a join admits exactly what either operand admits.
  *
- * A join is a union of authority, which settles the whole key-and-hole rule at
- * once: a method absent from an operand contributes the empty set, so it
- * survives at the other operand's delta, and a hole contributes everything, so
- * a hole on either side leaves that position unconstrained. A position past the
- * end of a delta is a hole.
+ * A join is a union of authority. A method absent from an operand contributes
+ * no rows, so it survives at the other operand's rows, and where both name it
+ * their rows are concatenated. A row of holes admits everything the base does,
+ * so it absorbs the method's other rows.
  *
  * Hence the keys are the union of both sides — the opposite of
  * `conjoinDeltas`, which takes its keys from one side because narrowing must
@@ -84,31 +119,38 @@ export const conjoinDeltas = (
  * @returns The disjoined delta.
  */
 export const disjoinDeltas = (
-  left: NarrowingDelta,
-  right: NarrowingDelta,
-): NarrowingDelta => {
-  const disjoined: NarrowingDelta = { ...left, ...right };
-  for (const [methodName, leftPatterns] of Object.entries(left)) {
-    const rightPatterns = right[methodName];
-    if (rightPatterns === undefined) {
-      continue;
-    }
-    const length = Math.max(leftPatterns.length, rightPatterns.length);
-    disjoined[methodName] = Array.from({ length }, (_, index) => {
-      const leftPattern = leftPatterns[index];
-      const rightPattern = rightPatterns[index];
-      if (leftPattern === undefined || rightPattern === undefined) {
-        return undefined;
-      }
-      return M.or(leftPattern, rightPattern);
-    });
+  left: DisjunctiveDelta,
+  right: DisjunctiveDelta,
+): DisjunctiveDelta => {
+  const disjoined: DisjunctiveDelta = {};
+  for (const methodName of new Set([
+    ...Object.keys(left),
+    ...Object.keys(right),
+  ])) {
+    // TODO: Two rows that differ at exactly one position can be merged into
+    // one, disjoining that position, without changing what the method admits.
+    const rows = [...(left[methodName] ?? []), ...(right[methodName] ?? [])];
+    disjoined[methodName] = rows.some((row) =>
+      row.every((pattern) => pattern === undefined),
+    )
+      ? [[]]
+      : rows;
   }
   return disjoined;
 };
 
 /**
- * Narrow one method guard by conjoining the delta's patterns onto the
- * positions they address.
+ * One row's argument guards, split as a method guard splits them. An undefined
+ * `rest` admits no arguments past the fixed arity.
+ */
+type RowGuards = {
+  required: Pattern[];
+  optionals: Pattern[];
+  rest: Pattern | undefined;
+};
+
+/**
+ * Conjoin one row onto the positions of a base method guard it addresses.
  *
  * Positions are walked as required arguments, then optionals, then the rest
  * guard, and each stays in the category it lands in. Every position past the
@@ -117,20 +159,20 @@ export const disjoinDeltas = (
  *
  * @param methodName - The method being narrowed, for error messages.
  * @param baseMethodGuard - The guard to narrow.
- * @param patterns - The delta's patterns for this method.
- * @returns The narrowed guard, asyncified for forwarding.
+ * @param row - The row's patterns.
+ * @returns The row's argument guards.
  */
-const narrowMethodGuard = (
+const narrowRow = (
   methodName: string,
   baseMethodGuard: MethodGuard,
-  patterns: (Pattern | undefined)[],
-): MethodGuard => {
-  const { argGuards, optionalArgGuards, restArgGuard, returnGuard } =
+  row: DeltaRow,
+): RowGuards => {
+  const { argGuards, optionalArgGuards, restArgGuard } =
     getMethodPayload(baseMethodGuard);
   const optionals = optionalArgGuards ?? [];
   const maxArity = argGuards.length + optionals.length;
 
-  const beyondArity = patterns.findIndex(
+  const beyondArity = row.findIndex(
     (pattern, index) => index >= maxArity && pattern !== undefined,
   );
   if (beyondArity !== -1 && restArgGuard === undefined) {
@@ -139,29 +181,27 @@ const narrowMethodGuard = (
     );
   }
 
-  return buildMethodGuard({
-    base: M.callWhen(
-      ...argGuards.map((guard, index) => conjoin(guard, patterns[index])),
-    ),
+  return {
+    required: argGuards.map((guard, index) => conjoin(guard, row[index])),
     optionals: optionals.map((guard, index) =>
-      conjoin(guard, patterns[argGuards.length + index]),
+      conjoin(guard, row[argGuards.length + index]),
     ),
-    restGuard:
+    rest:
       restArgGuard === undefined
         ? undefined
-        : patterns.slice(maxArity).reduce(conjoin, restArgGuard),
-    returnGuard,
-  });
+        : row.slice(maxArity).reduce(conjoin, restArgGuard),
+  };
 };
 
 /**
- * Synthesize a method guard for a method its base admits by default.
+ * Synthesize one row's argument guards for a method its base admits by
+ * default.
  *
  * `defaultGuards: 'passable'` admits any passable arguments, so there is
- * nothing to conjoin onto and the delta's patterns are the whole guard. The
- * result still admits no more calls than the base did — a delta of length 0
- * synthesizes `M.callWhen().rest(M.any()).returns(M.any())`, which admits
- * exactly what the base admits.
+ * nothing to conjoin onto and the row's patterns are the whole guard. The
+ * result still admits no more calls than the base did — an empty row
+ * synthesizes `M.callWhen().rest(M.any())`, which admits exactly what the base
+ * admits.
  *
  * Such a base names no methods, so a delta naming one it does not implement is
  * indistinguishable from one it does, and no error can be raised here. The
@@ -171,22 +211,56 @@ const narrowMethodGuard = (
  * pads the shorter operand's delta with holes, would demand arguments that
  * operand never required, and refuse calls it admitted.
  *
- * @param patterns - The delta's patterns for this method.
- * @returns The synthesized guard.
+ * @param row - The row's patterns.
+ * @returns The row's argument guards.
  */
-const synthesizeMethodGuard = (
-  patterns: (Pattern | undefined)[],
-): MethodGuard => {
-  let end = patterns.length;
-  while (end > 0 && patterns[end - 1] === undefined) {
+const synthesizeRow = (row: DeltaRow): RowGuards => {
+  let end = row.length;
+  while (end > 0 && row[end - 1] === undefined) {
     end -= 1;
   }
+  return {
+    required: row.slice(0, end).map((pattern) => pattern ?? M.any()),
+    optionals: [],
+    rest: M.any(),
+  };
+};
+
+/**
+ * Assemble a method guard admitting a call that any row admits, asyncified for
+ * forwarding.
+ *
+ * One row is rendered positionally. Several have no common positional form, so
+ * the guard takes no fixed arguments and its rest guard matches the whole
+ * argument array against one `M.splitArray` per row. A row without a rest guard
+ * gets `[]` as its rest, since `M.splitArray` would otherwise default to
+ * `M.any()` and admit trailing arguments the base refuses.
+ *
+ * @param rows - Each row's argument guards.
+ * @param returnGuard - The base's return guard.
+ * @returns The method guard.
+ */
+const renderMethodGuard = (
+  rows: RowGuards[],
+  returnGuard: Pattern,
+): MethodGuard => {
+  const [only] = rows;
+  if (only !== undefined && rows.length === 1) {
+    return buildMethodGuard({
+      base: M.callWhen(...only.required),
+      optionals: only.optionals,
+      restGuard: only.rest,
+      returnGuard,
+    });
+  }
   return buildMethodGuard({
-    base: M.callWhen(
-      ...patterns.slice(0, end).map((pattern) => pattern ?? M.any()),
+    base: M.callWhen(),
+    restGuard: M.or(
+      ...rows.map(({ required, optionals, rest }) =>
+        M.splitArray(required, optionals, rest ?? []),
+      ),
     ),
-    restGuard: M.any(),
-    returnGuard: M.any(),
+    returnGuard,
   });
 };
 
@@ -205,7 +279,7 @@ const synthesizeMethodGuard = (
 export const makeAbsorbingDelta = (
   name: string,
   baseGuard: InterfaceGuard,
-): NarrowingDelta => {
+): DisjunctiveDelta => {
   const { defaultGuards } = getInterfaceGuardPayload(baseGuard) as unknown as {
     defaultGuards?: 'passable' | 'raw';
   };
@@ -217,7 +291,7 @@ export const makeAbsorbingDelta = (
   return Object.fromEntries(
     Object.keys(getInterfaceMethodGuards(baseGuard)).map((methodName) => [
       methodName,
-      [],
+      [[]],
     ]),
   );
 };
@@ -226,7 +300,7 @@ export const makeAbsorbingDelta = (
  * Derive the interface guard of a narrowing of a base capability.
  *
  * Each delta pattern is conjoined onto the base's guard at the argument
- * position it addresses. Arity, the required/optional/rest split, and return
+ * position it addresses, row by row. Arity, the required/optional/rest split, and return
  * guards are inherited verbatim — a narrowed return guard could fail where the
  * base succeeds, which would not be an unaltered forward. Methods the delta
  * does not name are dropped.
@@ -239,7 +313,7 @@ export const makeAbsorbingDelta = (
  * @param options - Options bag.
  * @param options.name - The name for the derived interface guard.
  * @param options.baseGuard - The interface guard being narrowed.
- * @param options.delta - The patterns to conjoin, by method and position.
+ * @param options.delta - The patterns to conjoin, by method, row, and position.
  * @returns The derived interface guard.
  */
 export const narrowInterfaceGuard = ({
@@ -249,7 +323,7 @@ export const narrowInterfaceGuard = ({
 }: {
   name: string;
   baseGuard: InterfaceGuard;
-  delta: NarrowingDelta;
+  delta: DisjunctiveDelta;
 }): InterfaceGuard => {
   const baseMethodGuards = getInterfaceMethodGuards(baseGuard);
   const { defaultGuards } = getInterfaceGuardPayload(baseGuard) as unknown as {
@@ -257,11 +331,14 @@ export const narrowInterfaceGuard = ({
   };
 
   const narrowedMethodGuards: Record<string, MethodGuard> = {};
-  for (const [methodName, patterns] of Object.entries(delta)) {
+  for (const [methodName, rows] of Object.entries(delta)) {
     const baseMethodGuard = baseMethodGuards[methodName];
     if (baseMethodGuard === undefined) {
       if (defaultGuards === 'passable') {
-        narrowedMethodGuards[methodName] = synthesizeMethodGuard(patterns);
+        narrowedMethodGuards[methodName] = renderMethodGuard(
+          rows.map(synthesizeRow),
+          M.any(),
+        );
         continue;
       }
       throw new Error(
@@ -270,10 +347,9 @@ export const narrowInterfaceGuard = ({
           : `Cannot narrow method "${methodName}": the base guards it by default, so there is no guard to conjoin onto.`,
       );
     }
-    narrowedMethodGuards[methodName] = narrowMethodGuard(
-      methodName,
-      baseMethodGuard,
-      patterns,
+    narrowedMethodGuards[methodName] = renderMethodGuard(
+      rows.map((row) => narrowRow(methodName, baseMethodGuard, row)),
+      getMethodPayload(baseMethodGuard).returnGuard,
     );
   }
 
