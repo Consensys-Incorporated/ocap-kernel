@@ -755,8 +755,6 @@ describe('Kernel', () => {
 
       await kernel.terminateVat('v1');
 
-      // The death is written inside the crank that performs it, rather than in
-      // whichever crank happens to be open when the control plane asks.
       expect(
         mocks.KernelQueue.lastInstance.enqueueTerminateVat,
       ).toHaveBeenCalledWith('v1', undefined);
@@ -787,16 +785,17 @@ describe('Kernel', () => {
       expect(vatHandles).toHaveLength(0);
     });
 
-    it('throws an error when a vat terminate method throws', async () => {
+    it('terminates a vat whose channel will not close', async () => {
       const kernel = await Kernel.make(
         mockPlatformServices,
         mockKernelDatabase,
       );
       await kernel.launchSubcluster(makeSingleVatClusterConfig());
       vatHandles[0]?.terminate.mockRejectedValueOnce('Test error');
-      await expect(async () => kernel.terminateVat('v1')).rejects.toThrow(
-        'Test error',
-      );
+
+      await kernel.terminateVat('v1');
+
+      expect(kernel.getVatIds()).toStrictEqual([]);
     });
   });
 
