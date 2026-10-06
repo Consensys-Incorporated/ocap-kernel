@@ -31,9 +31,13 @@ type BufferArgs = {
  * persisted beside it.
  *
  * @param makeNewWorker - What the restart's `VatHandle.make` does.
+ * @param vatRelaunchTimeoutMs - How long the restart waits for it.
  * @returns The pieces a test drives.
  */
-async function setUp(makeNewWorker: (args: BufferArgs) => Promise<VatHandle>) {
+async function setUp(
+  makeNewWorker: (args: BufferArgs) => Promise<VatHandle>,
+  vatRelaunchTimeoutMs?: number,
+) {
   const kdb = await makeSQLKernelDatabase({ dbFilename: ':memory:' });
   const kernelStore = makeKernelStore(kdb);
   kernelStore.setRefCountAuditing(true);
@@ -53,7 +57,7 @@ async function setUp(makeNewWorker: (args: BufferArgs) => Promise<VatHandle>) {
   );
   const platformServices = {
     launch: vi.fn().mockResolvedValue({
-      end: vi.fn(),
+      end: vi.fn().mockResolvedValue(undefined),
     } as unknown as DuplexStream<JsonRpcMessage, JsonRpcMessage>),
     terminate: vi.fn().mockResolvedValue(undefined),
   } as unknown as PlatformServices;
@@ -64,19 +68,20 @@ async function setUp(makeNewWorker: (args: BufferArgs) => Promise<VatHandle>) {
     kernelStore,
     kernelQueue,
     logger,
+    vatRelaunchTimeoutMs,
   });
   kernel.vatManager = vatManager;
   vi.spyOn(VatHandle, 'make')
     .mockResolvedValueOnce({
       vatId: 'v1',
       config,
-      terminate: vi.fn(),
+      terminate: vi.fn().mockResolvedValue(undefined),
     } as unknown as VatHandle)
     .mockImplementationOnce(async () =>
       makeNewWorker({ kernelStore, kernelQueue, target, kpid }),
     );
   await vatManager.runVat('v1', config);
-  return { kernelStore, kernelQueue, vatManager, platformServices };
+  return { kernelStore, kernelQueue, vatManager, platformServices, target };
 }
 
 /**
@@ -142,7 +147,7 @@ describe('a restart whose crank fails after the relaunch', () => {
   it('rejects its caller rather than handing it the new vat', async () => {
     const newWorker = {
       vatId: 'v1',
-      terminate: vi.fn(),
+      terminate: vi.fn().mockResolvedValue(undefined),
     } as unknown as VatHandle;
     const { kernelQueue, vatManager } = await setUp(
       async ({ kernelStore, target }) => {
@@ -159,5 +164,37 @@ describe('a restart whose crank fails after the relaunch', () => {
 
     await expect(running).rejects.toThrow('reference count invariant violated');
     await expect(restarting).rejects.toThrow('Kernel run loop died');
+  });
+});
+
+describe('a restart whose new worker never answers', () => {
+  it('terminates the vat and goes on to the next item', async () => {
+    const { kernelStore, kernelQueue, vatManager, target } = await setUp(
+      async () => new Promise<VatHandle>(() => undefined),
+      1,
+    );
+    const restarting = vatManager.restartVat('v1');
+    restarting.catch(() => undefined);
+    kernelQueue.enqueueSend(target, {
+      methargs: kser(['hello', []]),
+      result: null,
+    });
+
+    const delivered: RunQueueItem['type'][] = [];
+    const running = kernelQueue.run(async (item) => {
+      delivered.push(item.type);
+      if (item.type === 'restartVat') {
+        return vatManager.performVatRestart('v1');
+      }
+      throw new Error(STOP_RUN_LOOP);
+    });
+
+    await expect(running).rejects.toThrow(STOP_RUN_LOOP);
+    await expect(restarting).rejects.toThrow(
+      'Vat v1 was terminated after its restart failed: Vat v1 did not start within 1 ms',
+    );
+    expect(delivered).toStrictEqual(['restartVat', 'restartVat', 'send']);
+    expect(kernelStore.isVatActive('v1')).toBe(false);
+    expect(vatManager.hasVat('v1')).toBe(false);
   });
 });

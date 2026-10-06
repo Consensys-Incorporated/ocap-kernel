@@ -304,6 +304,38 @@ describe('NodejsPlatformServices', () => {
       expect(service.workers.has(testVatId)).toBe(false);
     });
 
+    it.each([
+      [
+        'the channel will not close',
+        (): void => {
+          mocks.stream.return.mockRejectedValueOnce(new Error('stop failed'));
+        },
+      ],
+      [
+        'the worker will not stop',
+        (worker: ReturnType<typeof mocks.createMockWorker>): void => {
+          worker.terminate.mockRejectedValueOnce(new Error('stop failed'));
+        },
+      ],
+    ])('forgets the worker when %s', async (_case, breakStop) => {
+      const service = new NodejsPlatformServices({ workerFilePath });
+      const testVatId: VatId = getTestVatId();
+      const worker = mocks.createMockWorker();
+      vi.mocked(NodeWorker).mockImplementationOnce(function () {
+        return worker;
+      });
+      await service.launch(testVatId);
+      breakStop(worker);
+
+      await expect(service.terminate(testVatId)).rejects.toThrowError(
+        'stop failed',
+      );
+
+      expect(worker.terminate).toHaveBeenCalledOnce();
+      expect(service.workers.has(testVatId)).toBe(false);
+      expect(await service.launch(testVatId)).toStrictEqual(mocks.stream);
+    });
+
     it('tolerates terminating a vat with no worker', async () => {
       const service = new NodejsPlatformServices({
         workerFilePath,

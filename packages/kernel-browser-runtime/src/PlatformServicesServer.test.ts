@@ -347,6 +347,26 @@ describe('PlatformServicesServer', () => {
           vatNotFoundError,
         );
       });
+
+      it('forgets a worker that fails to terminate', async () => {
+        const errorSpy = vi.spyOn(logger, 'error');
+        const vatId = 'v0';
+        await stream.receiveInput(makeLaunchMessageEvent('m0', vatId));
+        await delay(10);
+        workers[0]?.terminate.mockRejectedValue(new Error('stop failed'));
+
+        await stream.receiveInput(makeTerminateMessageEvent('m1', vatId));
+        await delay(10);
+        await stream.receiveInput(makeLaunchMessageEvent('m2', vatId));
+        await delay(10);
+
+        expect(errorSpy).toHaveBeenCalledExactlyOnceWith(
+          'Error handling "terminate" request:',
+          new Error('stop failed'),
+        );
+        expect(workers).toHaveLength(2);
+        expect(workers[1]?.launch).toHaveBeenCalledOnce();
+      });
     });
 
     describe('terminateAll', () => {

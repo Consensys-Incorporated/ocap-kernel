@@ -74,7 +74,7 @@ describe('VatManager', () => {
 
     mockPlatformServices = {
       launch: vi.fn().mockResolvedValue({
-        end: vi.fn(),
+        end: vi.fn().mockResolvedValue(undefined),
       } as unknown as DuplexStream<JsonRpcMessage, JsonRpcMessage>),
       terminate: vi.fn().mockResolvedValue(undefined),
       terminateAll: vi.fn().mockResolvedValue(undefined),
@@ -166,6 +166,21 @@ describe('VatManager', () => {
       expect(manager).toBeDefined();
     });
   });
+
+  it.each([0, -1, Number.NaN, Number.POSITIVE_INFINITY, 2 ** 31])(
+    'refuses a relaunch timeout of %s ms',
+    (vatRelaunchTimeoutMs) => {
+      expect(
+        () =>
+          new VatManager({
+            platformServices: mockPlatformServices,
+            kernelStore: mockKernelStore,
+            kernelQueue: mockKernelQueue,
+            vatRelaunchTimeoutMs,
+          }),
+      ).toThrow(RangeError);
+    },
+  );
 
   describe('initializeAllVats', () => {
     it('starts the other vats when one will not start', async () => {
@@ -530,7 +545,7 @@ describe('VatManager', () => {
         'v1',
         undefined,
       );
-      expect(vatHandles[0]?.terminate).toHaveBeenCalledWith(false, undefined);
+      expect(vatHandles[0]?.terminate).toHaveBeenCalledWith(false);
       expect(vatManager.hasVat('v1')).toBe(false);
     });
 
@@ -755,17 +770,14 @@ describe('VatManager', () => {
       expect(mockKernelStore.markVatAsTerminated).toHaveBeenCalledWith('v1');
     });
 
-    it('closes the channel but rejects a restart whose worker will not stop', async () => {
+    it('stops a restarting vat whose worker will not stop', async () => {
       await vatManager.runVat('v1', createMockVatConfig());
-      const platformError = new Error('Platform error');
-      mockPlatformServices.terminate.mockRejectedValueOnce(platformError);
-
-      await expect(vatManager.stopVat('v1', false)).rejects.toThrow(
-        expect.objectContaining({
-          message: 'Worker for vat v1 would not stop',
-          cause: platformError,
-        }),
+      mockPlatformServices.terminate.mockRejectedValueOnce(
+        new Error('Platform error'),
       );
+
+      await vatManager.stopVat('v1', false);
+
       expect(vatHandles[0]?.terminate).toHaveBeenCalled();
       expect(vatManager.hasVat('v1')).toBe(false);
     });
@@ -982,7 +994,7 @@ describe('VatManager', () => {
       const result = await vatManager.restartVat('v1');
 
       expect(mockKernelQueue.enqueueRestartVat).toHaveBeenCalledWith('v1');
-      expect(originalHandle?.terminate).toHaveBeenCalledWith(false, undefined);
+      expect(originalHandle?.terminate).toHaveBeenCalledWith(false);
       expect(mockPlatformServices.launch).toHaveBeenCalledTimes(2);
       expect(makeVatHandleMock).toHaveBeenCalledTimes(2);
       expect(result).not.toBe(originalHandle);
@@ -1138,24 +1150,16 @@ describe('VatManager', () => {
       expect(mockKernelStore.markVatAsTerminated).not.toHaveBeenCalled();
     });
 
-    it('fails the restart before relaunching when the old worker will not stop', async () => {
+    it('relaunches even when the old worker will not stop', async () => {
       await vatManager.runVat('v1', createMockVatConfig());
-      leaveRequestQueued();
-      const restarting = vatManager.restartVat('v1');
       mockPlatformServices.terminate.mockRejectedValueOnce(
         new Error('worker.terminate failed'),
       );
 
-      const crankResult = await vatManager.performVatRestart('v1');
+      await vatManager.restartVat('v1');
 
-      expect(crankResult).toMatchObject({
-        abort: true,
-        terminate: { vatId: 'v1', reject: true },
-      });
-      expect(mockPlatformServices.launch).toHaveBeenCalledTimes(1);
-      await expect(restarting).rejects.toThrow(
-        'Vat v1 was terminated after its restart failed: Worker for vat v1 would not stop',
-      );
+      expect(mockPlatformServices.launch).toHaveBeenCalledTimes(2);
+      expect(mockKernelStore.markVatAsTerminated).not.toHaveBeenCalled();
     });
 
     it('answers its caller only once the crank commits', async () => {
@@ -1211,6 +1215,146 @@ describe('VatManager', () => {
       await expect(restarting).rejects.toThrow(
         expect.objectContaining({ message, cause: launchError }),
       );
+    });
+
+    it('relaunches even when the old channel never finishes closing', async () => {
+      await vatManager.runVat('v1', createMockVatConfig());
+      vatHandles[0]?.terminate.mockReturnValueOnce(
+        new Promise<void>(() => undefined),
+      );
+
+      await vatManager.restartVat('v1');
+
+      expect(mockPlatformServices.launch).toHaveBeenCalledTimes(2);
+    });
+
+    describe('with a new worker that is not ready in time', () => {
+      const timeoutMessage =
+        'Vat v1 was terminated after its restart failed: Vat v1 did not start within 1 ms';
+
+      beforeEach(() => {
+        vatManager = new VatManager({
+          platformServices: mockPlatformServices,
+          kernelStore: mockKernelStore,
+          kernelQueue: mockKernelQueue,
+          logger: mockLogger,
+          vatRelaunchTimeoutMs: 1,
+        });
+      });
+
+      /**
+       * Restart `v1` by hand and let the relaunch time out.
+       *
+       * @returns The caller's promise and the crank's result.
+       */
+      const restartPastTheTimeout = async (): Promise<{
+        restarting: Promise<VatHandle>;
+        crankResult: Awaited<ReturnType<VatManager['performVatRestart']>>;
+      }> => {
+        leaveRequestQueued();
+        const restarting = vatManager.restartVat('v1');
+        restarting.catch(() => undefined);
+        const crankResult = await vatManager.performVatRestart('v1');
+        return { restarting, crankResult };
+      };
+
+      it.each([
+        {
+          stage: 'launch',
+          hang: (): void => {
+            mockPlatformServices.launch.mockReturnValueOnce(
+              new Promise(() => undefined),
+            );
+          },
+        },
+        {
+          stage: 'handshake',
+          hang: (): void => {
+            makeVatHandleMock.mockReturnValueOnce(new Promise(() => undefined));
+          },
+        },
+      ])('terminates the vat when the $stage hangs', async ({ hang }) => {
+        await vatManager.runVat('v1', createMockVatConfig());
+        hang();
+
+        const { restarting, crankResult } = await restartPastTheTimeout();
+
+        expect(crankResult).toStrictEqual({
+          abort: true,
+          terminate: {
+            vatId: 'v1',
+            reject: true,
+            info: makeFatalKernelError('INTERNAL_ERROR', timeoutMessage),
+          },
+        });
+        expect(mockPlatformServices.terminate).toHaveBeenLastCalledWith('v1');
+        await expect(restarting).rejects.toThrow(timeoutMessage);
+      });
+
+      it('does not wait for the platform to stop the worker', async () => {
+        await vatManager.runVat('v1', createMockVatConfig());
+        makeVatHandleMock.mockReturnValueOnce(new Promise(() => undefined));
+        mockPlatformServices.terminate
+          .mockResolvedValueOnce(undefined)
+          .mockReturnValueOnce(new Promise(() => undefined));
+
+        const { restarting, crankResult } = await restartPastTheTimeout();
+
+        expect(crankResult).toMatchObject({ abort: true });
+        await expect(restarting).rejects.toThrow(timeoutMessage);
+      });
+
+      it('does not register a handle whose handshake finishes late', async () => {
+        await vatManager.runVat('v1', createMockVatConfig());
+        const { promise: handshake, resolve: finishHandshake } =
+          makePromiseKit<VatHandle>();
+        makeVatHandleMock.mockReturnValueOnce(handshake);
+
+        await restartPastTheTimeout();
+        const lateHandle = createMockVatHandle('v1', createMockVatConfig());
+        finishHandshake(lateHandle);
+        await delay();
+
+        expect(vatManager.hasVat('v1')).toBe(false);
+        expect(lateHandle.terminate).toHaveBeenCalledWith(true);
+      });
+
+      it('closes the channel of a handshake still under way', async () => {
+        await vatManager.runVat('v1', createMockVatConfig());
+        const channel = {
+          end: vi.fn().mockResolvedValue(undefined),
+        } as unknown as DuplexStream<JsonRpcMessage, JsonRpcMessage>;
+        mockPlatformServices.launch.mockResolvedValueOnce(channel);
+        makeVatHandleMock.mockReturnValueOnce(new Promise(() => undefined));
+
+        await restartPastTheTimeout();
+
+        expect(channel.end).toHaveBeenCalledWith(
+          expect.objectContaining({
+            message: 'Vat v1 did not start within 1 ms',
+          }),
+        );
+      });
+
+      it('stops a worker whose launch finishes late', async () => {
+        await vatManager.runVat('v1', createMockVatConfig());
+        const { promise: launched, resolve: finishLaunch } =
+          makePromiseKit<DuplexStream<JsonRpcMessage, JsonRpcMessage>>();
+        mockPlatformServices.launch.mockReturnValueOnce(launched);
+
+        await restartPastTheTimeout();
+        mockPlatformServices.terminate.mockClear();
+        finishLaunch({
+          end: vi.fn().mockResolvedValue(undefined),
+        } as unknown as DuplexStream<JsonRpcMessage, JsonRpcMessage>);
+        await delay();
+
+        expect(mockPlatformServices.terminate).toHaveBeenCalledExactlyOnceWith(
+          'v1',
+        );
+        expect(makeVatHandleMock).toHaveBeenCalledOnce();
+        expect(vatManager.hasVat('v1')).toBe(false);
+      });
     });
 
     it('answers a failed restart only once the crank ends', async () => {
