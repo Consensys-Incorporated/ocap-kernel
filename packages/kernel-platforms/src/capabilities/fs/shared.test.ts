@@ -200,4 +200,10 @@ describe('makeFsSpecification', () => {
       'root contains an invalid segment',
     );
   });
+
+  it('rejects an empty root', async () => {
+    await expect(
+      specification.capabilityFactory({ root: [], methods: ['readFile'] }),
+    ).rejects.toThrow('root must name at least one segment');
+  });
 });

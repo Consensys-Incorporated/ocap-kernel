@@ -165,7 +165,11 @@ const makeNarrowingFactory =
   (base: FsCapability) =>
   async (config: FsConfig): Promise<FsCapability> => {
     // `pathUnder([])` admits every path, so an unbounded root has to be refused
-    // here rather than by the pattern.
+    // here rather than by the pattern. The config struct refuses one too, but
+    // does not run when the factory is called directly.
+    if (config.root.length === 0) {
+      throw new Error('root must name at least one segment');
+    }
     assertPlainSegments(config.root, 'root');
     return narrow<Partial<FsMethods>>({
       name: 'Fs',
