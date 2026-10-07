@@ -7,10 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING:** Bump `better-sqlite3` from `^12.4.1` to `^13.0.3`, which requires Node 22 or later — the same floor this package already declares ([#1113](https://github.com/MetaMask/ocap-kernel/pull/1113))
+  - On Node 24.20.0, 12.x aborts the process during teardown: `Statement::~Statement` reaches `RemoveEnvironmentCleanupHook` after the environment is gone, and Node asserts. The tests it kills have already passed, so it surfaces as a worker dying rather than as a failure anyone can read
+  - Nothing in this package's driver changes. The 13.x major touches none of `prepare`, `run`, `get`, `all`, `iterate`, `pluck`, `transaction`, `exec`, or `close`
+
 ### Fixed
 
 - An error SQLite recovers from on its own — a full disk, an I/O error, a busy database — no longer leaves the browser kernel store refusing every later write ([#1089](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1089))
 - A write made after SQLite has ended a transaction itself is committed rather than left in a transaction nothing will close. Both drivers were affected; on a closed transaction each went on believing a savepoint inside it was still someone else's to commit ([#1089](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1089))
+- Neither SQLite driver logs the contents of the store any more: the Node driver opens the database without `verbose`, and the wasm driver no longer logs kv keys and values. Both wrote vat state in plain text to whatever logger the embedder supplied ([#1086](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1086))
 - `rollbackSavepoint` discards the enclosing transaction when `ROLLBACK TO` itself fails, instead of leaving the savepoint on its stack and the transaction open ([#1005](https://github.com/MetaMask/ocap-kernel/pull/1005))
   - Nothing would ever commit or abort that transaction, so every later write on the connection silently joined it, reported success, and vanished on close. Discarding it is no wider than the caller asked for: the transaction begins with the outermost savepoint, so it holds only the work the rollback was abandoning
   - The rollback failure is still what gets thrown, even if aborting the transaction fails too

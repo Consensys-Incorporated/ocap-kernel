@@ -15,11 +15,19 @@ import {
  * These are NOT ECMAScript intrinsics and are therefore absent from SES
  * Compartments unless explicitly provided.
  *
- * JS intrinsics (e.g. `ArrayBuffer`, `BigInt`, `Intl`, typed arrays) are
- * already available in every Compartment and do not need to be endowed.
+ * JS intrinsics (e.g. `ArrayBuffer`, `BigInt`, `Intl`, integer typed arrays)
+ * are already available in every Compartment and do not need to be endowed,
+ * as are `TextEncoder` and `TextDecoder`, which SES permits universally.
+ * Listing any of them here would make it look withholdable, which it is not.
  * `Date` and `Math` are intrinsics too, but lockdown tames them — calling
  * `Date.now()` or `Math.random()` throws in secure mode unless a working
  * replacement is endowed.
+ *
+ * The `Float16Array`, `Float32Array`, and `Float64Array` constructors are the
+ * exception: as of SES 2, they stay on the start compartment but are no longer
+ * universal globals, because a shared `ArrayBuffer` view lets code read the bit
+ * pattern of a `NaN` and use it as a side channel. Endowing one here would hand
+ * that channel back to vats, so they are deliberately absent.
  *
  * NOTE: adding `console` here will pull in a Snaps factory that requires
  * a `sourceLabel` option and will throw when called without it. Integrating
@@ -62,8 +70,6 @@ const ALLOWED_GLOBAL_NAMES = [
   'Response',
 
   // Plain hardened Web APIs (no attenuation).
-  'TextEncoder',
-  'TextDecoder',
   'URL',
   'URLSearchParams',
   'atob',

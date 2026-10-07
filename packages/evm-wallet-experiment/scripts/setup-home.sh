@@ -334,20 +334,20 @@ CONFIG=$(BUNDLE_DIR="$BUNDLE_DIR" DM="$DELEGATION_MANAGER" RPC_HOST="$RPC_HOST" 
       vats: {
         coordinator: {
           bundleSpec: bd + '/home-coordinator.bundle',
-          globals: ['TextEncoder', 'TextDecoder', 'Date', 'setTimeout']
+          globals: ['Date', 'setTimeout']
         },
         keyring: {
           bundleSpec: bd + '/keyring-vat.bundle',
-          globals: ['TextEncoder', 'TextDecoder', 'crypto']
+          globals: ['crypto']
         },
         provider: {
           bundleSpec: bd + '/provider-vat.bundle',
-          globals: ['TextEncoder', 'TextDecoder', 'fetch', 'Request', 'Headers', 'Response'],
+          globals: ['fetch', 'Request', 'Headers', 'Response'],
           network: { allowedHosts: hosts }
         },
         delegator: {
           bundleSpec: bd + '/delegator-vat.bundle',
-          globals: ['TextEncoder', 'TextDecoder', 'crypto'],
+          globals: ['crypto'],
           parameters: { delegationManagerAddress: dm }
         }
       }

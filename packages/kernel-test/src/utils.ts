@@ -16,14 +16,14 @@ import type {
   OnRunLoopFailure,
   PlatformServices,
 } from '@metamask/ocap-kernel';
-import { afterAll, afterEach, vi } from 'vitest';
+import { afterEach, vi } from 'vitest';
 
 /**
  * The first run loop death seen since it was last reported, held here rather
  * than passed to a test because the crank that kills the loop is often one no
  * test is awaiting — a garbage collection or reap crank, or one that lands
- * after the last assertion. The hooks below are the only thing guaranteed to
- * look, so they are registered for every file that imports this module.
+ * after the last assertion. The hook below is the only thing guaranteed to
+ * look, so it is registered for every file that imports this module.
  */
 let runLoopFailure: Error | undefined;
 
@@ -38,8 +38,125 @@ function assertRunLoopAlive(): void {
   }
 }
 
-afterEach(assertRunLoopAlive);
-afterAll(assertRunLoopAlive);
+/**
+ * Kernels made by {@link makeTrackedKernel} since the last teardown. Each vat
+ * is a worker thread of about 250 MB, so kernels left running exhaust a CI
+ * runner's memory within a few files.
+ */
+const trackedKernels: {
+  kernel: Kernel;
+  platformServices: PlatformServices;
+  kernelDatabase: KernelDatabase;
+}[] = [];
+
+/**
+ * Databases closed through a tracked kernel. Tests share one database between
+ * kernels to simulate a restart, so whether it is open is not a fact about any
+ * one kernel.
+ */
+const closedDatabases = new WeakSet<KernelDatabase>();
+
+/**
+ * How long a teardown waits for `stop`, which waits out the crank in flight.
+ * A test that timed out may have left a crank that never finishes; its workers
+ * are terminated anyway, within the 10 s hook timeout.
+ */
+const STOP_TIMEOUT_MS = 5_000;
+
+/**
+ * A `stop` that outlasted {@link STOP_TIMEOUT_MS}.
+ */
+class StopTimeoutError extends Error {}
+
+/**
+ * Stop a kernel, or throw if it takes longer than allowed.
+ *
+ * @param kernel - The kernel.
+ * @param timeoutMs - How long to wait.
+ */
+async function stopWithin(kernel: Kernel, timeoutMs: number): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      kernel.stop(),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(
+          () =>
+            reject(
+              new StopTimeoutError(
+                `Kernel did not stop within ${timeoutMs} ms`,
+              ),
+            ),
+          timeoutMs,
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Stop a tracked kernel if it is still running.
+ *
+ * @param tracked - The tracked kernel.
+ * @param tracked.kernel - The kernel.
+ * @param tracked.kernelDatabase - The kernel's database.
+ */
+async function stopTrackedKernel({
+  kernel,
+  kernelDatabase,
+}: (typeof trackedKernels)[number]): Promise<void> {
+  try {
+    await stopWithin(kernel, STOP_TIMEOUT_MS);
+  } catch (error) {
+    // A second `stop` throws on the closed database: expected for a kernel the
+    // test stopped, or one whose database another kernel closed. Checked after
+    // the `stop`, since a kernel sharing the database may be stopping in
+    // parallel with this one. A timeout is reported regardless.
+    if (
+      error instanceof StopTimeoutError ||
+      !closedDatabases.has(kernelDatabase)
+    ) {
+      throw error;
+    }
+  }
+}
+
+/**
+ * Stop every kernel the test left running and terminate its workers, in
+ * parallel so that each hung `stop` does not add its timeout to the hook's,
+ * then fail the test if any of it failed or any run loop died, this teardown's
+ * stops included.
+ */
+async function tearDownKernels(): Promise<void> {
+  const results = await Promise.allSettled(
+    trackedKernels.splice(0).flatMap((tracked) => {
+      const stopped = stopTrackedKernel(tracked);
+      // `stop` skips this if anything before it throws.
+      const terminated = stopped
+        .catch(() => undefined)
+        .then(async () => tracked.platformServices.terminateAll());
+      return [stopped, terminated];
+    }),
+  );
+  const errors = results
+    .filter((result) => result.status === 'rejected')
+    .map(({ reason }) => reason);
+  try {
+    assertRunLoopAlive();
+  } catch (error) {
+    errors.unshift(error);
+  }
+  if (errors.length === 1) {
+    throw errors[0];
+  }
+  if (errors.length > 1) {
+    throw new AggregateError(errors, 'Kernel teardown failed');
+  }
+}
+
+afterEach(tearDownKernels);
 
 /**
  * Kernel options under which reference count drift fails the test run.
@@ -65,6 +182,42 @@ export function makeAuditedKernelOptions(): {
       runLoopFailure ??= failure;
     },
   };
+}
+
+/**
+ * `Kernel.make`, with the kernel stopped after the current test unless the test
+ * stops it first.
+ *
+ * @param platformServices - As for `Kernel.make`.
+ * @param kernelDatabase - As for `Kernel.make`.
+ * @param options - As for `Kernel.make`.
+ * @returns The new kernel.
+ */
+export async function makeTrackedKernel(
+  platformServices: PlatformServices,
+  kernelDatabase: KernelDatabase,
+  options?: Parameters<typeof Kernel.make>[2],
+): Promise<Kernel> {
+  let kernel: Kernel;
+  try {
+    kernel = await Kernel.make(
+      platformServices,
+      {
+        ...kernelDatabase,
+        close: () => {
+          kernelDatabase.close();
+          closedDatabases.add(kernelDatabase);
+        },
+      },
+      options,
+    );
+  } catch (error) {
+    // A kernel that restarts vats has launched their workers by now.
+    await platformServices.terminateAll().catch(() => undefined);
+    throw error;
+  }
+  trackedKernels.push({ kernel, platformServices, kernelDatabase });
+  return kernel;
 }
 
 /**
@@ -142,13 +295,12 @@ export async function makeKernel(
   }
   const platformServicesClient =
     platformServices ?? new NodejsPlatformServices(platformServicesConfig);
-  const kernel = await Kernel.make(platformServicesClient, kernelDatabase, {
+  return await makeTrackedKernel(platformServicesClient, kernelDatabase, {
     resetStorage,
     logger,
     keySeed,
     ...makeAuditedKernelOptions(),
   });
-  return kernel;
 }
 
 /**

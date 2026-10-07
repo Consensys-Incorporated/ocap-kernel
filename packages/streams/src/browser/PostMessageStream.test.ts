@@ -2,11 +2,7 @@ import { delay } from '@metamask/kernel-utils';
 import { makeMockMessageTarget } from '@ocap/repo-tools/test-utils';
 import { describe, it, expect, vi } from 'vitest';
 
-import {
-  PostMessageDuplexStream,
-  PostMessageReader,
-  PostMessageWriter,
-} from './PostMessageStream.ts';
+import { PostMessageDuplexStream } from './PostMessageStream.ts';
 import type { PostMessageTarget } from './PostMessageStream.ts';
 import type { PostMessage } from './utils.ts';
 import { makeAck } from '../BaseDuplexStream.ts';
@@ -18,169 +14,19 @@ import {
   makeStreamErrorSignal,
 } from '../utils.ts';
 
-describe('PostMessageReader', () => {
-  it('constructs a PostMessageReader', () => {
-    const reader = new PostMessageReader({
-      messageTarget: makeMockMessageTarget(),
-    });
-    expect(reader).toBeInstanceOf(PostMessageReader);
-  });
-
-  it('emits messages received from postMessage', async () => {
-    const messageTarget = makeMockMessageTarget();
-    const reader = new PostMessageReader({
-      messageTarget,
-    });
-
-    const message = { foo: 'bar' };
-
-    messageTarget.postMessage(message);
-    expect(await reader.next()).toStrictEqual(makePendingResult(message));
-  });
-
-  it('can yield MessageEvents directly', async () => {
-    const messageTarget = makeMockMessageTarget();
-    const reader = new PostMessageReader<MessageEvent>({
-      messageTarget,
-      messageEventMode: 'event',
-    });
-
-    const message = new MessageEvent('message', { data: 'bar' });
-
-    messageTarget.postMessage(message);
-    expect(await reader.next()).toStrictEqual(makePendingResult(message));
-  });
-
-  it('handles stream done signals normally when yielding MessageEvents', async () => {
-    const messageTarget = makeMockMessageTarget();
-    const reader = new PostMessageReader<MessageEvent>({
-      messageTarget,
-      messageEventMode: 'event',
-    });
-
-    messageTarget.postMessage(
-      new MessageEvent('message', { data: makeStreamDoneSignal() }),
-    );
-    expect(await reader.next()).toStrictEqual(makeDoneResult());
-  });
-
-  it('handles stream error signals normally when yielding MessageEvents', async () => {
-    const messageTarget = makeMockMessageTarget();
-    const reader = new PostMessageReader<MessageEvent>({
-      messageTarget,
-      messageEventMode: 'event',
-    });
-
-    const nextP = reader.next();
-
-    messageTarget.postMessage(
-      new MessageEvent('message', {
-        data: makeStreamErrorSignal(new Error('foo')),
-      }),
-    );
-    await expect(nextP).rejects.toThrow('foo');
-  });
-
-  it('calls validateInput with received input if specified', async () => {
-    const validateInput = vi
-      .fn()
-      .mockReturnValue(true) as unknown as ValidateInput<number>;
-    const messageTarget = makeMockMessageTarget();
-    const reader = new PostMessageReader({
-      messageTarget,
-      validateInput,
-    });
-
-    const message = { foo: 'bar' };
-    messageTarget.postMessage(message);
-    expect(await reader.next()).toStrictEqual(makePendingResult(message));
-    expect(validateInput).toHaveBeenCalledWith(message);
-  });
-
-  it('throws if validateInput throws', async () => {
-    const messageTarget = makeMockMessageTarget();
-    const validateInput = (() => {
-      throw new Error('foo');
-    }) as unknown as ValidateInput<number>;
-    const reader = new PostMessageReader({
-      messageTarget,
-      validateInput,
-    });
-
-    messageTarget.postMessage(42);
-    await expect(reader.next()).rejects.toThrow('foo');
-    expect(await reader.next()).toStrictEqual(makeDoneResult());
-  });
-
-  it('removes its listener when it ends', async () => {
-    const messageTarget = makeMockMessageTarget();
-    const reader = new PostMessageReader({
-      messageTarget,
-    });
-    expect(messageTarget.listeners).toHaveLength(1);
-
-    const message = makeStreamDoneSignal();
-    messageTarget.postMessage(message);
-
-    expect(await reader.next()).toStrictEqual(makeDoneResult());
-    expect(messageTarget.removeEventListener).toHaveBeenCalled();
-    expect(messageTarget.listeners).toHaveLength(0);
-  });
-
-  it('calls onEnd once when ending', async () => {
-    const messageTarget = makeMockMessageTarget();
-    const onEnd = vi.fn();
-    const reader = new PostMessageReader({
-      messageTarget,
-      onEnd,
-    });
-
-    messageTarget.postMessage(makeStreamDoneSignal());
-
-    expect(await reader.next()).toStrictEqual(makeDoneResult());
-    expect(onEnd).toHaveBeenCalledTimes(1);
-    expect(await reader.next()).toStrictEqual(makeDoneResult());
-    expect(onEnd).toHaveBeenCalledTimes(1);
-  });
-});
-
-describe('PostMessageWriter', () => {
-  it('constructs a PostMessageWriter', () => {
-    const writer = new PostMessageWriter(makeMockMessageTarget());
-    expect(writer).toBeInstanceOf(PostMessageWriter);
-  });
-
-  it('writes messages to postMessage', async () => {
-    const messageTarget = makeMockMessageTarget();
-    const writer = new PostMessageWriter(messageTarget);
-    const message = { foo: 'bar' };
-    await writer.next({ payload: message, transfer: [] });
-    expect(messageTarget.postMessage).toHaveBeenCalledWith(message, []);
-  });
-
-  it('calls onEnd once when ending', async () => {
-    const messageTarget = makeMockMessageTarget();
-    const onEnd = vi.fn();
-    const writer = new PostMessageWriter(messageTarget, { onEnd });
-
-    expect(await writer.return()).toStrictEqual(makeDoneResult());
-    expect(onEnd).toHaveBeenCalledTimes(1);
-    expect(await writer.return()).toStrictEqual(makeDoneResult());
-    expect(onEnd).toHaveBeenCalledTimes(1);
-  });
-});
-
 describe('PostMessageDuplexStream', () => {
   const makeDuplexStream = async <Read, Write>({
     messageTarget = makeMockMessageTarget(),
     postRemoteMessage = vi.fn(),
     validateInput,
     onEnd,
+    messageEventMode,
   }: {
-    messageTarget?: PostMessageTarget;
+    messageTarget?: ReturnType<typeof makeMockMessageTarget>;
     postRemoteMessage?: PostMessage;
     validateInput?: ValidateInput<Read>;
     onEnd?: () => Promise<void>;
+    messageEventMode?: 'data' | 'event';
   } = {}) => {
     const postLocalMessage = messageTarget.postMessage;
     // @ts-expect-error In reality you have to be explicit about `messageEventMode`
@@ -188,6 +34,7 @@ describe('PostMessageDuplexStream', () => {
       messageTarget: { ...messageTarget, postMessage: postRemoteMessage },
       validateInput,
       onEnd,
+      messageEventMode,
     });
     postLocalMessage(makeAck());
     await delay(10);
@@ -222,6 +69,59 @@ describe('PostMessageDuplexStream', () => {
     expect(validateInput).toHaveBeenCalledWith(42);
   });
 
+  it('can yield MessageEvents directly', async () => {
+    const { duplexStream, postLocalMessage } = await makeDuplexStream<
+      MessageEvent,
+      unknown
+    >({ messageEventMode: 'event' });
+
+    const message = new MessageEvent('message', { data: 'bar' });
+    postLocalMessage(message);
+    expect(await duplexStream.next()).toStrictEqual(makePendingResult(message));
+  });
+
+  it('reads done signals as data when yielding MessageEvents', async () => {
+    const { duplexStream, postLocalMessage } = await makeDuplexStream<
+      MessageEvent,
+      unknown
+    >({ messageEventMode: 'event' });
+
+    postLocalMessage(makeStreamDoneSignal());
+    expect(await duplexStream.next()).toStrictEqual(makeDoneResult());
+  });
+
+  it('reads error signals as data when yielding MessageEvents', async () => {
+    const { duplexStream, postLocalMessage } = await makeDuplexStream<
+      MessageEvent,
+      unknown
+    >({ messageEventMode: 'event' });
+
+    const nextP = duplexStream.next();
+    postLocalMessage(makeStreamErrorSignal(new Error('foo')));
+    await expect(nextP).rejects.toThrow('foo');
+  });
+
+  it('removes its listener when it ends', async () => {
+    const { duplexStream, messageTarget } = await makeDuplexStream();
+    expect(messageTarget.listeners).toHaveLength(1);
+
+    await duplexStream.return();
+    expect(messageTarget.listeners).toHaveLength(0);
+  });
+
+  it('ends with an error if validateInput throws', async () => {
+    const validateInput = (() => {
+      throw new Error('foo');
+    }) as unknown as ValidateInput<number>;
+    const { duplexStream, postLocalMessage } = await makeDuplexStream({
+      validateInput,
+    });
+
+    postLocalMessage(42);
+    await expect(duplexStream.next()).rejects.toThrow('foo');
+    expect(await duplexStream.next()).toStrictEqual(makeDoneResult());
+  });
+
   it('calls onEnd when ending if specified', async () => {
     const onEnd = vi.fn();
     const { duplexStream } = await makeDuplexStream({
@@ -231,8 +131,53 @@ describe('PostMessageDuplexStream', () => {
     });
 
     await duplexStream.return();
-    // Once for the reader, once for the writer
-    expect(onEnd).toHaveBeenCalledTimes(2);
+    expect(onEnd).toHaveBeenCalledOnce();
+  });
+
+  it('calls onEnd once when the remote ends', async () => {
+    const onEnd = vi.fn();
+    const { duplexStream, postLocalMessage } = await makeDuplexStream({
+      onEnd,
+    });
+
+    postLocalMessage(makeStreamDoneSignal());
+    await delay(10);
+    expect(await duplexStream.next()).toStrictEqual(makeDoneResult());
+    expect(onEnd).toHaveBeenCalledOnce();
+  });
+
+  it('ends both sides when onEnd closes a BroadcastChannel', async () => {
+    const name = `test-channel-${Math.random()}`;
+    const channelA = new BroadcastChannel(name);
+    const channelB = new BroadcastChannel(name);
+    const makeTarget = (channel: BroadcastChannel): PostMessageTarget => ({
+      addEventListener: (_type, listener) =>
+        channel.addEventListener('message', listener),
+      removeEventListener: (_type, listener) =>
+        channel.removeEventListener('message', listener),
+      postMessage: (message) => channel.postMessage(message),
+    });
+    const onEndA = vi.fn(() => channelA.close());
+    const onEndB = vi.fn(() => channelB.close());
+
+    const [streamA, streamB] = await Promise.all([
+      PostMessageDuplexStream.make({
+        messageTarget: makeTarget(channelA),
+        onEnd: onEndA,
+      }),
+      PostMessageDuplexStream.make({
+        messageTarget: makeTarget(channelB),
+        onEnd: onEndB,
+      }),
+    ]);
+
+    await streamA.return();
+    await delay(50);
+
+    expect(onEndA).toHaveBeenCalledOnce();
+    expect(onEndB).toHaveBeenCalledOnce();
+    expect(await streamB.write({ x: 1 })).toStrictEqual(makeDoneResult());
+    expect(await streamB.next()).toStrictEqual(makeDoneResult());
   });
 
   it('ends the reader when the writer ends', async () => {

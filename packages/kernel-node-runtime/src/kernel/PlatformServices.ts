@@ -164,16 +164,23 @@ export class NodejsPlatformServices implements PlatformServices {
    *
    * @param vatId - The vat id of the worker to terminate.
    * @returns A promise that resolves when the worker has terminated
-   * or rejects if that worker does not exist.
+   * or rejects if that worker does not exist or failed to stop.
    */
   async terminate(vatId: VatId): Promise<undefined> {
     const workerEntry = this.workers.get(vatId);
     assert(workerEntry, `No worker found for vatId ${vatId}`);
     const { worker, stream } = workerEntry;
-    await stream.return();
-    worker.removeAllListeners();
-    await worker.terminate();
-    this.workers.delete(vatId);
+    // An entry left behind refuses the vat's next worker as a duplicate.
+    try {
+      await stream.return();
+    } finally {
+      try {
+        worker.removeAllListeners();
+        await worker.terminate();
+      } finally {
+        this.workers.delete(vatId);
+      }
+    }
     return undefined;
   }
 

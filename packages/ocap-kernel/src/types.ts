@@ -376,11 +376,36 @@ export type RunQueueItemBringOutYourDead = Infer<
   typeof RunQueueItemBringOutYourDeadStruct
 >;
 
+/**
+ * A request to replace a vat's worker, queued so the run loop performs it.
+ */
+const RunQueueItemRestartVatStruct = object({
+  type: literal('restartVat'),
+  vatId: VatIdStruct,
+});
+
+export type RunQueueItemRestartVat = Infer<typeof RunQueueItemRestartVatStruct>;
+
+/**
+ * A request to terminate a vat, queued so the run loop performs it.
+ */
+const RunQueueItemTerminateVatStruct = object({
+  type: literal('terminateVat'),
+  vatId: VatIdStruct,
+  reason: exactOptional(KernelCapDataStruct),
+});
+
+export type RunQueueItemTerminateVat = Infer<
+  typeof RunQueueItemTerminateVatStruct
+>;
+
 export const RunQueueItemStruct = union([
   RunQueueItemSendStruct,
   RunQueueItemNotifyStruct,
   RunQueueItemGCActionStruct,
   RunQueueItemBringOutYourDeadStruct,
+  RunQueueItemRestartVatStruct,
+  RunQueueItemTerminateVatStruct,
 ]);
 
 export type RunQueueItem = Infer<typeof RunQueueItemStruct>;
@@ -916,6 +941,27 @@ export type CrankResult = {
   didDelivery?: EndpointId | 'kernel'; // the endpoint to which we made a delivery
   abort?: boolean; // changes should be discarded, not committed
   terminate?: { vatId: VatId; reject: boolean; info: CapData<KRef> };
+  /**
+   * The delivery has done work a caller will be told of, so a later failure in
+   * this crank, from collection or the audit, must not roll it back. Ignored
+   * alongside `abort`, which rolls back first.
+   */
+  irrevocable?: boolean;
+  /**
+   * Work the run loop runs once the crank has committed, skipped if it aborts.
+   * For what a rollback could not undo anyway, and what must not be observable
+   * before the writes it reports on are durable: in-memory state, and sending
+   * a message the crank has already written down.
+   *
+   * While it runs it must not write the kernel store: the crank's transaction
+   * is released by then, so a write would commit on its own, outside the crank
+   * whose outcome it belongs to. That bounds what this hook promises, not what
+   * the kernel needs — work it starts and does not wait for, such as a
+   * transport's failure handling, lands outside every crank too, and is not
+   * fixed by this. A throw from it kills the run loop, after the crank it
+   * follows has committed.
+   */
+  afterCommit?: () => Promise<void>;
 };
 
 export type VatDeliveryResult = [VatCheckpoint, string | null];

@@ -1,4 +1,4 @@
-import type { ClusterConfig } from '@metamask/ocap-kernel';
+import type { ClusterConfig, VatConfig } from '@metamask/ocap-kernel';
 
 /**
  * Options for creating a wallet cluster configuration.
@@ -32,18 +32,18 @@ export function makeWalletClusterConfig(
       ? `${bundleBaseUrl}/home-coordinator.bundle`
       : `${bundleBaseUrl}/away-coordinator.bundle`;
 
-  const auxiliaryVat =
+  const auxiliaryVat: Record<string, VatConfig> =
     role === 'home'
       ? {
           delegator: {
             bundleSpec: `${bundleBaseUrl}/delegator-vat.bundle`,
-            globals: ['TextEncoder', 'TextDecoder', 'crypto'],
+            globals: ['crypto'],
           },
         }
       : {
           redeemer: {
             bundleSpec: `${bundleBaseUrl}/redeemer-vat.bundle`,
-            globals: ['TextEncoder', 'TextDecoder'],
+            globals: [],
           },
         };
 
@@ -54,24 +54,17 @@ export function makeWalletClusterConfig(
     vats: {
       coordinator: {
         bundleSpec: coordinatorBundle,
-        globals: ['TextEncoder', 'TextDecoder', 'Date', 'setTimeout'],
+        globals: ['Date', 'setTimeout'],
       },
       keyring: {
         bundleSpec: `${bundleBaseUrl}/keyring-vat.bundle`,
-        globals: ['TextEncoder', 'TextDecoder', 'crypto'],
+        globals: ['crypto'],
       },
       provider: {
         bundleSpec: `${bundleBaseUrl}/provider-vat.bundle`,
         globals: allowedHosts
-          ? [
-              'TextEncoder',
-              'TextDecoder',
-              'fetch',
-              'Request',
-              'Headers',
-              'Response',
-            ]
-          : ['TextEncoder', 'TextDecoder'],
+          ? ['fetch', 'Request', 'Headers', 'Response']
+          : [],
         ...(allowedHosts ? { network: { allowedHosts } } : {}),
       },
       ...auxiliaryVat,

@@ -39,7 +39,7 @@ vi.mock('@metamask/streams/browser', async () => {
     messageTarget: MockPostMessageTarget;
 
     constructor({ onEnd, messageTarget }: MockStreamOptions) {
-      super(() => undefined, { readerOnEnd: onEnd, writerOnEnd: onEnd });
+      super(() => undefined, { onEnd });
       MockStream.instances.push(this);
       this.messageTarget = messageTarget;
       this.messageTarget.onmessage = (event) => {
