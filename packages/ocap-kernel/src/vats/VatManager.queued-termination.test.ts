@@ -141,7 +141,7 @@ async function settle(): Promise<void> {
 }
 
 describe('VatManager queued termination', () => {
-  describe('bugs', () => {
+  describe('while the kernel resets', () => {
     it('does not carry out a termination that reset abandoned', async () => {
       const harness = await setUp();
       const { kernelStore, vatManager } = harness;
@@ -170,8 +170,6 @@ describe('VatManager queued termination', () => {
       harness.openGate();
       await settle();
 
-      // The abandoned request was still written into the fresh store when the
-      // crank ended, and the run loop then killed the new vat with it.
       expect({
         newVatActive: kernelStore.isVatActive('v1'),
         terminationsDelivered: harness.delivered.filter(
@@ -197,16 +195,12 @@ describe('VatManager queued termination', () => {
       const { kernelStore, vatManager } = harness;
       harness.run();
 
-      // `Kernel.reset` starts tearing the vats down...
       const terminatingAll = vatManager.terminateAllVats();
       await workerStopping.promise;
-      // ...and an outside caller's termination runs on the loop meanwhile.
       await vatManager.terminateVat('v1');
 
       releaseWorker.resolve();
 
-      // Rejects with VatNotFoundError for v1, so `reset` stops before it
-      // clears the kernel's state.
       expect(await terminatingAll).toBeUndefined();
       expect([
         kernelStore.isVatActive('v1'),
@@ -215,7 +209,7 @@ describe('VatManager queued termination', () => {
     });
   });
 
-  describe('test gaps', () => {
+  describe('across a kernel stop', () => {
     it('carries out a termination abandoned by stop on the next start', async () => {
       const first = await setUp();
       // Queued, but the run loop never got to it before the kernel stopped.
