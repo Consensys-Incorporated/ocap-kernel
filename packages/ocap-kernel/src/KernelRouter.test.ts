@@ -1,4 +1,5 @@
 import type { CapData } from '@endo/marshal';
+import { VatNotFoundError } from '@metamask/kernel-errors';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Mock, MockInstance } from 'vitest';
 
@@ -74,6 +75,7 @@ describe('KernelRouter', () => {
       ) as unknown as MockInstance,
       clearReachableFlag: vi.fn(),
       deleteCListEntry: vi.fn(),
+      isVatTerminated: vi.fn().mockReturnValue(false),
       orphanKernelObject: vi.fn(),
       forgetKref: vi.fn(),
       createCrankSavepoint: vi.fn(),
@@ -848,6 +850,216 @@ describe('KernelRouter', () => {
         expect(endpointHandle.deliverBringOutYourDead).toHaveBeenCalled();
         expect(result).toStrictEqual(mockCrankResult);
       });
+    });
+
+    /**
+     * A notify whose promise is resolved and still in the endpoint's c-list,
+     * so delivery is reached rather than short-circuited.
+     *
+     * @param endpointId - The endpoint the notify is addressed to.
+     * @returns The notify item to deliver.
+     */
+    const makeLiveNotify = (endpointId: EndpointId): RunQueueItemNotify => {
+      const kpid = 'kp123';
+      (kernelStore.getKernelPromise as unknown as MockInstance).mockReturnValue(
+        {
+          state: 'fulfilled',
+          value: { body: JSON.stringify({ value: 'v' }), slots: [] },
+        },
+      );
+      (kernelStore.krefToEref as unknown as MockInstance).mockReturnValue(
+        'p+123',
+      );
+      (kernelStore.getKpidsToRetire as unknown as MockInstance).mockReturnValue(
+        [kpid],
+      );
+      return { type: 'notify', endpointId, kpid };
+    };
+
+    describe('a vat that has ended', () => {
+      const endpointId = 'v2';
+
+      beforeEach(() => {
+        (getEndpoint as unknown as MockInstance).mockImplementation(
+          (requested: EndpointId) => {
+            if (requested === endpointId) {
+              throw new VatNotFoundError(requested as VatId);
+            }
+            return endpointHandle;
+          },
+        );
+        (
+          kernelStore.isVatTerminated as unknown as MockInstance
+        ).mockReturnValue(true);
+      });
+
+      it.each([
+        [
+          'notify',
+          (): RunQueueItem => makeLiveNotify(endpointId),
+          'deliverNotify',
+        ],
+        [
+          'dropExports',
+          (): RunQueueItem => ({
+            type: 'dropExports',
+            endpointId,
+            krefs: ['ko1'],
+          }),
+          'deliverDropExports',
+        ],
+        [
+          'bringOutYourDead',
+          (): RunQueueItem => ({ type: 'bringOutYourDead', endpointId }),
+          'deliverBringOutYourDead',
+        ],
+      ] as const)(
+        'skips a %s addressed to it instead of throwing out of the crank',
+        async (_what, makeItem, deliverMethod) => {
+          const result = await kernelRouter.deliver(makeItem());
+
+          expect(result).toStrictEqual({ didDelivery: endpointId });
+          expect(endpointHandle[deliverMethod]).not.toHaveBeenCalled();
+        },
+      );
+
+      it.each([
+        {
+          type: 'dropExports',
+          cleared: [[endpointId, 'ko1']],
+          deleted: [],
+          orphaned: [],
+        },
+        {
+          type: 'retireExports',
+          cleared: [],
+          deleted: [[endpointId, 'ko1', 'translated-ko1']],
+          orphaned: [['ko1', endpointId]],
+        },
+        {
+          type: 'retireImports',
+          cleared: [],
+          deleted: [[endpointId, 'ko1', 'translated-ko1']],
+          orphaned: [],
+        },
+      ] as const)(
+        "still does the kernel's half of a skipped $type",
+        async ({ type, cleared, deleted, orphaned }) => {
+          await kernelRouter.deliver({ type, endpointId, krefs: ['ko1'] });
+
+          expect({
+            cleared: (kernelStore.clearReachableFlag as unknown as MockInstance)
+              .mock.calls,
+            deleted: (kernelStore.deleteCListEntry as unknown as MockInstance)
+              .mock.calls,
+            orphaned: (
+              kernelStore.orphanKernelObject as unknown as MockInstance
+            ).mock.calls,
+          }).toStrictEqual({ cleared, deleted, orphaned });
+        },
+      );
+
+      it.each(['dropExports', 'retireExports', 'retireImports'] as const)(
+        'skips a %s to a vat cleaned up whole without touching its c-list',
+        async (type) => {
+          (
+            kernelStore.isVatTerminated as unknown as MockInstance
+          ).mockReturnValue(false);
+
+          const result = await kernelRouter.deliver({
+            type,
+            endpointId,
+            krefs: ['ko1'],
+          });
+
+          expect(result).toStrictEqual({ didDelivery: endpointId });
+          expect(kernelStore.krefsToErefs).not.toHaveBeenCalled();
+          expect(kernelStore.clearReachableFlag).not.toHaveBeenCalled();
+          expect(kernelStore.deleteCListEntry).not.toHaveBeenCalled();
+          expect(kernelStore.orphanKernelObject).not.toHaveBeenCalled();
+        },
+      );
+
+      it('releases the skipped notify’s own reference', async () => {
+        const item = makeLiveNotify(endpointId);
+
+        await kernelRouter.deliver(item);
+
+        expect(kernelStore.decrementRefCount).toHaveBeenCalledWith(
+          item.kpid,
+          'deliver|notify',
+        );
+      });
+
+      it('allocates nothing in the c-list of a vat it is skipping', async () => {
+        await kernelRouter.deliver(makeLiveNotify(endpointId));
+
+        expect(kernelStore.translateRefKtoE).not.toHaveBeenCalled();
+        expect(kernelStore.translateCapDataKtoE).not.toHaveBeenCalled();
+      });
+
+      it('throws for an endpoint id that is neither a vat nor a remote', async () => {
+        (getEndpoint as unknown as MockInstance).mockImplementation(
+          (requested: EndpointId) => {
+            throw new Error(`invalid endpoint ID ${requested}`);
+          },
+        );
+
+        await expect(
+          kernelRouter.deliver({
+            type: 'bringOutYourDead',
+            endpointId: 'bogus' as EndpointId,
+          }),
+        ).rejects.toThrow('invalid endpoint ID bogus');
+      });
+
+      it('still delivers to endpoints that are running', async () => {
+        const result = await kernelRouter.deliver({
+          type: 'bringOutYourDead',
+          endpointId: 'v1',
+        });
+
+        expect(endpointHandle.deliverBringOutYourDead).toHaveBeenCalled();
+        expect(result).toStrictEqual({ didDelivery: 'v1' });
+      });
+    });
+
+    describe('a remote that is only out of reach', () => {
+      const remoteId = 'r1' as EndpointId;
+
+      beforeEach(() => {
+        (getEndpoint as unknown as MockInstance).mockImplementation(() => {
+          throw new Error(`Remote not found: ${remoteId}`);
+        });
+      });
+
+      it('lets a reap addressed to it go', async () => {
+        const result = await kernelRouter.deliver({
+          type: 'bringOutYourDead',
+          endpointId: remoteId,
+        });
+
+        expect(result).toStrictEqual({ didDelivery: remoteId });
+      });
+
+      it('keeps a notify addressed to it loud', async () => {
+        await expect(
+          kernelRouter.deliver(makeLiveNotify(remoteId)),
+        ).rejects.toThrow('Remote not found');
+      });
+
+      it.each(['dropExports', 'retireExports', 'retireImports'] as const)(
+        'keeps a %s addressed to it loud',
+        async (type) => {
+          await expect(
+            kernelRouter.deliver({
+              type,
+              endpointId: remoteId,
+              krefs: ['ko1'],
+            }),
+          ).rejects.toThrow('Remote not found');
+        },
+      );
     });
 
     it('throws on unknown run queue item type', async () => {
