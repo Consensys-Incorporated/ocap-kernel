@@ -1,5 +1,19 @@
 export { prettifySmallcaps } from './prettify-smallcaps.ts';
 export { makeDefaultInterface, makeDefaultExo } from './exo.ts';
+export {
+  asyncifyMethodGuards,
+  buildMethodGuard,
+  getGuardAt,
+  getInterfaceMethodGuards,
+  getMethodPayload,
+} from './guard-algebra.ts';
+export type {
+  BuildMethodGuardOptions,
+  MethodGuardPayload,
+} from './guard-algebra.ts';
+export type { NarrowingDelta } from './narrow-interface-guard.ts';
+export { join, narrow, pathUnder } from './narrowing.ts';
+export type { JoinOptions, NarrowOptions } from './narrowing.ts';
 export { GET_DESCRIPTION, makeDiscoverableExo } from './discoverable.ts';
 export type { DiscoverableExo } from './discoverable.ts';
 export { S } from './described.ts';

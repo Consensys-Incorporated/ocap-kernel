@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 import {
   isConsoleForwardMessage,
+  isIframeWindow,
   setupConsoleForwarding,
   handleConsoleForwardMessage,
 } from './console-forwarding.ts';
@@ -93,6 +94,34 @@ describe('console-forwarding', () => {
       },
     ])('returns false for $name', ({ value }) => {
       expect(isConsoleForwardMessage(value)).toBe(false);
+    });
+  });
+
+  describe('isIframeWindow', () => {
+    const iframeWindow = {} as Window;
+
+    beforeEach(() => {
+      vi.stubGlobal('document', {
+        querySelectorAll: vi.fn(() => [
+          { contentWindow: null },
+          { contentWindow: iframeWindow },
+        ]),
+      });
+    });
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    it('returns true for the window of an iframe in the document', () => {
+      expect(isIframeWindow(iframeWindow)).toBe(true);
+    });
+
+    it.each([
+      { name: 'null', source: null },
+      { name: 'an unknown window', source: {} as Window },
+    ])('returns false for $name', ({ source }) => {
+      expect(isIframeWindow(source)).toBe(false);
     });
   });
 

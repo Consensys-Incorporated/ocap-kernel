@@ -7,7 +7,6 @@ import {
   makeArrayTransport,
 } from '@metamask/logger';
 import type { LogEntry } from '@metamask/logger';
-import { Kernel } from '@metamask/ocap-kernel';
 import type { AllowedGlobalName, KRef, VatId } from '@metamask/ocap-kernel';
 import { getWorkerFile } from '@ocap/nodejs-test-workers';
 import { describe, expect, it } from 'vitest';
@@ -16,6 +15,7 @@ import {
   extractTestLogs,
   getBundleSpec,
   makeAuditedKernelOptions,
+  makeTrackedKernel,
 } from './utils.ts';
 
 describe('global endowments', () => {
@@ -38,7 +38,7 @@ describe('global endowments', () => {
       logger: logger.subLogger({ tags: ['vat-worker-manager'] }),
       workerFilePath: getWorkerFile('mock-fetch'),
     });
-    const kernel = await Kernel.make(platformServices, database, {
+    const kernel = await makeTrackedKernel(platformServices, database, {
       resetStorage: true,
       logger,
       allowedGlobalNames,
@@ -60,10 +60,9 @@ describe('global endowments', () => {
     return { kernel, entries };
   };
 
-  it('can use TextEncoder and TextDecoder', async () => {
-    const { kernel, entries } = await setup({
-      globals: ['TextEncoder', 'TextDecoder'],
-    });
+  // SES permits these universally, so they are not endowments at all.
+  it('can use TextEncoder and TextDecoder without endowing them', async () => {
+    const { kernel, entries } = await setup({ globals: [] });
 
     await kernel.queueMessage(v1Root, 'testTextCodec', []);
     await waitUntilQuiescent();
@@ -166,8 +165,6 @@ describe('global endowments', () => {
     // These are Web/host APIs that are NOT JS intrinsics — they should
     // be genuinely absent from a SES compartment unless explicitly endowed.
     it.each([
-      'TextEncoder',
-      'TextDecoder',
       'URL',
       'URLSearchParams',
       'atob',
@@ -191,6 +188,35 @@ describe('global endowments', () => {
       expect(logs).toContain(`checkGlobal: ${name}=false`);
     });
 
+    // Unlike the above, these are intrinsics, withheld by SES so that a vat
+    // cannot read a `NaN` bit pattern through a shared `ArrayBuffer` and use
+    // it as a side channel. Snaps offers the 32- and 64-bit constructors as
+    // endowments, so this guards against restoring one via
+    // `ALLOWED_GLOBAL_NAMES`.
+    it.each(['Float16Array', 'Float32Array', 'Float64Array'])(
+      'does not have %s in a vat',
+      async (name) => {
+        const { kernel, entries } = await setup({ globals: [] });
+
+        await kernel.queueMessage(v1Root, 'checkGlobal', [name]);
+        await waitUntilQuiescent();
+
+        const logs = extractTestLogs(entries, vatId);
+        expect(logs).toContain(`checkGlobal: ${name}=false`);
+      },
+    );
+
+    // Rejected by `VatConfigStruct` before `VatSupervisor`'s allowlist check,
+    // so this surfaces as a config error rather than "unknown global".
+    it.each(['TextEncoder', 'TextDecoder'])(
+      'rejects a vat config naming %s',
+      async (name) => {
+        await expect(
+          setup({ globals: [name as AllowedGlobalName] }),
+        ).rejects.toThrow('invalid cluster config');
+      },
+    );
+
     it('throws when calling tamed Date.now without endowing Date', async () => {
       const { kernel } = await setup({ globals: [] });
 
@@ -210,29 +236,29 @@ describe('global endowments', () => {
 
   describe('kernel-level allowedGlobalNames restriction', () => {
     it('throws when a vat requests a global excluded by the kernel', async () => {
-      // Kernel only allows TextEncoder/TextDecoder — vat also requests URL.
+      // Kernel only allows URL/URLSearchParams — vat also requests atob.
       await expect(
         setup({
-          globals: ['TextEncoder', 'TextDecoder', 'URL'],
-          allowedGlobalNames: ['TextEncoder', 'TextDecoder'],
+          globals: ['URL', 'URLSearchParams', 'atob'],
+          allowedGlobalNames: ['URL', 'URLSearchParams'],
         }),
       ).rejects.toMatchObject({
         message: expect.stringMatching(/^Failed to launch vat \S+ \(main\)$/u),
-        cause: { message: expect.stringContaining('unknown global "URL"') },
+        cause: { message: expect.stringContaining('unknown global "atob"') },
       });
     });
 
     it('initializes when all vat globals are within allowedGlobalNames', async () => {
       const { kernel, entries } = await setup({
-        globals: ['TextEncoder', 'TextDecoder'],
-        allowedGlobalNames: ['TextEncoder', 'TextDecoder'],
+        globals: ['URL', 'URLSearchParams'],
+        allowedGlobalNames: ['URL', 'URLSearchParams'],
       });
 
-      await kernel.queueMessage(v1Root, 'testTextCodec', []);
+      await kernel.queueMessage(v1Root, 'testUrl', []);
       await waitUntilQuiescent();
 
       const logs = extractTestLogs(entries, vatId);
-      expect(logs).toContain('textCodec: hello');
+      expect(logs).toContain('url: /path params: 10');
     });
 
     it('allows all globals when allowedGlobalNames is omitted', async () => {
@@ -250,13 +276,13 @@ describe('global endowments', () => {
     it('rejects every vat global when allowedGlobalNames is empty', async () => {
       await expect(
         setup({
-          globals: ['TextEncoder'],
+          globals: ['URL'],
           allowedGlobalNames: [],
         }),
       ).rejects.toMatchObject({
         message: expect.stringMatching(/^Failed to launch vat \S+ \(main\)$/u),
         cause: {
-          message: expect.stringContaining('unknown global "TextEncoder"'),
+          message: expect.stringContaining('unknown global "URL"'),
         },
       });
     });
@@ -269,10 +295,10 @@ describe('global endowments', () => {
       // through.
       await expect(
         setup({
-          globals: ['TextEncoder', 'TextDecoder'],
+          globals: ['URL', 'URLSearchParams'],
           allowedGlobalNames: [
-            'TextEncoder',
-            'TextDecoder',
+            'URL',
+            'URLSearchParams',
             'NotARealGlobal' as AllowedGlobalName,
           ],
         }),

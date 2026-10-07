@@ -239,11 +239,16 @@ export function getSubclusterMethods(ctx: StoreContext) {
   /**
    * Removes a vat from its subcluster.
    *
+   * A no-op for a vat in no subcluster, since `deleteVat` calls this for every
+   * vat it discards.
+   *
    * @param vatId - The ID of the vat to remove.
    */
   function removeVatFromSubcluster(vatId: VatId): void {
-    const subclusterId = getVatSubcluster(vatId);
-    deleteSubclusterVat(subclusterId, vatId);
+    const subclusterId = getVatToSubclusterMap()[vatId];
+    if (subclusterId) {
+      deleteSubclusterVat(subclusterId, vatId);
+    }
   }
 
   // System subcluster mapping methods

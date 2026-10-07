@@ -1,19 +1,15 @@
-import {
-  BaseDuplexStream,
-  makeAck,
-  makeDuplexStreamInputValidator,
-} from '../src/BaseDuplexStream.ts';
+import { BaseDuplexStream, makeAck } from '../src/BaseDuplexStream.ts';
 import type {
   Dispatch,
   ReceiveInput,
   BaseReaderArgs,
+  OnEnd,
   ValidateInput,
-  BaseWriterArgs,
 } from '../src/BaseStream.ts';
 import { BaseReader, BaseWriter } from '../src/BaseStream.ts';
 
 /**
- * A test reader that exposes the receiveInput method for testing purposes.
+ * A test reader that exposes its receiveInput function for testing purposes.
  */
 export class TestReader<Read = number> extends BaseReader<Read> {
   readonly #receiveInput: ReceiveInput;
@@ -32,91 +28,33 @@ export class TestReader<Read = number> extends BaseReader<Read> {
    *
    * @param args - Options bag for configuring the reader.
    */
-  constructor(args: BaseReaderArgs<Read> = {}) {
-    super(args);
-    this.#receiveInput = super.getReceiveInput();
-  }
-
-  /**
-   * Gets the receive input function. Overrides the protected method for testing.
-   *
-   * @returns The receive input function.
-   */
-  getReceiveInput(): ReceiveInput {
-    return super.getReceiveInput();
-  }
-
-  /**
-   * Closes the underlying transport and returns.
-   *
-   * @returns The final result for this stream.
-   */
-  async return(): Promise<IteratorResult<Read, undefined>> {
-    return super.return();
-  }
-
-  /**
-   * Closes the stream with an error.
-   *
-   * @param error - The error to close the stream with.
-   * @returns The final result for this stream.
-   */
-  async throw(error: Error): Promise<IteratorResult<Read, undefined>> {
-    return super.throw(error);
+  constructor(args: Omit<BaseReaderArgs<Read>, 'listen'> = {}) {
+    let receiveInput!: ReceiveInput;
+    super({
+      ...args,
+      listen: (receive) => {
+        receiveInput = receive as ReceiveInput;
+      },
+    });
+    this.#receiveInput = receiveInput;
   }
 }
 
-/**
- * A test writer that exposes the onDispatch function for testing purposes.
- */
-export class TestWriter<Write = number> extends BaseWriter<Write> {
-  readonly #onDispatch: Dispatch<Write>;
-
-  /**
-   * Gets the dispatch function for this writer.
-   *
-   * @returns The dispatch function.
-   */
-  get onDispatch(): Dispatch<Write> {
-    return this.#onDispatch;
-  }
-
-  /**
-   * Constructs a new {@link TestWriter}.
-   *
-   * @param args - Options bag for configuring the writer.
-   */
-  constructor(args: BaseWriterArgs<Write>) {
-    super(args);
-    this.#onDispatch = args.onDispatch;
-  }
-}
+export class TestWriter<Write = number> extends BaseWriter<Write> {}
 
 type TestDuplexStreamOptions<Read = number> = {
   validateInput?: ValidateInput<Read> | undefined;
-  readerOnEnd?: () => void;
-  writerOnEnd?: () => void;
+  onEnd?: OnEnd | undefined;
 };
 
 /**
- * A test duplex stream that exposes internal methods for testing purposes.
+ * A test duplex stream that exposes its receiveInput function for testing purposes.
  */
 export class TestDuplexStream<
   Read = number,
   Write = Read,
-> extends BaseDuplexStream<Read, TestReader<Read>, Write, TestWriter<Write>> {
-  readonly #onDispatch: Dispatch<Write>;
-
+> extends BaseDuplexStream<Read, Write> {
   readonly #receiveInput: ReceiveInput;
-
-  /**
-   * Gets the dispatch function for the underlying writer.
-   *
-   * @returns The dispatch function.
-   */
-  get onDispatch(): Dispatch<Write> {
-    return this.#onDispatch;
-  }
 
   /**
    * Gets the receive input function for the underlying reader.
@@ -133,41 +71,23 @@ export class TestDuplexStream<
    * @param onDispatch - The dispatch function to use for writing.
    * @param options - Options bag for configuring the stream.
    * @param options.validateInput - A function that validates input from the transport.
-   * @param options.readerOnEnd - A function that is called when the reader ends.
-   * @param options.writerOnEnd - A function that is called when the writer ends.
+   * @param options.onEnd - A function that is called once when the stream ends.
    */
   constructor(
     onDispatch: Dispatch<Write>,
-    {
-      validateInput,
-      readerOnEnd,
-      writerOnEnd,
-    }: TestDuplexStreamOptions<Read> = {},
+    { validateInput, onEnd }: TestDuplexStreamOptions<Read> = {},
   ) {
-    const reader = new TestReader<Read>({
+    let receiveInput!: ReceiveInput;
+    super({
       name: 'TestDuplexStream',
-      onEnd: readerOnEnd,
-      validateInput: makeDuplexStreamInputValidator(validateInput),
+      validateInput,
+      onEnd,
+      onDispatch,
+      listen: (receive) => {
+        receiveInput = receive as ReceiveInput;
+      },
     });
-    super(
-      reader,
-      new TestWriter<Write>({
-        name: 'TestDuplexStream',
-        onDispatch,
-        onEnd: writerOnEnd,
-      }),
-    );
-    this.#onDispatch = onDispatch;
-    this.#receiveInput = reader.receiveInput;
-  }
-
-  /**
-   * Synchronizes the stream with its remote counterpart.
-   *
-   * @returns A promise that resolves when the stream is synchronized.
-   */
-  async synchronize(): Promise<void> {
-    return super.synchronize();
+    this.#receiveInput = receiveInput;
   }
 
   /**
