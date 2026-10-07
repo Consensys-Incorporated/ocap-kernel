@@ -101,7 +101,6 @@ export class VatManager {
    */
   readonly #restartWaiters: Map<VatId, Waiter<VatHandle>[]>;
 
-  /** Callers awaiting a queued termination, by vat. */
   readonly #terminationWaiters: Map<VatId, Waiter<undefined>[]>;
 
   /**
@@ -112,7 +111,6 @@ export class VatManager {
    */
   readonly #supersededRestarts: Map<VatId, Waiter<VatHandle>[]>;
 
-  /** Terminations queued and not yet carried out, counted by vat. */
   readonly #pendingTerminations: Map<VatId, number>;
 
   /** Service to spawn workers (in iframes) for vats to run in */
@@ -627,12 +625,8 @@ export class VatManager {
   /**
    * Terminate a vat with extreme prejudice.
    *
-   * Queued for the run loop, and answered once the crank that carries it out
-   * has ended.
-   *
    * @param vatId - The ID of the vat.
-   * @param reason - Why the vat is being terminated, if given. It must carry
-   *   no slots.
+   * @param reason - Why the vat is being terminated, if given.
    */
   async terminateVat(vatId: VatId, reason?: CapData<KRef>): Promise<void> {
     if (!this.#isVatKnown(vatId)) {
