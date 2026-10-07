@@ -552,9 +552,11 @@ export class KernelRouter {
     );
     const endpoint = this.#lookupEndpoint(endpointId, type);
     // Only a skipped vat gets here without a handle; a remote throws above. One
-    // the store no longer calls terminated has been cleaned up whole, possibly
-    // by `nextTerminatedVatCleanup` earlier in this crank, so its c-list is
-    // gone and the kernel's half with it.
+    // the store does not call terminated has been cleaned up whole, possibly
+    // by `nextTerminatedVatCleanup` earlier in this crank, or is still
+    // persisted: its worker failed to start at boot, or its termination is
+    // queued. The latter keeps its c-list as the vat last saw it, since a
+    // restart would bring up an incarnation still holding those erefs.
     if (!endpoint && !this.#kernelStore.isVatTerminated(endpointId as VatId)) {
       return { didDelivery: endpointId };
     }
