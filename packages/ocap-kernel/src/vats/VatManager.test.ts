@@ -133,6 +133,7 @@ describe('VatManager', () => {
       }),
       onRunLoopDeath: vi.fn(() => () => undefined),
       assertRunLoopAlive: vi.fn(),
+      discardHeldRequests: vi.fn(),
     } as unknown as Mocked<KernelQueue>;
 
     mockLogger = new Logger('test');
@@ -1498,6 +1499,12 @@ describe('VatManager', () => {
       expect(await vatManager.performVatRestart('v1')).toBeUndefined();
       expect(mockPlatformServices.launch).toHaveBeenCalledTimes(3);
     });
+
+    it('discards requests held for the open crank', () => {
+      vatManager.abandonQueuedWork(new Error('Kernel was reset'));
+
+      expect(mockKernelQueue.discardHeldRequests).toHaveBeenCalledOnce();
+    });
   });
 
   describe('pingVat', () => {
@@ -1688,6 +1695,24 @@ describe('VatManager', () => {
       expect(mockKernelStore.markVatAsTerminated).toHaveBeenCalledWith('v2');
       expect(mockKernelStore.markVatAsTerminated).toHaveBeenCalledWith('v1');
       expect(mockKernelStore.collectGarbage).toHaveBeenCalledTimes(2);
+      expect(vatManager.getVatIds()).toStrictEqual([]);
+    });
+
+    it('skips a vat something else retired while an earlier one stopped', async () => {
+      await vatManager.runVat('v1', createMockVatConfig());
+      await vatManager.runVat('v2', createMockVatConfig());
+      mockPlatformServices.terminate.mockImplementationOnce(async () => {
+        // A queued termination of v1 runs while v2's worker stops.
+        await vatManager.stopVat('v1', true);
+        mockKernelStore.isVatActive.mockReturnValue(false);
+      });
+
+      await vatManager.terminateAllVats();
+
+      expect(mockKernelStore.markVatAsTerminated.mock.calls).toStrictEqual([
+        ['v2'],
+        ['v1'],
+      ]);
       expect(vatManager.getVatIds()).toStrictEqual([]);
     });
 
