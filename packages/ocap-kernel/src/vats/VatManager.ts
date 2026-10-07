@@ -837,6 +837,7 @@ export class VatManager {
    * @param error - What to reject them with.
    */
   abandonQueuedWork(error: Error): void {
+    this.#kernelQueue.discardHeldRequests();
     for (const waiters of [
       this.#restartWaiters,
       this.#terminationWaiters,
@@ -1066,6 +1067,12 @@ export class VatManager {
   async terminateAllVats(): Promise<void> {
     await this.#kernelQueue.waitForCrank();
     for (const id of this.getVatIds().reverse()) {
+      // A queued termination can retire a vat while an earlier one stops.
+      // Checked with no await before `stopVat`'s own check, so nothing can
+      // retire it in between.
+      if (!this.#isVatKnown(id)) {
+        continue;
+      }
       await this.stopVat(id, true);
       this.collectGarbage();
     }

@@ -79,6 +79,8 @@ const mocks = vi.hoisted(() => {
       this.#deliverLater({ type: 'restartVat', vatId } as RunQueueItem);
     });
 
+    discardHeldRequests = vi.fn();
+
     enqueueTerminateVat = vi.fn((vatId: string, reason?: unknown) => {
       this.#deliverLater({
         type: 'terminateVat',

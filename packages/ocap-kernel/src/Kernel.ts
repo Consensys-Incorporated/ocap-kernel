@@ -883,7 +883,7 @@ export class Kernel {
     await this.#kernelQueue.waitForCrank();
     this.#vatManager.abandonQueuedWork(
       new Error(
-        'Kernel was stopped before answering; queued terminations still take effect on its next start, restarts do not',
+        'Kernel was stopped before answering; terminations already queued still take effect on its next start, restarts do not',
       ),
     );
     this.#kernelStore.recordLastActiveTime();
