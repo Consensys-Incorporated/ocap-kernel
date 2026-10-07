@@ -81,10 +81,6 @@ describe('makeCaveatedFsOperation', () => {
 });
 
 describe('assertPlainSegments', () => {
-  it('accepts a drive-prefixed root', () => {
-    expect(() => assertPlainSegments(['C:', 'srv'], 'root')).not.toThrow();
-  });
-
   it('names what it was checking', () => {
     expect(() => assertPlainSegments(['srv', '..'], 'root')).toThrow(
       'root contains an invalid segment: ".."',

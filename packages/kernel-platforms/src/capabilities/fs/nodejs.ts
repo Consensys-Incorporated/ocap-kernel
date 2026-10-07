@@ -1,6 +1,5 @@
 import { constants } from 'node:fs';
 import fs from 'node:fs/promises';
-import { resolve, sep } from 'node:path';
 
 import { makeFsSpecification } from './shared.ts';
 import type { FsSpecification } from './shared.ts';
@@ -9,15 +8,11 @@ import type { FsConfigStruct, PathSegments, SegmentsCaveat } from './types.ts';
 /**
  * Joins absolute segments into a Node.js path.
  *
- * `resolve` rather than a join on `sep` so a leading drive segment lands as a
- * drive. Callers have already rejected separators and traversals, so there is
- * nothing left for it to normalize away.
- *
  * @param segments - The segments to join
  * @returns The corresponding absolute path
  */
 export const toPath = (segments: PathSegments): string =>
-  resolve(sep, ...segments);
+  `/${segments.join('/')}`;
 
 /**
  * Asserts that the path is its own `realpath`.

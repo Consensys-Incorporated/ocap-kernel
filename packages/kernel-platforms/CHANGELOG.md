@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Call it as `await E(fs).readFile(['srv', 'data', 'x'], 'utf8')`. Methods share one flat namespace, so `promises.readFile` is now `readFile`, and a segment may not be empty, `.`, `..`, or contain a path separator.
   - `readFile` requires an encoding and resolves a string. Without one Node resolves a `Buffer`, and no typed array can cross an exo boundary, so reading raw bytes is not available.
   - `existsSync` and every other synchronous operation are gone. A narrowed method forwards through `E()`, so nothing synchronous can survive narrowing.
-  - Config is `{ root: ['srv', 'data'], methods: ['readFile'] }`, replacing `{ rootDir, promises: { readFile } }`. An empty `root` is rejected rather than denoting the whole filesystem, and a platform prefix is a leading segment, so a Windows drive is `['C:', 'srv']`.
+  - Config is `{ root: ['srv', 'data'], methods: ['readFile'] }`, replacing `{ rootDir, promises: { readFile } }`. An empty `root` is rejected rather than denoting the whole filesystem.
   - Every argument must be Passable, so an options record carrying an `AbortSignal` is rejected where the bare `node:fs` function accepted it.
   - The capability factory is now async.
   - On Node.js, a path through a symlink at any position, or differing in case from the entry it names, is rejected, so `root` must be canonical: on macOS, `/private/var/...` rather than `/var/...`.

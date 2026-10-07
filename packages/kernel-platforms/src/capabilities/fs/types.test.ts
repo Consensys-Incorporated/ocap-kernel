@@ -13,10 +13,6 @@ describe('fs types', () => {
         config: { root: ['srv', 'data'] },
       },
       {
-        name: 'config with a drive-prefixed root',
-        config: { root: ['C:', 'srv'] },
-      },
-      {
         name: 'config with one method',
         config: { root: ['root'], methods: ['readFile'] },
       },

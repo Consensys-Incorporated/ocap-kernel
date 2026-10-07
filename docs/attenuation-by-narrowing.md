@@ -367,9 +367,7 @@ things in the same vocabulary the library uses:
 The capability factory compiles that into a delta and applies the same `narrow`
 the library exports, so the config-time bound is provably the root of the
 narrowing tree rather than a parallel mechanism. Root segments are absolute; an
-empty `root` would denote the entire filesystem and is a config error. Any
-platform-specific prefix is a leading segment, so a Windows drive is
-`["C:", "srv"]`.
+empty `root` would denote the entire filesystem and is a config error.
 
 Config stays JSON — it is a config file validated by superstruct — while patterns
 are Passable tagged records, so a config narrowing cannot itself be a delta and

@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join, sep } from 'node:path';
+import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 
 import { makeCanonicalPathCaveat, readFile, toPath } from './nodejs.ts';
@@ -43,7 +43,7 @@ const makeTree = async (): Promise<{
     join(dir, 'outside', 'secret.txt'),
     join(dir, 'root', 'file-link'),
   );
-  const segments = dir.split(sep).filter(Boolean);
+  const segments = dir.split('/').filter(Boolean);
   return {
     root: [...segments, 'root'],
     file: [...segments, 'root', 'file.txt'],
@@ -53,7 +53,7 @@ const makeTree = async (): Promise<{
 
 describe('toPath', () => {
   it('joins segments into an absolute path', () => {
-    expect(toPath(['srv', 'data'])).toBe(`${sep}srv${sep}data`);
+    expect(toPath(['srv', 'data'])).toBe('/srv/data');
   });
 });
 

@@ -10,8 +10,7 @@ import {
 import type { Infer } from '@metamask/superstruct';
 import type { readFile, access } from 'node:fs/promises';
 
-// An absolute path, as in `['srv', 'data', 'x']`. Any platform prefix is a
-// leading segment, so a Windows drive is `['C:', 'srv']`.
+// An absolute path, as in `['srv', 'data', 'x']`.
 export type PathSegments = string[];
 
 // Throws if the segments argument violates expectations.
