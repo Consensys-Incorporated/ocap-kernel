@@ -549,7 +549,7 @@ describe('Remote Communications (Integration Tests)', () => {
     }
   });
 
-  it('is not bricked by a peer asking it to bring out its dead', async () => {
+  it('still boots after a peer asks it to bring out its dead', async () => {
     // `bringOutYourDead` is an ordinary arm of the remote protocol: any peer
     // can send one, unsolicited. The kernel answers by scheduling a reap
     // against the remote it came from, in the persisted reap queue.
@@ -557,8 +557,7 @@ describe('Remote Communications (Integration Tests)', () => {
     // `scheduleReap` does not wake a parked run loop, so an idle kernel holds
     // that reap indefinitely — and carries it into its next incarnation, which
     // starts its run loop inside `Kernel.make`, before `initRemoteComms` can
-    // restore any remote to deliver it to. One message from a peer is therefore
-    // enough to stop a kernel ever booting again, given only that it restarts.
+    // restore any remote to deliver it to.
     const tempDir = await mkdtemp(join(tmpdir(), 'kernel-test-rc-reap-'));
     const dbFile = join(tempDir, 'victim.db');
     try {
@@ -591,10 +590,9 @@ describe('Remote Communications (Integration Tests)', () => {
         [receiver.ocapURL, 'hello', ['once']],
       );
 
-      // The attack, in one message. The peer is given local work purely so its
-      // own loop cranks and sends the request; nothing touches the victim
-      // afterwards, so its loop stays parked and never delivers the reap it
-      // just queued.
+      // The peer is given local work purely so its own loop cranks and sends
+      // the request; nothing touches the victim afterwards, so its loop stays
+      // parked and never delivers the reap it just queued.
       kernel2.reapRemotes();
       await kernel2.queueMessage(
         makeKernelStore(kernelDatabase2).getRootObject('v1') as KRef,
