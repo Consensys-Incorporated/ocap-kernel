@@ -17,6 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Config is `{ root: ['srv', 'data'], methods: ['readFile'] }`, replacing `{ rootDir, promises: { readFile } }`. An empty `root` is rejected rather than denoting the whole filesystem, and a platform prefix is a leading segment, so a Windows drive is `['C:', 'srv']`.
   - Every argument must be Passable, so an options record carrying an `AbortSignal` is rejected where the bare `node:fs` function accepted it.
   - The capability factory is now async.
+  - On Node.js, a path through a symlink at any position, or differing in case from the entry it names, is rejected, so `root` must be canonical: on macOS, `/private/var/...` rather than `/var/...`.
 
 - Enforce the `fs` config's `root` and method set with a narrowing rather than a hand-rolled caveat, so a holder that narrows the capability further composes with the configured bound instead of stacking a second mechanism on it ([#1135](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1135))
 

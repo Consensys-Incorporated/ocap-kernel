@@ -1,134 +1,118 @@
-import { lstatSync, Stats } from 'node:fs';
 import fs from 'node:fs/promises';
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { tmpdir } from 'node:os';
+import { join, sep } from 'node:path';
+import { describe, expect, it, vi } from 'vitest';
 
-import { makeNoSymlinksCaveat, toPath } from './nodejs.ts';
+import { makeCanonicalPathCaveat, readFile, toPath } from './nodejs.ts';
 import { makeFsBase } from './shared.ts';
+import type { PathSegments } from './types.ts';
 
-/* eslint-disable n/no-sync */
+type TestCapability = {
+  readFile: (segments: PathSegments, encoding: string) => Promise<string>;
+  access: (segments: PathSegments, mode?: number) => Promise<void>;
+};
 
-// Mock fs/promises
-vi.mock('node:fs/promises', () => ({
-  default: {
-    readFile: vi.fn(),
-    access: vi.fn(),
-  },
-  readFile: vi.fn(),
-  access: vi.fn(),
-}));
+// The configured capability narrows this base, and `narrow` forwards over
+// `E()`, which cannot run under `mock-endoify` — see `shared.test.ts`.
+const makeCapability = (): TestCapability =>
+  makeFsBase({
+    makeReadFile: () => readFile as typeof fs.readFile,
+    makeAccess: () => fs.access,
+    makePathCaveat: makeCanonicalPathCaveat,
+    toPath,
+  }) as unknown as TestCapability;
 
-// Mock fs
-vi.mock('node:fs', () => ({
-  lstatSync: vi.fn(),
-}));
+/**
+ * Create a root holding a file, a directory symlink leaving the root, and a
+ * file symlink, under a canonical temporary directory.
+ *
+ * @returns Segment arrays into the tree.
+ */
+const makeTree = async (): Promise<{
+  root: PathSegments;
+  file: PathSegments;
+  outside: PathSegments;
+}> => {
+  const dir = await fs.realpath(await fs.mkdtemp(join(tmpdir(), 'fs-')));
+  await fs.mkdir(join(dir, 'root'));
+  await fs.mkdir(join(dir, 'outside'));
+  await fs.writeFile(join(dir, 'root', 'file.txt'), 'inside');
+  await fs.writeFile(join(dir, 'outside', 'secret.txt'), 'outside');
+  await fs.symlink(join(dir, 'outside'), join(dir, 'root', 'dir-link'));
+  await fs.symlink(
+    join(dir, 'outside', 'secret.txt'),
+    join(dir, 'root', 'file-link'),
+  );
+  const segments = dir.split(sep).filter(Boolean);
+  return {
+    root: [...segments, 'root'],
+    file: [...segments, 'root', 'file.txt'],
+    outside: [...segments, 'outside', 'secret.txt'],
+  };
+};
 
-// Mock factories
-const createMockStats = (isSymlink: boolean): Stats =>
-  ({
-    isSymbolicLink: () => isSymlink,
-  }) as unknown as Stats;
-
-const createMockLstatSync = (isSymlink: boolean) =>
-  vi.mocked(lstatSync).mockReturnValue(createMockStats(isSymlink));
-
-describe('fs nodejs capability', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    createMockLstatSync(false);
-  });
-
-  describe('fs base', () => {
-    describe.each([
-      {
-        operation: 'readFile',
-        mockFn: fs.readFile,
-        mockReturn: 'file content',
-        requiredArgs: ['utf8'],
-        additionalArg: 'utf8',
-        additionalMockReturn: 'file content',
-      },
-      {
-        operation: 'access',
-        mockFn: fs.access,
-        mockReturn: undefined,
-        requiredArgs: [] as unknown[],
-        additionalArg: 0o644,
-        additionalMockReturn: undefined,
-      },
-    ])(
-      '$operation operation',
-      ({
-        operation,
-        mockFn,
-        mockReturn,
-        requiredArgs,
-        additionalArg,
-        additionalMockReturn,
-      }) => {
-        type TestCapability = Record<string, CallableFunction>;
-
-        // Built from the module's own `toPath` and symlink caveat. The
-        // configured capability narrows this base, and `narrow` forwards over
-        // `E()`, which cannot run under `mock-endoify` — see `shared.test.ts`.
-        const makeCapability = (): TestCapability =>
-          makeFsBase({
-            makeReadFile: () => fs.readFile,
-            makeAccess: () => fs.access,
-            makePathCaveat: makeNoSymlinksCaveat,
-            toPath,
-          }) as unknown as TestCapability;
-
-        it('joins segments into a path for the underlying operation', async () => {
-          vi.mocked(mockFn).mockResolvedValue(mockReturn as never);
-
-          const result = await makeCapability()[operation]?.(
-            ['root', 'file.txt'],
-            ...requiredArgs,
-          );
-
-          expect(mockFn).toHaveBeenCalledWith(
-            '/root/file.txt',
-            ...requiredArgs,
-          );
-          expect(result).toBe(mockReturn);
-        });
-
-        it('throws error for a symlink', async () => {
-          createMockLstatSync(true);
-
-          await expect(
-            makeCapability()[operation]?.(
-              ['root', 'file.txt'],
-              ...requiredArgs,
-            ),
-          ).rejects.toThrow('Symlinks are prohibited: /root/file.txt');
-          expect(mockFn).not.toHaveBeenCalled();
-        });
-
-        it.each([
-          { name: 'parent segments', segments: ['root', '..', '..', 'etc'] },
-          { name: 'an embedded traversal', segments: ['root', '../../etc'] },
-        ])('throws error for $name', async ({ segments }) => {
-          await expect(
-            makeCapability()[operation]?.(segments, ...requiredArgs),
-          ).rejects.toThrow('contains an invalid segment');
-          expect(mockFn).not.toHaveBeenCalled();
-        });
-
-        it('handles additional arguments correctly', async () => {
-          vi.mocked(mockFn).mockResolvedValue(additionalMockReturn as never);
-
-          const result = await makeCapability()[operation]?.(
-            ['root', 'file.txt'],
-            additionalArg,
-          );
-
-          expect(mockFn).toHaveBeenCalledWith('/root/file.txt', additionalArg);
-          expect(result).toBe(additionalMockReturn);
-        });
-      },
-    );
+describe('toPath', () => {
+  it('joins segments into an absolute path', () => {
+    expect(toPath(['srv', 'data'])).toBe(`${sep}srv${sep}data`);
   });
 });
 
-/* eslint-enable n/no-sync */
+describe('fs nodejs base', () => {
+  it('reads a file at a canonical path', async () => {
+    const { file } = await makeTree();
+
+    expect(await makeCapability().readFile(file, 'utf8')).toBe('inside');
+  });
+
+  it('checks access at a canonical path', async () => {
+    const { file } = await makeTree();
+
+    expect(
+      await makeCapability().access(file, fs.constants.R_OK),
+    ).toBeUndefined();
+  });
+
+  it.each([
+    { name: 'a directory symlink', tail: ['dir-link', 'secret.txt'] },
+    { name: 'a file symlink', tail: ['file-link'] },
+  ])('refuses a path through $name', async ({ tail }) => {
+    const { root } = await makeTree();
+    const capability = makeCapability();
+
+    await expect(
+      capability.readFile([...root, ...tail], 'utf8'),
+    ).rejects.toThrow('Path is not canonical');
+    await expect(capability.access([...root, ...tail])).rejects.toThrow(
+      'Path is not canonical',
+    );
+  });
+
+  it.each([
+    { name: 'parent segments', tail: ['..', 'outside', 'secret.txt'] },
+    { name: 'an embedded traversal', tail: ['../outside/secret.txt'] },
+  ])('refuses $name', async ({ tail }) => {
+    const { root } = await makeTree();
+
+    await expect(
+      makeCapability().readFile([...root, ...tail], 'utf8'),
+    ).rejects.toThrow('contains an invalid segment');
+  });
+});
+
+describe('readFile', () => {
+  // Stands in for a symlink swapped into the path after the caveat passed and
+  // swapped back before the re-check: the handle is on the outside file while
+  // the path names the inside one.
+  it('refuses a path that named another file when it was opened', async () => {
+    const { file, outside } = await makeTree();
+    const { open } = fs;
+    const spy = vi
+      .spyOn(fs, 'open')
+      .mockImplementationOnce(async () => open(toPath(outside)));
+
+    await expect(readFile(toPath(file), 'utf8')).rejects.toThrow(
+      'Path changed while it was opened',
+    );
+    spy.mockRestore();
+  });
+});

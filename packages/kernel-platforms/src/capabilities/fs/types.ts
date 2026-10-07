@@ -15,7 +15,7 @@ import type { readFile, access } from 'node:fs/promises';
 export type PathSegments = string[];
 
 // Throws if the segments argument violates expectations.
-export type SegmentsCaveat = (segments: PathSegments) => void;
+export type SegmentsCaveat = (segments: PathSegments) => void | Promise<void>;
 
 export type ReadFile = typeof readFile;
 export type Access = typeof access;

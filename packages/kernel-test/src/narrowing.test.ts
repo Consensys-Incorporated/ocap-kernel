@@ -2,7 +2,7 @@ import { makeSQLKernelDatabase } from '@metamask/kernel-store/sqlite/nodejs';
 import { waitUntilQuiescent } from '@metamask/kernel-utils';
 import { kunser } from '@metamask/ocap-kernel';
 import type { Kernel, KRef, VatConfig } from '@metamask/ocap-kernel';
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
 import { describe, expect, it } from 'vitest';
@@ -49,7 +49,8 @@ const probe = async (
 
 /**
  * Create a readable file two directories deep, so that a narrowing of the
- * directory holding it is strictly narrower than the configured root.
+ * directory holding it is strictly narrower than the configured root, and a
+ * directory symlink inside the root leading out of it.
  *
  * @returns Absolute segment arrays for the tree, and the file's byte length.
  */
@@ -58,19 +59,26 @@ const makeTempTree = async (): Promise<{
   inner: string[];
   file: string[];
   sibling: string[];
+  throughLink: string[];
   size: number;
 }> => {
   const contents = 'narrowed-fs\n';
-  const dir = await mkdtemp(join(tmpdir(), 'narrowing-'));
+  // `realpath` because the capability refuses a path through a symlink, and
+  // the temporary directory is under one on macOS.
+  const dir = await realpath(await mkdtemp(join(tmpdir(), 'narrowing-')));
+  const outside = await realpath(await mkdtemp(join(tmpdir(), 'outside-')));
+  await writeFile(join(outside, 'secret.txt'), contents);
   await mkdir(join(dir, 'inner'));
   await writeFile(join(dir, 'inner', 'hello.txt'), contents);
   await writeFile(join(dir, 'sibling.txt'), contents);
+  await symlink(outside, join(dir, 'inner', 'link'));
   const root = dir.split(sep).filter(Boolean);
   return {
     root,
     inner: [...root, 'inner'],
     file: [...root, 'inner', 'hello.txt'],
     sibling: [...root, 'sibling.txt'],
+    throughLink: [...root, 'inner', 'link', 'secret.txt'],
     size: contents.length,
   };
 };
@@ -227,5 +235,25 @@ describe('narrowing', () => {
     expect(await probe(kernel, 'probeFsNarrowed', [inner, sibling])).toMatch(
       /^rejected:/u,
     );
+  });
+
+  it('rejects a path through a directory symlink inside the root', async () => {
+    const { root, throughLink } = await makeTempTree();
+    const kernel = await launchNarrowingVat({
+      fs: { root, methods: ['readFile'] },
+    });
+    expect(await probe(kernel, 'probeFs', [throughLink])).toMatch(
+      /^rejected:.*not canonical/u,
+    );
+  });
+
+  it('rejects a path through a directory symlink inside a narrowing', async () => {
+    const { root, inner, throughLink } = await makeTempTree();
+    const kernel = await launchNarrowingVat({
+      fs: { root, methods: ['readFile'] },
+    });
+    expect(
+      await probe(kernel, 'probeFsNarrowed', [inner, throughLink]),
+    ).toMatch(/^rejected:.*not canonical/u);
   });
 });

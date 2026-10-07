@@ -65,8 +65,7 @@ export const makeCaveatedFsOperation = ({
   return harden(async (segments: PathSegments, ...rest: unknown[]) => {
     try {
       assertPlainSegments(segments, 'path');
-      caveat(segments);
-      // We don't need async caveats yet, but we could await one here.
+      await caveat(segments);
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : 'Caveat failed';
       throw new Error(`fs.${operation.name}: ${message}`, { cause });
