@@ -451,12 +451,12 @@ export class KernelRouter {
       return this.#getEndpoint(endpointId);
     } catch (error) {
       // A restart and a termination each happen inside a crank of their own,
-      // so no crank sees a vat between workers: a vat with no handle has
-      // ended, and the store may already have forgotten it entirely.
+      // so no crank sees a vat between workers. A vat with no handle has
+      // ended, and the store may already have forgotten it entirely, unless a
+      // retirement that did not complete stranded it.
       //
       // A remote with no handle is only out of reach, so only a delivery with
-      // nothing to lose may skip one. An id that is neither a vat's nor a
-      // remote's still throws.
+      // nothing to lose may skip one.
       const skippable =
         error instanceof VatNotFoundError ||
         (discardable && isRemoteId(endpointId));
@@ -549,9 +549,10 @@ export class KernelRouter {
     );
     const endpoint = this.#lookupEndpoint(endpointId, type);
     // Only a skipped vat gets here without a handle; a remote throws above. One
-    // the store no longer calls terminated has been cleaned up whole, possibly
-    // by `nextTerminatedVatCleanup` earlier in this crank, so its c-list is
-    // gone and the kernel's half with it.
+    // the store does not call terminated has been cleaned up whole, possibly
+    // by `nextTerminatedVatCleanup` earlier in this crank, or is stranded and
+    // still persisted, and keeps its c-list for the incarnation a reboot
+    // brings up.
     if (!endpoint && !this.#kernelStore.isVatTerminated(endpointId as VatId)) {
       return { didDelivery: endpointId };
     }
