@@ -5,6 +5,7 @@ import { Kernel } from '@metamask/ocap-kernel';
 import { describe, expect, it, vi } from 'vitest';
 
 import { makeKernel } from './make-kernel.ts';
+import { assertSupportedPlatform } from '../platform.ts';
 
 vi.mock('@metamask/kernel-store/sqlite/nodejs', async () => {
   const { makeMapKernelDatabase } = await import(
@@ -14,6 +15,10 @@ vi.mock('@metamask/kernel-store/sqlite/nodejs', async () => {
     makeSQLKernelDatabase: vi.fn(makeMapKernelDatabase),
   };
 });
+
+vi.mock('../platform.ts', () => ({
+  assertSupportedPlatform: vi.fn(),
+}));
 
 describe('makeKernel', () => {
   it('should return a Kernel', async () => {
@@ -37,20 +42,12 @@ describe('makeKernel', () => {
     });
   });
 
-  it('throws on Windows before opening the database', async () => {
-    const descriptor = Object.getOwnPropertyDescriptor(process, 'platform');
-    Object.defineProperty(process, 'platform', { value: 'win32' });
-    try {
-      await expect(makeKernel({})).rejects.toThrow(
-        'The ocap kernel does not support Windows.',
-      );
-      expect(makeSQLKernelDatabase).not.toHaveBeenCalled();
-    } finally {
-      Object.defineProperty(
-        process,
-        'platform',
-        descriptor as PropertyDescriptor,
-      );
-    }
+  it('checks the platform before opening the database', async () => {
+    vi.mocked(assertSupportedPlatform).mockImplementationOnce(() => {
+      throw new Error('unsupported');
+    });
+
+    await expect(makeKernel({})).rejects.toThrow('unsupported');
+    expect(makeSQLKernelDatabase).not.toHaveBeenCalled();
   });
 });
