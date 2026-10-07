@@ -145,10 +145,9 @@ describe('GC methods', () => {
       kernelStore.addSubclusterVat(subclusterId, 'a', 'v1');
       kernelStore.scheduleReap('v1');
 
-      // Exactly what `terminateSubcluster` does, which is why that path leaves
-      // no c-list behind for the delivery to notice.
-      kernelStore.deleteVat('v1');
+      // The store's half of a termination, then every cleanup after it.
       kernelStore.markVatAsTerminated('v1');
+      kernelStore.deleteVat('v1');
       while (kernelStore.nextTerminatedVatCleanup()) {
         // drain
       }

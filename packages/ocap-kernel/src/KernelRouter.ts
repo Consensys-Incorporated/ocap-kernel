@@ -28,15 +28,13 @@ import type {
 import { isRemoteId } from './types.ts';
 import { assert, Fail } from './utils/assert.ts';
 
-/**
- * The delivery each GC action type makes, as a table rather than a method name
- * assembled from the type and cast back into range.
- */
 const GC_DELIVERY = {
   dropExports: 'deliverDropExports',
   retireExports: 'deliverRetireExports',
   retireImports: 'deliverRetireImports',
-} as const satisfies Record<GCRunQueueType, keyof EndpointHandle>;
+} as const satisfies {
+  [Type in GCRunQueueType]: `deliver${Capitalize<Type>}` & keyof EndpointHandle;
+};
 
 type MessageRoute = {
   endpointId?: EndpointId | 'kernel';
@@ -442,11 +440,12 @@ export class KernelRouter {
    *
    * An endpoint can be named by persisted state without being live. A
    * terminated vat's c-lists outlive it until `cleanupTerminatedVat` reaches
-   * them, one vat per crank; a remote's outlive every disconnection, and at
-   * startup the run loop begins inside `Kernel.make`, before an embedder can
-   * call `initRemoteComms` to restore any remote at all. Throwing here escapes
-   * the crank and kills the run loop — and the rollback puts the item back, so
-   * the next boot dies on it too.
+   * them, one vat per crank, and a reap scheduled for it outlives even that. A
+   * remote's state outlives every disconnection, and at startup the run loop
+   * begins inside `Kernel.make`, before an embedder can call `initRemoteComms`
+   * to restore any remote at all. Throwing here escapes the crank and kills the
+   * run loop, and the rollback puts the item back, so the next boot dies on it
+   * too.
    *
    * @param endpointId - The endpoint the item is addressed to.
    * @param what - What was being delivered, for the log.
@@ -463,21 +462,17 @@ export class KernelRouter {
     try {
       return this.#getEndpoint(endpointId);
     } catch (error) {
-      // A vat with no handle is one this incarnation will not deliver to
-      // again — ended, or being torn down after its stream died, or launched
-      // unsuccessfully at startup. Not "between incarnations": a restart and a
-      // termination each happen inside a crank of their own, so no crank can
-      // see a vat between workers. Keyed on the missing handle rather than on
-      // the store calling the vat terminated, because the first two of those
-      // are not, and may never be.
+      // A restart and a termination each happen inside a crank of their own,
+      // so no crank sees a vat between workers: a vat with no handle has
+      // ended, and the store may already have forgotten it entirely.
       //
-      // A remote with no handle is only out of reach — the kernel holds none at
-      // all until the embedder calls `initRemoteComms`, which is after the run
-      // loop has started — so only a delivery with nothing to lose may skip
-      // one. Anything else, including an id that names no endpoint at all, is a
-      // kernel fault and still throws.
-      const gone = error instanceof VatNotFoundError;
-      if (!gone && !(discardable && isRemoteId(endpointId))) {
+      // A remote with no handle is only out of reach, so only a delivery with
+      // nothing to lose may skip one. An id that is neither a vat's nor a
+      // remote's still throws.
+      const skippable =
+        error instanceof VatNotFoundError ||
+        (discardable && isRemoteId(endpointId));
+      if (!skippable) {
         throw error;
       }
       // Above the per-delivery trace channel: a delivery dropped on the floor
@@ -573,26 +568,20 @@ export class KernelRouter {
     if (!endpoint && remote) {
       return this.#keepForLater(remote, type);
     }
-    // `processGCActionSet` selected this action while the endpoint held a
-    // c-list entry for each kref, but `nextTerminatedVatCleanup` runs between
-    // that selection and here and takes a whole c-list at a time. Whatever it
-    // reached has had the kernel's half done for it already, and
-    // `krefsToErefs` reports the missing entry by throwing.
-    const toRelease = endpoint
-      ? krefs
-      : krefs.filter((kref) =>
-          this.#kernelStore.hasCListEntry(endpointId, kref),
-        );
-    if (toRelease.length === 0) {
+    // Only a skipped vat gets here without a handle; a remote returns above. One
+    // the store no longer calls terminated has been cleaned up whole, possibly
+    // by `nextTerminatedVatCleanup` earlier in this crank, so its c-list is
+    // gone and the kernel's half with it.
+    if (!endpoint && !this.#kernelStore.isVatTerminated(endpointId as VatId)) {
       return { didDelivery: endpointId };
     }
-    const erefs = this.#kernelStore.krefsToErefs(endpointId, toRelease);
+    const erefs = this.#kernelStore.krefsToErefs(endpointId, krefs);
     // Telling an endpoint to let go is also the kernel letting go. Otherwise a
     // dropped export stays flagged reachable, so the same action gets derived
-    // again, and retired entries outlive the objects they name. It happens even
-    // when the delivery is skipped: the action is already spent from the
-    // durable set, so leaving the entry would keep re-deriving it forever.
-    toRelease.forEach((kref, index) => {
+    // again, and retired entries outlive the objects they name. For a terminated
+    // vat that is skipped, this does now what `cleanupTerminatedVat` would do
+    // later.
+    krefs.forEach((kref, index) => {
       if (type === 'dropExports') {
         this.#kernelStore.clearReachableFlag(endpointId, kref);
       } else {
@@ -658,7 +647,7 @@ export class KernelRouter {
     const { endpointId } = item;
     this.#logger?.log(`@@@@ deliver ${endpointId} bringOutYourDead`);
     const endpoint = this.#lookupEndpoint(endpointId, 'bringOutYourDead', {
-      // A reap is a hint. A remote that is out of reach will be asked again.
+      // A reap is a hint, so dropping one loses nothing.
       discardable: true,
     });
     if (!endpoint) {
