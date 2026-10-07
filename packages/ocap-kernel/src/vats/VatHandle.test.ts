@@ -88,49 +88,26 @@ describe('VatHandle', () => {
       });
     });
 
-    it('reports the failure if the stream throws', async () => {
-      const onStreamFailure = vi.fn();
-      const { stream } = await makeVat({ onStreamFailure });
-      await stream.receiveInput(NaN);
-      await delay(10);
-      expect(onStreamFailure).toHaveBeenCalledWith(
-        expect.objectContaining({
-          cause: expect.objectContaining({
-            message: expect.stringMatching(/Message failed type validation/u),
-          }),
-        }),
-      );
-    });
-
-    it('reports the failure if handleMessage throws', async () => {
-      const onStreamFailure = vi.fn();
-      const { stream } = await makeVat({ onStreamFailure });
-      await stream.receiveInput({
-        id: 'v0:1',
-        method: 'ping',
-        params: [],
-        jsonrpc: '2.0',
-      });
-      await delay(10);
-      expect(onStreamFailure).toHaveBeenCalledWith(
-        expect.objectContaining({
-          cause: expect.objectContaining({
-            message: expect.stringMatching(/^Received unexpected message/u),
-          }),
-        }),
-      );
-    });
-
-    it('reports a dead channel to its owner', async () => {
+    it.each([
+      ['the stream throws', NaN, /Message failed type validation/u],
+      [
+        'handleMessage throws',
+        { id: 'v0:1', method: 'ping', params: [], jsonrpc: '2.0' },
+        /^Received unexpected message/u,
+      ],
+    ])('reports the failure if %s', async (_case, input, cause) => {
       const onStreamFailure = vi.fn();
       const { stream } = await makeVat({ onStreamFailure });
 
-      await stream.receiveInput(NaN);
+      await stream.receiveInput(input);
       await delay(10);
 
       expect(onStreamFailure).toHaveBeenCalledWith(
         expect.objectContaining({
           message: 'Unexpected stream read error.',
+          cause: expect.objectContaining({
+            message: expect.stringMatching(cause),
+          }),
         }),
       );
     });
@@ -139,14 +116,26 @@ describe('VatHandle', () => {
       const onStreamFailure = vi.fn();
       const { stream } = await makeVat({ onStreamFailure });
 
-      // What a worker that exits produces: the drain ends rather than failing.
       await stream.return();
       await delay(10);
 
       expect(onStreamFailure).toHaveBeenCalledOnce();
     });
 
-    it('says nothing when the kernel closes the channel', async () => {
+    it('fails a pending command when the channel closes', async () => {
+      const { vat, stream } = await makeVat({ onStreamFailure: vi.fn() });
+      sendVatCommandMock.mockRestore();
+      const pinging = vat.sendVatCommand({
+        method: 'ping' as const,
+        params: [],
+      });
+
+      await stream.return();
+
+      await expect(pinging).rejects.toThrow('Unexpected stream read error.');
+    });
+
+    it('says nothing when it closes its own channel', async () => {
       const onStreamFailure = vi.fn();
       const { vat } = await makeVat({ onStreamFailure });
 

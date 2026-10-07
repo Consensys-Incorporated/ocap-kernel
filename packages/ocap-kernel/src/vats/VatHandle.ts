@@ -44,7 +44,7 @@ type VatConstructorProps = {
   kernelQueue: KernelQueue;
   logger?: Logger | undefined;
   allowedGlobalNames?: AllowedGlobalName[] | undefined;
-  /** Called when the channel to the worker fails. */
+  /** Called when the worker's channel ends without the kernel closing it. */
   onStreamFailure: (error: Error) => void;
 };
 
@@ -73,7 +73,7 @@ export class VatHandle implements EndpointHandle {
   /** The vat's syscall */
   readonly #vatSyscall: VatSyscall;
 
-  /** Told when the channel to the worker fails */
+  /** Told when the worker's channel ends without the kernel closing it */
   readonly #onStreamFailure: (error: Error) => void;
 
   /** Whether the kernel is closing the channel itself */
@@ -94,7 +94,8 @@ export class VatHandle implements EndpointHandle {
    * @param params.kernelQueue - The kernel's queue.
    * @param params.logger - Optional logger for error and diagnostic output.
    * @param params.allowedGlobalNames - Optional list of allowed global names for vat endowments.
-   * @param params.onStreamFailure - Called when the channel to the worker fails.
+   * @param params.onStreamFailure - Called when the worker's channel ends without
+   * the kernel closing it.
    */
   // eslint-disable-next-line no-restricted-syntax
   private constructor({
@@ -167,9 +168,8 @@ export class VatHandle implements EndpointHandle {
     this.#vatStream
       .drain(this.#handleMessage.bind(this))
       .then(() => {
-        // A worker that exits closes the channel rather than erroring on it,
-        // so the drain resolves. Silence from a vat nobody asked to close is
-        // the vat going away, not the vat behaving.
+        // A worker that exits has its channel closed rather than failed, so a
+        // clean end is a lost vat too.
         this.#reportStreamFailure(new Error('vat channel closed'));
         return undefined;
       })
@@ -203,19 +203,16 @@ export class VatHandle implements EndpointHandle {
       { vatId: this.vatId },
       { cause: error },
     );
+    // Here, not left to the manager, which ignores a handle it does not hold:
+    // one still shaking hands, or one a restart has replaced.
+    this.#rpcClient.rejectAll(streamError);
     try {
-      // Now, not in the retirement's `terminate`: that waits for the current
-      // crank, which may be blocked on a pending command.
-      this.#rpcClient.rejectAll(streamError);
-    } finally {
-      try {
-        this.#onStreamFailure(streamError);
-      } catch (reportError) {
-        this.#logger?.error(
-          `Failed to report the dead channel of vat ${this.vatId}`,
-          reportError,
-        );
-      }
+      this.#onStreamFailure(streamError);
+    } catch (reportError) {
+      this.#logger?.error(
+        `Failed to report the dead channel of vat ${this.vatId}`,
+        reportError,
+      );
     }
   }
 

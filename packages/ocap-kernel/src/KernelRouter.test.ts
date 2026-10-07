@@ -76,6 +76,7 @@ describe('KernelRouter', () => {
       clearReachableFlag: vi.fn(),
       deleteCListEntry: vi.fn(),
       isVatTerminated: vi.fn().mockReturnValue(false),
+      isVatActive: vi.fn().mockReturnValue(true),
       orphanKernelObject: vi.fn(),
       forgetKref: vi.fn(),
       createCrankSavepoint: vi.fn(),
@@ -1064,21 +1065,30 @@ describe('KernelRouter', () => {
 
     describe('a vat lost while a delivery is in flight', () => {
       const endpointId = 'v2' as EndpointId;
-      let lost: boolean;
-
-      beforeEach(() => {
-        lost = false;
-        (getEndpoint as unknown as MockInstance).mockImplementation(
-          (requested: EndpointId) => {
-            if (lost) {
-              throw new VatNotFoundError(requested as VatId);
-            }
-            return endpointHandle;
-          },
-        );
-      });
 
       it.each([
+        [
+          'send',
+          'deliverMessage' as const,
+          (): RunQueueItem => {
+            (
+              kernelStore.getOwner as unknown as MockInstance
+            ).mockReturnValueOnce(endpointId);
+            return {
+              type: 'send',
+              target: 'ko123',
+              message: {
+                methargs: { body: 'method args', slots: [] },
+                result: 'kp1',
+              } as unknown as SwingsetMessage,
+            };
+          },
+        ],
+        [
+          'notify',
+          'deliverNotify' as const,
+          (): RunQueueItem => makeLiveNotify(endpointId),
+        ],
         [
           'dropExports',
           'deliverDropExports' as const,
@@ -1094,22 +1104,46 @@ describe('KernelRouter', () => {
           (): RunQueueItem => ({ type: 'bringOutYourDead', endpointId }),
         ],
       ])(
-        'skips a %s whose vat dies under it',
+        'rolls back a %s whose vat dies under it',
         async (_what, deliverMethod, makeItem) => {
           (
             endpointHandle[deliverMethod] as unknown as MockInstance
           ).mockImplementationOnce(async () => {
-            // What the manager does when the channel dies: the handle goes in
-            // the same step that rejects the pending command.
-            lost = true;
+            (getEndpoint as unknown as MockInstance).mockImplementation(
+              (requested: EndpointId) => {
+                throw new VatNotFoundError(requested as VatId);
+              },
+            );
             throw new Error('Unexpected stream read error.');
           });
 
           expect(await kernelRouter.deliver(makeItem())).toStrictEqual({
             didDelivery: endpointId,
+            abort: true,
           });
+          expect(kernelQueue.resolvePromises).not.toHaveBeenCalled();
         },
       );
+
+      it('commits a delivery to a vat the kernel retired during it', async () => {
+        (
+          endpointHandle.deliverBringOutYourDead as unknown as MockInstance
+        ).mockImplementationOnce(async () => {
+          (getEndpoint as unknown as MockInstance).mockImplementation(
+            (requested: EndpointId) => {
+              throw new VatNotFoundError(requested as VatId);
+            },
+          );
+          (kernelStore.isVatActive as unknown as MockInstance).mockReturnValue(
+            false,
+          );
+          throw new Error('Unexpected stream read error.');
+        });
+
+        expect(
+          await kernelRouter.deliver({ type: 'bringOutYourDead', endpointId }),
+        ).toStrictEqual({ didDelivery: endpointId });
+      });
 
       it('still throws when the vat is running', async () => {
         (
@@ -1119,6 +1153,23 @@ describe('KernelRouter', () => {
         await expect(
           kernelRouter.deliver({ type: 'bringOutYourDead', endpointId }),
         ).rejects.toThrow('kernel fault');
+      });
+
+      it('still throws for a remote', async () => {
+        (
+          endpointHandle.deliverNotify as unknown as MockInstance
+        ).mockImplementationOnce(async () => {
+          (getEndpoint as unknown as MockInstance).mockImplementation(
+            (requested: EndpointId) => {
+              throw new VatNotFoundError(requested as VatId);
+            },
+          );
+          throw new Error('transport failed');
+        });
+
+        await expect(
+          kernelRouter.deliver(makeLiveNotify('r1' as EndpointId)),
+        ).rejects.toThrow('transport failed');
       });
     });
 

@@ -1,3 +1,4 @@
+import { makePromiseKit } from '@endo/promise-kit';
 import { makeCounter } from '@metamask/kernel-utils';
 import { Logger } from '@metamask/logger';
 import type { VatId } from '@metamask/ocap-kernel';
@@ -65,6 +66,7 @@ const mocks = vi.hoisted(() => {
     stream: {
       synchronize: vi.fn(async () => undefined).mockResolvedValue(undefined),
       return: vi.fn(async () => ({})),
+      throw: vi.fn(async () => ({})),
     },
   };
 });
@@ -208,8 +210,8 @@ describe('NodejsPlatformServices', () => {
     });
   });
 
-  describe('a worker that exits once online', () => {
-    it('fails a launch still shaking hands', async () => {
+  describe('a worker once online', () => {
+    it('fails a launch still shaking hands when it exits', async () => {
       const service = new NodejsPlatformServices({ workerFilePath });
       const testVatId: VatId = getTestVatId();
       const worker = mocks.createMockWorker();
@@ -229,7 +231,34 @@ describe('NodejsPlatformServices', () => {
       );
     });
 
-    it('logs an error the worker raises rather than rethrowing it', async () => {
+    it('is not registered when its handshake completes after it exited', async () => {
+      const service = new NodejsPlatformServices({ workerFilePath });
+      const testVatId: VatId = getTestVatId();
+      const worker = mocks.createMockWorker();
+      vi.mocked(NodeWorker).mockImplementationOnce(function () {
+        return worker;
+      });
+      const handshake = makePromiseKit<void>();
+      mocks.stream.synchronize.mockReturnValueOnce(handshake.promise);
+      const launching = service.launch(testVatId);
+      await delay(0);
+
+      worker.emit('exit', 1);
+      handshake.resolve();
+      await delay(0);
+
+      await expect(launching).rejects.toThrowError(
+        `Worker ${testVatId} exited during startup with code 1`,
+      );
+      expect(service.workers.has(testVatId)).toBe(false);
+      expect(mocks.stream.throw).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: `Worker ${testVatId} exited during startup with code 1`,
+        }),
+      );
+    });
+
+    it('logs an error it raises rather than rethrowing it', async () => {
       const logger = new Logger('test');
       const logError = vi.spyOn(logger, 'error').mockReturnValue();
       const service = new NodejsPlatformServices({ workerFilePath, logger });
@@ -249,7 +278,7 @@ describe('NodejsPlatformServices', () => {
       );
     });
 
-    it('is forgotten, and its channel closed', async () => {
+    it('is forgotten, and its channel closed, when it exits', async () => {
       const service = new NodejsPlatformServices({ workerFilePath });
       const testVatId: VatId = getTestVatId();
       const worker = mocks.createMockWorker();
@@ -262,12 +291,10 @@ describe('NodejsPlatformServices', () => {
       worker.emit('exit', 1);
 
       expect(service.workers.has(testVatId)).toBe(false);
-      // A worker thread that dies emits no port event, so this is how the
-      // kernel hears of it.
       expect(mocks.stream.return).toHaveBeenCalledOnce();
     });
 
-    it('leaves a replacement worker alone', async () => {
+    it('leaves a replacement alone when it exits while being stopped', async () => {
       const service = new NodejsPlatformServices({ workerFilePath });
       const testVatId: VatId = getTestVatId();
       const firstWorker = mocks.createMockWorker();
@@ -280,9 +307,8 @@ describe('NodejsPlatformServices', () => {
           return secondWorker;
         });
       await service.launch(testVatId);
-      // Forgotten with its listeners still attached, so its `exit` arrives after
-      // a replacement holds the vat id.
-      service.workers.delete(testVatId);
+      mocks.stream.return.mockReturnValueOnce(new Promise(() => undefined));
+      service.terminate(testVatId).catch(() => undefined);
       await service.launch(testVatId);
 
       firstWorker.emit('exit', 1);
@@ -343,8 +369,36 @@ describe('NodejsPlatformServices', () => {
       });
       const testVatId: VatId = getTestVatId();
 
-      // A worker that exited on its own has already taken its entry.
       expect(await service.terminate(testVatId)).toBeUndefined();
+    });
+
+    it('returns at once when called again while the worker stops', async () => {
+      const service = new NodejsPlatformServices({ workerFilePath });
+      const testVatId: VatId = getTestVatId();
+      const worker = mocks.createMockWorker();
+      vi.mocked(NodeWorker).mockImplementationOnce(function () {
+        return worker;
+      });
+      // As Node's `worker.terminate()` does: settled by an `exit` listener,
+      // which `removeAllListeners` can strip.
+      worker.terminate.mockImplementation(
+        async () =>
+          new Promise<undefined>((resolve) => {
+            worker.once('exit', () => resolve(undefined));
+          }),
+      );
+      await service.launch(testVatId);
+
+      const first = service.terminate(testVatId);
+      const second = service.terminate(testVatId);
+      await delay(0);
+      worker.emit('exit', 0);
+
+      expect(await Promise.all([first, second])).toStrictEqual([
+        undefined,
+        undefined,
+      ]);
+      expect(worker.terminate).toHaveBeenCalledOnce();
     });
   });
 

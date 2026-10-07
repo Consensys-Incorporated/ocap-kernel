@@ -124,7 +124,6 @@ export class NodejsPlatformServices implements PlatformServices {
     });
 
     worker.once('online', () => {
-      // Remove error and exit listeners now that worker is online
       worker.removeAllListeners('error');
       worker.removeAllListeners('exit');
       // Without a listener, a worker's uncaught exception is rethrown in the
@@ -132,22 +131,29 @@ export class NodejsPlatformServices implements PlatformServices {
       worker.on('error', (error) => {
         this.#logger.error(`Worker ${vatId} errored:`, error);
       });
+
+      const stream = new NodeWorkerDuplexStream<JsonRpcMessage, JsonRpcMessage>(
+        worker,
+        isJsonRpcMessage,
+      );
+      let phase: 'handshake' | 'registered' | 'exited' = 'handshake';
       worker.once('exit', (code) => {
         // An orderly `terminate` removes this listener before killing the
         // worker, so reaching it means the worker went away on its own.
-        const entry = this.workers.get(vatId);
-        if (!entry) {
-          // Still shaking hands: nothing else would settle the launch.
-          reject(
-            new Error(
-              `Worker ${vatId} exited during startup with code ${code}`,
-            ),
+        if (phase === 'handshake') {
+          phase = 'exited';
+          const error = new Error(
+            `Worker ${vatId} exited during startup with code ${code}`,
           );
+          // Failed, so the handshake does not wait forever on a worker that is
+          // gone.
+          stream.throw(error).catch(() => undefined);
+          reject(error);
           return;
         }
-        // Guarded by identity in case a replacement is registered under this
-        // vat id.
-        if (entry.worker !== worker) {
+        const entry = this.workers.get(vatId);
+        // A `terminate` under way has forgotten it already.
+        if (entry?.worker !== worker) {
           return;
         }
         this.workers.delete(vatId);
@@ -162,13 +168,13 @@ export class NodejsPlatformServices implements PlatformServices {
         });
       });
 
-      const stream = new NodeWorkerDuplexStream<JsonRpcMessage, JsonRpcMessage>(
-        worker,
-        isJsonRpcMessage,
-      );
       stream
         .synchronize()
         .then(() => {
+          if (phase === 'exited') {
+            return undefined;
+          }
+          phase = 'registered';
           // Only add worker to map after successful synchronization
           this.workers.set(vatId, { worker, stream });
           resolve(stream);
@@ -197,27 +203,26 @@ export class NodejsPlatformServices implements PlatformServices {
    *
    * @param vatId - The vat id of the worker to terminate.
    * @returns A promise that resolves when the worker has terminated, or at
-   * once if there is no worker to terminate, and rejects if it failed to stop.
+   * once if there is no worker or another call is stopping it, and rejects if
+   * it failed to stop.
    */
   async terminate(vatId: VatId): Promise<undefined> {
     const workerEntry = this.workers.get(vatId);
     if (!workerEntry) {
-      // A worker that exited on its own took its entry with it, and its vat is
-      // being torn down because of that: there is nothing left to stop.
+      // Its worker exited on its own, never started, or is being stopped.
       this.#logger.debug(`No worker to terminate for vat ${vatId}`);
       return undefined;
     }
+    // Forgotten first. An entry left behind refuses the vat's next worker as a
+    // duplicate, and a second call would strip the listener this call's
+    // `worker.terminate()` settles on, leaving it pending forever.
+    this.workers.delete(vatId);
     const { worker, stream } = workerEntry;
-    // An entry left behind refuses the vat's next worker as a duplicate.
     try {
       await stream.return();
     } finally {
-      try {
-        worker.removeAllListeners();
-        await worker.terminate();
-      } finally {
-        this.workers.delete(vatId);
-      }
+      worker.removeAllListeners();
+      await worker.terminate();
     }
     return undefined;
   }

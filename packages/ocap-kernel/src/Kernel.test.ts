@@ -857,6 +857,24 @@ describe('Kernel', () => {
       expect(workerTerminateAllMock).toHaveBeenCalledOnce();
     });
 
+    it('tells each vat its channel is closing before stopping remote comms', async () => {
+      const stopRemoteCommsMock = vi
+        .spyOn(mockPlatformServices, 'stopRemoteComms')
+        .mockResolvedValue(undefined);
+      const kernel = await Kernel.make(
+        mockPlatformServices,
+        mockKernelDatabase,
+      );
+      await kernel.launchSubcluster(makeSingleVatClusterConfig());
+
+      await kernel.stop();
+
+      const [expectClose] =
+        vatHandles[0]?.expectClose.mock.invocationCallOrder ?? [];
+      const [stopRemoteComms] = stopRemoteCommsMock.mock.invocationCallOrder;
+      expect(expectClose).toBeLessThan(stopRemoteComms as number);
+    });
+
     it('waits for crank before stopping', async () => {
       const kernel = await Kernel.make(
         mockPlatformServices,

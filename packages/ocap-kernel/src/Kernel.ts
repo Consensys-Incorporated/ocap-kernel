@@ -881,6 +881,9 @@ export class Kernel {
    */
   async stop(): Promise<void> {
     await this.#kernelQueue.waitForCrank();
+    // Before anything that yields, so a worker that exits from here on reads
+    // as the stop, not as its vat dying.
+    this.#vatManager.expectWorkersToStop();
     this.#vatManager.abandonQueuedWork(
       new Error(
         'Kernel was stopped before answering; terminations already queued still take effect on its next start, restarts do not',
@@ -889,7 +892,6 @@ export class Kernel {
     this.#kernelStore.recordLastActiveTime();
     await this.#platformServices.stopRemoteComms();
     this.#remoteManager.cleanup();
-    this.#vatManager.expectWorkersToStop();
     await this.#platformServices.terminateAll();
     this.#kernelDatabase.close();
   }
