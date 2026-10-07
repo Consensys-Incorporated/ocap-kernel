@@ -79,6 +79,16 @@ const mocks = vi.hoisted(() => {
       this.#deliverLater({ type: 'restartVat', vatId } as RunQueueItem);
     });
 
+    discardHeldRequests = vi.fn();
+
+    enqueueTerminateVat = vi.fn((vatId: string, reason?: unknown) => {
+      this.#deliverLater({
+        type: 'terminateVat',
+        vatId,
+        ...(reason ? { reason } : {}),
+      } as RunQueueItem);
+    });
+
     /**
      * @param item - The queued item to hand to the router on a later turn.
      */
@@ -714,6 +724,43 @@ describe('Kernel', () => {
   });
 
   describe('terminateVat()', () => {
+    it.each([
+      { method: 'clearStorage', message: 'Kernel storage was cleared' },
+      { method: 'reset', message: 'Kernel was reset' },
+      { method: 'stop', message: 'Kernel was stopped' },
+    ] as const)(
+      'rejects a queued termination on $method',
+      async ({ method, message }) => {
+        const kernel = await Kernel.make(
+          mockPlatformServices,
+          mockKernelDatabase,
+        );
+        await kernel.launchSubcluster(makeSingleVatClusterConfig());
+        mocks.KernelQueue.lastInstance.enqueueTerminateVat.mockImplementationOnce(
+          () => undefined,
+        );
+
+        const terminating = kernel.terminateVat('v1');
+        await kernel[method]();
+
+        await expect(terminating).rejects.toThrow(message);
+      },
+    );
+
+    it('asks the run loop to terminate the vat', async () => {
+      const kernel = await Kernel.make(
+        mockPlatformServices,
+        mockKernelDatabase,
+      );
+      await kernel.launchSubcluster(makeSingleVatClusterConfig());
+
+      await kernel.terminateVat('v1');
+
+      expect(
+        mocks.KernelQueue.lastInstance.enqueueTerminateVat,
+      ).toHaveBeenCalledWith('v1', undefined);
+    });
+
     it('deletes a vat from the kernel without errors when the vat exists', async () => {
       const kernel = await Kernel.make(
         mockPlatformServices,
@@ -739,16 +786,17 @@ describe('Kernel', () => {
       expect(vatHandles).toHaveLength(0);
     });
 
-    it('throws an error when a vat terminate method throws', async () => {
+    it('terminates a vat whose channel will not close', async () => {
       const kernel = await Kernel.make(
         mockPlatformServices,
         mockKernelDatabase,
       );
       await kernel.launchSubcluster(makeSingleVatClusterConfig());
       vatHandles[0]?.terminate.mockRejectedValueOnce('Test error');
-      await expect(async () => kernel.terminateVat('v1')).rejects.toThrow(
-        'Test error',
-      );
+
+      await kernel.terminateVat('v1');
+
+      expect(kernel.getVatIds()).toStrictEqual([]);
     });
   });
 

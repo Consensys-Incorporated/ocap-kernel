@@ -386,12 +386,26 @@ const RunQueueItemRestartVatStruct = object({
 
 export type RunQueueItemRestartVat = Infer<typeof RunQueueItemRestartVatStruct>;
 
+/**
+ * A request to terminate a vat, queued so the run loop performs it.
+ */
+const RunQueueItemTerminateVatStruct = object({
+  type: literal('terminateVat'),
+  vatId: VatIdStruct,
+  reason: exactOptional(KernelCapDataStruct),
+});
+
+export type RunQueueItemTerminateVat = Infer<
+  typeof RunQueueItemTerminateVatStruct
+>;
+
 export const RunQueueItemStruct = union([
   RunQueueItemSendStruct,
   RunQueueItemNotifyStruct,
   RunQueueItemGCActionStruct,
   RunQueueItemBringOutYourDeadStruct,
   RunQueueItemRestartVatStruct,
+  RunQueueItemTerminateVatStruct,
 ]);
 
 export type RunQueueItem = Infer<typeof RunQueueItemStruct>;
@@ -927,6 +941,12 @@ export type CrankResult = {
   didDelivery?: EndpointId | 'kernel'; // the endpoint to which we made a delivery
   abort?: boolean; // changes should be discarded, not committed
   terminate?: { vatId: VatId; reject: boolean; info: CapData<KRef> };
+  /**
+   * The delivery has done work a caller will be told of, so a later failure in
+   * this crank, from collection or the audit, must not roll it back. Ignored
+   * alongside `abort`, which rolls back first.
+   */
+  irrevocable?: boolean;
   /**
    * Work the run loop runs once the crank has committed, skipped if it aborts.
    * For what a rollback could not undo anyway, and what must not be observable

@@ -1,3 +1,4 @@
+import type { CapData } from '@endo/marshal';
 import { makePromiseKit } from '@endo/promise-kit';
 import {
   VatAlreadyExistsError,
@@ -14,7 +15,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { KernelQueue } from '../KernelQueue.ts';
 import { makeFatalKernelError } from '../liveslots/kernel-marshal.ts';
 import type { KernelStore } from '../store/index.ts';
-import type { VatId, VatConfig, PlatformServices } from '../types.ts';
+import type { KRef, VatId, VatConfig, PlatformServices } from '../types.ts';
 import { VatHandle } from './VatHandle.ts';
 import { VatManager } from './VatManager.ts';
 
@@ -121,7 +122,18 @@ describe('VatManager', () => {
           });
         });
       }),
+      enqueueTerminateVat: vi.fn((vatId: VatId, reason?: CapData<KRef>) => {
+        queueMicrotask(() => {
+          vatManager
+            .performVatTermination(vatId, reason)
+            .catch((error: unknown) => {
+              throw error;
+            });
+        });
+      }),
       onRunLoopDeath: vi.fn(() => () => undefined),
+      assertRunLoopAlive: vi.fn(),
+      discardHeldRequests: vi.fn(),
     } as unknown as Mocked<KernelQueue>;
 
     mockLogger = new Logger('test');
@@ -482,7 +494,7 @@ describe('VatManager', () => {
         'v1',
         undefined,
       );
-      expect(vatHandles[0]?.terminate).toHaveBeenCalledWith(false);
+      expect(vatHandles[0]?.terminate).toHaveBeenCalledWith(false, undefined);
       expect(vatManager.hasVat('v1')).toBe(false);
     });
 
@@ -625,28 +637,41 @@ describe('VatManager', () => {
       expect(mockKernelStore.markVatAsTerminated).not.toHaveBeenCalled();
     });
 
-    it.each([
-      {
-        step: 'unpinning the root',
-        arrange: () => {
-          mockKernelStore.unpinObject.mockImplementationOnce(() => {
-            throw new Error('unpin failed');
-          });
-        },
-      },
-      {
-        step: 'terminating the handle',
-        arrange: () => {
-          vatHandles[0]?.terminate.mockRejectedValueOnce(
-            new Error('terminate failed'),
-          );
-        },
-      },
-    ])('forgets the vat when $step throws', async ({ arrange }) => {
+    it('does not wait for the channel to close', async () => {
       await vatManager.runVat('v1', createMockVatConfig());
-      arrange();
+      vatHandles[0]?.terminate.mockReturnValueOnce(
+        new Promise(() => undefined),
+      );
 
-      await expect(vatManager.stopVat('v1', true)).rejects.toThrow('failed');
+      await vatManager.stopVat('v1', true);
+
+      expect(mockKernelStore.deleteVat).toHaveBeenCalledWith('v1');
+    });
+
+    it('logs a channel that will not close', async () => {
+      const logError = vi.spyOn(mockLogger, 'error');
+      await vatManager.runVat('v1', createMockVatConfig());
+      const failure = new Error('stream will not end');
+      vatHandles[0]?.terminate.mockRejectedValueOnce(failure);
+
+      await vatManager.stopVat('v1', true);
+      await delay();
+
+      expect(logError).toHaveBeenCalledWith(
+        'Channel to vat v1 would not close:',
+        failure,
+      );
+    });
+
+    it('forgets the vat when unpinning the root throws', async () => {
+      await vatManager.runVat('v1', createMockVatConfig());
+      mockKernelStore.unpinObject.mockImplementationOnce(() => {
+        throw new Error('unpin failed');
+      });
+
+      await expect(vatManager.stopVat('v1', true)).rejects.toThrow(
+        'unpin failed',
+      );
 
       expect(vatManager.hasVat('v1')).toBe(false);
       expect(vatManager.getVatIds()).toStrictEqual([]);
@@ -727,7 +752,10 @@ describe('VatManager', () => {
 
       await vatManager.terminateVat('v1');
 
-      expect(mockKernelQueue.waitForCrank).toHaveBeenCalled();
+      expect(mockKernelQueue.enqueueTerminateVat).toHaveBeenCalledWith(
+        'v1',
+        undefined,
+      );
       expect(mockPlatformServices.terminate).toHaveBeenCalled();
       expect(vatHandles[0]?.terminate).toHaveBeenCalled();
       expect(mockKernelStore.markVatAsTerminated).toHaveBeenCalledWith('v1');
@@ -745,6 +773,237 @@ describe('VatManager', () => {
         'v1',
         expect.objectContaining({ message: 'Vat termination: Custom reason' }),
       );
+    });
+
+    it('supersedes a restart still queued for the same vat', async () => {
+      await vatManager.runVat('v1', createMockVatConfig());
+      mockKernelQueue.enqueueRestartVat.mockImplementationOnce(() => undefined);
+      const restarting = vatManager.restartVat('v1');
+
+      await vatManager.terminateVat('v1');
+
+      await expect(restarting).rejects.toThrow(VatDeletedError);
+    });
+
+    it('rejects a superseded restart with the run loop death that drops its termination', async () => {
+      const deathHandlers: ((error: Error) => void)[] = [];
+      mockKernelQueue.onRunLoopDeath.mockImplementation((reject) => {
+        deathHandlers.push(reject);
+        return () => undefined;
+      });
+      await vatManager.runVat('v1', createMockVatConfig());
+      mockKernelQueue.enqueueRestartVat.mockImplementationOnce(() => undefined);
+      const restarting = vatManager.restartVat('v1');
+      // Held during a crank that then kills the run loop, so never written.
+      mockKernelQueue.enqueueTerminateVat.mockImplementationOnce(
+        () => undefined,
+      );
+      const terminating = vatManager.terminateVat('v1');
+      await delay();
+
+      const death = new Error('Kernel run loop died');
+      for (const reject of deathHandlers) {
+        reject(death);
+      }
+
+      await expect(restarting).rejects.toBe(death);
+      await expect(terminating).rejects.toBe(death);
+    });
+
+    it('leaves a queued restart in place when the termination is refused', async () => {
+      await vatManager.runVat('v1', createMockVatConfig());
+      mockKernelQueue.enqueueRestartVat.mockImplementationOnce(() => undefined);
+      const restarting = vatManager.restartVat('v1');
+      mockKernelQueue.enqueueTerminateVat.mockImplementationOnce(() => {
+        throw new Error('run loop is dead');
+      });
+
+      await expect(vatManager.terminateVat('v1')).rejects.toThrow(
+        'run loop is dead',
+      );
+
+      const crankResult = await vatManager.performVatRestart('v1');
+      await crankResult?.afterCommit?.();
+      expect(await restarting).toBe(vatHandles[1]);
+    });
+
+    it('answers a restart asked for while the termination is pending with its death', async () => {
+      await vatManager.runVat('v1', createMockVatConfig());
+      leaveRequestQueued();
+      const overtaken = vatManager.restartVat('v1');
+      mockKernelQueue.enqueueTerminateVat.mockImplementationOnce(
+        () => undefined,
+      );
+      const terminating = vatManager.terminateVat('v1');
+      const later = vatManager.restartVat('v1');
+
+      expect(await vatManager.performVatRestart('v1')).toBeUndefined();
+      await vatManager.performVatTermination('v1');
+
+      await expect(overtaken).rejects.toThrow(VatDeletedError);
+      await expect(later).rejects.toThrow(VatDeletedError);
+      expect(await terminating).toBeUndefined();
+      expect(mockKernelQueue.enqueueRestartVat).toHaveBeenCalledOnce();
+      expect(mockPlatformServices.launch).toHaveBeenCalledOnce();
+    });
+
+    it('queues restarts again once its termination is abandoned', async () => {
+      await vatManager.runVat('v1', createMockVatConfig());
+      mockKernelQueue.enqueueTerminateVat.mockImplementationOnce(
+        () => undefined,
+      );
+      const terminating = vatManager.terminateVat('v1');
+      vatManager.abandonQueuedWork(new Error('Kernel was reset'));
+      await expect(terminating).rejects.toThrow('Kernel was reset');
+
+      expect(await vatManager.restartVat('v1')).toBe(vatHandles[1]);
+    });
+
+    it('throws for a vat that is neither running nor persisted', async () => {
+      mockKernelStore.isVatActive.mockReturnValue(false);
+
+      await expect(vatManager.terminateVat('v9')).rejects.toThrow(
+        VatNotFoundError,
+      );
+      expect(mockKernelQueue.enqueueTerminateVat).not.toHaveBeenCalled();
+    });
+
+    describe('performVatTermination', () => {
+      it('carries out a request nobody is waiting for', async () => {
+        await vatManager.runVat('v1', createMockVatConfig());
+
+        expect(await vatManager.performVatTermination('v1')).toStrictEqual({
+          irrevocable: true,
+        });
+
+        expect(mockKernelStore.markVatAsTerminated).toHaveBeenCalledWith('v1');
+      });
+
+      it('tells an overtaken restart its vat is gone when something else killed it first', async () => {
+        await vatManager.runVat('v1', createMockVatConfig());
+        leaveRequestQueued();
+        const restarting = vatManager.restartVat('v1');
+        mockKernelQueue.enqueueTerminateVat.mockImplementationOnce(
+          () => undefined,
+        );
+        const terminating = vatManager.terminateVat('v1');
+        await vatManager.stopVat('v1', true);
+        mockKernelStore.isVatActive.mockReturnValue(false);
+
+        expect(await vatManager.performVatTermination('v1')).toBeUndefined();
+
+        await expect(restarting).rejects.toThrow(VatDeletedError);
+        expect(await terminating).toBeUndefined();
+      });
+
+      it('answers a caller whose vat something else already killed', async () => {
+        await vatManager.runVat('v1', createMockVatConfig());
+        mockKernelQueue.enqueueTerminateVat.mockImplementationOnce(
+          () => undefined,
+        );
+        const terminating = vatManager.terminateVat('v1');
+        await vatManager.stopVat('v1', true);
+        mockKernelStore.isVatActive.mockReturnValue(false);
+
+        expect(await vatManager.performVatTermination('v1')).toBeUndefined();
+
+        expect(await terminating).toBeUndefined();
+      });
+
+      it('answers its caller when the run loop dies after the crank took the request', async () => {
+        await vatManager.runVat('v1', createMockVatConfig());
+        mockKernelQueue.enqueueTerminateVat.mockImplementationOnce(
+          () => undefined,
+        );
+        let killRunLoop = (_error: Error): void => undefined;
+        mockKernelQueue.onRunLoopDeath.mockImplementationOnce(
+          (reject: (error: Error) => void) => {
+            killRunLoop = reject;
+            return () => undefined;
+          },
+        );
+        const terminating = vatManager.terminateVat('v1');
+        let endCrank = (): void => undefined;
+        mockKernelQueue.waitForCrank.mockReturnValue(
+          new Promise<void>((resolve) => {
+            endCrank = resolve;
+          }),
+        );
+
+        await vatManager.performVatTermination('v1');
+        killRunLoop(new Error('run loop died'));
+        endCrank();
+
+        expect(await terminating).toBeUndefined();
+      });
+
+      it('settles without rejecting when the teardown fails', async () => {
+        await vatManager.runVat('v1', createMockVatConfig());
+        mockKernelQueue.enqueueTerminateVat.mockImplementationOnce(
+          () => undefined,
+        );
+        const terminating = vatManager.terminateVat('v1');
+        mockKernelStore.deleteVat.mockImplementationOnce(() => {
+          throw new Error('deleteVat failed');
+        });
+
+        expect(await vatManager.performVatTermination('v1')).toStrictEqual({
+          irrevocable: true,
+        });
+        await expect(terminating).rejects.toThrow(
+          expect.objectContaining({
+            message: 'Termination of vat v1 failed',
+            cause: expect.objectContaining({ message: 'deleteVat failed' }),
+          }),
+        );
+      });
+
+      it('holds a restart asked for during a failing teardown for the termination', async () => {
+        await vatManager.runVat('v1', createMockVatConfig());
+        mockKernelQueue.enqueueTerminateVat.mockImplementationOnce(
+          () => undefined,
+        );
+        const terminating = vatManager.terminateVat('v1');
+        mockKernelStore.deleteVat.mockImplementationOnce(() => {
+          throw new Error('deleteVat failed');
+        });
+        let restarting: Promise<VatHandle> | undefined;
+        mockPlatformServices.terminate.mockImplementationOnce(async () => {
+          restarting = vatManager.restartVat('v1');
+        });
+
+        await vatManager.performVatTermination('v1');
+
+        await expect(restarting).rejects.toThrow(
+          'Restart of vat v1 was overtaken by a termination that failed',
+        );
+        await expect(terminating).rejects.toThrow(
+          'Termination of vat v1 failed',
+        );
+        expect(mockKernelQueue.enqueueRestartVat).not.toHaveBeenCalled();
+      });
+
+      it('tells an overtaken restart it was not carried out when the teardown fails', async () => {
+        await vatManager.runVat('v1', createMockVatConfig());
+        leaveRequestQueued();
+        const restarting = vatManager.restartVat('v1');
+        mockKernelQueue.enqueueTerminateVat.mockImplementationOnce(
+          () => undefined,
+        );
+        const terminating = vatManager.terminateVat('v1');
+        mockKernelStore.deleteVat.mockImplementationOnce(() => {
+          throw new Error('deleteVat failed');
+        });
+
+        await vatManager.performVatTermination('v1');
+
+        await expect(restarting).rejects.toThrow(
+          'Restart of vat v1 was overtaken by a termination that failed',
+        );
+        await expect(terminating).rejects.toThrow(
+          'Termination of vat v1 failed',
+        );
+      });
     });
 
     describe('a vat that is persisted but not running', () => {
@@ -801,15 +1060,6 @@ describe('VatManager', () => {
 
         expect(mockKernelStore.unpinObject).toHaveBeenCalledWith('ko1');
       });
-
-      it('throws for a vat that is neither running nor persisted', async () => {
-        mockKernelStore.isVatActive.mockReturnValue(false);
-
-        await expect(vatManager.terminateVat('v9')).rejects.toThrow(
-          VatNotFoundError,
-        );
-        expect(mockKernelStore.markVatAsTerminated).not.toHaveBeenCalled();
-      });
     });
   });
 
@@ -822,7 +1072,7 @@ describe('VatManager', () => {
       const result = await vatManager.restartVat('v1');
 
       expect(mockKernelQueue.enqueueRestartVat).toHaveBeenCalledWith('v1');
-      expect(originalHandle?.terminate).toHaveBeenCalledWith(false);
+      expect(originalHandle?.terminate).toHaveBeenCalledWith(false, undefined);
       expect(mockPlatformServices.launch).toHaveBeenCalledTimes(2);
       expect(makeVatHandleMock).toHaveBeenCalledTimes(2);
       expect(result).not.toBe(originalHandle);
@@ -1173,7 +1423,7 @@ describe('VatManager', () => {
         await restartPastTheTimeout();
         mockPlatformServices.terminate.mockClear();
         finishLaunch({
-          end: vi.fn(),
+          end: vi.fn().mockResolvedValue(undefined),
         } as unknown as DuplexStream<JsonRpcMessage, JsonRpcMessage>);
         await delay();
 
@@ -1220,26 +1470,40 @@ describe('VatManager', () => {
     });
   });
 
-  describe('abandonRestarts', () => {
-    it('rejects every caller waiting on a queued restart', async () => {
+  describe('abandonQueuedWork', () => {
+    it('rejects every caller waiting on queued work', async () => {
       await vatManager.runVat('v1', createMockVatConfig());
       await vatManager.runVat('v2', createMockVatConfig());
+      await vatManager.runVat('v3', createMockVatConfig());
       leaveRequestQueued();
       leaveRequestQueued();
-      const restarts = [
+      leaveRequestQueued();
+      mockKernelQueue.enqueueTerminateVat.mockImplementationOnce(
+        () => undefined,
+      );
+      const waiting = [
         vatManager.restartVat('v1'),
         vatManager.restartVat('v2'),
+        // Overtaken by the termination after it.
+        vatManager.restartVat('v3'),
+        vatManager.terminateVat('v3'),
       ];
       const reset = new Error('Kernel was reset');
 
-      vatManager.abandonRestarts(reset);
+      vatManager.abandonQueuedWork(reset);
 
-      for (const restarting of restarts) {
-        await expect(restarting).rejects.toBe(reset);
+      for (const caller of waiting) {
+        await expect(caller).rejects.toBe(reset);
       }
       // Their items find nobody to answer.
       expect(await vatManager.performVatRestart('v1')).toBeUndefined();
-      expect(mockPlatformServices.launch).toHaveBeenCalledTimes(2);
+      expect(mockPlatformServices.launch).toHaveBeenCalledTimes(3);
+    });
+
+    it('discards requests held for the open crank', () => {
+      vatManager.abandonQueuedWork(new Error('Kernel was reset'));
+
+      expect(mockKernelQueue.discardHeldRequests).toHaveBeenCalledOnce();
     });
   });
 
@@ -1410,6 +1674,15 @@ describe('VatManager', () => {
   });
 
   describe('terminateAllVats', () => {
+    it('writes directly rather than queuing', async () => {
+      await vatManager.runVat('v1', createMockVatConfig());
+
+      await vatManager.terminateAllVats();
+
+      expect(mockKernelQueue.enqueueTerminateVat).not.toHaveBeenCalled();
+      expect(mockKernelStore.markVatAsTerminated).toHaveBeenCalledWith('v1');
+    });
+
     it('terminates all vats in reverse order', async () => {
       await vatManager.runVat('v1', createMockVatConfig());
       await vatManager.runVat('v2', createMockVatConfig());
@@ -1422,6 +1695,24 @@ describe('VatManager', () => {
       expect(mockKernelStore.markVatAsTerminated).toHaveBeenCalledWith('v2');
       expect(mockKernelStore.markVatAsTerminated).toHaveBeenCalledWith('v1');
       expect(mockKernelStore.collectGarbage).toHaveBeenCalledTimes(2);
+      expect(vatManager.getVatIds()).toStrictEqual([]);
+    });
+
+    it('skips a vat something else retired while an earlier one stopped', async () => {
+      await vatManager.runVat('v1', createMockVatConfig());
+      await vatManager.runVat('v2', createMockVatConfig());
+      mockPlatformServices.terminate.mockImplementationOnce(async () => {
+        // A queued termination of v1 runs while v2's worker stops.
+        await vatManager.stopVat('v1', true);
+        mockKernelStore.isVatActive.mockReturnValue(false);
+      });
+
+      await vatManager.terminateAllVats();
+
+      expect(mockKernelStore.markVatAsTerminated.mock.calls).toStrictEqual([
+        ['v2'],
+        ['v1'],
+      ]);
       expect(vatManager.getVatIds()).toStrictEqual([]);
     });
 

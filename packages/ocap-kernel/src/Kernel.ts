@@ -149,8 +149,8 @@ export class Kernel {
       this.#resetKernelState({ resetIdentity: Boolean(options.mnemonic) });
     }
 
-    // Bypass VatManager.terminateVat() here because it calls waitForCrank(),
-    // which would deadlock — this callback is invoked from within a crank.
+    // `stopVat`, not `terminateVat`: this runs inside a crank, and
+    // `terminateVat` would wait for a crank that cannot start until it ends.
     this.#kernelQueue = new KernelQueue(
       this.#kernelStore,
       async (vatId, reason) =>
@@ -228,6 +228,7 @@ export class Kernel {
         this.#kernelServiceManager,
       ),
       this.#vatManager.performVatRestart.bind(this.#vatManager),
+      this.#vatManager.performVatTermination.bind(this.#vatManager),
       this.#logger,
     );
 
@@ -546,7 +547,9 @@ export class Kernel {
   }
 
   /**
-   * Terminates a named sub-cluster of vats.
+   * Terminates a named sub-cluster of vats, each by way of `terminateVat`.
+   * Refused on a dead run loop. A member that survives keeps the subcluster
+   * and its IO channels, and makes this reject.
    *
    * @param subclusterId - The id of the subcluster to terminate.
    * @returns A promise that resolves when termination is complete.
@@ -632,10 +635,14 @@ export class Kernel {
   }
 
   /**
-   * Terminate a vat with extreme prejudice.
+   * Terminate a vat with extreme prejudice. The run loop carries it out in a
+   * crank of its own, so this waits behind the run queue, and rejects if the
+   * run loop dies or the kernel is stopped, reset or has its storage cleared
+   * first.
    *
    * @param vatId - The ID of the vat to terminate.
-   * @param reason - The reason for the termination, if any.
+   * @param reason - The reason for the termination, if any. It must carry no
+   *   slots.
    * @returns A promise that resolves when the vat has been terminated.
    */
   async terminateVat(vatId: VatId, reason?: CapData<KRef>): Promise<void> {
@@ -648,8 +655,8 @@ export class Kernel {
   async clearStorage(): Promise<void> {
     await this.#kernelQueue.waitForCrank();
     this.#kernelStore.clear();
-    this.#vatManager.abandonRestarts(
-      new Error('Kernel storage was cleared; the restart was abandoned'),
+    this.#vatManager.abandonQueuedWork(
+      new Error('Kernel storage was cleared; queued work was abandoned'),
     );
   }
 
@@ -852,8 +859,8 @@ export class Kernel {
       await this.terminateAllVats();
       this.#subclusterManager.clearSystemSubclusters();
       this.#resetKernelState();
-      this.#vatManager.abandonRestarts(
-        new Error('Kernel was reset; the restart was abandoned'),
+      this.#vatManager.abandonQueuedWork(
+        new Error('Kernel was reset; queued work was abandoned'),
       );
     } catch (error) {
       this.#logger.error('Error resetting kernel:', error);
@@ -874,8 +881,10 @@ export class Kernel {
    */
   async stop(): Promise<void> {
     await this.#kernelQueue.waitForCrank();
-    this.#vatManager.abandonRestarts(
-      new Error('Kernel was stopped; the restart was abandoned'),
+    this.#vatManager.abandonQueuedWork(
+      new Error(
+        'Kernel was stopped before answering; terminations already queued still take effect on its next start, restarts do not',
+      ),
     );
     this.#kernelStore.recordLastActiveTime();
     await this.#platformServices.stopRemoteComms();

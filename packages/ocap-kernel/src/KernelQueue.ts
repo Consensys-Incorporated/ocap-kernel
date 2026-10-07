@@ -15,10 +15,13 @@ import type {
   RunQueueItem,
   RunQueueItemNotify,
   RunQueueItemRestartVat,
+  RunQueueItemTerminateVat,
   RunQueueItemSend,
   VatId,
 } from './types.ts';
 import { Fail } from './utils/assert.ts';
+
+type HeldRequest = RunQueueItemRestartVat | RunQueueItemTerminateVat;
 
 /** What a caller awaiting queued work is told when the run loop dies. */
 const DEAD_RUN_LOOP_WORK =
@@ -70,7 +73,7 @@ export class KernelQueue {
    * would be rolled back with it if it aborts, and their callers would wait on
    * work nothing is going to do.
    */
-  #heldRequests: RunQueueItemRestartVat[] = [];
+  #heldRequests: HeldRequest[] = [];
 
   /** Thunk to signal run queue transition from empty to non-empty */
   #wakeUpTheRunQueue: (() => void) | null;
@@ -81,8 +84,8 @@ export class KernelQueue {
    * False once the savepoint has been handed to `rollbackCrank` — attempted,
    * not necessarily succeeded, since it is forgotten either way and asking
    * twice could only report "no such savepoint" over the real error — and
-   * false once a vat's death has been recorded, which must outlive whatever
-   * throws after it.
+   * false once a vat's death has been recorded, or a crank result reports
+   * itself `irrevocable`, which must outlive whatever throws after it.
    *
    * A field rather than a return value from `#processCrankResult`, because that
    * method can throw after rolling back (`#terminateVat`, `collectGarbage`).
@@ -226,7 +229,8 @@ export class KernelQueue {
   /**
    * Tell a caller waiting on queued work if the run loop dies before carrying
    * it out. `subscriptions` covers a message's result; a request with no kernel
-   * promise behind it — a vat restart — has nothing else that would settle it.
+   * promise behind it — a vat restart or termination — has nothing else that
+   * would settle it.
    *
    * @param reject - How to tell the caller.
    * @returns A function that unregisters it, for the caller's own `finally`.
@@ -439,6 +443,9 @@ export class KernelQueue {
         this.#deliveryRollbackAllowed = false;
       }
     }
+    if (crankResult?.irrevocable) {
+      this.#deliveryRollbackAllowed = false;
+    }
     this.#kernelStore.collectGarbage();
     // While a violation can still undo this crank, the audit goes first, so the
     // flush does not settle the promise `enqueueMessage` gave an external
@@ -603,12 +610,21 @@ export class KernelQueue {
    *
    * @param item - The item to add.
    */
-  #enqueueRequest(item: RunQueueItemRestartVat): void {
+  #enqueueRequest(item: HeldRequest): void {
     if (this.#kernelStore.isInCrank()) {
       this.#heldRequests.push(item);
     } else {
       this.#enqueueRun(item);
     }
+  }
+
+  /**
+   * Forget the requests held for the open crank to write once it ends, for a
+   * kernel discarding its run queue: not in the store yet, they would outlive
+   * a wipe of it.
+   */
+  discardHeldRequests(): void {
+    this.#heldRequests = [];
   }
 
   /**
@@ -620,6 +636,23 @@ export class KernelQueue {
     for (const item of held) {
       this.#enqueueRun(item);
     }
+  }
+
+  /**
+   * Enqueue a request to terminate a vat.
+   *
+   * @param vatId - The vat to terminate.
+   * @param reason - The reason, if any. It must carry no slots.
+   */
+  enqueueTerminateVat(vatId: VatId, reason?: CapData<KRef>): void {
+    this.assertRunLoopAlive('terminate a vat');
+    // A queued row takes no reference count on what it names.
+    !reason?.slots.length || Fail`a termination reason cannot carry slots`;
+    this.#enqueueRequest({
+      type: 'terminateVat',
+      vatId,
+      ...(reason && { reason }),
+    });
   }
 
   /**
