@@ -387,9 +387,7 @@ const RunQueueItemRestartVatStruct = object({
 export type RunQueueItemRestartVat = Infer<typeof RunQueueItemRestartVatStruct>;
 
 /**
- * A request to terminate a vat, queued so the run loop performs it. Made from
- * outside the run loop, a vat's death landed in whichever crank was open, for
- * an unrelated rollback to undo after the caller was told it had succeeded.
+ * A request to terminate a vat, queued so the run loop performs it.
  */
 const RunQueueItemTerminateVatStruct = object({
   type: literal('terminateVat'),
