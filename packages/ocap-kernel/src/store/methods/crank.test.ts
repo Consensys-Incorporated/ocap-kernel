@@ -2,7 +2,17 @@ import type { KernelDatabase } from '@metamask/kernel-store';
 import { expect, describe, it, vi, beforeEach } from 'vitest';
 
 import { getCrankMethods } from './crank.ts';
-import type { StoreContext } from '../types.ts';
+import type { KRef } from '../../types.ts';
+import type { Savepoint, StoreContext } from '../types.ts';
+
+/**
+ * @param name - The savepoint's name.
+ * @param maybeFreeKrefs - The collection candidates it snapshots.
+ * @returns A savepoint as `createCrankSavepoint` records it.
+ */
+function makeSavepoint(name: string, maybeFreeKrefs: KRef[] = []): Savepoint {
+  return { name, maybeFreeKrefs: new Set(maybeFreeKrefs) };
+}
 
 describe('crank methods', () => {
   let context: StoreContext;
@@ -16,7 +26,9 @@ describe('crank methods', () => {
       inCrank: false,
       savepoints: [],
       crankBuffer: mockCrankBuffer,
+      maybeFreeKrefs: new Set(),
       refreshRunQueue: vi.fn(),
+      refreshCachedValues: vi.fn(),
     } as unknown as StoreContext;
 
     kdb = {
@@ -51,7 +63,7 @@ describe('crank methods', () => {
       context.inCrank = true;
       crankMethods.createCrankSavepoint('test');
 
-      expect(context.savepoints).toStrictEqual(['test']);
+      expect(context.savepoints).toStrictEqual([makeSavepoint('test')]);
       expect(kdb.createSavepoint).toHaveBeenCalledWith('t0');
     });
 
@@ -60,7 +72,10 @@ describe('crank methods', () => {
       crankMethods.createCrankSavepoint('first');
       crankMethods.createCrankSavepoint('second');
 
-      expect(context.savepoints).toStrictEqual(['first', 'second']);
+      expect(context.savepoints).toStrictEqual([
+        makeSavepoint('first'),
+        makeSavepoint('second'),
+      ]);
       expect(kdb.createSavepoint).toHaveBeenCalledWith('t0');
       expect(kdb.createSavepoint).toHaveBeenCalledWith('t1');
     });
@@ -92,7 +107,7 @@ describe('crank methods', () => {
   describe('rollbackCrank', () => {
     it('forgets the savepoint even if the database rollback fails', () => {
       context.inCrank = true;
-      context.savepoints = ['start'];
+      context.savepoints = [makeSavepoint('start')];
       vi.mocked(kdb.rollbackSavepoint).mockImplementationOnce(() => {
         throw new Error('database is gone');
       });
@@ -110,17 +125,21 @@ describe('crank methods', () => {
 
     it('should rollback to specified savepoint', () => {
       context.inCrank = true;
-      context.savepoints = ['first', 'second', 'third'];
+      context.savepoints = [
+        makeSavepoint('first'),
+        makeSavepoint('second'),
+        makeSavepoint('third'),
+      ];
 
       crankMethods.rollbackCrank('second');
 
       expect(kdb.rollbackSavepoint).toHaveBeenCalledWith('t1');
-      expect(context.savepoints).toStrictEqual(['first']);
+      expect(context.savepoints).toStrictEqual([makeSavepoint('first')]);
     });
 
     it('should throw when savepoint does not exist', () => {
       context.inCrank = true;
-      context.savepoints = ['first', 'second'];
+      context.savepoints = [makeSavepoint('first'), makeSavepoint('second')];
 
       expect(() => crankMethods.rollbackCrank('nonexistent')).toThrow(
         'no such savepoint as ""nonexistent""',
@@ -141,12 +160,82 @@ describe('crank methods', () => {
       crankMethods.rollbackCrank('b');
       crankMethods.createCrankSavepoint('b2');
       expect(kdb.createSavepoint).toHaveBeenLastCalledWith('t1');
-      expect(context.savepoints).toStrictEqual(['a', 'b2']);
+      expect(context.savepoints).toStrictEqual([
+        makeSavepoint('a'),
+        makeSavepoint('b2'),
+      ]);
+    });
+
+    it("restores the named savepoint's candidates, not an outer one's", () => {
+      context.inCrank = true;
+      context.maybeFreeKrefs = new Set(['ko1']);
+      crankMethods.createCrankSavepoint('outer');
+      context.maybeFreeKrefs.add('ko2');
+      crankMethods.createCrankSavepoint('inner');
+      context.maybeFreeKrefs.add('ko3');
+
+      crankMethods.rollbackCrank('inner');
+
+      expect([...context.maybeFreeKrefs]).toStrictEqual(['ko1', 'ko2']);
+    });
+
+    it('goes back to the outermost savepoint when the rollback fails', () => {
+      context.inCrank = true;
+      crankMethods.createCrankSavepoint('outer');
+      context.maybeFreeKrefs.add('ko1');
+      crankMethods.createCrankSavepoint('inner');
+      context.maybeFreeKrefs.add('ko2');
+      vi.mocked(kdb.rollbackSavepoint).mockImplementationOnce(() => {
+        throw new Error('database is gone');
+      });
+
+      expect(() => crankMethods.rollbackCrank('inner')).toThrow(
+        'database is gone',
+      );
+
+      // A failed rollback discards the whole transaction, so the database is
+      // back past `t0` and nothing either savepoint covered survives.
+      expect([...context.maybeFreeKrefs]).toStrictEqual([]);
+      expect(context.savepoints).toStrictEqual([]);
+      expect(context.refreshCachedValues).toHaveBeenCalled();
+    });
+
+    it('rethrows a revert that fails after a successful rollback', () => {
+      context.inCrank = true;
+      crankMethods.createCrankSavepoint('start');
+      vi.mocked(context.refreshCachedValues).mockImplementationOnce(() => {
+        throw new Error('caches are gone');
+      });
+
+      expect(() => crankMethods.rollbackCrank('start')).toThrow(
+        'caches are gone',
+      );
+    });
+
+    it('keeps the rollback failure as the cause when the revert fails too', () => {
+      context.inCrank = true;
+      crankMethods.createCrankSavepoint('start');
+      vi.mocked(kdb.rollbackSavepoint).mockImplementationOnce(() => {
+        throw new Error('database is gone');
+      });
+      vi.mocked(context.refreshCachedValues).mockImplementationOnce(() => {
+        throw new Error('caches are gone');
+      });
+
+      let thrown: Error | undefined;
+      try {
+        crankMethods.rollbackCrank('start');
+      } catch (error) {
+        thrown = error as Error;
+      }
+
+      expect(thrown?.message).toContain('caches are gone');
+      expect((thrown?.cause as Error).message).toBe('database is gone');
     });
 
     it('clears the crank buffer', () => {
       context.inCrank = true;
-      context.savepoints = ['start'];
+      context.savepoints = [makeSavepoint('start')];
       mockCrankBuffer.push({ type: 'send' }, { type: 'notify' });
 
       crankMethods.rollbackCrank('start');
@@ -168,7 +257,7 @@ describe('crank methods', () => {
 
     it('should release savepoints if they exist', () => {
       context.inCrank = true;
-      context.savepoints = ['test'];
+      context.savepoints = [makeSavepoint('test')];
       crankMethods.endCrank();
       expect(kdb.releaseSavepoint).toHaveBeenCalledWith('t0');
       expect(context.savepoints).toStrictEqual([]);
@@ -196,7 +285,7 @@ describe('crank methods', () => {
 
     it('settles the crank even if releasing savepoints fails', async () => {
       crankMethods.startCrank();
-      context.savepoints = ['test'];
+      context.savepoints = [makeSavepoint('test')];
       const waiter = crankMethods.waitForCrank();
       vi.mocked(kdb.releaseSavepoint).mockImplementationOnce(() => {
         throw new Error('database is gone');
@@ -211,7 +300,7 @@ describe('crank methods', () => {
   describe('releaseAllSavepoints', () => {
     it('should release all savepoints', () => {
       context.inCrank = true;
-      context.savepoints = ['test'];
+      context.savepoints = [makeSavepoint('test')];
       crankMethods.releaseAllSavepoints();
       expect(kdb.releaseSavepoint).toHaveBeenCalledWith('t0');
       expect(context.savepoints).toStrictEqual([]);

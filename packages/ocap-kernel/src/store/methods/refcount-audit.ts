@@ -252,6 +252,20 @@ export function getRefCountAuditMethods(ctx: StoreContext) {
       }
     }
 
+    // A buffered send or notify holds its references already: `enqueueSend`
+    // and `enqueueNotify` charge for the target, the result and every slot as
+    // they buffer it, and the run queue row those units belong to appears only
+    // when `flushCrankBuffer` moves the item across. Uncredited, every crank
+    // that buffers anything reads as a leak.
+    ctx.crankBuffer.forEach((item, index) => {
+      if (item.type === 'send') {
+        credit(item.target, `crank buffer #${index} send target`);
+        creditMessage(item.message, `crank buffer #${index} send`);
+      } else {
+        credit(item.kpid, `crank buffer #${index} notify`);
+      }
+    });
+
     for (const kref of getPinnedObjects()) {
       // One unit per pin: each `pinObject` call increments once, and the
       // object's count is how many of those calls are outstanding.

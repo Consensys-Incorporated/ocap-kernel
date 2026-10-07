@@ -62,7 +62,6 @@ export const makeDiscoverableExo = <
     return makeExo(
       name,
       interfaceGuard,
-      // @ts-expect-error We're intentionally not specifying method-specific interface guards.
       mergeDisjointRecords(methods, {
         /**
          * Describe the methods of the discoverable.
