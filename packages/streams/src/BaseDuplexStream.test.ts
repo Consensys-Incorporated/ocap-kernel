@@ -167,8 +167,9 @@ describe('BaseDuplexStream', () => {
           throw new Error('foo');
         });
 
-        await expect(stream.synchronize()).rejects.toThrow('foo');
-        await expect(stream.synchronize()).rejects.toThrow('foo');
+        const message = 'TestDuplexStream experienced a dispatch failure';
+        await expect(stream.synchronize()).rejects.toThrow(message);
+        await expect(stream.synchronize()).rejects.toThrow(message);
       });
     });
 
@@ -343,53 +344,54 @@ describe('BaseDuplexStream', () => {
     await sink.return();
   });
 
-  it('return calls ends both the reader and writer', async () => {
-    const readerOnEnd = vi.fn();
-    const writerOnEnd = vi.fn();
-    const stream = await TestDuplexStream.make(() => undefined, {
-      readerOnEnd,
-      writerOnEnd,
-    });
+  it.each([
+    ['returning', async (stream: TestDuplexStream) => stream.return()],
+    [
+      'throwing',
+      async (stream: TestDuplexStream) => stream.throw(new Error('foo')),
+    ],
+    [
+      'the remote ending',
+      async (stream: TestDuplexStream) =>
+        stream.receiveInput(makeStreamDoneSignal()),
+    ],
+  ])('calls onEnd once after %s', async (_, endStream) => {
+    const onEnd = vi.fn();
+    const stream = await TestDuplexStream.make(() => undefined, { onEnd });
 
+    await endStream(stream);
     await stream.return();
-    expect(readerOnEnd).toHaveBeenCalledOnce();
-    expect(writerOnEnd).toHaveBeenCalledOnce();
+    expect(onEnd).toHaveBeenCalledOnce();
+    expect(await stream.next()).toStrictEqual(makeDoneResult());
   });
 
-  it('throw calls throw on the writer but return on the reader', async () => {
-    const readerOnEnd = vi.fn();
-    const writerOnEnd = vi.fn();
-    const stream = await TestDuplexStream.make(() => undefined, {
-      readerOnEnd,
-      writerOnEnd,
-    });
-
-    await stream.throw(new Error('foo'));
-    expect(readerOnEnd).toHaveBeenCalledOnce();
-    expect(writerOnEnd).toHaveBeenCalledOnce();
-  });
-
-  it('ending the reader calls reader onEnd function', async () => {
-    const readerOnEnd = vi.fn();
-    const stream = await TestDuplexStream.make(() => undefined, {
-      readerOnEnd,
-    });
-
-    await stream.receiveInput(makeStreamDoneSignal());
-    expect(readerOnEnd).toHaveBeenCalledOnce();
-  });
-
-  it('ending the writer calls writer onEnd function', async () => {
-    const onDispatch = vi.fn(() => {
+  it('ends and calls onEnd if a write fails', async () => {
+    const onDispatch = vi.fn();
+    const onEnd = vi.fn();
+    const stream = await TestDuplexStream.make(onDispatch, { onEnd });
+    onDispatch.mockImplementation(() => {
       throw new Error('foo');
     });
-    const writerOnEnd = vi.fn();
-    const stream = await TestDuplexStream.make(onDispatch, {
-      writerOnEnd,
-    });
 
-    await expect(stream.write(42)).rejects.toThrow('foo');
-    expect(writerOnEnd).toHaveBeenCalledOnce();
+    await expect(stream.write(42)).rejects.toThrow(
+      'TestDuplexStream experienced a dispatch failure',
+    );
+    expect(onEnd).toHaveBeenCalledOnce();
+    expect(await stream.next()).toStrictEqual(makeDoneResult());
+  });
+
+  it('dispatches the done signal before calling onEnd', async () => {
+    const calls: string[] = [];
+    const stream = await TestDuplexStream.make(
+      (value) => {
+        calls.push(stringify(value));
+      },
+      { onEnd: () => calls.push('onEnd') },
+    );
+    calls.length = 0;
+
+    await stream.receiveInput(makeStreamDoneSignal());
+    expect(calls).toStrictEqual([stringify(makeStreamDoneSignal()), 'onEnd']);
   });
 
   describe('end', () => {

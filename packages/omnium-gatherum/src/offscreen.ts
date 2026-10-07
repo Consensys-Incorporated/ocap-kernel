@@ -4,6 +4,7 @@ import {
   createCommsQueryString,
   setupConsoleForwarding,
   isConsoleForwardMessage,
+  isIframeWindow,
 } from '@metamask/kernel-browser-runtime';
 import { delay, isJsonRpcMessage } from '@metamask/kernel-utils';
 import type { JsonRpcMessage } from '@metamask/kernel-utils';
@@ -43,7 +44,7 @@ async function main(): Promise<void> {
 
   // Listen for console messages from vat iframes and forward to background
   window.addEventListener('message', (event) => {
-    if (isConsoleForwardMessage(event.data)) {
+    if (isIframeWindow(event.source) && isConsoleForwardMessage(event.data)) {
       backgroundStream.write(event.data).catch(() => undefined);
     }
   });

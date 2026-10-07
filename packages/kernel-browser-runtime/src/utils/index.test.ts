@@ -9,6 +9,7 @@ describe('index', () => {
       'getCommsParamsFromCurrentLocation',
       'handleConsoleForwardMessage',
       'isConsoleForwardMessage',
+      'isIframeWindow',
       'parseCommsQueryString',
       'setupConsoleForwarding',
     ]);

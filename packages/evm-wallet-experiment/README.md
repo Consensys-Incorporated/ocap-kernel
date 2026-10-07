@@ -688,7 +688,7 @@ const config = makeWalletClusterConfig({
 const { rootKref } = await kernel.launchSubcluster(config);
 ```
 
-The configuration creates four vats: `coordinator`, `keyring`, `provider`, and either `delegator` (home role — default) or `redeemer` (away role). The coordinator is registered as the bootstrap vat. Every vat receives `TextEncoder` and `TextDecoder` for binary encoding. The `keyring` vat additionally receives `crypto` for throwaway-key generation; the `delegator` vat receives `crypto` for delegation-salt generation (the `redeemer` vat does not). The `coordinator` vat receives `Date` and `setTimeout` for on-chain confirmation polling.
+The configuration creates four vats: `coordinator`, `keyring`, `provider`, and either `delegator` (home role — default) or `redeemer` (away role). The coordinator is registered as the bootstrap vat. Every vat can use `TextEncoder` and `TextDecoder` for binary encoding without endowing them, because SES permits both in every compartment. The `keyring` vat receives `crypto` for throwaway-key generation; the `delegator` vat receives `crypto` for delegation-salt generation (the `redeemer` vat does not). The `coordinator` vat receives `Date` and `setTimeout` for on-chain confirmation polling.
 
 ## SES Compatibility
 

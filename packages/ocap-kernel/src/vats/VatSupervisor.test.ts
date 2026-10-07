@@ -40,7 +40,7 @@ const makeVatSupervisor = async ({
   platformOptions,
   makeAllowedGlobals,
   fetchBlob,
-  writerOnEnd,
+  onEnd,
 }: {
   dispatch?: (input: unknown) => void | Promise<void>;
   logger?: Logger;
@@ -49,7 +49,7 @@ const makeVatSupervisor = async ({
   platformOptions?: Record<string, unknown>;
   makeAllowedGlobals?: (options: { logger: Logger }) => VatEndowments;
   fetchBlob?: FetchBlob;
-  writerOnEnd?: () => void;
+  onEnd?: () => void;
 } = {}): Promise<{
   supervisor: VatSupervisor;
   stream: TestDuplexStream<JsonRpcMessage, JsonRpcMessage>;
@@ -59,7 +59,7 @@ const makeVatSupervisor = async ({
     JsonRpcMessage
   >(dispatch ?? (() => undefined), {
     validateInput: isJsonRpcMessage,
-    writerOnEnd,
+    onEnd,
   });
 
   // Provide a default makePlatform if none is specified
@@ -160,20 +160,20 @@ describe('VatSupervisor', () => {
 
     it('calls the endowments teardown before closing the stream', async () => {
       // The stream is hardened, so we can't vi.spyOn(stream, 'end'). Instead,
-      // observe the writer's onEnd callback, which fires as part of stream.end().
+      // observe the stream's onEnd callback, which fires as part of stream.end().
       const teardown = vi.fn().mockResolvedValue(undefined);
-      const writerOnEnd = vi.fn();
+      const onEnd = vi.fn();
       const { supervisor } = await makeVatSupervisor({
         makeAllowedGlobals: () => makeVatEndowments({}, teardown),
-        writerOnEnd,
+        onEnd,
       });
 
       await supervisor.terminate();
 
       expect(teardown).toHaveBeenCalledTimes(1);
-      expect(writerOnEnd).toHaveBeenCalledTimes(1);
+      expect(onEnd).toHaveBeenCalledTimes(1);
       expect(teardown.mock.invocationCallOrder[0]).toBeLessThan(
-        writerOnEnd.mock.invocationCallOrder[0] as number,
+        onEnd.mock.invocationCallOrder[0] as number,
       );
     });
 

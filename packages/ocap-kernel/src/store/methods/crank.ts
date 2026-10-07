@@ -2,7 +2,7 @@ import { Fail, q } from '@endo/errors';
 import { makePromiseKit } from '@endo/promise-kit';
 import type { KernelDatabase } from '@metamask/kernel-store';
 
-import type { CrankBufferItem, StoreContext } from '../types.ts';
+import type { CrankBufferItem, Savepoint, StoreContext } from '../types.ts';
 
 /**
  * Get the crank methods.
@@ -36,7 +36,9 @@ export function getCrankMethods(ctx: StoreContext, kdb: KernelDatabase) {
     // first would leave `endCrank` trying to release a savepoint that was never
     // created, and that error would replace whatever really went wrong.
     kdb.createSavepoint(`t${ordinal}`);
-    ctx.savepoints.push(name);
+    // Copied, not referenced: `maybeFreeKrefs` is mutated in place from here
+    // on, and this is the "before" a rollback restores.
+    ctx.savepoints.push({ name, maybeFreeKrefs: new Set(ctx.maybeFreeKrefs) });
   }
 
   /**
@@ -48,28 +50,69 @@ export function getCrankMethods(ctx: StoreContext, kdb: KernelDatabase) {
     ctx.inCrank || Fail`rollbackCrank outside of crank`;
     ctx.crankBuffer.length = 0; // Discard buffered outputs
     for (const ordinal of ctx.savepoints.keys()) {
-      if (ctx.savepoints[ordinal] === savepoint) {
+      const restored = ctx.savepoints[ordinal];
+      if (restored?.name === savepoint) {
         try {
           kdb.rollbackSavepoint(`t${ordinal}`);
-        } finally {
-          // Forget the savepoint even if the rollback failed. Leaving it listed
-          // would have `endCrank`'s release commit the crank we just abandoned —
-          // the half-finished state this rollback exists to discard. A failed
-          // rollback discards the whole transaction instead (see
-          // `rollbackSavepoint`), which for a crank is the same boundary.
           ctx.savepoints.length = ordinal;
+        } catch (error) {
+          // A failed rollback discards the whole transaction (see
+          // `rollbackSavepoint`), so no savepoint survives it and RAM goes back
+          // to where the outermost one was taken, not to the named one.
+          // Reverting before the rethrow, because leaving the caches as they
+          // are would have the dying crank still holding the GC action it
+          // consumed and the freed krefs it was about to collect.
+          const outermost = ctx.savepoints[0] ?? restored;
+          ctx.savepoints.length = 0;
+          revertStateBeneathRollback(outermost, error);
+          throw error;
         }
-        // The rollback reverted DB state but in-memory caches are stale.
-        // Recreate the run queue so its cached head/tail are re-read from DB.
-        ctx.refreshRunQueue();
-        // Invalidate the run queue length cache so it's recalculated from
-        // the database on next access, since the rollback may have restored
-        // dequeued items.
-        ctx.runQueueLengthCache = -1;
+        revertStateBeneathRollback(restored);
         return;
       }
     }
     Fail`no such savepoint as "${q(savepoint)}"`;
+  }
+
+  /**
+   * Revert what a database rollback cannot reach: the in-memory caches built
+   * over the abandoned crank's writes.
+   *
+   * @param restored - The savepoint being rolled back to, whose snapshot of
+   * `maybeFreeKrefs` is the "before" this restores.
+   * @param rollbackError - The error the rollback threw, if it threw. Kept as
+   * the `cause` should reverting fail too, since it is the root cause an
+   * operator needs.
+   */
+  function revertStateBeneathRollback(
+    restored: Savepoint,
+    rollbackError?: unknown,
+  ): void {
+    // Nothing rolls back RAM. Krefs the abandoned crank added are collection
+    // candidates only because of decrements that were just undone; left in
+    // place, `collectGarbage` throws on a later crank for any promise that
+    // crank created, killing the run loop over work that no longer exists.
+    // Restored to the snapshot rather than cleared, because the set is not
+    // per-crank: only `collectGarbage` empties it, so a candidate added while
+    // the run loop was idle is still owed a collection. Done first, being the
+    // one step that cannot fail.
+    ctx.maybeFreeKrefs.clear();
+    for (const kref of restored.maybeFreeKrefs) {
+      ctx.maybeFreeKrefs.add(kref);
+    }
+    try {
+      ctx.refreshRunQueue();
+      ctx.runQueueLengthCache = -1;
+      ctx.refreshCachedValues();
+    } catch (revertError) {
+      if (rollbackError === undefined) {
+        throw revertError;
+      }
+      throw new Error(
+        `Crank rollback failed and its caches could not be reverted: ${String(revertError)}`,
+        { cause: rollbackError },
+      );
+    }
   }
 
   /**

@@ -74,15 +74,11 @@ export async function initDB(
  * @param options.assertWritable - Throws if this connection can no longer
  * persist anything, which every write here must ask first: one issued into a
  * transaction nothing can end reports success and is lost with it.
- * @param options.logger - A logger object for recording activity.
  * @returns A key/value store using the given database.
  */
 function makeKVStore(
   db: Database,
-  {
-    assertWritable,
-    logger,
-  }: { assertWritable: () => void; logger?: Logger | undefined },
+  { assertWritable }: { assertWritable: () => void },
 ): KVStore {
   db.exec(SQL_QUERIES.CREATE_TABLE);
 
@@ -101,7 +97,6 @@ function makeKVStore(
       const result = sqlKVGet.getString(0);
       if (result) {
         sqlKVGet.reset();
-        logger?.debug(`kv get '${key}' as '${result}'`);
         return result;
       }
     }
@@ -128,7 +123,6 @@ function makeKVStore(
       const result = sqlKVGetNextKey.getString(0);
       if (result) {
         sqlKVGetNextKey.reset();
-        logger?.debug(`kv getNextKey '${previousKey}' as '${result}'`);
         return result;
       }
     }
@@ -146,7 +140,6 @@ function makeKVStore(
    */
   function kvSet(key: string, value: string): void {
     assertWritable();
-    logger?.debug(`kv set '${key}' to '${value}'`);
     sqlKVSet.bind([key, value]);
     sqlKVSet.step();
     sqlKVSet.reset();
@@ -161,7 +154,6 @@ function makeKVStore(
    */
   function kvDelete(key: string): void {
     assertWritable();
-    logger?.debug(`kv delete '${key}'`);
     sqlKVDelete.bind([key]);
     sqlKVDelete.step();
     sqlKVDelete.reset();
@@ -227,10 +219,7 @@ export async function makeSQLKernelDatabase({
     logger,
   });
 
-  const kvStore = makeKVStore(db, {
-    assertWritable: assertNotAbandoned,
-    logger: logger?.subLogger({ tags: ['kv'] }),
-  });
+  const kvStore = makeKVStore(db, { assertWritable: assertNotAbandoned });
 
   db.exec(SQL_QUERIES.CREATE_TABLE_VS);
 

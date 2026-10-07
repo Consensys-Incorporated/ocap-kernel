@@ -1,7 +1,7 @@
 import { chromium, test } from '@playwright/test';
 import type { BrowserContext, ConsoleMessage, Page } from '@playwright/test';
 import { appendFileSync } from 'node:fs';
-import { mkdir, rm, readFile, access } from 'node:fs/promises';
+import { mkdir, rm, readFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -85,16 +85,19 @@ export const makeLoadExtension = async ({
    * to include console logs in the Playwright HTML report.
    */
   const attachLogs = async (): Promise<void> => {
+    let content: string;
     try {
-      await access(logFilePath);
-      const content = await readFile(logFilePath, 'utf-8');
-      await test.info().attach('console-logs', {
-        body: content,
-        contentType: 'text/plain',
-      });
-    } catch {
-      // File doesn't exist, nothing to attach
+      content = await readFile(logFilePath, 'utf-8');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        return;
+      }
+      throw error;
     }
+    await test.info().attach('console-logs', {
+      body: content,
+      contentType: 'text/plain',
+    });
   };
 
   /**
