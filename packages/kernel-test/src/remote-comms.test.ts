@@ -3,7 +3,7 @@ import { peerIdFromPrivateKey } from '@libp2p/peer-id';
 import { NodejsPlatformServices } from '@metamask/kernel-node-runtime';
 import type { KernelDatabase } from '@metamask/kernel-store';
 import { makeSQLKernelDatabase } from '@metamask/kernel-store/sqlite/nodejs';
-import { fromHex, waitUntilQuiescent } from '@metamask/kernel-utils';
+import { fromHex } from '@metamask/kernel-utils';
 import { makeKernelStore, kunser, Kernel } from '@metamask/ocap-kernel';
 import type {
   KernelStore,
@@ -16,7 +16,7 @@ import type {
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 import {
   makeTestLogger,
@@ -564,12 +564,15 @@ describe('Remote Communications (Integration Tests)', () => {
     try {
       // Only the victim needs to survive a restart, so only it needs a file.
       await kernel1.stop();
-      const victimStore = makeKernelStore(
-        await makeSQLKernelDatabase({ dbFilename: dbFile }),
-      );
-      let victim = await makeTestKernel(
+      const victimDatabase = await makeSQLKernelDatabase({
+        dbFilename: dbFile,
+      });
+      const victimStore = makeKernelStore(victimDatabase);
+      const readReapQueue = (database: KernelDatabase): unknown =>
+        JSON.parse(database.kernelKVStore.get('reapQueue') ?? '[]');
+      const victim = await makeTestKernel(
         'victim',
-        await makeSQLKernelDatabase({ dbFilename: dbFile }),
+        victimDatabase,
         directNetwork,
         true,
         'kernel1-peer',
@@ -598,37 +601,36 @@ describe('Remote Communications (Integration Tests)', () => {
         'hello',
         ['probe'],
       );
-      await waitUntilQuiescent();
+      await vi.waitFor(() =>
+        expect(readReapQueue(victimDatabase)).not.toStrictEqual([]),
+      );
       await victim.stop();
 
-      // Asserted, not assumed: if the victim had cranked it would have eaten
-      // its own reap while the remote still existed, and the rest would prove
-      // nothing.
+      // Asserted on disk, not assumed: if the victim had cranked it would have
+      // eaten its own reap while the remote still existed, and the rest would
+      // prove nothing.
       const armed = await makeSQLKernelDatabase({ dbFilename: dbFile });
-      expect(
-        JSON.parse(armed.kernelKVStore.get('reapQueue') ?? '[]'),
-      ).not.toStrictEqual([]);
+      expect(readReapQueue(armed)).not.toStrictEqual([]);
+      armed.close();
 
-      // Twice, because it is unrecoverable rather than merely fatal: the crank
-      // that dies is rolled back, which puts the reap back on the queue for the
-      // boot after this one.
-      let database = armed;
+      // Twice, because without the fix the failure is unrecoverable rather
+      // than merely fatal: the crank that dies is rolled back, which puts the
+      // reap back on the queue for the boot after. With it, the first boot
+      // spends the reap and the second only shows nothing else was left.
       const bootStates = [];
       for (const boot of [1, 2]) {
-        victim = await makeTestKernel(
+        const rebooted = await makeTestKernel(
           `victim-boot${boot}`,
-          database,
+          await makeSQLKernelDatabase({ dbFilename: dbFile }),
           directNetwork,
           false,
           'kernel1-peer',
           '01',
         );
-        bootStates.push((await victim.getStatus()).runLoop);
-        await victim.stop();
-        database = await makeSQLKernelDatabase({ dbFilename: dbFile });
+        bootStates.push((await rebooted.getStatus()).runLoop);
+        await rebooted.stop();
       }
-      // Asserted together rather than per boot, so a failure reports both: the
-      // point is that the second is no better than the first.
+      // Asserted together rather than per boot, so a failure reports both.
       expect(bootStates).toStrictEqual([
         { state: 'running' },
         { state: 'running' },
