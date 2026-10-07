@@ -75,7 +75,6 @@ describe('KernelRouter', () => {
       ) as unknown as MockInstance,
       clearReachableFlag: vi.fn(),
       deleteCListEntry: vi.fn(),
-      hasCListEntry: vi.fn().mockReturnValue(true),
       isVatTerminated: vi.fn().mockReturnValue(false),
       orphanKernelObject: vi.fn(),
       forgetKref: vi.fn(),
@@ -961,7 +960,7 @@ describe('KernelRouter', () => {
       );
 
       it.each(['dropExports', 'retireExports', 'retireImports'] as const)(
-        'leaves the c-list alone for a skipped %s to a vat the store does not call terminated',
+        'skips a %s to a vat cleaned up whole without touching its c-list',
         async (type) => {
           (
             kernelStore.isVatTerminated as unknown as MockInstance
@@ -974,32 +973,12 @@ describe('KernelRouter', () => {
           });
 
           expect(result).toStrictEqual({ didDelivery: endpointId });
+          expect(kernelStore.krefsToErefs).not.toHaveBeenCalled();
           expect(kernelStore.clearReachableFlag).not.toHaveBeenCalled();
           expect(kernelStore.deleteCListEntry).not.toHaveBeenCalled();
           expect(kernelStore.orphanKernelObject).not.toHaveBeenCalled();
         },
       );
-
-      it('skips a GC action whose c-list entries went in the same crank', async () => {
-        (kernelStore.hasCListEntry as unknown as MockInstance).mockReturnValue(
-          false,
-        );
-        (
-          kernelStore.krefsToErefs as unknown as MockInstance
-        ).mockImplementation(() => {
-          throw new Error(`unmapped kref ko1 in ${endpointId} c-list`);
-        });
-
-        const result = await kernelRouter.deliver({
-          type: 'dropExports',
-          endpointId,
-          krefs: ['ko1'],
-        });
-
-        expect(result).toStrictEqual({ didDelivery: endpointId });
-        expect(kernelStore.clearReachableFlag).not.toHaveBeenCalled();
-        expect(kernelStore.deleteCListEntry).not.toHaveBeenCalled();
-      });
 
       it('releases the skipped notify’s own reference', async () => {
         const item = makeLiveNotify(endpointId);
@@ -1010,25 +989,6 @@ describe('KernelRouter', () => {
           item.kpid,
           'deliver|notify',
         );
-      });
-
-      it('releases only the krefs the vat still has an entry for', async () => {
-        (
-          kernelStore.hasCListEntry as unknown as MockInstance
-        ).mockImplementation(
-          (_endpointId: EndpointId, kref: KRef) => kref === 'ko2',
-        );
-
-        await kernelRouter.deliver({
-          type: 'dropExports',
-          endpointId,
-          krefs: ['ko1', 'ko2'],
-        });
-
-        expect(
-          (kernelStore.clearReachableFlag as unknown as MockInstance).mock
-            .calls,
-        ).toStrictEqual([[endpointId, 'ko2']]);
       });
 
       it('allocates nothing in the c-list of a vat it is skipping', async () => {

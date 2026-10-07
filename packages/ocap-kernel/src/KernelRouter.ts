@@ -552,32 +552,19 @@ export class KernelRouter {
     );
     const endpoint = this.#lookupEndpoint(endpointId, type);
     // Only a skipped vat gets here without a handle; a remote throws above. One
-    // the store does not call terminated keeps its c-list as the vat last saw
-    // it, since a restart would bring up an incarnation still holding those
-    // erefs.
+    // the store no longer calls terminated has been cleaned up whole, possibly
+    // by `nextTerminatedVatCleanup` earlier in this crank, so its c-list is
+    // gone and the kernel's half with it.
     if (!endpoint && !this.#kernelStore.isVatTerminated(endpointId as VatId)) {
       return { didDelivery: endpointId };
     }
-    // `processGCActionSet` selected this action while the endpoint held a
-    // c-list entry for each kref, but `nextTerminatedVatCleanup` runs between
-    // that selection and here and takes a whole c-list at a time. Whatever it
-    // reached has had the kernel's half done for it already, and
-    // `krefsToErefs` reports the missing entry by throwing.
-    const toRelease = endpoint
-      ? krefs
-      : krefs.filter((kref) =>
-          this.#kernelStore.hasCListEntry(endpointId, kref),
-        );
-    if (toRelease.length === 0) {
-      return { didDelivery: endpointId };
-    }
-    const erefs = this.#kernelStore.krefsToErefs(endpointId, toRelease);
+    const erefs = this.#kernelStore.krefsToErefs(endpointId, krefs);
     // Telling an endpoint to let go is also the kernel letting go. Otherwise a
     // dropped export stays flagged reachable, so the same action gets derived
     // again, and retired entries outlive the objects they name. For a terminated
     // vat that is skipped, this does now what `cleanupTerminatedVat` would do
     // later.
-    toRelease.forEach((kref, index) => {
+    krefs.forEach((kref, index) => {
       if (type === 'dropExports') {
         this.#kernelStore.clearReachableFlag(endpointId, kref);
       } else {
