@@ -36,4 +36,21 @@ describe('makeKernel', () => {
       message: 'diagnostic',
     });
   });
+
+  it('throws on Windows before opening the database', async () => {
+    const descriptor = Object.getOwnPropertyDescriptor(process, 'platform');
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    try {
+      await expect(makeKernel({})).rejects.toThrow(
+        'The ocap kernel does not support Windows.',
+      );
+      expect(makeSQLKernelDatabase).not.toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(
+        process,
+        'platform',
+        descriptor as PropertyDescriptor,
+      );
+    }
+  });
 });
