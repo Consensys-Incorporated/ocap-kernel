@@ -829,27 +829,68 @@ describe('KernelQueue', () => {
       });
     });
 
-    it('drops a request held by a crank that kills the run loop', async () => {
-      (kernelStore.isInCrank as unknown as MockInstance).mockReturnValue(true);
-      (kernelStore.runQueueLength as unknown as MockInstance).mockReturnValue(
-        1,
-      );
-      (kernelStore.dequeueRun as unknown as MockInstance).mockReturnValue({
-        type: 'send',
-        target: 'ko123',
-        message: {} as KernelMessage,
-      });
-      const failure = new Error('crank exploded');
-      const deliver = vi.fn().mockImplementationOnce(async () => {
-        kernelQueue.enqueueRestartVat('v1');
-        throw failure;
-      });
+    it.each([
+      ['restart', (queue: KernelQueue) => queue.enqueueRestartVat('v1')],
+      ['termination', (queue: KernelQueue) => queue.enqueueTerminateVat('v1')],
+    ])(
+      'does not write a %s discarded before its crank ends',
+      async (_, request) => {
+        (kernelStore.isInCrank as unknown as MockInstance).mockReturnValue(
+          true,
+        );
+        (kernelStore.runQueueLength as unknown as MockInstance).mockReturnValue(
+          1,
+        );
+        (kernelStore.dequeueRun as unknown as MockInstance).mockReturnValue({
+          type: 'send',
+          target: 'ko123',
+          message: {} as KernelMessage,
+        });
+        const stop = new Error('test: stop run loop');
+        const deliver = vi
+          .fn()
+          .mockImplementationOnce(async () => {
+            request(kernelQueue);
+            kernelQueue.discardHeldRequests();
+            return undefined;
+          })
+          .mockRejectedValueOnce(stop);
 
-      await expect(kernelQueue.run(deliver)).rejects.toBe(failure);
+        await expect(kernelQueue.run(deliver)).rejects.toBe(stop);
 
-      // Its caller hears of the death through `onRunLoopDeath` instead.
-      expect(kernelStore.enqueueRun).not.toHaveBeenCalled();
-    });
+        expect(kernelStore.enqueueRun).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each([
+      ['restart', (queue: KernelQueue) => queue.enqueueRestartVat('v1')],
+      ['termination', (queue: KernelQueue) => queue.enqueueTerminateVat('v1')],
+    ])(
+      'drops a %s held by a crank that kills the run loop',
+      async (_, request) => {
+        (kernelStore.isInCrank as unknown as MockInstance).mockReturnValue(
+          true,
+        );
+        (kernelStore.runQueueLength as unknown as MockInstance).mockReturnValue(
+          1,
+        );
+        (kernelStore.dequeueRun as unknown as MockInstance).mockReturnValue({
+          type: 'send',
+          target: 'ko123',
+          message: {} as KernelMessage,
+        });
+        const failure = new Error('crank exploded');
+        const deliver = vi.fn().mockImplementationOnce(async () => {
+          request(kernelQueue);
+          throw failure;
+        });
+
+        await expect(kernelQueue.run(deliver)).rejects.toBe(failure);
+
+        // Its caller hears of the death through `onRunLoopDeath` instead.
+        expect(kernelStore.enqueueRun).not.toHaveBeenCalled();
+      },
+    );
 
     it('refuses once the run loop is dead', async () => {
       await killRunLoop(new Error('crank exploded'));
