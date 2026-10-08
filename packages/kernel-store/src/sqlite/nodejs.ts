@@ -157,6 +157,7 @@ export async function makeSQLKernelDatabase({
       return false;
     }
     sqlBeginTransaction.run();
+    db._spStack.length = 0;
     return true;
   }
 
