@@ -1,5 +1,6 @@
 import { makeCounter } from '@metamask/kernel-utils';
 import type { VatId } from '@metamask/ocap-kernel';
+import { delay } from '@ocap/repo-tools/test-utils';
 import { Worker as NodeWorker } from 'node:worker_threads';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
@@ -246,15 +247,42 @@ describe('NodejsPlatformServices', () => {
       expect(await service.launch(testVatId)).toStrictEqual(mocks.stream);
     });
 
-    it('throws when terminating an unknown vat', async () => {
+    it('tolerates terminating a vat with no worker', async () => {
       const service = new NodejsPlatformServices({
         workerFilePath,
       });
       const testVatId: VatId = getTestVatId();
 
-      await expect(service.terminate(testVatId)).rejects.toThrowError(
-        /No worker found/u,
+      expect(await service.terminate(testVatId)).toBeUndefined();
+    });
+
+    it('returns at once when called again while the worker stops', async () => {
+      const service = new NodejsPlatformServices({ workerFilePath });
+      const testVatId: VatId = getTestVatId();
+      const worker = mocks.createMockWorker();
+      vi.mocked(NodeWorker).mockImplementationOnce(function () {
+        return worker;
+      });
+      // As Node's `worker.terminate()` does: settled by an `exit` listener,
+      // which `removeAllListeners` can strip.
+      worker.terminate.mockImplementation(
+        async () =>
+          new Promise<undefined>((resolve) => {
+            worker.once('exit', () => resolve(undefined));
+          }),
       );
+      await service.launch(testVatId);
+
+      const first = service.terminate(testVatId);
+      const second = service.terminate(testVatId);
+      await delay(0);
+      worker.emit('exit', 0);
+
+      expect(await Promise.all([first, second])).toStrictEqual([
+        undefined,
+        undefined,
+      ]);
+      expect(worker.terminate).toHaveBeenCalledOnce();
     });
   });
 
