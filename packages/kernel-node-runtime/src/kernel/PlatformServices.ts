@@ -162,7 +162,7 @@ export class NodejsPlatformServices implements PlatformServices {
         // channel is the only way the kernel hears of it.
         entry.stream.throw(error).catch((closeError: unknown) => {
           this.#logger.error(
-            `Failed to close the channel of exited worker ${vatId}:`,
+            `Failed to end the channel of exited worker ${vatId}:`,
             closeError,
           );
         });

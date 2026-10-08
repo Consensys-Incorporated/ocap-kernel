@@ -441,8 +441,8 @@ export class VatManager {
     }
     this.#logger.error(`Vat ${vatId} lost its channel to its worker:`, error);
     this.#vats.delete(vatId);
-    // Not awaited: ending a broken channel may never settle. The termination
-    // below stops the worker, or `Kernel.stop` does if the run loop is dead.
+    // Not awaited: ending a broken channel may never settle. A termination
+    // stops the worker, or `Kernel.stop` does if the run loop is dead.
     handle.terminate(true, error).catch((closeError: unknown) => {
       this.#logger.error(
         `Channel to vat ${vatId} would not close:`,
@@ -451,6 +451,10 @@ export class VatManager {
     });
     this.terminateVat(vatId, makeLostVatReason(vatId, error)).catch(
       (failure: unknown) => {
+        // A vat lost mid-delivery was retired in that delivery's crank.
+        if (!this.#kernelStore.isVatActive(vatId)) {
+          return;
+        }
         this.#logger.warn(
           `Vat ${vatId} lost its channel, and its retirement was not confirmed:`,
           failure,
@@ -878,11 +882,16 @@ export class VatManager {
       // that resumed inside it. The new worker is stopped, and the state its
       // `initVat` wrote deleted with it.
       const error = new VatDeletedError(vatId);
-      await this.#stopVat({
-        vatId,
-        terminating: true,
-        terminationError: error,
-      });
+      if (this.#vats.has(vatId)) {
+        await this.#stopVat({
+          vatId,
+          terminating: true,
+          terminationError: error,
+        });
+      } else {
+        // Its worker already stopped by whatever took the handle.
+        this.#kernelStore.deleteVat(vatId);
+      }
       return harden({ afterCommit: async () => taken.answer(error) });
     }
     // Only once the crank commits: one that then fails, in its collection or
