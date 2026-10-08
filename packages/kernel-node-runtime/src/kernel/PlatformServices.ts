@@ -17,7 +17,6 @@ import type {
 import { initTransport } from '@metamask/ocap-kernel';
 import { NodeWorkerDuplexStream } from '@metamask/streams';
 import type { DuplexStream } from '@metamask/streams';
-import { strict as assert } from 'node:assert';
 import { Worker as NodeWorker } from 'node:worker_threads';
 
 // Worker file loads from the built dist directory, requires rebuild after change
@@ -125,17 +124,57 @@ export class NodejsPlatformServices implements PlatformServices {
     });
 
     worker.once('online', () => {
-      // Remove error and exit listeners now that worker is online
       worker.removeAllListeners('error');
       worker.removeAllListeners('exit');
+      // Without a listener, a worker's uncaught exception is rethrown in the
+      // kernel's own thread. Its `exit` follows.
+      worker.on('error', (error) => {
+        this.#logger.error(`Worker ${vatId} errored:`, error);
+      });
 
       const stream = new NodeWorkerDuplexStream<JsonRpcMessage, JsonRpcMessage>(
         worker,
         isJsonRpcMessage,
       );
+      let phase: 'handshake' | 'registered' | 'exited' = 'handshake';
+      worker.once('exit', (code) => {
+        if (phase === 'handshake') {
+          phase = 'exited';
+          const error = new Error(
+            `Worker ${vatId} exited during startup with code ${code}`,
+          );
+          // Failed, so the handshake does not wait forever on a worker that is
+          // gone.
+          stream.throw(error).catch(() => undefined);
+          reject(error);
+          return;
+        }
+        const entry = this.workers.get(vatId);
+        // Forgotten by a `terminate` under way; the slot may hold the vat's
+        // next worker.
+        if (entry?.worker !== worker) {
+          return;
+        }
+        this.workers.delete(vatId);
+        const error = new Error(`Worker ${vatId} exited with code ${code}`);
+        this.#logger.error(error.message);
+        // A worker thread that dies emits no port event, so failing the
+        // channel is the only way the kernel hears of it.
+        entry.stream.throw(error).catch((closeError: unknown) => {
+          this.#logger.error(
+            `Failed to close the channel of exited worker ${vatId}:`,
+            closeError,
+          );
+        });
+      });
+
       stream
         .synchronize()
         .then(() => {
+          if (phase === 'exited') {
+            return undefined;
+          }
+          phase = 'registered';
           // Only add worker to map after successful synchronization
           this.workers.set(vatId, { worker, stream });
           resolve(stream);
@@ -144,9 +183,8 @@ export class NodejsPlatformServices implements PlatformServices {
         })
         .catch(async (error) => {
           // Clean up worker if synchronization fails
-          worker.removeAllListeners();
           try {
-            await worker.terminate();
+            await this.#killWorker(vatId, worker);
           } catch (terminateError) {
             this.#logger.error(
               `Error terminating worker ${vatId} after sync failure`,
@@ -163,25 +201,45 @@ export class NodejsPlatformServices implements PlatformServices {
    * Terminate a worker identified by its vat id.
    *
    * @param vatId - The vat id of the worker to terminate.
-   * @returns A promise that resolves when the worker has terminated
-   * or rejects if that worker does not exist or failed to stop.
+   * @returns A promise that resolves when the worker has terminated, or at
+   * once if there is no worker or another call is stopping it, and rejects if
+   * the channel or the worker would not stop.
    */
   async terminate(vatId: VatId): Promise<undefined> {
     const workerEntry = this.workers.get(vatId);
-    assert(workerEntry, `No worker found for vatId ${vatId}`);
+    if (!workerEntry) {
+      // Exited on its own, never launched, still shaking hands, or stopped by
+      // another call.
+      this.#logger.debug(`No worker to terminate for vat ${vatId}`);
+      return undefined;
+    }
+    // Forgotten first. An entry left behind refuses the vat's next worker as a
+    // duplicate, and a second call would strip the listener this call's
+    // `worker.terminate()` settles on, leaving it pending forever.
+    this.workers.delete(vatId);
     const { worker, stream } = workerEntry;
-    // An entry left behind refuses the vat's next worker as a duplicate.
     try {
       await stream.return();
     } finally {
-      try {
-        worker.removeAllListeners();
-        await worker.terminate();
-      } finally {
-        this.workers.delete(vatId);
-      }
+      await this.#killWorker(vatId, worker);
     }
     return undefined;
+  }
+
+  /**
+   * Kill a worker. An `error` listener stays on: Node emits an exception the
+   * worker threw before it stopped as it exits, and rethrows one nothing
+   * listens for in the kernel's thread.
+   *
+   * @param vatId - The vat whose worker it is.
+   * @param worker - The worker.
+   */
+  async #killWorker(vatId: VatId, worker: NodeWorker): Promise<void> {
+    worker.removeAllListeners();
+    worker.on('error', (error) => {
+      this.#logger.error(`Worker ${vatId} errored as it stopped:`, error);
+    });
+    await worker.terminate();
   }
 
   /**
