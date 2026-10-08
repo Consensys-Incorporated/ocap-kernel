@@ -27,6 +27,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A vat worker that exits after its handshake has its channel failed with its exit code, so the kernel notices the vat is gone and says why ([#1161](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1161))
+- An uncaught exception in a vat worker is logged instead of crashing the kernel's process, including one raised while the worker is being stopped ([#1161](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1161))
+- A vat worker that exits during the handshake fails its launch instead of leaving it pending ([#1161](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1161))
 - A second `NodejsPlatformServices.terminate` of a worker that is still stopping returns at once, instead of leaving the first call waiting forever ([#1100](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1100))
 - `NodejsPlatformServices.terminate` forgets a worker that fails to stop, so the vat's next worker is no longer refused as a duplicate, and kills the worker even when its channel will not close ([#1149](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1149))
 - The RPC socket server refuses to bind a Unix socket that has a live listener, rather than unlinking it and orphaning the previous owner; stale socket files with no listener are still cleaned up automatically ([#952](https://github.com/MetaMask/ocap-kernel/pull/952))
