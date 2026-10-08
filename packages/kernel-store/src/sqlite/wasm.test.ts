@@ -6,6 +6,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { SQL_QUERIES } from './common.ts';
 import { getDBFolder } from './env.ts';
 import { makeSQLKernelDatabase } from './wasm.ts';
+import type { KernelDatabase } from '../types.ts';
 
 const mockKVData = [
   { key: 'key1', value: 'value1' },
@@ -60,8 +61,8 @@ const resetStatements = (): void => {
 };
 resetStatements();
 
-// `initDB` installs `inTransaction` with `Object.defineProperty`, so each call
-// needs a database it has not defined it on yet.
+// `initDB` defines `inTransaction` non-configurably, so each call needs a fresh
+// mock database.
 const makeMockDb = () => ({
   exec: vi.fn(),
   prepare: vi.fn((sql: string) => {
@@ -456,11 +457,37 @@ describe('makeSQLKernelDatabase', () => {
       );
       expect(mockStatement.reset).toHaveBeenCalled();
     });
+
+    it.each([
+      ['get', (db: KernelDatabase) => db.kernelKVStore.get('key')],
+      [
+        'getNextKey',
+        (db: KernelDatabase) => db.kernelKVStore.getNextKey('key'),
+      ],
+      ['set', (db: KernelDatabase) => db.kernelKVStore.set('key', 'value')],
+      ['delete', (db: KernelDatabase) => db.kernelKVStore.delete('key')],
+      [
+        'a vatstore set',
+        (db: KernelDatabase) =>
+          db.makeVatStore('v1').updateKVData([['key', 'value']], []),
+      ],
+      [
+        'a vatstore delete',
+        (db: KernelDatabase) => db.makeVatStore('v1').updateKVData([], ['key']),
+      ],
+      ['deleteVatStore', (db: KernelDatabase) => db.deleteVatStore('v1')],
+    ])('resets the statement when %s fails', async (_name, operation) => {
+      const db = await makeSQLKernelDatabase({});
+      mockStatement.step.mockImplementationOnce(() => {
+        throw new Error('Database error');
+      });
+
+      expect(() => operation(db)).toThrowError('Database error');
+      expect(mockStatement.reset).toHaveBeenCalledOnce();
+    });
   });
 
   describe('savepoint functionality', () => {
-    beforeEach(resetMocks);
-
     it('creates a savepoint using sanitized name', async () => {
       const db = await makeSQLKernelDatabase({});
       db.createSavepoint('valid_name');
@@ -636,21 +663,6 @@ describe('makeSQLKernelDatabase', () => {
     expect(mockStatement.bind).toHaveBeenCalledWith([vatId]);
     expect(mockStatement.step).toHaveBeenCalled();
     expect(mockStatement.reset).toHaveBeenCalled();
-  });
-
-  it('deleteVatStore handles errors correctly', async () => {
-    Object.values(mockStatement).forEach((mock) => {
-      if (typeof mock === 'function' && mock.mockReset) {
-        mock.mockReset();
-      }
-    });
-    mockStatement.step.mockImplementationOnce(() => {
-      throw new Error('Database error');
-    });
-    const db = await makeSQLKernelDatabase({});
-    expect(() => db.deleteVatStore('test-vat')).toThrowError('Database error');
-    expect(mockStatement.bind).toHaveBeenCalled();
-    expect(mockStatement.reset).not.toHaveBeenCalled();
   });
 
   it('deleteVatStore handles empty vatId correctly', async () => {

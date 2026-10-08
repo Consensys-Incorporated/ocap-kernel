@@ -455,8 +455,6 @@ describe('makeSQLKernelDatabase', () => {
     it('drops savepoints SQLite discarded with the transaction', async () => {
       const db = await makeSQLKernelDatabase({});
       db.createSavepoint('t0');
-      // SQLite ends the transaction itself after SQLITE_FULL, IOERR or BUSY,
-      // taking every savepoint in it.
       mockDb.inTransaction = false;
 
       db.createSavepoint('t1');

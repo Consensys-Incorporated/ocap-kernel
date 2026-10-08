@@ -15,9 +15,8 @@ import type { KVStore, VatStore, KernelDatabase } from '../types.ts';
 
 export type Database = SqliteDatabase & {
   /**
-   * A cached answer goes stale: SQLite ends the transaction itself after
-   * SQLITE_FULL, SQLITE_IOERR or SQLITE_BUSY, and a driver still believing one
-   * is open skips the next `BEGIN` and then cannot commit.
+   * Asked of SQLite on every read, never cached: SQLite can roll a transaction
+   * back on its own after an error such as SQLITE_FULL or SQLITE_IOERR.
    */
   readonly inTransaction: boolean;
   // stack of active savepoint names
@@ -86,15 +85,20 @@ function makeKVStore(db: Database): KVStore {
    * @returns The value at that key.
    */
   function kvGet(key: string, required: boolean): string | undefined {
-    sqlKVGet.bind([key]);
-    if (sqlKVGet.step()) {
-      const result = sqlKVGet.getString(0);
-      if (result) {
-        sqlKVGet.reset();
-        return result;
+    let result: string | null = null;
+    // Reset even when the step throws: SQLite refuses to bind a statement left
+    // unreset, so one failure would fail every later call.
+    try {
+      sqlKVGet.bind([key]);
+      if (sqlKVGet.step()) {
+        result = sqlKVGet.getString(0);
       }
+    } finally {
+      sqlKVGet.reset();
     }
-    sqlKVGet.reset();
+    if (result) {
+      return result;
+    }
     if (required) {
       throw Error(`no record matching key '${key}'`);
     }
@@ -112,15 +116,18 @@ function makeKVStore(db: Database): KVStore {
    *   last key in the store.
    */
   function kvGetNextKey(previousKey: string): string | undefined {
-    sqlKVGetNextKey.bind([previousKey]);
-    if (sqlKVGetNextKey.step()) {
-      const result = sqlKVGetNextKey.getString(0);
-      if (result) {
-        sqlKVGetNextKey.reset();
-        return result;
+    let result: string | null = null;
+    try {
+      sqlKVGetNextKey.bind([previousKey]);
+      if (sqlKVGetNextKey.step()) {
+        result = sqlKVGetNextKey.getString(0);
       }
+    } finally {
+      sqlKVGetNextKey.reset();
     }
-    sqlKVGetNextKey.reset();
+    if (result) {
+      return result;
+    }
     return undefined;
   }
 
@@ -133,9 +140,12 @@ function makeKVStore(db: Database): KVStore {
    * @param value - The value to assign to it.
    */
   function kvSet(key: string, value: string): void {
-    sqlKVSet.bind([key, value]);
-    sqlKVSet.step();
-    sqlKVSet.reset();
+    try {
+      sqlKVSet.bind([key, value]);
+      sqlKVSet.step();
+    } finally {
+      sqlKVSet.reset();
+    }
   }
 
   const sqlKVDelete = db.prepare(SQL_QUERIES.DELETE);
@@ -146,9 +156,12 @@ function makeKVStore(db: Database): KVStore {
    * @param key - The key to remove.
    */
   function kvDelete(key: string): void {
-    sqlKVDelete.bind([key]);
-    sqlKVDelete.step();
-    sqlKVDelete.reset();
+    try {
+      sqlKVDelete.bind([key]);
+      sqlKVDelete.step();
+    } finally {
+      sqlKVDelete.reset();
+    }
   }
 
   return {
@@ -205,9 +218,8 @@ export async function makeSQLKernelDatabase({
     }
     sqlBeginTransaction.step();
     sqlBeginTransaction.reset();
-    // A savepoint named on the stack belonged to the transaction SQLite ended,
-    // and is gone with it. Left there, it makes `commitIfNeeded` defer to an
-    // owner that no longer exists, and nothing ever commits this one.
+    // Any name still here died with a transaction SQLite ended, and would keep
+    // `commitIfNeeded` from ever committing this one.
     db._spStack.length = 0;
     return true;
   }
@@ -328,14 +340,20 @@ export async function makeSQLKernelDatabase({
     function updateKVData(sets: [string, string][], deletes: string[]): void {
       safeMutate(() => {
         for (const [key, value] of sets) {
-          sqlVatstoreSet.bind([vatID, key, value]);
-          sqlVatstoreSet.step();
-          sqlVatstoreSet.reset();
+          try {
+            sqlVatstoreSet.bind([vatID, key, value]);
+            sqlVatstoreSet.step();
+          } finally {
+            sqlVatstoreSet.reset();
+          }
         }
         for (const value of deletes) {
-          sqlVatstoreDelete.bind([vatID, value]);
-          sqlVatstoreDelete.step();
-          sqlVatstoreDelete.reset();
+          try {
+            sqlVatstoreDelete.bind([vatID, value]);
+            sqlVatstoreDelete.step();
+          } finally {
+            sqlVatstoreDelete.reset();
+          }
         }
       });
     }
@@ -352,9 +370,12 @@ export async function makeSQLKernelDatabase({
    * @param vatId - The vat whose store is to be deleted.
    */
   function deleteVatStore(vatId: string): void {
-    sqlVatstoreDeleteAll.bind([vatId]);
-    sqlVatstoreDeleteAll.step();
-    sqlVatstoreDeleteAll.reset();
+    try {
+      sqlVatstoreDeleteAll.bind([vatId]);
+      sqlVatstoreDeleteAll.step();
+    } finally {
+      sqlVatstoreDeleteAll.reset();
+    }
   }
 
   /**

@@ -15,8 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- An error SQLite recovers from on its own — a full disk, an I/O error, a busy database — no longer leaves the browser kernel store refusing every later write ([#1089](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1089))
-- A write made after SQLite has ended a transaction itself is committed rather than left in a transaction nothing will close. Both drivers were affected; on a closed transaction each went on believing a savepoint inside it was still someone else's to commit ([#1089](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1089))
+- After SQLite rolls a transaction back on its own, as it can on a full disk or an I/O error, the wasm driver no longer throws `cannot commit - no transaction is active` from later savepoint releases ([#1089](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1089))
+- A read or write that fails in the wasm driver no longer makes every later call to the same operation throw `SQLITE_MISUSE` ([#1089](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1089))
+- After SQLite rolls a transaction back on its own, the Node driver commits the writes under a later savepoint instead of leaving them in a transaction that never commits ([#1089](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1089))
 - Neither SQLite driver logs the contents of the store any more: the Node driver opens the database without `verbose`, and the wasm driver no longer logs kv keys and values. Both wrote vat state in plain text to whatever logger the embedder supplied ([#1086](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1086))
 - `rollbackSavepoint` discards the enclosing transaction when `ROLLBACK TO` itself fails, instead of leaving the savepoint on its stack and the transaction open ([#1005](https://github.com/MetaMask/ocap-kernel/pull/1005))
   - Nothing would ever commit or abort that transaction, so every later write on the connection silently joined it, reported success, and vanished on close. Discarding it is no wider than the caller asked for: the transaction begins with the outermost savepoint, so it holds only the work the rollback was abandoning
