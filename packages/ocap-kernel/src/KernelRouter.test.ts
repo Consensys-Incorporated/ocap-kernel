@@ -92,14 +92,14 @@ describe('KernelRouter', () => {
     mockTerminateVat = vi.fn(async () => undefined);
 
     // Create the router to test
-    kernelRouter = new KernelRouter(
+    kernelRouter = new KernelRouter({
       kernelStore,
       kernelQueue,
       getEndpoint,
-      mockInvokeKernelService,
-      mockRestartVat,
-      mockTerminateVat,
-    );
+      invokeKernelService: mockInvokeKernelService,
+      restartVat: mockRestartVat,
+      terminateVat: mockTerminateVat,
+    });
   });
 
   describe('deliver', () => {
