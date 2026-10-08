@@ -277,7 +277,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Removed
 
 - Remove support for launching vats outside a subcluster ([#535](https://github.com/MetaMask/ocap-kernel/pull/535))
-- **BREAKING:** `Kernel.make` no longer rejects when a persisted vat fails to start. The failure is logged, and the vat stays persisted with no worker, messages to it rejected, until `restartVat`, `terminateVat` or `terminateAllVats` ([#1100](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1100))
 
 ### Fixed
 

@@ -452,9 +452,8 @@ export class KernelRouter {
     } catch (error) {
       // A restart and a termination each happen inside a crank of their own,
       // so no crank sees a vat between workers. A vat with no handle has
-      // ended, is waiting on the termination its channel's loss queued, failed
-      // to start at boot, or was stranded by a retirement that did not
-      // complete.
+      // ended, is waiting on the termination its channel's loss queued, or was
+      // stranded by a retirement that did not complete.
       //
       // A remote with no handle is only out of reach, so only a delivery with
       // nothing to lose may skip one.
