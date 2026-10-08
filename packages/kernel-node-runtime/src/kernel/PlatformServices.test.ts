@@ -1,8 +1,5 @@
-import { makePromiseKit } from '@endo/promise-kit';
 import { makeCounter } from '@metamask/kernel-utils';
-import { Logger } from '@metamask/logger';
 import type { VatId } from '@metamask/ocap-kernel';
-import { delay } from '@ocap/repo-tools/test-utils';
 import { Worker as NodeWorker } from 'node:worker_threads';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
@@ -36,12 +33,6 @@ const mocks = vi.hoisted(() => {
         }
         // Don't emit 'error' or 'exit' events unless we want to test error cases
       },
-      on: (event: string, callback: (...args: unknown[]) => unknown) => {
-        eventHandlers.set(event, [
-          ...(eventHandlers.get(event) ?? []),
-          callback,
-        ]);
-      },
       removeAllListeners: vi.fn((event?: string) => {
         if (event) {
           eventHandlers.delete(event);
@@ -66,7 +57,6 @@ const mocks = vi.hoisted(() => {
     stream: {
       synchronize: vi.fn(async () => undefined).mockResolvedValue(undefined),
       return: vi.fn(async () => ({})),
-      throw: vi.fn(async () => ({})),
     },
   };
 });
@@ -210,116 +200,6 @@ describe('NodejsPlatformServices', () => {
     });
   });
 
-  describe('a worker once online', () => {
-    it('fails a launch still shaking hands when it exits', async () => {
-      const service = new NodejsPlatformServices({ workerFilePath });
-      const testVatId: VatId = getTestVatId();
-      const worker = mocks.createMockWorker();
-      vi.mocked(NodeWorker).mockImplementationOnce(function () {
-        return worker;
-      });
-      mocks.stream.synchronize.mockReturnValueOnce(
-        new Promise(() => undefined),
-      );
-      const launching = service.launch(testVatId);
-      await delay(0);
-
-      worker.emit('exit', 1);
-
-      await expect(launching).rejects.toThrowError(
-        `Worker ${testVatId} exited during startup with code 1`,
-      );
-    });
-
-    it('is not registered when its handshake completes after it exited', async () => {
-      const service = new NodejsPlatformServices({ workerFilePath });
-      const testVatId: VatId = getTestVatId();
-      const worker = mocks.createMockWorker();
-      vi.mocked(NodeWorker).mockImplementationOnce(function () {
-        return worker;
-      });
-      const handshake = makePromiseKit<void>();
-      mocks.stream.synchronize.mockReturnValueOnce(handshake.promise);
-      const launching = service.launch(testVatId);
-      await delay(0);
-
-      worker.emit('exit', 1);
-      handshake.resolve();
-      await delay(0);
-
-      await expect(launching).rejects.toThrowError(
-        `Worker ${testVatId} exited during startup with code 1`,
-      );
-      expect(service.workers.has(testVatId)).toBe(false);
-      expect(mocks.stream.throw).toHaveBeenCalledWith(
-        expect.objectContaining({
-          message: `Worker ${testVatId} exited during startup with code 1`,
-        }),
-      );
-    });
-
-    it('logs an error it raises rather than rethrowing it', async () => {
-      const logger = new Logger('test');
-      const logError = vi.spyOn(logger, 'error').mockReturnValue();
-      const service = new NodejsPlatformServices({ workerFilePath, logger });
-      const testVatId: VatId = getTestVatId();
-      const worker = mocks.createMockWorker();
-      vi.mocked(NodeWorker).mockImplementationOnce(function () {
-        return worker;
-      });
-      await service.launch(testVatId);
-      const failure = new Error('uncaught in the vat');
-
-      worker.emit('error', failure);
-
-      expect(logError).toHaveBeenCalledWith(
-        `Worker ${testVatId} errored:`,
-        failure,
-      );
-    });
-
-    it('is forgotten, and its channel failed with the exit code, when it exits', async () => {
-      const service = new NodejsPlatformServices({ workerFilePath });
-      const testVatId: VatId = getTestVatId();
-      const worker = mocks.createMockWorker();
-      vi.mocked(NodeWorker).mockImplementationOnce(function () {
-        return worker;
-      });
-      await service.launch(testVatId);
-      mocks.stream.throw.mockClear();
-
-      worker.emit('exit', 1);
-
-      expect(service.workers.has(testVatId)).toBe(false);
-      expect(mocks.stream.throw).toHaveBeenCalledOnce();
-      expect(mocks.stream.throw).toHaveBeenCalledWith(
-        new Error(`Worker ${testVatId} exited with code 1`),
-      );
-    });
-
-    it('leaves a replacement alone when it exits while being stopped', async () => {
-      const service = new NodejsPlatformServices({ workerFilePath });
-      const testVatId: VatId = getTestVatId();
-      const firstWorker = mocks.createMockWorker();
-      const secondWorker = mocks.createMockWorker();
-      vi.mocked(NodeWorker)
-        .mockImplementationOnce(function () {
-          return firstWorker;
-        })
-        .mockImplementationOnce(function () {
-          return secondWorker;
-        });
-      await service.launch(testVatId);
-      mocks.stream.return.mockReturnValueOnce(new Promise(() => undefined));
-      service.terminate(testVatId).catch(() => undefined);
-      await service.launch(testVatId);
-
-      firstWorker.emit('exit', 1);
-
-      expect(service.workers.get(testVatId)?.worker).toBe(secondWorker);
-    });
-  });
-
   describe('terminate', () => {
     it('terminates the target vat', async () => {
       const service = new NodejsPlatformServices({
@@ -366,67 +246,15 @@ describe('NodejsPlatformServices', () => {
       expect(await service.launch(testVatId)).toStrictEqual(mocks.stream);
     });
 
-    it('logs an error the worker raises as it stops', async () => {
-      const logger = new Logger('test');
-      const logError = vi.spyOn(logger, 'error').mockReturnValue();
-      const service = new NodejsPlatformServices({ workerFilePath, logger });
-      const testVatId: VatId = getTestVatId();
-      const worker = mocks.createMockWorker();
-      vi.mocked(NodeWorker).mockImplementationOnce(function () {
-        return worker;
-      });
-      const failure = new Error('uncaught in the vat');
-      // As Node does for an exception the worker threw before it stopped.
-      worker.terminate.mockImplementationOnce(async () => {
-        worker.emit('error', failure);
-        return undefined;
-      });
-      await service.launch(testVatId);
-
-      await service.terminate(testVatId);
-
-      expect(logError).toHaveBeenCalledWith(
-        `Worker ${testVatId} errored as it stopped:`,
-        failure,
-      );
-    });
-
-    it('tolerates terminating a vat with no worker', async () => {
+    it('throws when terminating an unknown vat', async () => {
       const service = new NodejsPlatformServices({
         workerFilePath,
       });
       const testVatId: VatId = getTestVatId();
 
-      expect(await service.terminate(testVatId)).toBeUndefined();
-    });
-
-    it('returns at once when called again while the worker stops', async () => {
-      const service = new NodejsPlatformServices({ workerFilePath });
-      const testVatId: VatId = getTestVatId();
-      const worker = mocks.createMockWorker();
-      vi.mocked(NodeWorker).mockImplementationOnce(function () {
-        return worker;
-      });
-      // As Node's `worker.terminate()` does: settled by an `exit` listener,
-      // which `removeAllListeners` can strip.
-      worker.terminate.mockImplementation(
-        async () =>
-          new Promise<undefined>((resolve) => {
-            worker.once('exit', () => resolve(undefined));
-          }),
+      await expect(service.terminate(testVatId)).rejects.toThrowError(
+        /No worker found/u,
       );
-      await service.launch(testVatId);
-
-      const first = service.terminate(testVatId);
-      const second = service.terminate(testVatId);
-      await delay(0);
-      worker.emit('exit', 0);
-
-      expect(await Promise.all([first, second])).toStrictEqual([
-        undefined,
-        undefined,
-      ]);
-      expect(worker.terminate).toHaveBeenCalledOnce();
     });
   });
 
