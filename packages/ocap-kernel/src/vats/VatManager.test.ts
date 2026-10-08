@@ -187,6 +187,23 @@ describe('VatManager', () => {
   );
 
   describe('initializeAllVats', () => {
+    it('starts the other vats when one will not start', async () => {
+      mockKernelStore.getAllVatRecords.mockReturnValue(
+        (function* () {
+          yield { vatID: 'v1', vatConfig: createMockVatConfig('moved') };
+          yield { vatID: 'v2', vatConfig: createMockVatConfig() };
+        })() as ReturnType<KernelStore['getAllVatRecords']>,
+      );
+      const logError = vi.spyOn(mockLogger, 'error').mockReturnValue();
+      const failure = new Error('bundle not found');
+      mockPlatformServices.launch.mockRejectedValueOnce(failure);
+
+      await vatManager.initializeAllVats();
+
+      expect(vatManager.getVatIds()).toStrictEqual(['v2']);
+      expect(logError).toHaveBeenCalledWith('Failed to start vat v1:', failure);
+    });
+
     it('initializes all vats from storage', async () => {
       const vatRecords = [
         { vatID: 'v1' as VatId, vatConfig: createMockVatConfig('vat1') },
