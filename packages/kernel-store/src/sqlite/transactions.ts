@@ -105,9 +105,8 @@ export function makeTransactionMethods({
       return false;
     }
     begin();
-    // A savepoint named on the stack belonged to the transaction SQLite ended,
-    // and is gone with it. Left there, it makes `commitIfNeeded` defer to an
-    // owner that no longer exists, and nothing ever commits this one.
+    // Any name still here died with a transaction SQLite ended, and would keep
+    // `commitIfNeeded` from ever committing this one.
     db._spStack.length = 0;
     return true;
   }
