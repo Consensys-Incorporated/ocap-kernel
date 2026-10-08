@@ -44,7 +44,7 @@ type VatConstructorProps = {
   kernelQueue: KernelQueue;
   logger?: Logger | undefined;
   allowedGlobalNames?: AllowedGlobalName[] | undefined;
-  /** Called when the worker's channel ends without the kernel closing it. */
+  /** Called when the channel ends before `terminate` or `expectClose`. */
   onStreamFailure: (error: Error) => void;
 };
 
@@ -73,7 +73,7 @@ export class VatHandle implements EndpointHandle {
   /** The vat's syscall */
   readonly #vatSyscall: VatSyscall;
 
-  /** Told when the worker's channel ends without the kernel closing it */
+  /** Told when the channel ends before `terminate` or `expectClose` */
   readonly #onStreamFailure: (error: Error) => void;
 
   /** Whether the kernel is closing the channel itself */
@@ -94,8 +94,8 @@ export class VatHandle implements EndpointHandle {
    * @param params.kernelQueue - The kernel's queue.
    * @param params.logger - Optional logger for error and diagnostic output.
    * @param params.allowedGlobalNames - Optional list of allowed global names for vat endowments.
-   * @param params.onStreamFailure - Called when the worker's channel ends without
-   * the kernel closing it.
+   * @param params.onStreamFailure - Called when the channel ends before
+   * `terminate` or `expectClose`.
    */
   // eslint-disable-next-line no-restricted-syntax
   private constructor({
@@ -191,7 +191,7 @@ export class VatHandle implements EndpointHandle {
 
   /**
    * Fail the commands waiting on a channel that has gone, and tell the
-   * manager, unless the kernel is closing the channel itself.
+   * manager, unless `terminate` or `expectClose` came first.
    *
    * @param error - What the channel ended with.
    */
@@ -204,7 +204,7 @@ export class VatHandle implements EndpointHandle {
       { cause: error },
     );
     // Here, not left to the manager, which ignores a handle it does not hold:
-    // one still shaking hands, or one a restart has replaced.
+    // one still shaking hands, or one a termination or restart has let go.
     this.#rpcClient.rejectAll(streamError);
     try {
       this.#onStreamFailure(streamError);

@@ -278,7 +278,7 @@ describe('NodejsPlatformServices', () => {
       );
     });
 
-    it('is forgotten, and its channel closed, when it exits', async () => {
+    it('is forgotten, and its channel failed with the exit code, when it exits', async () => {
       const service = new NodejsPlatformServices({ workerFilePath });
       const testVatId: VatId = getTestVatId();
       const worker = mocks.createMockWorker();
@@ -286,12 +286,15 @@ describe('NodejsPlatformServices', () => {
         return worker;
       });
       await service.launch(testVatId);
-      mocks.stream.return.mockClear();
+      mocks.stream.throw.mockClear();
 
       worker.emit('exit', 1);
 
       expect(service.workers.has(testVatId)).toBe(false);
-      expect(mocks.stream.return).toHaveBeenCalledOnce();
+      expect(mocks.stream.throw).toHaveBeenCalledOnce();
+      expect(mocks.stream.throw).toHaveBeenCalledWith(
+        new Error(`Worker ${testVatId} exited with code 1`),
+      );
     });
 
     it('leaves a replacement alone when it exits while being stopped', async () => {
@@ -361,6 +364,31 @@ describe('NodejsPlatformServices', () => {
       expect(worker.terminate).toHaveBeenCalledOnce();
       expect(service.workers.has(testVatId)).toBe(false);
       expect(await service.launch(testVatId)).toStrictEqual(mocks.stream);
+    });
+
+    it('logs an error the worker raises as it stops', async () => {
+      const logger = new Logger('test');
+      const logError = vi.spyOn(logger, 'error').mockReturnValue();
+      const service = new NodejsPlatformServices({ workerFilePath, logger });
+      const testVatId: VatId = getTestVatId();
+      const worker = mocks.createMockWorker();
+      vi.mocked(NodeWorker).mockImplementationOnce(function () {
+        return worker;
+      });
+      const failure = new Error('uncaught in the vat');
+      // As Node does for an exception the worker threw before it stopped.
+      worker.terminate.mockImplementationOnce(async () => {
+        worker.emit('error', failure);
+        return undefined;
+      });
+      await service.launch(testVatId);
+
+      await service.terminate(testVatId);
+
+      expect(logError).toHaveBeenCalledWith(
+        `Worker ${testVatId} errored as it stopped:`,
+        failure,
+      );
     });
 
     it('tolerates terminating a vat with no worker', async () => {

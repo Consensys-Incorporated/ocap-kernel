@@ -120,6 +120,12 @@ describe('VatHandle', () => {
       await delay(10);
 
       expect(onStreamFailure).toHaveBeenCalledOnce();
+      expect(onStreamFailure).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: 'Unexpected stream read error.',
+          cause: expect.objectContaining({ message: 'vat channel closed' }),
+        }),
+      );
     });
 
     it('fails a pending command when the channel closes', async () => {

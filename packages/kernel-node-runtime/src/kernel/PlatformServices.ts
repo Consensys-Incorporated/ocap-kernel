@@ -138,8 +138,6 @@ export class NodejsPlatformServices implements PlatformServices {
       );
       let phase: 'handshake' | 'registered' | 'exited' = 'handshake';
       worker.once('exit', (code) => {
-        // An orderly `terminate` removes this listener before killing the
-        // worker, so reaching it means the worker went away on its own.
         if (phase === 'handshake') {
           phase = 'exited';
           const error = new Error(
@@ -152,18 +150,20 @@ export class NodejsPlatformServices implements PlatformServices {
           return;
         }
         const entry = this.workers.get(vatId);
-        // A `terminate` under way has forgotten it already.
+        // Forgotten by a `terminate` under way; the slot may hold the vat's
+        // next worker.
         if (entry?.worker !== worker) {
           return;
         }
         this.workers.delete(vatId);
-        this.#logger.error(`Worker ${vatId} exited with code ${code}`);
-        // A worker thread that dies emits no port event, so closing the
+        const error = new Error(`Worker ${vatId} exited with code ${code}`);
+        this.#logger.error(error.message);
+        // A worker thread that dies emits no port event, so failing the
         // channel is the only way the kernel hears of it.
-        entry.stream.return().catch((error: unknown) => {
+        entry.stream.throw(error).catch((closeError: unknown) => {
           this.#logger.error(
             `Failed to close the channel of exited worker ${vatId}:`,
-            error,
+            closeError,
           );
         });
       });
@@ -183,9 +183,8 @@ export class NodejsPlatformServices implements PlatformServices {
         })
         .catch(async (error) => {
           // Clean up worker if synchronization fails
-          worker.removeAllListeners();
           try {
-            await worker.terminate();
+            await this.#killWorker(vatId, worker);
           } catch (terminateError) {
             this.#logger.error(
               `Error terminating worker ${vatId} after sync failure`,
@@ -204,12 +203,13 @@ export class NodejsPlatformServices implements PlatformServices {
    * @param vatId - The vat id of the worker to terminate.
    * @returns A promise that resolves when the worker has terminated, or at
    * once if there is no worker or another call is stopping it, and rejects if
-   * it failed to stop.
+   * the channel or the worker would not stop.
    */
   async terminate(vatId: VatId): Promise<undefined> {
     const workerEntry = this.workers.get(vatId);
     if (!workerEntry) {
-      // Its worker exited on its own, never started, or is being stopped.
+      // Exited on its own, never launched, still shaking hands, or stopped by
+      // another call.
       this.#logger.debug(`No worker to terminate for vat ${vatId}`);
       return undefined;
     }
@@ -221,10 +221,25 @@ export class NodejsPlatformServices implements PlatformServices {
     try {
       await stream.return();
     } finally {
-      worker.removeAllListeners();
-      await worker.terminate();
+      await this.#killWorker(vatId, worker);
     }
     return undefined;
+  }
+
+  /**
+   * Kill a worker. An `error` listener stays on: Node emits an exception the
+   * worker threw before it stopped as it exits, and rethrows one nothing
+   * listens for in the kernel's thread.
+   *
+   * @param vatId - The vat whose worker it is.
+   * @param worker - The worker.
+   */
+  async #killWorker(vatId: VatId, worker: NodeWorker): Promise<void> {
+    worker.removeAllListeners();
+    worker.on('error', (error) => {
+      this.#logger.error(`Worker ${vatId} errored as it stopped:`, error);
+    });
+    await worker.terminate();
   }
 
   /**

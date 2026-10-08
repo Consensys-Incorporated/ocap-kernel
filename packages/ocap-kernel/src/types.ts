@@ -532,7 +532,7 @@ export type PlatformServices = {
    * @param vatId - The vat id of the worker to terminate.
    * @param error - An optional error to terminate the worker with.
    * @returns A promise that resolves when the worker has terminated. For a vat
-   * with no worker, it resolves or rejects at once, depending on the runtime.
+   * with no worker, a runtime may resolve or reject.
    */
   terminate: (vatId: VatId, error?: Error) => Promise<void>;
   /**

@@ -135,7 +135,6 @@ describe('VatManager', () => {
         });
       }),
       onRunLoopDeath: vi.fn(() => () => undefined),
-      getRunLoopStatus: vi.fn(() => ({ state: 'running' })),
       assertRunLoopAlive: vi.fn(),
       discardHeldRequests: vi.fn(),
     } as unknown as Mocked<KernelQueue>;
@@ -195,14 +194,14 @@ describe('VatManager', () => {
           yield { vatID: 'v2', vatConfig: createMockVatConfig() };
         })() as ReturnType<KernelStore['getAllVatRecords']>,
       );
-      vi.spyOn(mockLogger, 'error').mockReturnValue();
-      mockPlatformServices.launch.mockRejectedValueOnce(
-        new Error('bundle not found'),
-      );
+      const logError = vi.spyOn(mockLogger, 'error').mockReturnValue();
+      const failure = new Error('bundle not found');
+      mockPlatformServices.launch.mockRejectedValueOnce(failure);
 
       await vatManager.initializeAllVats();
 
       expect(vatManager.getVatIds()).toStrictEqual(['v2']);
+      expect(logError).toHaveBeenCalledWith('Failed to start vat v1:', failure);
     });
 
     it('initializes all vats from storage', async () => {
@@ -478,7 +477,7 @@ describe('VatManager', () => {
         expect(mockKernelStore.markVatAsTerminated).not.toHaveBeenCalled();
         expect(mockKernelStore.deleteVat).not.toHaveBeenCalled();
         expect(logWarn).toHaveBeenCalledWith(
-          'Vat v1 lost its worker, and its retirement was not confirmed:',
+          'Vat v1 lost its channel, and its retirement was not confirmed:',
           refusal,
         );
       });
@@ -504,8 +503,8 @@ describe('VatManager', () => {
         await vatManager.runVat('v1', createMockVatConfig());
         vatManager.expectWorkersToStop();
 
-        // The stub's `expectClose` does nothing, so this stands in for a
-        // report from a handle registered after the call.
+        // The stub's `expectClose` does nothing, so the report reaches the
+        // manager's own check.
         reportStreamFailure(new Error('vat channel closed'));
         await delay(10);
 

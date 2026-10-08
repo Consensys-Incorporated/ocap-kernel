@@ -426,6 +426,62 @@ describe('a writer acting while a crank aborts', () => {
     }).toStrictEqual({ reachable: true, dropExports: [] });
   });
 
+  it('lost-vat retirement, when the next crank aborts too: the vat stays retired', async () => {
+    const harness = await setUp();
+    const {
+      kernelStore,
+      kernelQueue,
+      vatManager,
+      failStream,
+      doomed,
+      sentinel,
+    } = harness;
+    kernelQueue.enqueueSend(doomed, {
+      methargs: kser(['work', []]),
+      result: null,
+    });
+    let doomedDeliveries = 0;
+    const deliver = async (
+      item: RunQueueItem,
+    ): Promise<CrankResult | undefined> => {
+      if (item.type === 'send' && item.target === doomed) {
+        doomedDeliveries += 1;
+        if (doomedDeliveries === 1) {
+          failStream(new Error('stream died'));
+          return { didDelivery: 'v1', abort: true };
+        }
+        if (doomedDeliveries === 2) {
+          // Long enough for a retirement that waits for the crank to resume
+          // inside this one.
+          await delay(20);
+          return { didDelivery: 'v1', abort: true };
+        }
+        return undefined;
+      }
+      if (item.type === 'send' && item.target === sentinel) {
+        throw new Error(STOP_RUN_LOOP);
+      }
+      if (item.type === 'terminateVat') {
+        return await vatManager.performVatTermination(item.vatId, item.reason);
+      }
+      return undefined;
+    };
+
+    const running = kernelQueue.run(deliver);
+    await vi.waitFor(() => expect(doomedDeliveries).toBe(3));
+    kernelQueue.enqueueSend(sentinel, {
+      methargs: kser(['stop', []]),
+      result: null,
+    });
+    await expect(running).rejects.toThrow(STOP_RUN_LOOP);
+    harness.remoteManager.cleanup();
+
+    expect({
+      active: kernelStore.isVatActive('v2'),
+      terminated: kernelStore.getTerminatedVats().includes('v2'),
+    }).toStrictEqual({ active: false, terminated: true });
+  });
+
   it('lost-vat retirement: the vat stays retired', async () => {
     const harness = await setUp();
     const { kernelStore, failStream } = harness;

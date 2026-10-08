@@ -26,6 +26,7 @@ import type {
 } from './types.ts';
 import { isRemoteId, isVatId } from './types.ts';
 import { assert, Fail } from './utils/assert.ts';
+import { makeLostVatReason } from './vats/lost-vat-reason.ts';
 
 const GC_DELIVERY = {
   dropExports: 'deliverDropExports',
@@ -237,8 +238,7 @@ export class KernelRouter {
   /**
    * Reject a message's result promise, unless it is already settled.
    *
-   * A failed delivery may have settled the result on its way down: the
-   * endpoint resolved it before the delivery failed. Resolving a settled
+   * A failed delivery may have settled the result first. Resolving a settled
    * promise is a `Fail`, thrown from inside the catch that is handling the
    * failure.
    *
@@ -613,11 +613,13 @@ export class KernelRouter {
   }
 
   /**
-   * Make a delivery, rolling it back if its vat is lost while it is in flight.
+   * Make a delivery, and if its vat is lost while it is in flight, roll the
+   * delivery back and terminate the vat in the same crank, unless the kernel
+   * retired the vat during it.
    *
-   * Nothing the vat did during the delivery takes effect. The rollback puts
-   * the item back, and the next crank finds the vat gone; the termination its
-   * loss queued records the death.
+   * After the rollback nothing the vat did in the delivery takes effect, and
+   * a kernel caller awaiting the result of the message it was handling is told
+   * why the vat ended.
    *
    * @param endpointId - The endpoint the delivery is addressed to.
    * @param deliver - Makes the delivery.
@@ -638,14 +640,26 @@ export class KernelRouter {
       }
       if (!this.#kernelStore.isVatActive(endpointId)) {
         // Retired by the kernel inside this crank, as `terminateAllVats` can
-        // do while the run loop runs. A rollback would undo that retirement.
+        // do while the run loop runs. A rollback would undo that retirement,
+        // and any other it made in this crank.
         return harden({ didDelivery: endpointId });
       }
       this.#logger?.warn(
         `Rolled back a delivery to ${endpointId}, which was lost during it:`,
         error,
       );
-      return harden({ didDelivery: endpointId, abort: true });
+      return harden({
+        didDelivery: endpointId,
+        abort: true,
+        terminate: {
+          vatId: endpointId,
+          reject: true,
+          info: makeLostVatReason(
+            endpointId,
+            error instanceof Error ? error : new Error(String(error)),
+          ),
+        },
+      });
     }
   }
 

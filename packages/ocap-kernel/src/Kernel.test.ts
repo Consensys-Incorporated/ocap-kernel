@@ -1,7 +1,8 @@
+import { makePromiseKit } from '@endo/promise-kit';
 import { VatNotFoundError } from '@metamask/kernel-errors';
 import type { KernelDatabase } from '@metamask/kernel-store';
 import type { JsonRpcMessage } from '@metamask/kernel-utils';
-import { waitUntilQuiescent } from '@metamask/kernel-utils';
+import { delay, waitUntilQuiescent } from '@metamask/kernel-utils';
 import { Logger } from '@metamask/logger';
 import type { DuplexStream } from '@metamask/streams';
 import type { Mocked, MockInstance } from 'vitest';
@@ -855,6 +856,29 @@ describe('Kernel', () => {
       expect(stopRemoteCommsMock).toHaveBeenCalledOnce();
       expect(remoteManagerInstance.cleanup).toHaveBeenCalledOnce();
       expect(workerTerminateAllMock).toHaveBeenCalledOnce();
+    });
+
+    it('tells each vat its channel is closing only once the crank it waits for has ended', async () => {
+      const kernel = await Kernel.make(
+        mockPlatformServices,
+        mockKernelDatabase,
+      );
+      await kernel.launchSubcluster(makeSingleVatClusterConfig());
+      const crank = makePromiseKit<void>();
+      mocks.KernelQueue.lastInstance.waitForCrank.mockReturnValueOnce(
+        crank.promise,
+      );
+
+      const stopping = kernel.stop();
+      await delay(0);
+      const closingEarly = vatHandles[0]?.expectClose.mock.calls.length;
+      crank.resolve();
+      await stopping;
+
+      expect({
+        closingEarly,
+        closing: vatHandles[0]?.expectClose.mock.calls.length,
+      }).toStrictEqual({ closingEarly: 0, closing: 1 });
     });
 
     it('tells each vat its channel is closing before stopping remote comms', async () => {

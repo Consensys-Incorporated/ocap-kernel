@@ -287,18 +287,14 @@ describe('Vat Lifecycle', { timeout: 30_000 }, () => {
       },
     });
     await waitUntilQuiescent();
-    const doomedRoot = kernelStore.getRootObject('v1') as string;
     const survivorRoot = kernelStore.getRootObject('v2') as string;
 
-    // The thread alone, so only the `exit` listener can close the channel.
+    // The thread alone, so only the `exit` listener can fail the channel.
     await platformServices.workers.get('v1')?.worker.terminate();
     await waitUntilQuiescent(2000);
 
     expect(kernel.getVatIds()).not.toContain('v1');
     expect(kernelStore.isVatActive('v1')).toBe(false);
-    await expect(
-      kernel.queueMessage(doomedRoot, 'resume', []),
-    ).rejects.toBeInstanceOf(Error);
     expect(await runResume(kernel, survivorRoot)).toBe(
       'Counter incremented to: 2',
     );

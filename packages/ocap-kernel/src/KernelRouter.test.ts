@@ -5,7 +5,7 @@ import type { Mock, MockInstance } from 'vitest';
 
 import { KernelQueue } from './KernelQueue.ts';
 import { KernelRouter } from './KernelRouter.ts';
-import { kser, kslot } from './liveslots/kernel-marshal.ts';
+import { kser, kslot, makeKernelError } from './liveslots/kernel-marshal.ts';
 import type { KernelStore } from './store/index.ts';
 import type {
   KernelMessage,
@@ -1104,7 +1104,7 @@ describe('KernelRouter', () => {
           (): RunQueueItem => ({ type: 'bringOutYourDead', endpointId }),
         ],
       ])(
-        'rolls back a %s whose vat dies under it',
+        'rolls back a %s whose vat dies under it, and terminates the vat',
         async (_what, deliverMethod, makeItem) => {
           (
             endpointHandle[deliverMethod] as unknown as MockInstance
@@ -1114,12 +1114,22 @@ describe('KernelRouter', () => {
                 throw new VatNotFoundError(requested as VatId);
               },
             );
-            throw new Error('Unexpected stream read error.');
+            throw new Error('Unexpected stream read error.', {
+              cause: new Error('Worker v2 exited with code 1'),
+            });
           });
 
           expect(await kernelRouter.deliver(makeItem())).toStrictEqual({
             didDelivery: endpointId,
             abort: true,
+            terminate: {
+              vatId: endpointId,
+              reject: true,
+              info: makeKernelError(
+                'VAT_TERMINATED',
+                'Vat v2 lost its channel: Worker v2 exited with code 1',
+              ),
+            },
           });
           expect(kernelQueue.resolvePromises).not.toHaveBeenCalled();
         },
@@ -1153,6 +1163,21 @@ describe('KernelRouter', () => {
         await expect(
           kernelRouter.deliver({ type: 'bringOutYourDead', endpointId }),
         ).rejects.toThrow('kernel fault');
+      });
+
+      it('still throws when looking the vat up fails for another reason', async () => {
+        (
+          endpointHandle.deliverBringOutYourDead as unknown as MockInstance
+        ).mockImplementationOnce(async () => {
+          (getEndpoint as unknown as MockInstance).mockImplementation(() => {
+            throw new Error('store fault');
+          });
+          throw new Error('Unexpected stream read error.');
+        });
+
+        await expect(
+          kernelRouter.deliver({ type: 'bringOutYourDead', endpointId }),
+        ).rejects.toThrow('store fault');
       });
 
       it('still throws for a remote', async () => {

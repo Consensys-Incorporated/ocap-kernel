@@ -23,14 +23,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **BREAKING:** `makeIOChannelFactory` is now `makeIOListenerFactory`, and `makeSocketIOChannel` is now `makeSocketIOListener`. The Unix-socket server hands each connection to `accept()` as its own `IOChannel`, whose receive buffer, decoder, line queue, and reader queue are local to that connection, so any number of peers can be served concurrently. Connections arriving before `accept()` is called are queued rather than dropped. Gone with the single-client design: the shared `currentSocket`, the session-boundary latch, the merged line queue, and the `socket.destroy()` that rejected every second connection ([#1007](https://github.com/MetaMask/ocap-kernel/pull/1007))
 - **BREAKING:** Drop `platformOptions.fetch` from `makeNodeJsVatSupervisor` ([#942](https://github.com/MetaMask/ocap-kernel/pull/942))
   - `fetch` is now a vat endowment; stub `globalThis.fetch` directly if needed
+- `NodejsPlatformServices.terminate` resolves at once for a vat with no worker, such as one whose worker already exited, instead of throwing ([#1100](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1100))
 
 ### Fixed
 
-- A vat worker that exits after coming online has its channel closed, so the kernel notices the vat is gone ([#1100](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1100))
-- An uncaught exception in a vat worker is logged instead of being rethrown in the kernel's thread ([#1100](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1100))
+- A vat worker that exits after its handshake has its channel failed with its exit code, so the kernel notices the vat is gone and says why ([#1100](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1100))
+- An uncaught exception in a vat worker is logged instead of crashing the kernel's process, including one raised while the worker is being stopped ([#1100](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1100))
 - A vat worker that exits during the handshake fails its launch instead of leaving it pending ([#1100](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1100))
-- `NodejsPlatformServices.terminate` resolves for a vat with no worker, such as one whose worker already exited, instead of throwing ([#1100](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1100))
-- A second `NodejsPlatformServices.terminate` of a worker that is still stopping no longer leaves the first call waiting forever ([#1100](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1100))
+- A second `NodejsPlatformServices.terminate` of a worker that is still stopping returns at once, instead of leaving the first call waiting forever ([#1100](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1100))
 - `NodejsPlatformServices.terminate` forgets a worker that fails to stop, so the vat's next worker is no longer refused as a duplicate, and kills the worker even when its channel will not close ([#1149](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1149))
 - The RPC socket server refuses to bind a Unix socket that has a live listener, rather than unlinking it and orphaning the previous owner; stale socket files with no listener are still cleaned up automatically ([#952](https://github.com/MetaMask/ocap-kernel/pull/952))
 
