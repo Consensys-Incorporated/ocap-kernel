@@ -116,6 +116,7 @@ describe('kernel store', () => {
         'getReachableFlag',
         'getRefCount',
         'getRelayEntries',
+        'getRemoteIDs',
         'getRemoteIdentityValue',
         'getRemoteIdentityValueRequired',
         'getRemoteInfo',
