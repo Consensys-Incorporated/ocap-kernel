@@ -1,3 +1,4 @@
+import { assertSupportedPlatform } from '@metamask/kernel-node-runtime/daemon';
 import { spawn } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
@@ -41,6 +42,10 @@ async function readPidFile(): Promise<number | undefined> {
  * @param socketPath - The UNIX socket path.
  */
 export async function ensureDaemon(socketPath: string): Promise<void> {
+  // The daemon would also refuse to boot, but out of sight: it runs with
+  // `stdio: 'ignore'`, so the caller would only see the poll below time out.
+  assertSupportedPlatform();
+
   if (await pingDaemon(socketPath)) {
     return;
   }
