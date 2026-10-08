@@ -24,7 +24,7 @@ jobs:
       - name: Check pull request merge queue status
         id: check-skip-merge-queue
         if: github.event_name == 'merge_group'
-        uses: MetaMask/github-tools/.github/actions/check-skip-merge-queue@7e0d74bc7b79ce9601e52f58d5e4d36c19591df9 # v1
+        uses: MetaMask/github-tools/.github/actions/check-skip-merge-queue@b1b556ff7ab5b6054698d078c661a7b149b8609e # v1
 
   detect-changes:
     name: Detect changes
