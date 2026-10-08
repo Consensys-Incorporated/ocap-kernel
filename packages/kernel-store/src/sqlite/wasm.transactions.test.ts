@@ -3,12 +3,21 @@ import { describe, it, expect } from 'vitest';
 import { initDB, makeSQLKernelDatabase } from './wasm.ts';
 import type { KernelDatabase } from '../types.ts';
 
-// The wasm driver against the real SQLite build. Its siblings mock the database
-// to inject I/O failures; this file exists for the savepoint and transaction
-// semantics only SQLite itself can state.
+// Kept out of `wasm.test.ts`, whose `vi.mock` replaces sqlite-wasm for the
+// whole file.
 
 const makeDb = async (): Promise<KernelDatabase> =>
   makeSQLKernelDatabase({ dbFilename: ':memory:' });
+
+// The SQLITE_FULL also rolls back any open transaction.
+const failWithFullDisk = (kdb: KernelDatabase, write: () => void): void => {
+  // SQLite raises a limit below the database's current size to that size.
+  kdb.executeQuery('PRAGMA max_page_count = 1');
+  expect(write).toThrow('database or disk is full');
+  kdb.executeQuery('PRAGMA max_page_count = 1073741823');
+};
+
+const tooBig = 'x'.repeat(100_000);
 
 describe('the wasm driver on real SQLite', () => {
   it('undoes the writes a rolled-back savepoint covers', async () => {
@@ -49,24 +58,35 @@ describe('the wasm driver on real SQLite', () => {
     const kdb = await makeDb();
     kdb.createSavepoint('t0');
     kdb.kernelKVStore.set('key', 'value');
+    // A transaction the `SAVEPOINT` opened ends here; one `BEGIN` opened does not.
+    kdb.executeQuery('RELEASE SAVEPOINT t0');
 
     // SQLite refuses this unless a transaction is open.
     expect(() => kdb.executeQuery('ROLLBACK TRANSACTION')).not.toThrow();
     expect(kdb.kernelKVStore.get('key')).toBeUndefined();
   });
 
-  // `ROLLBACK TRANSACTION` stands in for what SQLITE_FULL leaves behind: the
-  // transaction and every savepoint in it are gone.
-  it('keeps writing after SQLite ends the transaction itself', async () => {
+  it.each([
+    [
+      'kv',
+      (kdb: KernelDatabase, value: string) =>
+        kdb.kernelKVStore.set('key', value),
+      (kdb: KernelDatabase) => kdb.kernelKVStore.get('key'),
+    ],
+    [
+      'vatstore',
+      (kdb: KernelDatabase, value: string) =>
+        kdb.makeVatStore('v1').updateKVData([['key', value]], []),
+      (kdb: KernelDatabase) =>
+        new Map(kdb.makeVatStore('v1').getKVData()).get('key'),
+    ],
+  ])('keeps taking %s writes after one fails', async (_name, write, read) => {
     const kdb = await makeDb();
-    kdb.createSavepoint('t0');
-    kdb.kernelKVStore.set('lost', 'value');
-    kdb.executeQuery('ROLLBACK TRANSACTION');
+    failWithFullDisk(kdb, () => write(kdb, tooBig));
 
-    expect(() => kdb.rollbackSavepoint('t0')).toThrow('no such savepoint: t0');
+    write(kdb, 'value');
 
-    kdb.kernelKVStore.set('after', 'value');
-    expect(kdb.kernelKVStore.get('after')).toBe('value');
+    expect(read(kdb)).toBe('value');
   });
 
   it('reports no transaction once the database is closed', async () => {
@@ -82,19 +102,22 @@ describe('the wasm driver on real SQLite', () => {
   it('commits a write made after SQLite ends the transaction itself', async () => {
     const kdb = await makeDb();
     kdb.createSavepoint('t0');
-    kdb.executeQuery('ROLLBACK TRANSACTION');
+    failWithFullDisk(kdb, () => kdb.kernelKVStore.set('key', tooBig));
 
     kdb.makeVatStore('v1').updateKVData([['key', 'value']], []);
 
     expect(() => kdb.executeQuery('COMMIT TRANSACTION')).toThrow(
       'cannot commit - no transaction is active',
     );
+    expect(kdb.makeVatStore('v1').getKVData()).toStrictEqual([
+      ['key', 'value'],
+    ]);
   });
 
   it('takes the next crank in a transaction of its own', async () => {
     const kdb = await makeDb();
     kdb.createSavepoint('t0');
-    kdb.executeQuery('ROLLBACK TRANSACTION');
+    failWithFullDisk(kdb, () => kdb.kernelKVStore.set('key', tooBig));
     expect(() => kdb.rollbackSavepoint('t0')).toThrow('no such savepoint: t0');
 
     kdb.createSavepoint('t0');
