@@ -25,15 +25,15 @@ type Stream = TestDuplexStream<JsonRpcMessage, JsonRpcMessage>;
 type KernelDatabase = Awaited<ReturnType<typeof makeSQLKernelDatabase>>;
 
 /** How a vat loses its channel. */
-type Death = 'exit' | 'bad frame';
+type Death = 'close' | 'bad frame';
 
 type Worker = {
   /** Make a syscall, as liveslots would mid-delivery. */
   syscall: (vso: unknown[]) => Promise<void>;
   /**
-   * Lose the channel: an exit ends it, as a runtime that closes the channel of
-   * an exited worker does; a bad frame fails it, as a garbled message from a
-   * live worker does.
+   * Lose the channel: a close ends it cleanly, as a runtime may for an exited
+   * worker; a bad frame fails it, as a garbled message from a live worker
+   * does.
    */
   die: (death: Death) => Promise<void>;
 };
@@ -64,7 +64,7 @@ function makeWorkers() {
       syscall: async (vso) =>
         receive({ jsonrpc: '2.0', method: 'syscall', params: vso }),
       die: async (death) => {
-        if (death === 'exit') {
+        if (death === 'close') {
           await holder.stream?.return();
         } else {
           await receive(NaN);
@@ -262,7 +262,7 @@ describe('a vat that loses its channel mid-delivery', () => {
       },
     },
   ];
-  const deaths: Death[] = ['exit', 'bad frame'];
+  const deaths: Death[] = ['close', 'bad frame'];
 
   it.each(
     deaths.flatMap((death) =>
@@ -336,7 +336,7 @@ describe('a delivery a kernel stop cuts off', () => {
     await vi.waitFor(() => expect(doomedWorker).toBeDefined());
 
     vatManager.expectWorkersToStop();
-    await doomedWorker?.die('exit');
+    await doomedWorker?.die('close');
     await delay(50);
 
     expect({

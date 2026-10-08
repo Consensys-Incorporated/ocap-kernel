@@ -168,8 +168,8 @@ export class VatHandle implements EndpointHandle {
     this.#vatStream
       .drain(this.#handleMessage.bind(this))
       .then(() => {
-        // A worker that exits has its channel closed rather than failed, so a
-        // clean end is a lost vat too.
+        // A runtime may close an exited worker's channel rather than fail it,
+        // so a clean end is a lost vat too.
         this.#reportStreamFailure(new Error('vat channel closed'));
         return undefined;
       })
