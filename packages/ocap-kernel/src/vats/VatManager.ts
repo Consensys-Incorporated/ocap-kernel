@@ -183,7 +183,15 @@ export class VatManager {
   async initializeAllVats(): Promise<void> {
     const starts: Promise<void>[] = [];
     for (const { vatID, vatConfig } of this.#kernelStore.getAllVatRecords()) {
-      starts.push(this.runVat(vatID, vatConfig));
+      // Per vat, so one whose bundle has moved since it was launched costs the
+      // kernel that vat rather than its whole startup. It stays persisted with
+      // no handle: until it is restarted or terminated, messages to it are
+      // rejected and its notifies and GC actions skipped (#1151).
+      starts.push(
+        this.runVat(vatID, vatConfig).catch((error: unknown) => {
+          this.#logger.error(`Failed to start vat ${vatID}:`, error);
+        }),
+      );
     }
     await Promise.all(starts);
   }
@@ -516,8 +524,8 @@ export class VatManager {
     terminating,
     terminationError,
   }: StopVatOptions): Promise<void> {
-    // A terminating vat may have no handle: one whose channel was lost, or
-    // one whose relaunch failed.
+    // A terminating vat may have no handle: one whose channel was lost, one
+    // that failed to start, or one whose relaunch failed.
     const vat = terminating ? this.#vats.get(vatId) : this.getVat(vatId);
     if (terminating && !this.#isVatKnown(vatId)) {
       throw new VatNotFoundError(vatId);
@@ -1042,9 +1050,9 @@ export class VatManager {
    */
   async terminateAllVats(): Promise<void> {
     await this.#kernelQueue.waitForCrank();
-    // With the persisted vats that have no handle, such as one whose loss
-    // queued a termination not yet carried out, whose worker may still be
-    // running.
+    // With the persisted vats that have no handle: one that failed to start,
+    // and one whose loss queued a termination not yet carried out, whose
+    // worker may still be running.
     const ids = new Set([
       ...this.getVatIds(),
       ...this.#kernelStore.getVatIDs(),

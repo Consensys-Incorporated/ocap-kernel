@@ -130,9 +130,14 @@ function makeWorkers() {
  * `VatHandle`s over fake workers, wired as `Kernel` wires them.
  *
  * @param kdb - The database.
+ * @param options - Options.
+ * @param options.failToStart - Vats whose worker will not launch.
  * @returns The pieces a test drives.
  */
-function boot(kdb: KernelDatabase) {
+function boot(
+  kdb: KernelDatabase,
+  { failToStart = new Set() }: { failToStart?: Set<VatId> } = {},
+) {
   const kernelStore: KernelStore = makeKernelStore(kdb);
   const logger = new Logger('test');
   for (const level of ['log', 'warn', 'error', 'debug'] as const) {
@@ -149,7 +154,12 @@ function boot(kdb: KernelDatabase) {
   );
   const workers = makeWorkers();
   const platformServices = {
-    launch: vi.fn(async (vatId: VatId) => workers.launch(vatId)),
+    launch: vi.fn(async (vatId: VatId) => {
+      if (failToStart.has(vatId)) {
+        throw new Error(`bundle for ${vatId} not found`);
+      }
+      return workers.launch(vatId);
+    }),
     terminate: vi.fn(async () => undefined),
   } as unknown as PlatformServices;
   const vatManager = new VatManager({
@@ -200,6 +210,19 @@ async function setUp() {
     doomedRoot,
     survivorRoot,
     survivorERef,
+    /**
+     * Boot the same store again, as the next process would, without stopping
+     * this one's workers.
+     *
+     * @param options - What `boot` takes.
+     * @param options.failToStart - Vats whose worker will not launch.
+     * @returns The new kernel's pieces, once `initializeAllVats` is done.
+     */
+    reboot: async (options: { failToStart?: Set<VatId> }) => {
+      const next = boot(kdb, options);
+      await next.vatManager.initializeAllVats();
+      return next;
+    },
   };
 }
 
@@ -325,6 +348,23 @@ describe('a delivery a kernel stop cuts off', () => {
       running: ['v1', 'v2'],
       active: true,
     });
+  });
+});
+
+describe('a vat that failed to start at boot', () => {
+  it('is terminated by terminateAllVats', async () => {
+    const harness = await setUp();
+    const next = await harness.reboot({ failToStart: new Set(['v1']) });
+    next.run();
+
+    await next.vatManager.terminateAllVats();
+
+    expect({
+      running: next.vatManager.getVatIds(),
+      persisted: [...next.kernelStore.getAllVatRecords()].map(
+        ({ vatID }) => vatID,
+      ),
+    }).toStrictEqual({ running: [], persisted: [] });
   });
 });
 
