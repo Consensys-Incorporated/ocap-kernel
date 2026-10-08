@@ -5,6 +5,7 @@ import { Kernel } from '@metamask/ocap-kernel';
 import { describe, expect, it, vi } from 'vitest';
 
 import { makeKernel } from './make-kernel.ts';
+import { assertSupportedPlatform } from '../platform.ts';
 
 vi.mock('@metamask/kernel-store/sqlite/nodejs', async () => {
   const { makeMapKernelDatabase } = await import(
@@ -14,6 +15,10 @@ vi.mock('@metamask/kernel-store/sqlite/nodejs', async () => {
     makeSQLKernelDatabase: vi.fn(makeMapKernelDatabase),
   };
 });
+
+vi.mock('../platform.ts', () => ({
+  assertSupportedPlatform: vi.fn(),
+}));
 
 describe('makeKernel', () => {
   it('should return a Kernel', async () => {
@@ -35,5 +40,14 @@ describe('makeKernel', () => {
       tags: ['kernel-store'],
       message: 'diagnostic',
     });
+  });
+
+  it('checks the platform before opening the database', async () => {
+    vi.mocked(assertSupportedPlatform).mockImplementationOnce(() => {
+      throw new Error('unsupported');
+    });
+
+    await expect(makeKernel({})).rejects.toThrow('unsupported');
+    expect(makeSQLKernelDatabase).not.toHaveBeenCalled();
   });
 });
