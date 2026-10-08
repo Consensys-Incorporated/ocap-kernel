@@ -68,6 +68,75 @@ describe('a crank that dies after recording a vat death', () => {
   });
 });
 
+describe('a crank whose transaction SQLite rolls back mid-delivery', () => {
+  const causes = (error: unknown): string[] =>
+    error instanceof Error ? [error.message, ...causes(error.cause)] : [];
+
+  it.each([
+    { outcome: 'reports success', crankResult: undefined },
+    {
+      outcome: 'aborts',
+      crankResult: {
+        abort: true,
+        terminate: { vatId: 'v1', info: {} as KernelMessage['methargs'] },
+      } as unknown as CrankResult,
+    },
+  ])(
+    'keeps none of the writes it makes afterwards when it $outcome',
+    async ({ crankResult }) => {
+      const kdb = await makeSQLKernelDatabase({ dbFilename: ':memory:' });
+      const kernelStore = makeKernelStore(kdb);
+      const kernelQueue = new KernelQueue(kernelStore, async () => undefined);
+      kernelStore.enqueueRun({
+        type: 'send',
+        target: 'ko1',
+        message: { methargs: { body: '', slots: [] }, result: null },
+      } as unknown as RunQueueItem);
+
+      // As `VatSyscall` does: a failed syscall is logged and the vat carries on.
+      const syscall = (write: () => void): void => {
+        try {
+          write();
+        } catch {
+          // Swallowed.
+        }
+      };
+      const deliver = async (): Promise<CrankResult | undefined> => {
+        kdb.executeQuery('PRAGMA max_page_count = 1');
+        syscall(() =>
+          kernelStore.setKernelServiceKref('big', 'x'.repeat(100_000)),
+        );
+        kdb.executeQuery('PRAGMA max_page_count = 1073741823');
+        syscall(() => kernelStore.setKernelServiceKref('after', 'ko2'));
+        syscall(() =>
+          kernelStore.makeVatStore('v1').updateKVData([['after', 'value']], []),
+        );
+        return crankResult;
+      };
+
+      const failure = await kernelQueue.run(deliver).catch((error) => error);
+
+      const { get } = kdb.kernelKVStore;
+      expect({
+        runQueue: Number(get('queue.run.head')) - Number(get('queue.run.tail')),
+        after: get('kernelService.after'),
+        vatstore: kdb.makeVatStore('v1').getKVData(),
+      }).toStrictEqual({ runQueue: 1, after: undefined, vatstore: [] });
+      expect(causes(failure)).toContainEqual(
+        expect.stringContaining(
+          'SQLite already ended the transaction holding savepoint t1',
+        ),
+      );
+      expect(causes(failure)).toContainEqual(
+        expect.stringContaining('database or disk is full'),
+      );
+      expect(() =>
+        kernelStore.setKernelServiceKref('later', 'ko3'),
+      ).not.toThrow();
+    },
+  );
+});
+
 /**
  * The audit runs while the crank can still be rolled back, which means it runs
  * before the flush moves buffered items onto the run queue.

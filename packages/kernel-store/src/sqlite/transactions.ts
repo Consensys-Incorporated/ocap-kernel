@@ -15,7 +15,10 @@ export type TransactionalDatabase = {
 };
 
 export type TransactionMethods = {
-  assertNotAbandoned: () => void;
+  assertWritable: () => void;
+  guardWrite: <Args extends unknown[], Result>(
+    write: (...args: Args) => Result,
+  ) => (...args: Args) => Result;
   beginIfNeeded: () => boolean;
   commitIfNeeded: () => void;
   rollbackIfNeeded: () => void;
@@ -55,6 +58,10 @@ export function makeTransactionMethods({
   // Why, for whoever catches the refusal: the logger is the embedder's to pass
   // and may not be there.
   let abortFailure: unknown;
+  // The error a write threw as SQLite rolled back the transaction, kept as the
+  // cause of what is thrown until the savepoint is rolled back or released,
+  // since whoever caught it may swallow it.
+  let lossCause: unknown;
 
   /**
    * Refuse to touch a transaction an earlier abort could not end. A savepoint
@@ -79,6 +86,77 @@ export function makeTransactionMethods({
   }
 
   /**
+   * Whether SQLite has rolled back, on its own, the transaction a savepoint on
+   * the stack was taken in.
+   *
+   * @returns True if so.
+   */
+  function isTransactionLost(): boolean {
+    return db._spStack.length > 0 && !db.inTransaction;
+  }
+
+  /**
+   * Refuse a write into a transaction an abort could not end, where it would be
+   * lost with that transaction, or into one SQLite has rolled back, where it
+   * would commit alone while the work around it is gone. Rolling back or
+   * releasing the savepoint ends the refusal.
+   *
+   * @throws If either holds.
+   */
+  function assertWritable(): void {
+    assertNotAbandoned();
+    if (isTransactionLost()) {
+      throw new Error(
+        `SQLite ended the transaction holding savepoint ${db._spStack[0]}; refusing writes until it is rolled back or released`,
+        { cause: lossCause },
+      );
+    }
+  }
+
+  /**
+   * Wrap a write so that it asks {@link assertWritable} first.
+   *
+   * @param write - The write.
+   * @returns The guarded write.
+   */
+  function guardWrite<Args extends unknown[], Result>(
+    write: (...args: Args) => Result,
+  ): (...args: Args) => Result {
+    return (...args) => {
+      assertWritable();
+      try {
+        return write(...args);
+      } catch (error) {
+        if (isTransactionLost()) {
+          lossCause = error;
+        }
+        throw error;
+      }
+    };
+  }
+
+  /**
+   * Tell a savepoint's owner that SQLite has already ended its transaction,
+   * taking every savepoint in it.
+   *
+   * @param name - The savepoint.
+   * @throws If the transaction has ended, after clearing the stack as any failed
+   * rollback or release does.
+   */
+  function assertSavepointLive(name: string): void {
+    if (db.inTransaction) {
+      return;
+    }
+    db._spStack.length = 0;
+    const cause = lossCause;
+    lossCause = undefined;
+    throw new Error(
+      `SQLite already ended the transaction holding savepoint ${name}`,
+      { cause },
+    );
+  }
+
+  /**
    * Discard the transaction after a failure that leaves it unowned, keeping the
    * error that got us here rather than the abort's.
    *
@@ -100,14 +178,11 @@ export function makeTransactionMethods({
    * @returns True if a new transaction was started, false if already in one.
    */
   function beginIfNeeded(): boolean {
-    assertNotAbandoned();
+    assertWritable();
     if (db.inTransaction) {
       return false;
     }
     begin();
-    // Any name still here died with a transaction SQLite ended, and would keep
-    // `commitIfNeeded` from ever committing this one.
-    db._spStack.length = 0;
     return true;
   }
 
@@ -201,6 +276,7 @@ export function makeTransactionMethods({
   function rollbackSavepoint(name: string): void {
     assertNotAbandoned();
     const idx = requireSavepoint(name);
+    assertSavepointLive(name);
     try {
       db.exec(SQL_QUERIES.ROLLBACK_SAVEPOINT.replace('%NAME%', name));
     } catch (error) {
@@ -226,6 +302,7 @@ export function makeTransactionMethods({
   function releaseSavepoint(name: string): void {
     assertNotAbandoned();
     const idx = requireSavepoint(name);
+    assertSavepointLive(name);
     try {
       db.exec(SQL_QUERIES.RELEASE_SAVEPOINT.replace('%NAME%', name));
     } catch (error) {
@@ -241,7 +318,8 @@ export function makeTransactionMethods({
   }
 
   return {
-    assertNotAbandoned,
+    assertWritable,
+    guardWrite,
     beginIfNeeded,
     commitIfNeeded,
     rollbackIfNeeded,

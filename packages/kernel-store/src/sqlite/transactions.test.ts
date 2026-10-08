@@ -197,24 +197,102 @@ describe('makeTransactionMethods', () => {
     expect(db._spStack).toStrictEqual([]);
   });
 
-  it('drops savepoints SQLite discarded with the transaction', () => {
-    const {
-      db,
-      begin,
-      commit,
-      endTransactionBehindOurBack,
-      createSavepoint,
-      releaseSavepoint,
-    } = makeFakeDriver();
-    createSavepoint('t0');
-    endTransactionBehindOurBack();
+  describe('a transaction SQLite ended itself', () => {
+    const lose = (): FakeDriver => {
+      const driver = makeFakeDriver();
+      driver.createSavepoint('t0');
+      driver.createSavepoint('t1');
+      driver.endTransactionBehindOurBack();
+      driver.issued.length = 0;
+      return driver;
+    };
 
-    createSavepoint('t1');
-    releaseSavepoint('t1');
+    it.each([
+      {
+        what: 'a write',
+        write: (driver: FakeDriver) => driver.assertWritable(),
+      },
+      {
+        what: 'a transaction',
+        write: (driver: FakeDriver) => driver.beginIfNeeded(),
+      },
+      {
+        what: 'a savepoint',
+        write: (driver: FakeDriver) => driver.createSavepoint('t2'),
+      },
+    ])(
+      'refuses $what until its savepoints are rolled back or released',
+      ({ write }) => {
+        const driver = lose();
 
-    expect(begin).toHaveBeenCalledTimes(2);
-    expect(commit).toHaveBeenCalledOnce();
-    expect(db._spStack).toStrictEqual([]);
+        expect(() => write(driver)).toThrow(
+          'SQLite ended the transaction holding savepoint t0; refusing writes',
+        );
+        expect(driver.issued).toStrictEqual([]);
+      },
+    );
+
+    it.each([
+      { method: 'rollbackSavepoint', name: 't1' },
+      { method: 'releaseSavepoint', name: 't0' },
+    ] as const)(
+      'tells the caller of $method, then writes again',
+      ({ method, name }) => {
+        const driver = lose();
+
+        expect(() => driver[method](name)).toThrow(
+          `SQLite already ended the transaction holding savepoint ${name}`,
+        );
+        expect(driver.db._spStack).toStrictEqual([]);
+
+        driver.createSavepoint('t0');
+        driver.releaseSavepoint('t0');
+        expect(driver.issued).toStrictEqual([
+          BEGIN_TRANSACTION,
+          'SAVEPOINT t0',
+          'RELEASE SAVEPOINT t0',
+          COMMIT_TRANSACTION,
+        ]);
+      },
+    );
+
+    it.each(['rollbackSavepoint', 'releaseSavepoint'] as const)(
+      'keeps refusing after %s of a savepoint it never held',
+      (method) => {
+        const driver = lose();
+
+        expect(() => driver[method]('t9')).toThrow('No such savepoint: t9');
+        expect(driver.db._spStack).toStrictEqual(['t0', 't1']);
+        expect(() => driver.assertWritable()).toThrow('refusing writes');
+      },
+    );
+
+    it('keeps the error of the write SQLite rolled back on as the cause', () => {
+      const driver = makeFakeDriver();
+      driver.createSavepoint('t0');
+      const full = new Error('SQLITE_FULL');
+      const write = driver.guardWrite(() => {
+        driver.endTransactionBehindOurBack();
+        throw full;
+      });
+
+      expect(write).toThrow(full);
+      expect(() => driver.assertWritable()).toThrow(
+        expect.objectContaining({ cause: full }),
+      );
+      expect(() => driver.rollbackSavepoint('t0')).toThrow(
+        expect.objectContaining({
+          message: 'SQLite already ended the transaction holding savepoint t0',
+          cause: full,
+        }),
+      );
+
+      driver.createSavepoint('t0');
+      driver.endTransactionBehindOurBack();
+      expect(() => driver.assertWritable()).toThrow(
+        expect.objectContaining({ cause: undefined }),
+      );
+    });
   });
 
   it('leaves an open transaction to whoever began it', () => {
@@ -311,11 +389,10 @@ describe('makeTransactionMethods', () => {
     // SQLite ending the transaction is the only way out of an abort that keeps
     // failing. Refusing writes past that point would refuse them forever.
     it('writes again once SQLite has ended it', () => {
-      const { issued, endTransactionBehindOurBack, assertNotAbandoned } =
-        abandon();
+      const { issued, endTransactionBehindOurBack, assertWritable } = abandon();
       endTransactionBehindOurBack();
 
-      expect(() => assertNotAbandoned()).not.toThrow();
+      expect(() => assertWritable()).not.toThrow();
       expect(issued).toStrictEqual([]);
     });
 

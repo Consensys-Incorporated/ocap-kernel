@@ -309,7 +309,7 @@ describe('makeSQLKernelDatabase', () => {
 
   // The store's write doors all have to ask, because teardown after the run
   // loop dies reaches most of them without going near `beginIfNeeded`.
-  describe('a transaction no abort can end', () => {
+  describe('refused writes', () => {
     const abandon = async (): Promise<KernelDatabase> => {
       const kdb = await makeSQLKernelDatabase({});
       kdb.createSavepoint('t0');
@@ -323,41 +323,61 @@ describe('makeSQLKernelDatabase', () => {
       return kdb;
     };
 
-    it.each([
-      {
-        what: 'a kv write',
-        write: (kdb: KernelDatabase) => kdb.kernelKVStore.set('k', 'v'),
-        statement: SQL_QUERIES.SET,
-      },
-      {
-        what: 'a kv delete',
-        write: (kdb: KernelDatabase) => kdb.kernelKVStore.delete('k'),
-        statement: SQL_QUERIES.DELETE,
-      },
-      {
-        what: 'a clear',
-        write: (kdb: KernelDatabase) => kdb.clear(),
-        statement: SQL_QUERIES.CLEAR,
-      },
-      {
-        what: 'a vatstore delete',
-        write: (kdb: KernelDatabase) => kdb.deleteVatStore('v1'),
-        statement: SQL_QUERIES.DELETE_VS_ALL,
-      },
-      {
-        what: 'a vatstore update',
-        write: (kdb: KernelDatabase) =>
-          kdb.makeVatStore('v1').updateKVData([['k', 'v']], []),
-        statement: SQL_QUERIES.SET_VS,
-      },
-    ])('refuses $what', async ({ write, statement }) => {
-      const kdb = await abandon();
-      mockDb.prepare.mockClear();
-      mockStatement.run.mockClear();
+    const lose = async (): Promise<KernelDatabase> => {
+      const kdb = await makeSQLKernelDatabase({});
+      kdb.createSavepoint('t0');
+      mockDb.inTransaction = false;
+      return kdb;
+    };
 
-      expect(() => write(kdb)).toThrow('refusing further writes');
-      expect(mockStatement.run).not.toHaveBeenCalled();
-      expect(mockDb.prepare).not.toHaveBeenCalledWith(statement);
+    describe.each([
+      {
+        state: 'a transaction no abort can end',
+        arrange: abandon,
+        refusal: 'refusing further writes',
+      },
+      {
+        state: 'a transaction SQLite rolled back',
+        arrange: lose,
+        refusal: 'refusing writes until',
+      },
+    ])('$state', ({ arrange, refusal }) => {
+      it.each([
+        {
+          what: 'a kv write',
+          write: (kdb: KernelDatabase) => kdb.kernelKVStore.set('k', 'v'),
+          statement: SQL_QUERIES.SET,
+        },
+        {
+          what: 'a kv delete',
+          write: (kdb: KernelDatabase) => kdb.kernelKVStore.delete('k'),
+          statement: SQL_QUERIES.DELETE,
+        },
+        {
+          what: 'a clear',
+          write: (kdb: KernelDatabase) => kdb.clear(),
+          statement: SQL_QUERIES.CLEAR,
+        },
+        {
+          what: 'a vatstore delete',
+          write: (kdb: KernelDatabase) => kdb.deleteVatStore('v1'),
+          statement: SQL_QUERIES.DELETE_VS_ALL,
+        },
+        {
+          what: 'a vatstore update',
+          write: (kdb: KernelDatabase) =>
+            kdb.makeVatStore('v1').updateKVData([['k', 'v']], []),
+          statement: SQL_QUERIES.SET_VS,
+        },
+      ])('refuses $what', async ({ write, statement }) => {
+        const kdb = await arrange();
+        mockDb.prepare.mockClear();
+        mockStatement.run.mockClear();
+
+        expect(() => write(kdb)).toThrow(refusal);
+        expect(mockStatement.run).not.toHaveBeenCalled();
+        expect(mockDb.prepare).not.toHaveBeenCalledWith(statement);
+      });
     });
   });
 

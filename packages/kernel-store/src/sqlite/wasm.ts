@@ -8,6 +8,7 @@ import sqlite3InitModule from '@sqlite.org/sqlite-wasm';
 import { DEFAULT_DB_FILENAME, SQL_QUERIES } from './common.ts';
 import { getDBFolder } from './env.ts';
 import { makeTransactionMethods } from './transactions.ts';
+import type { TransactionMethods } from './transactions.ts';
 import type { KVStore, VatStore, KernelDatabase } from '../types.ts';
 
 export type Database = SqliteDatabase & {
@@ -70,14 +71,12 @@ export async function initDB(
  *
  * @param db - The (open) database to use.
  * @param options - Options for the store.
- * @param options.assertWritable - Throws if this connection can no longer
- * persist anything, which every write here must ask first: one issued into a
- * transaction nothing can end reports success and is lost with it.
+ * @param options.guardWrite - The guard every write goes through.
  * @returns A key/value store using the given database.
  */
 function makeKVStore(
   db: Database,
-  { assertWritable }: { assertWritable: () => void },
+  { guardWrite }: Pick<TransactionMethods, 'guardWrite'>,
 ): KVStore {
   db.exec(SQL_QUERIES.CREATE_TABLE);
 
@@ -146,7 +145,6 @@ function makeKVStore(
    * @param value - The value to assign to it.
    */
   function kvSet(key: string, value: string): void {
-    assertWritable();
     try {
       sqlKVSet.bind([key, value]);
       sqlKVSet.step();
@@ -163,7 +161,6 @@ function makeKVStore(
    * @param key - The key to remove.
    */
   function kvDelete(key: string): void {
-    assertWritable();
     try {
       sqlKVDelete.bind([key]);
       sqlKVDelete.step();
@@ -178,8 +175,8 @@ function makeKVStore(
     getNextKey: kvGetNextKey,
     getRequired: <Value extends string = string>(key: string) =>
       kvGet(key, true) as Value,
-    set: kvSet,
-    delete: kvDelete,
+    set: guardWrite(kvSet),
+    delete: guardWrite(kvDelete),
   };
 }
 
@@ -217,7 +214,7 @@ export async function makeSQLKernelDatabase({
   }
 
   const {
-    assertNotAbandoned,
+    guardWrite,
     beginIfNeeded,
     commitIfNeeded,
     rollbackIfNeeded,
@@ -232,7 +229,7 @@ export async function makeSQLKernelDatabase({
     logger,
   });
 
-  const kvStore = makeKVStore(db, { assertWritable: assertNotAbandoned });
+  const kvStore = makeKVStore(db, { guardWrite });
 
   db.exec(SQL_QUERIES.CREATE_TABLE_VS);
 
@@ -267,7 +264,6 @@ export async function makeSQLKernelDatabase({
    * Delete everything from the database.
    */
   function kvClear(): void {
-    assertNotAbandoned();
     logger?.debug('clearing all kernel state');
     sqlKVClear.step();
     sqlKVClear.reset();
@@ -359,7 +355,7 @@ export async function makeSQLKernelDatabase({
 
     return {
       getKVData,
-      updateKVData,
+      updateKVData: guardWrite(updateKVData),
     };
   }
 
@@ -369,7 +365,6 @@ export async function makeSQLKernelDatabase({
    * @param vatId - The vat whose store is to be deleted.
    */
   function deleteVatStore(vatId: string): void {
-    assertNotAbandoned();
     try {
       sqlVatstoreDeleteAll.bind([vatId]);
       sqlVatstoreDeleteAll.step();
@@ -380,10 +375,10 @@ export async function makeSQLKernelDatabase({
 
   return {
     kernelKVStore: kvStore,
-    clear: kvClear,
+    clear: guardWrite(kvClear),
     executeQuery,
     makeVatStore,
-    deleteVatStore,
+    deleteVatStore: guardWrite(deleteVatStore),
     createSavepoint,
     rollbackSavepoint,
     releaseSavepoint,
