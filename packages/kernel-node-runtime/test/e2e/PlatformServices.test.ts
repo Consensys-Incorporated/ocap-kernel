@@ -70,13 +70,11 @@ describe('NodejsPlatformServices', () => {
       expect(service.workers.has(testVatId)).toBe(false);
     });
 
-    it('throws when terminating an unknown vat', async () => {
+    it('tolerates terminating an unknown vat', async () => {
       const service = createService();
       const testVatId: VatId = getTestVatId();
 
-      await expect(service.terminate(testVatId)).rejects.toThrow(
-        /No worker found/u,
-      );
+      expect(await service.terminate(testVatId)).toBeUndefined();
     });
   });
 

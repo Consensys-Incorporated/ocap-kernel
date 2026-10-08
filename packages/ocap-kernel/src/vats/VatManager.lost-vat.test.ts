@@ -234,6 +234,7 @@ describe('a vat that loses its channel mid-delivery', () => {
       what: 'send',
       queue: async ({ kernelQueue, doomedRoot }: Harness): Promise<unknown> =>
         kernelQueue.enqueueMessage(doomedRoot, 'work', []),
+      caller: /^\[KERNEL:VAT_TERMINATED\] Vat v1 lost its channel: /u,
     },
     {
       what: 'notify',
@@ -244,6 +245,7 @@ describe('a vat that loses its channel mid-delivery', () => {
         kernelQueue.resolvePromises(undefined, [[kpid, false, kser('done')]]);
         return undefined;
       },
+      caller: /^none$/u,
     },
     {
       what: 'dropExports',
@@ -253,6 +255,7 @@ describe('a vat that loses its channel mid-delivery', () => {
         kernelStore.addGCActions([makeGCAction('v1', 'dropExport', kref)]);
         return undefined;
       },
+      caller: /^none$/u,
     },
     {
       what: 'bringOutYourDead',
@@ -260,6 +263,7 @@ describe('a vat that loses its channel mid-delivery', () => {
         kernelStore.scheduleReap('v1');
         return undefined;
       },
+      caller: /^none$/u,
     },
   ];
   const deaths: Death[] = ['close', 'bad frame'];
@@ -270,7 +274,7 @@ describe('a vat that loses its channel mid-delivery', () => {
     ),
   )(
     'rolls back what the vat sent during the $what it lost its channel in ($death)',
-    async ({ death, queue }) => {
+    async ({ death, queue, caller: expectedCaller }) => {
       const harness = await setUp();
       const { kernelStore, kernelQueue, workers, survivorERef } = harness;
       workers.onDeliver('v1', async ({ syscall, die }) => {
@@ -304,11 +308,7 @@ describe('a vat that loses its channel mid-delivery', () => {
         survivorGot: [],
         runLoop: 'running',
       });
-      expect(caller).toMatch(
-        caller === 'none'
-          ? /^none$/u
-          : /^\[KERNEL:VAT_TERMINATED\] Vat v1 lost its channel: /u,
-      );
+      expect(caller).toMatch(expectedCaller);
     },
   );
 });
@@ -473,7 +473,7 @@ describe('terminateAllVats resuming inside a restart crank', () => {
       .catch((error: Error) => {
         restart = error.message;
       });
-    // Held behind the restart, whose crank starts as this one ends.
+    // Resumes inside the restart's crank, which starts as this one ends.
     const terminating = vatManager.terminateAllVats();
     v2Busy.resolve();
     await terminating;
