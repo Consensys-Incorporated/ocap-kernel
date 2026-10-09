@@ -35,8 +35,11 @@ type StopVatOptions = { vatId: VatId } & (
   | { terminating: false; terminationError?: never }
 );
 
-/** Set once `VatHandle.make` returns. */
-type RunningVat = { handle?: VatHandle };
+/**
+ * `handle` is set once `VatHandle.make` returns; `lost`, if the channel ends
+ * before then.
+ */
+type RunningVat = { handle?: VatHandle; lost?: Error };
 
 /** How a caller awaiting queued work is answered. */
 type Waiter<Value> = {
@@ -309,7 +312,8 @@ export class VatManager {
       (error) => this.#logger.error(`Vat ${vatId} error: ${stringify(error)}`),
     );
     // Matches a report to the handle that made it, since a restart reuses the
-    // vat id. Until `make` returns, the catch below covers a failed channel.
+    // vat id. Until the handle is registered, the catch below covers a failed
+    // channel.
     const running: RunningVat = {};
     let vat: VatHandle;
     try {
@@ -324,6 +328,9 @@ export class VatManager {
         onStreamFailure: (error) =>
           this.#reportLostVat({ vatId, running, error }),
       });
+      if (running.lost) {
+        throw running.lost;
+      }
     } catch (error) {
       await this.#platformServices
         .terminate(vatId)
@@ -432,11 +439,18 @@ export class VatManager {
     error: Error;
   }): void {
     const { handle } = running;
+    if (this.#workersStopping) {
+      return;
+    }
+    if (!handle) {
+      running.lost = error;
+      return;
+    }
     // The identity check, not the handle's own flag, is what keeps an orderly
     // termination or restart from reading as a death: the platform closes the
     // channel before `#stopVat` reaches the handle, which by then is no longer
     // the vat's.
-    if (!handle || this.#workersStopping || this.#vats.get(vatId) !== handle) {
+    if (this.#vats.get(vatId) !== handle) {
       return;
     }
     this.#logger.error(`Vat ${vatId} lost its channel to its worker:`, error);
@@ -894,10 +908,16 @@ export class VatManager {
       }
       return harden({ afterCommit: async () => taken.answer(error) });
     }
+    const handle = this.#vats.get(vatId);
+    if (!handle) {
+      // Lost its new channel since it was registered; the termination that
+      // loss queued retires it.
+      const error = new VatDeletedError(vatId);
+      return harden({ afterCommit: async () => taken.answer(error) });
+    }
     // Only once the crank commits: one that then fails, in its collection or
     // its audit, rolls the restart back and kills the run loop, which rejects
     // these callers instead.
-    const handle = this.getVat(vatId);
     return harden({ afterCommit: async () => taken.answer(handle) });
   }
 
