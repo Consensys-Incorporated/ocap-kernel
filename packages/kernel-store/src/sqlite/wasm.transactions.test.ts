@@ -114,6 +114,25 @@ describe('the wasm driver on real SQLite', () => {
     ]);
   });
 
+  it('frees the database after a COMMIT fails and the transaction rolls back', async () => {
+    const kdb = await makeDb();
+    // A deferred foreign key fails the COMMIT and leaves the transaction open.
+    kdb.executeQuery('PRAGMA foreign_keys = ON');
+    kdb.executeQuery('CREATE TABLE parent (id PRIMARY KEY)');
+    kdb.executeQuery(
+      'CREATE TABLE child (parentId REFERENCES parent (id) DEFERRABLE INITIALLY DEFERRED)',
+    );
+    kdb.createSavepoint('t0');
+    kdb.executeQuery('INSERT INTO child VALUES (1)');
+    expect(() => kdb.releaseSavepoint('t0')).toThrow(
+      'FOREIGN KEY constraint failed',
+    );
+    kdb.createSavepoint('t0');
+    kdb.rollbackSavepoint('t0');
+
+    expect(() => kdb.executeQuery('DROP TABLE child')).not.toThrow();
+  });
+
   it('takes the next crank in a transaction of its own', async () => {
     const kdb = await makeDb();
     kdb.createSavepoint('t0');
