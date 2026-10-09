@@ -18,6 +18,7 @@ import type {
   VatId,
 } from '../types.ts';
 import { makeGCAction } from '../types.ts';
+import { VatHandle } from './VatHandle.ts';
 import { VatManager } from './VatManager.ts';
 
 type Stream = TestDuplexStream<JsonRpcMessage, JsonRpcMessage>;
@@ -450,6 +451,67 @@ describe('terminateAllVats resuming inside a restart crank', () => {
       persisted: [],
       runLoop: 'running',
     });
+  });
+});
+
+describe('a restarted vat that loses its new channel as the restart ends', () => {
+  it.each([
+    {
+      when: 'before the manager registers its handle',
+      restart: /^Vat v1 was terminated after its restart failed: /u,
+    },
+    {
+      when: 'after the manager registers its handle',
+      restart: /^Vat was deleted\.$/u,
+    },
+  ])('retires the vat when it is lost $when', async ({ when, restart }) => {
+    const harness = await setUp();
+    const { kernelStore, kernelQueue, vatManager } = harness;
+    const make = VatHandle.make.bind(VatHandle);
+    vi.spyOn(VatHandle, 'make').mockImplementationOnce(async (params) => {
+      const handle = await make(params);
+      const lose = (): void =>
+        params.onStreamFailure(new Error('vat channel closed'));
+      if (when.startsWith('before')) {
+        lose();
+      } else {
+        // Polled a microtask at a time, so the loss lands as soon as the
+        // handle is registered and before the restart's crank reads it back.
+        (async () => {
+          while (!vatManager.hasVat('v1')) {
+            await Promise.resolve();
+          }
+          lose();
+        })().catch(() => undefined);
+      }
+      return handle;
+    });
+    harness.run();
+
+    let restarted = 'pending';
+    vatManager
+      .restartVat('v1')
+      .then(() => {
+        restarted = 'fulfilled';
+        return undefined;
+      })
+      .catch((error: unknown) => {
+        restarted = (error as Error).message;
+      });
+
+    await vi.waitFor(() =>
+      expect({
+        restarted,
+        running: vatManager.getVatIds(),
+        active: kernelStore.isVatActive('v1'),
+        runLoop: kernelQueue.getRunLoopStatus().state,
+      }).toStrictEqual({
+        restarted: expect.stringMatching(restart),
+        running: ['v2'],
+        active: false,
+        runLoop: 'running',
+      }),
+    );
   });
 });
 
