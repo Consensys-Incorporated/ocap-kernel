@@ -1,6 +1,7 @@
 import { Logger } from '@metamask/logger';
 import type {
   Database as SqliteDatabase,
+  PreparedStatement,
   Sqlite3Static,
 } from '@sqlite.org/sqlite-wasm';
 import sqlite3InitModule from '@sqlite.org/sqlite-wasm';
@@ -17,14 +18,12 @@ export type Database = SqliteDatabase & {
    * back on its own after an error such as SQLITE_FULL or SQLITE_IOERR.
    */
   readonly inTransaction: boolean;
-  // stack of active savepoint names
+  // savepoint names, innermost last
   _spStack: string[];
 };
 
 /** `sqlite3_get_autocommit` is bound by the wasm build but absent from its types. */
 type AutocommitCapi = { sqlite3_get_autocommit: (pDb: number) => number };
-
-type PreparedStatement = { step: () => unknown; reset: () => unknown };
 
 /**
  * Ensure that SQLite is initialized.
@@ -209,8 +208,14 @@ export async function makeSQLKernelDatabase({
    * @param statement - The statement to run.
    */
   function runStatement(statement: PreparedStatement): void {
-    statement.step();
-    statement.reset();
+    // A COMMIT that fails and leaves the transaction open stays busy until it
+    // is reset, and a busy statement keeps a read lock past the ROLLBACK that
+    // ends the transaction.
+    try {
+      statement.step();
+    } finally {
+      statement.reset();
+    }
   }
 
   const {
@@ -265,10 +270,8 @@ export async function makeSQLKernelDatabase({
    */
   function kvClear(): void {
     logger?.debug('clearing all kernel state');
-    sqlKVClear.step();
-    sqlKVClear.reset();
-    sqlKVClearVS.step();
-    sqlKVClearVS.reset();
+    runStatement(sqlKVClear);
+    runStatement(sqlKVClearVS);
   }
 
   /**

@@ -123,6 +123,26 @@ describe('makeTransactionMethods', () => {
     },
   );
 
+  it.each([
+    { method: 'rollbackSavepoint', sql: 'ROLLBACK TO SAVEPOINT a' },
+    { method: 'releaseSavepoint', sql: 'RELEASE SAVEPOINT a' },
+  ] as const)(
+    '$method takes a repeated name to its newest savepoint, as SQLite does',
+    ({ method, sql }) => {
+      const methods = makeFakeDriver();
+      methods.createSavepoint('a');
+      methods.createSavepoint('b');
+      methods.createSavepoint('a');
+
+      methods[method]('a');
+
+      expect(methods.db.exec).toHaveBeenLastCalledWith(sql);
+      expect(methods.db._spStack).toStrictEqual(['a', 'b']);
+      expect(methods.commit).not.toHaveBeenCalled();
+      expect(methods.abort).not.toHaveBeenCalled();
+    },
+  );
+
   it('rolls back to a savepoint and drops the ones above it', () => {
     const { db, abort, createSavepoint, rollbackSavepoint } = makeFakeDriver();
     createSavepoint('t0');
@@ -184,7 +204,7 @@ describe('makeTransactionMethods', () => {
   });
 
   it('reports the rollback failure even if the abort fails too', () => {
-    const { db, failOnce, createSavepoint, rollbackSavepoint } =
+    const { db, abort, failOnce, createSavepoint, rollbackSavepoint } =
       makeFakeDriver();
     createSavepoint('t0');
     failOnce.add('ROLLBACK TO SAVEPOINT t0');
@@ -194,6 +214,7 @@ describe('makeTransactionMethods', () => {
       'SQLITE_IOERR: ROLLBACK TO SAVEPOINT t0',
     );
 
+    expect(abort).toHaveBeenCalledOnce();
     expect(db._spStack).toStrictEqual([]);
   });
 
@@ -297,7 +318,7 @@ describe('makeTransactionMethods', () => {
 
   it('leaves an open transaction to whoever began it', () => {
     const { begin, beginIfNeeded } = makeFakeDriver();
-    beginIfNeeded();
+    expect(beginIfNeeded()).toBe(true);
 
     expect(beginIfNeeded()).toBe(false);
     expect(begin).toHaveBeenCalledOnce();

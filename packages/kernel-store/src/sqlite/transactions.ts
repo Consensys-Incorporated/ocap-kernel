@@ -3,10 +3,13 @@ import type { Logger } from '@metamask/logger';
 import { SQL_QUERIES, assertSafeIdentifier } from './common.ts';
 
 /**
- * What the transaction methods need of a driver's database handle. `_spStack`
- * is not a faithful mirror of SQLite's savepoint stack: `ROLLBACK TO tN` leaves
- * `tN` alive in SQLite, and `splice` drops it here. Harmless so far, because
- * the eventual `RELEASE t0` sweeps the orphans.
+ * What the transaction methods need of a driver's database handle.
+ *
+ * `_spStack` is not a faithful mirror of SQLite's savepoint stack:
+ * `ROLLBACK TO x` keeps `x` in SQLite but drops it here. That is safe while no
+ * savepoint is opened under a name already on the stack, ignoring case: SQLite
+ * resolves a name to its newest savepoint, which could then be a leftover the
+ * stack no longer shows.
  */
 export type TransactionalDatabase = {
   readonly inTransaction: boolean;
@@ -28,7 +31,7 @@ export type TransactionMethods = {
 };
 
 /**
- * Make the transaction and savepoint methods a SQLite driver exposes.
+ * Make a SQLite driver's transaction and savepoint methods.
  *
  * @param options - Options bag.
  * @param options.db - The open database.
@@ -283,8 +286,7 @@ export function makeTransactionMethods({
       // Left as it was, the savepoint stays on the stack and the transaction open
       // with nothing to ever commit or abort it, so every later write on this
       // connection joins it, reports success, and vanishes on close. Discarding
-      // the whole transaction is safe: it begins with the outermost savepoint, so
-      // it holds only what this rollback was abandoning anyway.
+      // the transaction loses the work of the savepoints below this one too.
       discardTransaction('rollback');
       throw error;
     }

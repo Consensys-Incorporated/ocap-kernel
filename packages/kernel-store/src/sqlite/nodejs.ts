@@ -12,7 +12,7 @@ import type { TransactionMethods } from './transactions.ts';
 import type { KVStore, VatStore, KernelDatabase } from '../types.ts';
 
 export type Database = SqliteDatabase & {
-  // stack of active savepoint names
+  // savepoint names, innermost last
   _spStack: string[];
 };
 

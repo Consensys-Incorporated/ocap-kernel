@@ -232,9 +232,8 @@ describe('makeSQLKernelDatabase', () => {
     const db = await makeSQLKernelDatabase({});
     const vatStore = db.makeVatStore('vvat');
     vatStore.updateKVData([...mockKVDataForMap], ['del1', 'del2']);
-    // begin transaction
-    expect(mockStatement.step).toHaveBeenCalled();
-    expect(mockStatement.reset).toHaveBeenCalled();
+    expect(mockBegin.step).toHaveBeenCalledOnce();
+    expect(mockBegin.reset).toHaveBeenCalledOnce();
     // set
     expect(mockStatement.bind).toHaveBeenCalledWith(['vvat', 'key1', 'value1']);
     expect(mockStatement.step).toHaveBeenCalled();
@@ -251,9 +250,8 @@ describe('makeSQLKernelDatabase', () => {
     expect(mockStatement.bind).toHaveBeenCalledWith(['vvat', 'del2']);
     expect(mockStatement.step).toHaveBeenCalled();
     expect(mockStatement.reset).toHaveBeenCalled();
-    // commit transaction
-    expect(mockStatement.step).toHaveBeenCalled();
-    expect(mockStatement.reset).toHaveBeenCalled();
+    expect(mockCommit.step).toHaveBeenCalledOnce();
+    expect(mockCommit.reset).toHaveBeenCalledOnce();
   });
 
   it('executeQuery executes arbitrary SQL queries', async () => {
