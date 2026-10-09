@@ -602,6 +602,70 @@ describe('transaction management', () => {
     expect(mockCommit.step).not.toHaveBeenCalled();
   });
 
+  // The store's write doors all have to ask, because teardown after the run
+  // loop dies reaches most of them without going near `beginIfNeeded`.
+  describe('refused writes', () => {
+    const abandon = async (): Promise<KernelDatabase> => {
+      const kdb = await makeSQLKernelDatabase({});
+      kdb.createSavepoint('t0');
+      mockDb.exec.mockImplementationOnce(() => {
+        throw new Error('SQLITE_IOERR');
+      });
+      mockAbort.step.mockImplementation(() => {
+        throw new Error('SQLITE_IOERR');
+      });
+      expect(() => kdb.rollbackSavepoint('t0')).toThrow('SQLITE_IOERR');
+      return kdb;
+    };
+
+    const lose = async (): Promise<KernelDatabase> => {
+      const kdb = await makeSQLKernelDatabase({});
+      kdb.createSavepoint('t0');
+      txOpen = false;
+      return kdb;
+    };
+
+    describe.each([
+      {
+        state: 'a transaction no abort can end',
+        arrange: abandon,
+        refusal: 'refusing further writes',
+      },
+      {
+        state: 'a transaction SQLite rolled back',
+        arrange: lose,
+        refusal: 'refusing writes until',
+      },
+    ])('$state', ({ arrange, refusal }) => {
+      it.each([
+        {
+          what: 'a kv write',
+          write: (kdb: KernelDatabase) => kdb.kernelKVStore.set('k', 'v'),
+        },
+        {
+          what: 'a kv delete',
+          write: (kdb: KernelDatabase) => kdb.kernelKVStore.delete('k'),
+        },
+        { what: 'a clear', write: (kdb: KernelDatabase) => kdb.clear() },
+        {
+          what: 'a vatstore delete',
+          write: (kdb: KernelDatabase) => kdb.deleteVatStore('v1'),
+        },
+        {
+          what: 'a vatstore update',
+          write: (kdb: KernelDatabase) =>
+            kdb.makeVatStore('v1').updateKVData([['k', 'v']], []),
+        },
+      ])('refuses $what', async ({ write }) => {
+        const kdb = await arrange();
+        mockStatement.step.mockClear();
+
+        expect(() => write(kdb)).toThrow(refusal);
+        expect(mockStatement.step).not.toHaveBeenCalled();
+      });
+    });
+  });
+
   describe('close functionality', () => {
     it('closes the database', async () => {
       const db = await makeSQLKernelDatabase({});

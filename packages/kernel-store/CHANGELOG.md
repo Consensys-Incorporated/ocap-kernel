@@ -15,10 +15,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A `RELEASE`, `COMMIT` or `SAVEPOINT` that fails now discards the transaction it was in, rather than leaving one open that nothing will ever end — every later write would have joined it, reported success, and vanished on close ([#1094](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1094))
+- Once even the abort that discards such a transaction fails, both drivers refuse every write — kv, vat store, `clear`, `deleteVatStore` — instead of reporting success for one that cannot land. The abort is retried on each attempt, so a connection SQLite recovers starts writing again ([#1094](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1094))
+- A savepoint name the driver rejects no longer leaves a transaction open behind it ([#1094](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1094))
+- Once SQLite has rolled back a transaction on its own, both drivers refuse writes until its savepoints are rolled back or released, instead of committing each write alone ([#1094](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1094))
 - After SQLite rolls a transaction back on its own, as it can on a full disk or an I/O error, the wasm driver no longer throws `cannot commit - no transaction is active` from later savepoint releases ([#1089](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1089))
 - A read or write that fails in the wasm driver no longer makes every later call to the same operation throw `SQLITE_MISUSE` ([#1089](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1089))
 - A COMMIT that fails in the wasm driver no longer keeps a read lock on the database after the transaction rolls back, which made `DROP TABLE` and `VACUUM` fail until the next commit ([#1092](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1092))
-- After SQLite rolls a transaction back on its own, the Node driver commits the writes under a later savepoint instead of leaving them in a transaction that never commits ([#1089](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1089))
 - Neither SQLite driver logs the contents of the store any more: the Node driver opens the database without `verbose`, and the wasm driver no longer logs kv keys and values. Both wrote vat state in plain text to whatever logger the embedder supplied ([#1086](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1086))
 - `rollbackSavepoint` discards the enclosing transaction when `ROLLBACK TO` itself fails, instead of leaving the savepoint on its stack and the transaction open ([#1005](https://github.com/MetaMask/ocap-kernel/pull/1005))
   - Nothing would ever commit or abort that transaction, so every later write on the connection silently joined it, reported success, and vanished on close. Discarding it also discards the work of every savepoint below the one being rolled back

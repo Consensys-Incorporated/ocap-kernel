@@ -886,7 +886,14 @@ export class Kernel {
         'Kernel was stopped before answering; terminations already queued still take effect on its next start, restarts do not',
       ),
     );
-    this.#kernelStore.recordLastActiveTime();
+    try {
+      this.#kernelStore.recordLastActiveTime();
+    } catch (error) {
+      // A store that can no longer persist anything refuses this write, and
+      // everything below it releases something: remote comms, the vat workers,
+      // the database handle. A timestamp is not worth leaking those over.
+      this.#logger.error('could not record last active time', error);
+    }
     await this.#platformServices.stopRemoteComms();
     this.#remoteManager.cleanup();
     await this.#platformServices.terminateAll();

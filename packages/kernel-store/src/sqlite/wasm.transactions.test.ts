@@ -99,19 +99,35 @@ describe('the wasm driver on real SQLite', () => {
     expect(db.inTransaction).toBe(false);
   });
 
-  it('commits a write made after SQLite ends the transaction itself', async () => {
+  it('refuses writes once SQLite rolls back the transaction a savepoint is in', async () => {
     const kdb = await makeDb();
     kdb.createSavepoint('t0');
     failWithFullDisk(kdb, () => kdb.kernelKVStore.set('key', tooBig));
 
-    kdb.makeVatStore('v1').updateKVData([['key', 'value']], []);
-
-    expect(() => kdb.executeQuery('COMMIT TRANSACTION')).toThrow(
-      'cannot commit - no transaction is active',
+    expect(() => kdb.kernelKVStore.set('key', 'value')).toThrow(
+      'refusing writes',
     );
-    expect(kdb.makeVatStore('v1').getKVData()).toStrictEqual([
-      ['key', 'value'],
-    ]);
+    expect(() =>
+      kdb.makeVatStore('v1').updateKVData([['key', 'value']], []),
+    ).toThrow('refusing writes');
+    expect(kdb.kernelKVStore.get('key')).toBeUndefined();
+    expect(kdb.makeVatStore('v1').getKVData()).toStrictEqual([]);
+  });
+
+  it('keeps the error of the vatstore write SQLite rolled back on as the cause', async () => {
+    const kdb = await makeDb();
+    kdb.createSavepoint('t0');
+    failWithFullDisk(kdb, () =>
+      kdb.makeVatStore('v1').updateKVData([['key', tooBig]], []),
+    );
+
+    expect(() => kdb.kernelKVStore.set('key', 'value')).toThrow(
+      expect.objectContaining({
+        cause: expect.objectContaining({
+          message: expect.stringContaining('database or disk is full'),
+        }),
+      }),
+    );
   });
 
   it('frees the database after a COMMIT fails and the transaction rolls back', async () => {
@@ -137,7 +153,9 @@ describe('the wasm driver on real SQLite', () => {
     const kdb = await makeDb();
     kdb.createSavepoint('t0');
     failWithFullDisk(kdb, () => kdb.kernelKVStore.set('key', tooBig));
-    expect(() => kdb.rollbackSavepoint('t0')).toThrow('no such savepoint: t0');
+    expect(() => kdb.rollbackSavepoint('t0')).toThrow(
+      'SQLite already ended the transaction holding savepoint t0',
+    );
 
     kdb.createSavepoint('t0');
     kdb.kernelKVStore.set('key', 'value');

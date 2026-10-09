@@ -8,6 +8,7 @@ import { dirname, isAbsolute, join } from 'node:path';
 import { SQL_QUERIES, DEFAULT_DB_FILENAME } from './common.ts';
 import { getDBFolder } from './env.ts';
 import { makeTransactionMethods } from './transactions.ts';
+import type { TransactionMethods } from './transactions.ts';
 import type { KVStore, VatStore, KernelDatabase } from '../types.ts';
 
 export type Database = SqliteDatabase & {
@@ -35,9 +36,14 @@ async function initDB(dbFilename: string, logger?: Logger): Promise<Database> {
  * Makes a persistent {@link KVStore} on top of a SQLite database.
  *
  * @param db - The (open) database to use.
+ * @param options - Options for the store.
+ * @param options.guardWrite - The guard every write goes through.
  * @returns A key/value store using the given database.
  */
-function makeKVStore(db: Database): KVStore {
+function makeKVStore(
+  db: Database,
+  { guardWrite }: Pick<TransactionMethods, 'guardWrite'>,
+): KVStore {
   const sqlKVInit = db.prepare(SQL_QUERIES.CREATE_TABLE);
   sqlKVInit.run();
 
@@ -107,8 +113,8 @@ function makeKVStore(db: Database): KVStore {
     getNextKey: kvGetNextKey,
     getRequired: <Value extends string = string>(key: string) =>
       kvGet(key, true) as Value,
-    set: kvSet,
-    delete: kvDelete,
+    set: guardWrite(kvSet),
+    delete: guardWrite(kvDelete),
   };
 }
 
@@ -129,7 +135,20 @@ export async function makeSQLKernelDatabase({
 }): Promise<KernelDatabase> {
   const db = await initDB(dbFilename ?? DEFAULT_DB_FILENAME, logger);
 
-  const kvStore = makeKVStore(db);
+  const sqlBeginTransaction = db.prepare(SQL_QUERIES.BEGIN_TRANSACTION);
+  const sqlCommitTransaction = db.prepare(SQL_QUERIES.COMMIT_TRANSACTION);
+  const sqlAbortTransaction = db.prepare(SQL_QUERIES.ABORT_TRANSACTION);
+
+  const { guardWrite, createSavepoint, rollbackSavepoint, releaseSavepoint } =
+    makeTransactionMethods({
+      db,
+      begin: () => sqlBeginTransaction.run(),
+      commit: () => sqlCommitTransaction.run(),
+      abort: () => sqlAbortTransaction.run(),
+      logger,
+    });
+
+  const kvStore = makeKVStore(db, { guardWrite });
 
   const sqlKVInitVS = db.prepare(SQL_QUERIES.CREATE_TABLE_VS);
   sqlKVInitVS.run();
@@ -140,17 +159,6 @@ export async function makeSQLKernelDatabase({
   const sqlVatstoreSet = db.prepare(SQL_QUERIES.SET_VS);
   const sqlVatstoreDelete = db.prepare(SQL_QUERIES.DELETE_VS);
   const sqlVatstoreDeleteAll = db.prepare(SQL_QUERIES.DELETE_VS_ALL);
-  const sqlBeginTransaction = db.prepare(SQL_QUERIES.BEGIN_TRANSACTION);
-  const sqlCommitTransaction = db.prepare(SQL_QUERIES.COMMIT_TRANSACTION);
-  const sqlAbortTransaction = db.prepare(SQL_QUERIES.ABORT_TRANSACTION);
-
-  const { createSavepoint, rollbackSavepoint, releaseSavepoint } =
-    makeTransactionMethods({
-      db,
-      begin: () => sqlBeginTransaction.run(),
-      commit: () => sqlCommitTransaction.run(),
-      abort: () => sqlAbortTransaction.run(),
-    });
 
   /**
    * Delete everything from the database.
@@ -159,6 +167,8 @@ export async function makeSQLKernelDatabase({
     sqlKVClear.run();
     sqlKVClearVS.run();
   }
+
+  const clear = guardWrite(db.transaction(kvClear));
 
   /**
    * Execute an arbitrary query and return the results.
@@ -216,7 +226,7 @@ export async function makeSQLKernelDatabase({
 
     return {
       getKVData,
-      updateKVData,
+      updateKVData: guardWrite(updateKVData),
     };
   }
 
@@ -232,9 +242,9 @@ export async function makeSQLKernelDatabase({
   return {
     kernelKVStore: kvStore,
     executeQuery: kvExecuteQuery,
-    clear: db.transaction(kvClear),
+    clear,
     makeVatStore,
-    deleteVatStore,
+    deleteVatStore: guardWrite(deleteVatStore),
     createSavepoint,
     rollbackSavepoint,
     releaseSavepoint,
