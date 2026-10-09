@@ -324,9 +324,6 @@ narrowed while keeping them synchronous.
 
 ## The fs capability
 
-> **In progress:** the `fs` capability described in this section has not fully
-> landed.
-
 `@metamask/kernel-platforms` vends `fs` as an exo. This replaces the previous
 `node:fs` lookalike record of caveated functions; there is no compatibility
 shim, and `existsSync` is gone, which the promises-only forwarding requires in
@@ -370,9 +367,7 @@ things in the same vocabulary the library uses:
 The capability factory compiles that into a delta and applies the same `narrow`
 the library exports, so the config-time bound is provably the root of the
 narrowing tree rather than a parallel mechanism. Root segments are absolute; an
-empty `root` would denote the entire filesystem and is a config error. Any
-platform-specific prefix is a leading segment, so a Windows drive is
-`["C:", "srv"]`.
+empty `root` would denote the entire filesystem and is a config error.
 
 Config stays JSON — it is a config file validated by superstruct — while patterns
 are Passable tagged records, so a config narrowing cannot itself be a delta and
@@ -392,15 +387,24 @@ for `fs`, one path component each; for the reversed-host-segment `fetch`
 narrowing on the roadmap, one label each, since a segment containing a dot would
 span several.
 
-**Aliasing defeats syntactic narrowing, and `fs` does not yet stop it.** Patterns
-are equally blind to the filesystem: a symlink at `/srv/data/evil -> /etc` makes
+**Aliasing defeats syntactic narrowing.** Patterns are equally blind to the
+filesystem: a symlink at `/srv/data/evil -> /etc` makes
 `['srv', 'data', 'evil', 'passwd']` satisfy `pathUnder(['srv', 'data'])`.
-`makeNoSymlinksCaveat` catches only a symlink in the final position, because
-`lstat` follows every intermediate component, so a holder of a narrowed or
-config-scoped `fs` can read outside its root if anyone can place a directory
-symlink inside it. Syntactic narrowing is sound only over a namespace that is not
-self-aliasing, and each capability owns that property for its own namespace —
-which `fs` has yet to do.
+Syntactic narrowing is sound only over a namespace that is not self-aliasing, and
+each capability owns that property for its own namespace.
+
+On Node.js, `fs` refuses any path that is not its own `realpath`: a symlink at any
+position, or on a case-insensitive filesystem a segment differing in case from the
+entry it names. Re-checking the prefix after resolving would not do, because the
+base cannot see which prefix a holder was narrowed to; refusing every alias is
+sound for all of them. It follows that `root` must be canonical — on macOS,
+`/private/var/...` rather than `/var/...`.
+
+The check races a writer who swaps a component for a symlink after it runs.
+`readFile` closes that race: it opens with `O_NOFOLLOW`, re-checks, and requires
+the path to still name the opened file. `access` has no handle to pin, so a swap
+can still reveal whether something outside the root exists. Hard links are
+aliases the check cannot see, and remain open.
 
 **Arity is not narrowable.** A delta constrains patterns at inherited positions
 and cannot drop trailing optionals or make an optional required.
@@ -419,11 +423,6 @@ or filters rather than forwarding — including the state-dependent cases such a
 provide.
 
 ## Roadmap
-
-**Close the symlink hole in `fs`.** Either resolve each path with `realpath` and
-re-check the prefix, or walk it a component at a time with `O_NOFOLLOW`. Both are
-TOCTOU-prone, and `realpath` additionally rejects a legitimately symlinked root,
-which is why this is its own change rather than a rider on the narrowing work.
 
 **Restore raw-byte reads.** `harden(buffer.transferToImmutable())` is Passable,
 with `byteArray` pass style, so `readFile` could return bytes after all. Deferred

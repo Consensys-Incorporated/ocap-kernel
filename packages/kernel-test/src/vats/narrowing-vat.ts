@@ -15,6 +15,19 @@ type Store = {
 };
 
 /**
+ * The fs endowment's shape, claimed here rather than imported from
+ * `@metamask/kernel-platforms` so that this file typechecks independently of it.
+ *
+ * The encoding is required: `readFile` without one resolves a `Buffer`, and no
+ * typed array is Passable, so the result could not cross the exo boundary.
+ */
+type FsExo = {
+  readFile: (segments: string[], encoding: string) => Promise<string>;
+};
+
+declare const fs: object;
+
+/**
  * Report an invocation's outcome, so a caller can tell a refusal from a result
  * without matching on a rejection.
  *
@@ -30,7 +43,8 @@ const probe = async (call: () => Promise<unknown>): Promise<string> => {
 };
 
 /**
- * Build function for a vat that narrows capabilities it builds itself.
+ * Build function for a vat that narrows capabilities — ones it builds itself,
+ * and the `fs` platform endowment.
  *
  * @returns The root object for the new vat.
  */
@@ -177,6 +191,22 @@ export function buildRootObject() {
         delta: underData,
       });
       return probe(async () => E(scoped).read(segments));
+    },
+
+    probeFs: async (segments: string[]) =>
+      probe(
+        async () => (await E(fs as FsExo).readFile(segments, 'utf8')).length,
+      ),
+
+    probeFsNarrowed: async (prefix: string[], segments: string[]) => {
+      const scoped = await narrow<FsExo>({
+        name: 'ScopedFs',
+        base: fs,
+        delta: { readFile: [pathUnder(prefix)] },
+      });
+      return probe(
+        async () => (await E(scoped).readFile(segments, 'utf8')).length,
+      );
     },
   });
 }
