@@ -3,11 +3,11 @@ import { describe, it, expect, vi } from 'vitest';
 import { makeTransactionMethods } from './transactions.ts';
 
 /**
- * A database that answers `inTransaction` the way SQLite does: only the
- * injected begin/commit/abort move it, and a test can end the transaction
- * behind the driver's back the way SQLite does after `SQLITE_FULL`.
+ * A fake database whose `inTransaction` moves with the injected
+ * begin/commit/abort, and with `endTransactionBehindOurBack`, which stands in
+ * for SQLite rolling back on its own after `SQLITE_FULL`.
  *
- * @returns The fake database and the methods built over it.
+ * @returns The fake database, its spies, and the methods built over it.
  */
 const makeFakeDriver = () => {
   let inTransaction = false;
@@ -18,21 +18,21 @@ const makeFakeDriver = () => {
     _spStack: [] as string[],
     exec: vi.fn(),
   };
-  const endTransactionBehindOurBack = () => {
+  const endTransaction = () => {
     inTransaction = false;
   };
   const begin = vi.fn(() => {
     inTransaction = true;
   });
-  const commit = vi.fn(endTransactionBehindOurBack);
-  const abort = vi.fn(endTransactionBehindOurBack);
+  const commit = vi.fn(endTransaction);
+  const abort = vi.fn(endTransaction);
 
   return {
     db,
     begin,
     commit,
     abort,
-    endTransactionBehindOurBack,
+    endTransactionBehindOurBack: endTransaction,
     ...makeTransactionMethods({ db, begin, commit, abort }),
   };
 };
@@ -83,6 +83,26 @@ describe('makeTransactionMethods', () => {
       methods.createSavepoint('t0');
 
       expect(() => methods[method]('t1')).toThrow('No such savepoint: t1');
+    },
+  );
+
+  it.each([
+    { method: 'rollbackSavepoint', sql: 'ROLLBACK TO SAVEPOINT a' },
+    { method: 'releaseSavepoint', sql: 'RELEASE SAVEPOINT a' },
+  ] as const)(
+    '$method takes a repeated name to its newest savepoint, as SQLite does',
+    ({ method, sql }) => {
+      const methods = makeFakeDriver();
+      methods.createSavepoint('a');
+      methods.createSavepoint('b');
+      methods.createSavepoint('a');
+
+      methods[method]('a');
+
+      expect(methods.db.exec).toHaveBeenLastCalledWith(sql);
+      expect(methods.db._spStack).toStrictEqual(['a', 'b']);
+      expect(methods.commit).not.toHaveBeenCalled();
+      expect(methods.abort).not.toHaveBeenCalled();
     },
   );
 
@@ -158,6 +178,7 @@ describe('makeTransactionMethods', () => {
 
     expect(() => rollbackSavepoint('t0')).toThrow('disk I/O error');
 
+    expect(abort).toHaveBeenCalledOnce();
     expect(db._spStack).toStrictEqual([]);
   });
 
@@ -183,7 +204,7 @@ describe('makeTransactionMethods', () => {
 
   it('leaves an open transaction to whoever began it', () => {
     const { begin, beginIfNeeded } = makeFakeDriver();
-    beginIfNeeded();
+    expect(beginIfNeeded()).toBe(true);
 
     expect(beginIfNeeded()).toBe(false);
     expect(begin).toHaveBeenCalledOnce();
