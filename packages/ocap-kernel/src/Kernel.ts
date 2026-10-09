@@ -881,6 +881,10 @@ export class Kernel {
    */
   async stop(): Promise<void> {
     await this.#kernelQueue.waitForCrank();
+    // Before anything else that yields, so a channel that ends from here on
+    // reads as the stop, not as its vat's loss. Not before the wait: a vat
+    // lost in that crank must still fail the delivery waiting on it.
+    this.#vatManager.expectWorkersToStop();
     this.#vatManager.abandonQueuedWork(
       new Error(
         'Kernel was stopped before answering; terminations already queued still take effect on its next start, restarts do not',

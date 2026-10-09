@@ -88,55 +88,85 @@ describe('VatHandle', () => {
       });
     });
 
-    it('throws if the stream throws', async () => {
-      const logger = {
-        error: vi.fn(),
-        subLogger: vi.fn(() => logger),
-      } as unknown as Logger;
-      const { stream } = await makeVat({ logger });
-      await stream.receiveInput(NaN);
-      await delay(10);
-      expect(logger.error).toHaveBeenCalledWith(
-        'Unexpected read error',
-        expect.objectContaining({
-          message: expect.stringMatching(/Message failed type validation/u),
-        }),
-      );
-    });
-
-    it('throws if handleMessage throws', async () => {
-      const logger = {
-        error: vi.fn(),
-        subLogger: vi.fn(() => logger),
-      } as unknown as Logger;
-      const { stream } = await makeVat({ logger });
-      await stream.receiveInput({
-        id: 'v0:1',
-        method: 'ping',
-        params: [],
-        jsonrpc: '2.0',
-      });
-      await delay(10);
-      expect(logger.error).toHaveBeenCalledWith(
-        'Unexpected read error',
-        expect.objectContaining({
-          message: expect.stringMatching(/^Received unexpected message/u),
-        }),
-      );
-    });
-
-    it('reports a dead channel to its owner', async () => {
+    it.each([
+      ['the stream throws', NaN, /Message failed type validation/u],
+      [
+        'handleMessage throws',
+        { id: 'v0:1', method: 'ping', params: [], jsonrpc: '2.0' },
+        /^Received unexpected message/u,
+      ],
+    ])('reports the failure if %s', async (_case, input, cause) => {
       const onStreamFailure = vi.fn();
       const { stream } = await makeVat({ onStreamFailure });
 
-      await stream.receiveInput(NaN);
+      await stream.receiveInput(input);
       await delay(10);
 
       expect(onStreamFailure).toHaveBeenCalledWith(
         expect.objectContaining({
           message: 'Unexpected stream read error.',
+          cause: expect.objectContaining({
+            message: expect.stringMatching(cause),
+          }),
         }),
       );
+    });
+
+    it('reports a channel that closes with no error', async () => {
+      const onStreamFailure = vi.fn();
+      const { stream } = await makeVat({ onStreamFailure });
+
+      await stream.return();
+      await delay(10);
+
+      expect(onStreamFailure).toHaveBeenCalledOnce();
+      expect(onStreamFailure).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: 'Unexpected stream read error.',
+          cause: expect.objectContaining({ message: 'vat channel closed' }),
+        }),
+      );
+    });
+
+    it('fails a pending command when the channel closes', async () => {
+      const { vat, stream } = await makeVat({ onStreamFailure: vi.fn() });
+      sendVatCommandMock.mockRestore();
+      const pinging = vat.sendVatCommand({
+        method: 'ping' as const,
+        params: [],
+      });
+
+      await stream.return();
+
+      await expect(pinging).rejects.toThrow('Unexpected stream read error.');
+    });
+
+    it('says nothing when it closes its own channel', async () => {
+      const onStreamFailure = vi.fn();
+      const { vat } = await makeVat({ onStreamFailure });
+
+      await vat.terminate(true);
+      await delay(10);
+
+      expect(onStreamFailure).not.toHaveBeenCalled();
+    });
+
+    it('leaves a pending command waiting once the kernel will close the channel', async () => {
+      const onStreamFailure = vi.fn();
+      const { vat, stream } = await makeVat({ onStreamFailure });
+      sendVatCommandMock.mockRestore();
+      const settled = vi.fn();
+      vat
+        .sendVatCommand({ method: 'ping' as const, params: [] })
+        .then(settled)
+        .catch(settled);
+
+      vat.expectClose();
+      await stream.return();
+      await delay(10);
+
+      expect(settled).not.toHaveBeenCalled();
+      expect(onStreamFailure).not.toHaveBeenCalled();
     });
 
     it('rejects pending commands when the channel dies', async () => {

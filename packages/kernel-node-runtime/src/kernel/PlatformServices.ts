@@ -17,7 +17,6 @@ import type {
 import { initTransport } from '@metamask/ocap-kernel';
 import { NodeWorkerDuplexStream } from '@metamask/streams';
 import type { DuplexStream } from '@metamask/streams';
-import { strict as assert } from 'node:assert';
 import { Worker as NodeWorker } from 'node:worker_threads';
 
 // Worker file loads from the built dist directory, requires rebuild after change
@@ -163,23 +162,27 @@ export class NodejsPlatformServices implements PlatformServices {
    * Terminate a worker identified by its vat id.
    *
    * @param vatId - The vat id of the worker to terminate.
-   * @returns A promise that resolves when the worker has terminated
-   * or rejects if that worker does not exist or failed to stop.
+   * @returns A promise that resolves when the worker has terminated, or at
+   * once if there is no worker or another call is stopping it, and rejects if
+   * the channel or the worker would not stop.
    */
   async terminate(vatId: VatId): Promise<undefined> {
     const workerEntry = this.workers.get(vatId);
-    assert(workerEntry, `No worker found for vatId ${vatId}`);
+    if (!workerEntry) {
+      // Never launched, still shaking hands, or stopped by another call.
+      this.#logger.debug(`No worker to terminate for vat ${vatId}`);
+      return undefined;
+    }
+    // Forgotten first. An entry left behind refuses the vat's next worker as a
+    // duplicate, and a second call would strip the listener this call's
+    // `worker.terminate()` settles on, leaving it pending forever.
+    this.workers.delete(vatId);
     const { worker, stream } = workerEntry;
-    // An entry left behind refuses the vat's next worker as a duplicate.
     try {
       await stream.return();
     } finally {
-      try {
-        worker.removeAllListeners();
-        await worker.terminate();
-      } finally {
-        this.workers.delete(vatId);
-      }
+      worker.removeAllListeners();
+      await worker.terminate();
     }
     return undefined;
   }
