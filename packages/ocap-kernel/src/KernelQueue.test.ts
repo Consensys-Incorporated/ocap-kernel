@@ -1904,6 +1904,24 @@ describe('KernelQueue', () => {
       );
       expect(kernelQueue.subscriptions.size).toBe(0);
     });
+
+    it('drops the arrivals no crank has taken yet', async () => {
+      (kernelStore.runQueueLength as unknown as MockInstance).mockReturnValue(
+        0,
+      );
+      kernelQueue.acceptRemoteInbound('r1' as RemoteId, '{"seq":1}');
+      kernelQueue.acceptPeerIncarnation('peer-1', 'incarnation-B');
+
+      kernelQueue.discardQueuedWork('this message result will never arrive');
+      const deliver = vi.fn();
+      const running = kernelQueue.run(deliver);
+      await kernelQueue.stopRunLoop();
+      await running;
+
+      // Applied after a reset, the incarnation change would write the peer's
+      // pre-reset bookkeeping back into the wiped store.
+      expect(deliver).not.toHaveBeenCalled();
+    });
   });
 
   describe('waitForCrank', () => {
