@@ -80,7 +80,8 @@ A single execution cycle in the kernel's [run queue](#run-queue). Each crank pro
 item from the run queue, delivering a single message or notification to [a vat](#vat). The
 "message or notification" is whatever item is taken of the run queue. Cranks can be
 aborted and rolled back if errors occur. See the
-[KernelQueue](../packages/ocap-kernel/src/KernelQueue.ts) for the run loop implementation.
+[KernelQueue](../packages/ocap-kernel/src/KernelQueue.ts) for the [run loop](#run-loop)
+implementation.
 
 ### syscall
 
@@ -203,6 +204,16 @@ collection](#garbage-collection-gc) actions. Each [crank](#crank) processes one 
 this queue. See the [KernelQueue](../packages/ocap-kernel/src/KernelQueue.ts) class and
 [queue methods](../packages/ocap-kernel/src/store/methods/queue.ts) for implementation
 details.
+
+### run loop
+
+The loop in [KernelQueue](../packages/ocap-kernel/src/KernelQueue.ts) that takes items off
+the [run queue](#run-queue) one at a time, each in a [crank](#crank) of its own, and sleeps
+when the queue is empty. It is the one writer meant to change the kernel store: work asked
+for from outside it, such as a vat restart or termination, is queued as a run-queue item
+for it to carry out rather than written into whichever crank happens to be open. A crank
+that throws kills the run loop for the life of the kernel instance; callers still waiting
+on queued work are then rejected.
 
 ### kernel router
 

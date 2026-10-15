@@ -116,6 +116,7 @@ export class Kernel {
    * @param options.ioListenerFactory - Optional factory for creating IO listeners.
    * @param options.allowedGlobalNames - Optional list of allowed global names for vat endowments.
    * @param options.onRunLoopFailure - Optional handler called if the run loop dies.
+   * @param options.vatRelaunchTimeoutMs - How long a vat restart waits for the new worker before terminating the vat.
    * @param options.auditRefCounts - If true, verify every kref's reference
    * counts against the references the kernel actually holds at the end of each
    * crank, and throw on any mismatch. Intended for tests and debugging; the
@@ -133,6 +134,7 @@ export class Kernel {
       ioListenerFactory?: IOListenerFactory;
       allowedGlobalNames?: AllowedGlobalName[];
       onRunLoopFailure?: OnRunLoopFailure;
+      vatRelaunchTimeoutMs?: number;
       auditRefCounts?: boolean;
     } = {},
   ) {
@@ -154,8 +156,8 @@ export class Kernel {
       this.#resetKernelState({ resetIdentity: Boolean(options.mnemonic) });
     }
 
-    // Bypass VatManager.terminateVat() here because it calls waitForCrank(),
-    // which would deadlock — this callback is invoked from within a crank.
+    // `stopVat`, not `terminateVat`: this runs inside a crank, and
+    // `terminateVat` would wait for a crank that cannot start until it ends.
     this.#kernelQueue = new KernelQueue(
       this.#kernelStore,
       async (vatId, reason) =>
@@ -168,6 +170,7 @@ export class Kernel {
       kernelQueue: this.#kernelQueue,
       logger: this.#logger.subLogger({ tags: ['VatManager'] }),
       allowedGlobalNames: options.allowedGlobalNames,
+      vatRelaunchTimeoutMs: options.vatRelaunchTimeoutMs,
     });
 
     this.#remoteManager = new RemoteManager({
@@ -231,6 +234,8 @@ export class Kernel {
       this.#kernelServiceManager.invokeKernelService.bind(
         this.#kernelServiceManager,
       ),
+      this.#vatManager.performVatRestart.bind(this.#vatManager),
+      this.#vatManager.performVatTermination.bind(this.#vatManager),
       this.#logger,
     );
 
@@ -263,6 +268,7 @@ export class Kernel {
    * @param options.systemSubclusters - Optional array of system subcluster configurations.
    * @param options.allowedGlobalNames - Optional list of allowed global names for vat endowments. When set, only these names from the `VatSupervisor`'s configured endowments (see `createDefaultEndowments`) are available to vats.
    * @param options.onRunLoopFailure - Optional handler called if the run loop dies. The kernel must be restarted after that, so an embedder that outlives it (e.g. a daemon) should use this to terminate or restart.
+   * @param options.vatRelaunchTimeoutMs - How long a vat restart waits for the new worker before terminating the vat, in milliseconds: more than 0 and at most 2^31 - 1. Defaults to 30 seconds.
    * @param options.auditRefCounts - If true, verify reference counts against
    * ground truth at the end of each crank and throw on any mismatch.
    * @returns A promise for the new kernel instance.
@@ -279,6 +285,7 @@ export class Kernel {
       systemSubclusters?: SystemSubclusterConfig[];
       allowedGlobalNames?: AllowedGlobalName[];
       onRunLoopFailure?: OnRunLoopFailure;
+      vatRelaunchTimeoutMs?: number;
       auditRefCounts?: boolean;
     } = {},
   ): Promise<Kernel> {
@@ -630,7 +637,9 @@ export class Kernel {
   }
 
   /**
-   * Terminates a named sub-cluster of vats.
+   * Terminates a named sub-cluster of vats, each by way of `terminateVat`.
+   * Refused on a dead run loop. A member that survives keeps the subcluster
+   * and its IO channels, and makes this reject.
    *
    * @param subclusterId - The id of the subcluster to terminate.
    * @returns A promise that resolves when termination is complete.
@@ -704,7 +713,9 @@ export class Kernel {
   }
 
   /**
-   * Restarts a vat.
+   * Restarts a vat. The run loop carries the restart out, so this waits behind
+   * the run queue and rejects if the run loop dies. A vat whose relaunch fails
+   * is terminated.
    *
    * @param vatId - The ID of the vat to restart.
    * @returns A promise for the restarted vat handle.
@@ -714,10 +725,14 @@ export class Kernel {
   }
 
   /**
-   * Terminate a vat with extreme prejudice.
+   * Terminate a vat with extreme prejudice. The run loop carries it out in a
+   * crank of its own, so this waits behind the run queue, and rejects if the
+   * run loop dies or the kernel is stopped, reset or has its storage cleared
+   * first.
    *
    * @param vatId - The ID of the vat to terminate.
-   * @param reason - The reason for the termination, if any.
+   * @param reason - The reason for the termination, if any. It must carry no
+   *   slots.
    * @returns A promise that resolves when the vat has been terminated.
    */
   async terminateVat(vatId: VatId, reason?: CapData<KRef>): Promise<void> {
@@ -732,6 +747,9 @@ export class Kernel {
       this.#kernelStore.clear();
       this.#kernelQueue.discardQueuedWork(
         'this message result will never be delivered',
+      );
+      this.#vatManager.abandonQueuedWork(
+        new Error('Kernel storage was cleared; queued work was abandoned'),
       );
     });
   }
@@ -937,6 +955,9 @@ export class Kernel {
         this.#kernelQueue.discardQueuedWork(
           'this message result will never be delivered',
         );
+        this.#vatManager.abandonQueuedWork(
+          new Error('Kernel was reset; queued work was abandoned'),
+        );
         this.#resetKernelState();
       } catch (error) {
         this.#logger.error('Error resetting kernel:', error);
@@ -959,10 +980,20 @@ export class Kernel {
   async stop(): Promise<void> {
     await this.#withRunLoopStopped(
       async () => {
-        // First, so that a caller waiting on work this kernel will never do
+        // Before anything else that yields, so a channel that ends from here on
+        // reads as the stop, not as its vat's loss. Never above the stop: a vat
+        // lost in the crank in flight must still fail the delivery waiting on
+        // it, or that crank never ends and the loop never stops.
+        this.#vatManager.expectWorkersToStop();
+        // Next, so that a caller waiting on work this kernel will never do
         // hears about it even if tearing the platform down then fails.
         this.#kernelQueue.discardQueuedWork(
           'the kernel was stopped before this message result was delivered',
+        );
+        this.#vatManager.abandonQueuedWork(
+          new Error(
+            'Kernel was stopped before answering; terminations already queued still take effect on its next start, restarts do not',
+          ),
         );
         try {
           this.#kernelStore.recordLastActiveTime();

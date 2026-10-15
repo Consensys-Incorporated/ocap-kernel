@@ -1,285 +1,118 @@
-import { existsSync, lstatSync, Stats } from 'node:fs';
 import fs from 'node:fs/promises';
-import { relative } from 'node:path';
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { describe, expect, it, vi } from 'vitest';
 
-import { capabilityFactory } from './nodejs.ts';
-import type { FsConfig, PathLike } from './types.ts';
+import { makeCanonicalPathCaveat, readFile, toPath } from './nodejs.ts';
+import { makeFsBase } from './shared.ts';
+import type { PathSegments } from './types.ts';
 
-/* eslint-disable n/no-sync */
+type TestCapability = {
+  readFile: (segments: PathSegments, encoding: string) => Promise<string>;
+  access: (segments: PathSegments, mode?: number) => Promise<void>;
+};
 
-// Mock fs/promises
-vi.mock('node:fs/promises', () => ({
-  default: {
-    readFile: vi.fn(),
-    access: vi.fn(),
-  },
-  readFile: vi.fn(),
-  access: vi.fn(),
-}));
+// The configured capability narrows this base, and `narrow` forwards over
+// `E()`, which cannot run under `mock-endoify` — see `shared.test.ts`.
+const makeCapability = (): TestCapability =>
+  makeFsBase({
+    makeReadFile: () => readFile as typeof fs.readFile,
+    makeAccess: () => fs.access,
+    makePathCaveat: makeCanonicalPathCaveat,
+    toPath,
+  }) as unknown as TestCapability;
 
-// Mock fs
-vi.mock('node:fs', () => ({
-  existsSync: vi.fn(),
-  lstatSync: vi.fn(),
-}));
+/**
+ * Create a root holding a file, a directory symlink leaving the root, and a
+ * file symlink, under a canonical temporary directory.
+ *
+ * @returns Segment arrays into the tree.
+ */
+const makeTree = async (): Promise<{
+  root: PathSegments;
+  file: PathSegments;
+  outside: PathSegments;
+}> => {
+  const dir = await fs.realpath(await fs.mkdtemp(join(tmpdir(), 'fs-')));
+  await fs.mkdir(join(dir, 'root'));
+  await fs.mkdir(join(dir, 'outside'));
+  await fs.writeFile(join(dir, 'root', 'file.txt'), 'inside');
+  await fs.writeFile(join(dir, 'outside', 'secret.txt'), 'outside');
+  await fs.symlink(join(dir, 'outside'), join(dir, 'root', 'dir-link'));
+  await fs.symlink(
+    join(dir, 'outside', 'secret.txt'),
+    join(dir, 'root', 'file-link'),
+  );
+  const segments = dir.split('/').filter(Boolean);
+  return {
+    root: [...segments, 'root'],
+    file: [...segments, 'root', 'file.txt'],
+    outside: [...segments, 'outside', 'secret.txt'],
+  };
+};
 
-// Mock path
-vi.mock('node:path', () => ({
-  relative: vi.fn(),
-}));
-
-// Mock factories
-const createMockStats = (isSymlink: boolean): Stats =>
-  ({
-    isSymbolicLink: () => isSymlink,
-  }) as unknown as Stats;
-
-const createMockRelative = (returnValue: string) =>
-  vi.mocked(relative).mockReturnValue(returnValue);
-
-const createMockLstatSync = (isSymlink: boolean) =>
-  vi.mocked(lstatSync).mockReturnValue(createMockStats(isSymlink));
-
-describe('fs nodejs capability', () => {
-  beforeEach(() => {
-    vi.clearAllMocks();
-    // Default mocks
-    createMockLstatSync(false);
-    createMockRelative('subdir/file.txt');
-  });
-
-  describe('caveat functions', () => {
-    describe('makeNoSymlinksCaveat', () => {
-      const createSymlinkCaveat = () => (path: PathLike) => {
-        const pathString = path.toString();
-        const stats = lstatSync(pathString);
-        if (stats.isSymbolicLink()) {
-          throw new Error(`Symlinks are prohibited: ${pathString}`);
-        }
-      };
-
-      it('throws error for symlinks', () => {
-        createMockLstatSync(true);
-        const caveat = createSymlinkCaveat();
-
-        expect(() => caveat('/symlink/path')).toThrow(
-          'Symlinks are prohibited: /symlink/path',
-        );
-        expect(lstatSync).toHaveBeenCalledWith('/symlink/path');
-      });
-
-      it.each([
-        {
-          name: 'string',
-          input: '/path',
-        },
-        {
-          name: 'Buffer',
-          input: Buffer.from('/path'),
-        },
-      ])('accepts $name paths', ({ input }) => {
-        createMockLstatSync(false);
-        const caveat = createSymlinkCaveat();
-
-        expect(caveat(input)).toBeUndefined();
-        expect(lstatSync).toHaveBeenCalledWith(input.toString());
-      });
-    });
-
-    describe('makeRootCaveat', () => {
-      const createRootCaveat = () => (path: PathLike) => {
-        const pathString = path.toString();
-        const relativePath = relative('/root', pathString);
-        if (relativePath.startsWith('..')) {
-          throw new Error(`Path ${pathString} is outside allowed root /root`);
-        }
-      };
-
-      it('accepts paths within root directory', () => {
-        createMockRelative('subdir/file.txt');
-        const caveat = createRootCaveat();
-
-        expect(caveat('/root/subdir/file.txt')).toBeUndefined();
-        expect(relative).toHaveBeenCalledWith('/root', '/root/subdir/file.txt');
-      });
-
-      it.each([
-        {
-          name: 'outside root',
-          input: '/outside/file.txt',
-          relativeReturn: '../../outside/file.txt',
-          expectedError: 'Path /outside/file.txt is outside allowed root /root',
-        },
-        {
-          name: 'with root prefix but outside',
-          input: '/root-other/file.txt',
-          relativeReturn: '../../root-other/file.txt',
-          expectedError:
-            'Path /root-other/file.txt is outside allowed root /root',
-        },
-      ])(
-        'throws error for paths $name',
-        ({ input, relativeReturn, expectedError }) => {
-          createMockRelative(relativeReturn);
-          const caveat = createRootCaveat();
-
-          expect(() => caveat(input)).toThrow(expectedError);
-          expect(relative).toHaveBeenCalledWith('/root', input.toString());
-        },
-      );
-
-      it('accepts root directory itself', () => {
-        createMockRelative('');
-        const caveat = createRootCaveat();
-
-        expect(caveat('/root')).toBeUndefined();
-        expect(relative).toHaveBeenCalledWith('/root', '/root');
-      });
-    });
-  });
-
-  describe('capabilityFactory', () => {
-    describe('existsSync operation', () => {
-      it('returns true for existing file', () => {
-        vi.mocked(existsSync).mockReturnValue(true);
-
-        const config: FsConfig = { rootDir: '/root', existsSync: true };
-        const capability = capabilityFactory(config);
-
-        const result = capability.existsSync?.('/root/file.txt');
-        expect(existsSync).toHaveBeenCalledWith('/root/file.txt');
-        expect(result).toBe(true);
-      });
-
-      it.each([
-        {
-          name: 'outside root',
-          relativeReturn: '../../outside/file.txt',
-          isSymlink: false,
-          testPath: '/outside/file.txt',
-          expectedError: 'Path /outside/file.txt is outside allowed root /root',
-        },
-        {
-          name: 'symlink',
-          relativeReturn: '/root/file.txt',
-          isSymlink: true,
-          testPath: '/root/file.txt',
-          expectedError: 'Symlinks are prohibited: /root/file.txt',
-        },
-      ])(
-        'throws error for path $name',
-        ({ relativeReturn, isSymlink, testPath, expectedError }) => {
-          createMockRelative(relativeReturn);
-          createMockLstatSync(isSymlink);
-
-          const config: FsConfig = { rootDir: '/root', existsSync: true };
-          const capability = capabilityFactory(config);
-
-          expect(() => capability.existsSync?.(testPath)).toThrow(
-            expectedError,
-          );
-          expect(existsSync).not.toHaveBeenCalled();
-        },
-      );
-    });
-
-    describe.each([
-      {
-        operation: 'readFile',
-        mockFn: fs.readFile,
-        validArgs: ['/root/file.txt'],
-        mockReturn: 'file content',
-        additionalArgs: ['/root/file.txt', { encoding: 'utf8' }],
-        additionalMockReturn: Buffer.from('file content'),
-      },
-      {
-        operation: 'access',
-        mockFn: fs.access,
-        validArgs: ['/root/file.txt'],
-        mockReturn: undefined,
-        additionalArgs: ['/root/file.txt', 0o644],
-        additionalMockReturn: undefined,
-      },
-    ])(
-      'promises.$operation operation',
-      ({
-        operation,
-        mockFn,
-        validArgs,
-        mockReturn,
-        additionalArgs,
-        additionalMockReturn,
-      }) => {
-        type TestCapability = { promises: { [operation]: CallableFunction } };
-
-        it('returns expected result for valid path', async () => {
-          vi.mocked(mockFn).mockResolvedValue(mockReturn as never);
-
-          const config: FsConfig = {
-            rootDir: '/root',
-            promises: { [operation]: true },
-          };
-          const capability = capabilityFactory(config) as TestCapability;
-
-          const result = await capability.promises[operation]?.(...validArgs);
-          expect(mockFn).toHaveBeenCalledWith(...validArgs);
-          expect(result).toBe(mockReturn);
-        });
-
-        it.each([
-          {
-            name: 'outside root',
-            relativeReturn: '../../outside/file.txt',
-            isSymlink: false,
-            expectedError: `Path ${validArgs[0]} is outside allowed root /root`,
-          },
-          {
-            name: 'symlink',
-            relativeReturn: '/root/file.txt',
-            isSymlink: true,
-            expectedError: `Symlinks are prohibited: ${validArgs[0]}`,
-          },
-        ])(
-          'throws error for path $name',
-          async ({ relativeReturn, isSymlink, expectedError }) => {
-            createMockRelative(relativeReturn);
-            createMockLstatSync(isSymlink);
-
-            const config: FsConfig = {
-              rootDir: '/root',
-              promises: { [operation]: true },
-            };
-            const capability = capabilityFactory(config) as TestCapability;
-
-            await expect(
-              capability.promises[operation]?.(...validArgs),
-            ).rejects.toThrow(expectedError);
-            expect(mockFn).not.toHaveBeenCalled();
-          },
-        );
-
-        if (additionalArgs && additionalMockReturn) {
-          it('handles additional arguments correctly', async () => {
-            vi.mocked(mockFn).mockResolvedValue(additionalMockReturn as never);
-
-            const config: FsConfig = {
-              rootDir: '/root',
-              promises: { [operation]: true },
-            };
-            const capability = capabilityFactory(config) as TestCapability;
-
-            const result = await capability.promises[operation]?.(
-              ...additionalArgs,
-            );
-
-            expect(mockFn).toHaveBeenCalledWith(...additionalArgs);
-            expect(result).toBe(additionalMockReturn);
-          });
-        }
-      },
-    );
+describe('toPath', () => {
+  it('joins segments into an absolute path', () => {
+    expect(toPath(['srv', 'data'])).toBe('/srv/data');
   });
 });
 
-/* eslint-enable n/no-sync */
+describe('fs nodejs base', () => {
+  it('reads a file at a canonical path', async () => {
+    const { file } = await makeTree();
+
+    expect(await makeCapability().readFile(file, 'utf8')).toBe('inside');
+  });
+
+  it('checks access at a canonical path', async () => {
+    const { file } = await makeTree();
+
+    expect(
+      await makeCapability().access(file, fs.constants.R_OK),
+    ).toBeUndefined();
+  });
+
+  it.each([
+    { name: 'a directory symlink', tail: ['dir-link', 'secret.txt'] },
+    { name: 'a file symlink', tail: ['file-link'] },
+  ])('refuses a path through $name', async ({ tail }) => {
+    const { root } = await makeTree();
+    const capability = makeCapability();
+
+    await expect(
+      capability.readFile([...root, ...tail], 'utf8'),
+    ).rejects.toThrow('Path is not canonical');
+    await expect(capability.access([...root, ...tail])).rejects.toThrow(
+      'Path is not canonical',
+    );
+  });
+
+  it.each([
+    { name: 'parent segments', tail: ['..', 'outside', 'secret.txt'] },
+    { name: 'an embedded traversal', tail: ['../outside/secret.txt'] },
+  ])('refuses $name', async ({ tail }) => {
+    const { root } = await makeTree();
+
+    await expect(
+      makeCapability().readFile([...root, ...tail], 'utf8'),
+    ).rejects.toThrow('contains an invalid segment');
+  });
+});
+
+describe('readFile', () => {
+  // Stands in for a symlink swapped into the path after the caveat passed and
+  // swapped back before the re-check: the handle is on the outside file while
+  // the path names the inside one.
+  it('refuses a path that named another file when it was opened', async () => {
+    const { file, outside } = await makeTree();
+    const { open } = fs;
+    const spy = vi
+      .spyOn(fs, 'open')
+      .mockImplementationOnce(async () => open(toPath(outside)));
+
+    await expect(readFile(toPath(file), 'utf8')).rejects.toThrow(
+      'Path changed while it was opened',
+    );
+    spy.mockRestore();
+  });
+});

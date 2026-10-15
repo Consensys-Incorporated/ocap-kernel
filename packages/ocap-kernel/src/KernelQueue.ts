@@ -18,6 +18,8 @@ import type {
   RunQueueItemPeerIncarnation,
   RunQueueItemRemoteInbound,
   RunQueueItemNotify,
+  RunQueueItemRestartVat,
+  RunQueueItemTerminateVat,
   RunQueueItemSend,
   VatId,
 } from './types.ts';
@@ -30,6 +32,12 @@ import { Fail } from './utils/assert.ts';
  * unacknowledged, and sent again.
  */
 const MAX_ARRIVALS_PER_REMOTE = 200;
+
+type HeldRequest = RunQueueItemRestartVat | RunQueueItemTerminateVat;
+
+/** What a caller awaiting queued work is told when the run loop dies. */
+const DEAD_RUN_LOOP_WORK =
+  'Kernel run loop died; this work will never be carried out';
 
 type RunLoopState =
   | Exclude<RunLoopStatus, { state: 'failed' }>
@@ -68,6 +76,17 @@ export class KernelQueue {
    */
   #resolvedWithKernelSubscription: KernelOneResolution[] = [];
 
+  /** Callers awaiting work the run loop has been asked for but not yet done. */
+  readonly #pendingWorkWaiters: Set<(error: Error) => void> = new Set();
+
+  /**
+   * Requests made while a crank was open, for the run loop to write once it
+   * ends, unless it ends by killing the loop. Written into the crank, they
+   * would be rolled back with it if it aborts, and their callers would wait on
+   * work nothing is going to do.
+   */
+  #heldRequests: HeldRequest[] = [];
+
   /** Thunk to signal run queue transition from empty to non-empty */
   #wakeUpTheRunQueue: (() => void) | null;
 
@@ -77,8 +96,8 @@ export class KernelQueue {
    * False once the savepoint has been handed to `rollbackCrank` — attempted,
    * not necessarily succeeded, since it is forgotten either way and asking
    * twice could only report "no such savepoint" over the real error — and
-   * false once a vat's death has been recorded, which must outlive whatever
-   * throws after it.
+   * false once a vat's death has been recorded, or a crank result reports
+   * itself `irrevocable`, which must outlive whatever throws after it.
    *
    * A field rather than a return value from `#processCrankResult`, because that
    * method can throw after rolling back (`#terminateVat`, `collectGarbage`).
@@ -241,6 +260,9 @@ export class KernelQueue {
         throw error;
       } finally {
         this.#endCrank(crankFailure);
+        if (!crankFailure) {
+          this.#enqueueHeldRequests();
+        }
         if (wakeUpPromise) {
           await wakeUpPromise;
         }
@@ -310,10 +332,30 @@ export class KernelQueue {
   }
 
   /**
+   * Tell a caller waiting on queued work if the run loop dies before carrying
+   * it out. `subscriptions` covers a message's result; a request with no kernel
+   * promise behind it — a vat restart or termination — has nothing else that
+   * would settle it.
+   *
+   * @param reject - How to tell the caller.
+   * @returns A function that unregisters it, for the caller's own `finally`.
+   */
+  onRunLoopDeath(reject: (error: Error) => void): () => void {
+    if (this.#runLoopState.state === 'failed') {
+      reject(this.#makeDeadRunLoopError(DEAD_RUN_LOOP_WORK));
+      return () => undefined;
+    }
+    this.#pendingWorkWaiters.add(reject);
+    return () => {
+      this.#pendingWorkWaiters.delete(reject);
+    };
+  }
+
+  /**
    * Record the death of the run loop and fail the kernel's own message-result
-   * subscriptions, which would otherwise hang forever. Kernel promises in the
-   * store stay unresolved, so vats awaiting a notify the dead loop owed them
-   * are not rescued by this.
+   * subscriptions and anyone waiting on queued work, which would otherwise hang
+   * forever. Kernel promises in the store stay unresolved, so vats awaiting a
+   * notify the dead loop owed them are not rescued by this.
    *
    * @param error - The error that killed the run loop.
    * @returns The failure, as an `Error` whatever was thrown.
@@ -329,6 +371,12 @@ export class KernelQueue {
         'Kernel run loop died; this message result will never be delivered',
       ),
     );
+
+    const abandoned = [...this.#pendingWorkWaiters];
+    this.#pendingWorkWaiters.clear();
+    for (const reject of abandoned) {
+      reject(this.#makeDeadRunLoopError(DEAD_RUN_LOOP_WORK));
+    }
     return failure;
   }
 
@@ -525,6 +573,9 @@ export class KernelQueue {
         // the crank's transaction regardless.
         this.#deliveryRollbackAllowed = false;
       }
+    }
+    if (crankResult?.irrevocable) {
+      this.#deliveryRollbackAllowed = false;
     }
     this.#kernelStore.collectGarbage();
     // While a violation can still undo this crank, the audit goes first, so the
@@ -738,6 +789,67 @@ export class KernelQueue {
       incarnation,
     });
     this.#wakeTheRunLoop();
+  }
+
+  /**
+   * Enqueue a request to replace a vat's worker.
+   *
+   * @param vatId - The vat whose worker is to be replaced.
+   */
+  enqueueRestartVat(vatId: VatId): void {
+    this.assertRunLoopAlive('restart a vat');
+    this.#enqueueRequest({ type: 'restartVat', vatId });
+  }
+
+  /**
+   * Enqueue a request from outside the run loop, holding it until the open
+   * crank, if any, has ended.
+   *
+   * @param item - The item to add.
+   */
+  #enqueueRequest(item: HeldRequest): void {
+    if (this.#kernelStore.isInCrank()) {
+      this.#heldRequests.push(item);
+    } else {
+      this.#enqueueRun(item);
+    }
+  }
+
+  /**
+   * Forget the requests held for the open crank to write once it ends, for a
+   * kernel discarding its run queue: not in the store yet, they would outlive
+   * a wipe of it.
+   */
+  discardHeldRequests(): void {
+    this.#heldRequests = [];
+  }
+
+  /**
+   * Write the requests held while the crank that just ended was open.
+   */
+  #enqueueHeldRequests(): void {
+    const held = this.#heldRequests;
+    this.#heldRequests = [];
+    for (const item of held) {
+      this.#enqueueRun(item);
+    }
+  }
+
+  /**
+   * Enqueue a request to terminate a vat.
+   *
+   * @param vatId - The vat to terminate.
+   * @param reason - The reason, if any. It must carry no slots.
+   */
+  enqueueTerminateVat(vatId: VatId, reason?: CapData<KRef>): void {
+    this.assertRunLoopAlive('terminate a vat');
+    // A queued row takes no reference count on what it names.
+    !reason?.slots.length || Fail`a termination reason cannot carry slots`;
+    this.#enqueueRequest({
+      type: 'terminateVat',
+      vatId,
+      ...(reason && { reason }),
+    });
   }
 
   /**

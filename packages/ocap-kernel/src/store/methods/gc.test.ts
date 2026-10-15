@@ -131,6 +131,34 @@ describe('GC methods', () => {
       expect(kernelStore.nextReapAction()).toBeUndefined();
     });
 
+    it('yields a reap scheduled for a vat that has since been terminated', () => {
+      // Why a housekeeping delivery has to tolerate an endpoint that is not
+      // running. Nothing purges the reap queue when a vat dies, and unlike a GC
+      // action, which `shouldProcessAction` filters on `hasCListEntry`, a reap
+      // is handed back with no liveness check at all.
+      kernelStore.setVatConfig('v1', { bundleSpec: 'file:///gone.bundle' });
+      kernelStore.initEndpoint('v1');
+      const subclusterId = kernelStore.addSubcluster({
+        bootstrap: 'a',
+        vats: { a: { bundleSpec: 'file:///gone.bundle' } },
+      });
+      kernelStore.addSubclusterVat(subclusterId, 'a', 'v1');
+      kernelStore.scheduleReap('v1');
+
+      kernelStore.markVatAsTerminated('v1');
+      kernelStore.deleteVat('v1');
+      while (kernelStore.nextTerminatedVatCleanup()) {
+        // drain
+      }
+      kernelStore.collectGarbage();
+
+      expect(kernelStore.isVatActive('v1')).toBe(false);
+      expect(kernelStore.nextReapAction()).toStrictEqual({
+        type: 'bringOutYourDead',
+        endpointId: 'v1',
+      });
+    });
+
     it('interleaves vat and remote reap scheduling', () => {
       kernelStore.scheduleReap('v1');
       kernelStore.scheduleReap('r0');

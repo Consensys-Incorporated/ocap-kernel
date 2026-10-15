@@ -64,8 +64,6 @@ another — rather than by anticipation.
 
 ## The library
 
-> **In progress:** the library described in this section has not fully landed.
-
 Exported from `@metamask/kernel-utils`:
 
 ```ts
@@ -159,12 +157,12 @@ delta cannot promote an optional argument to required, and cannot change arity.
 It is an error for a delta to name a method the base does not have, or a position
 beyond the base's maximum arity when the base has no rest guard.
 
-A position that lands in the rest guard conjoins onto it. Since a rest guard is
-one pattern over all trailing arguments, the conjunction constrains every one of
-them rather than only the position named, and several such positions conjoin onto
-the same guard. `guard(B) ≤ guard(A)` still holds and the forward is still
-unaltered, and the surprise runs in the safe direction: the author gets less
-authority than intended, never more.
+A position that lands in the rest guard still addresses its own argument. A rest
+guard is one pattern over the array of trailing arguments, so the patterns at
+rest positions are gathered into `M.splitArray([], [p, …])` over that array and
+conjoined onto the base's rest guard. They sit in optional slots, so each
+constrains its argument when present without making it required, and arguments
+past the last pattern are left as the base has them.
 
 ### Default-guarded bases
 
@@ -185,16 +183,19 @@ This is sound on the same grounds as the general case: the synthesized guard
 admits no more calls than the base's own, and the method still forwards
 unaltered. Because the interface names no methods, a delta naming a method the
 base does not implement is caught at call time rather than at narrowing time.
+A method with several rows after a [join](#join) renders by the same rule, with
+each row synthesized this way.
 
 ### Provenance and flattening
 
 `narrow` records `{ base, delta, baseGuard }` in a `WeakMap` keyed by the exo it
-returns. Caching `baseGuard` matters because narrowing a narrowing then needs no
+returns, with `delta` lifted to one row per method (see [join](#join)). Caching `baseGuard` matters because narrowing a narrowing then needs no
 guard fetch, so a chain of any depth costs one fetch in total.
 
 Narrowing a narrowing **flattens**: `narrow(B, Y)` where `B` is
 `{ base: A, delta: X }` records `{ base: A, delta: AND(X, Y) }`, and the returned
-exo forwards directly to `A`.
+exo forwards directly to `A`. When `X` has several rows for a method, as after a
+[join](#join), `Y` is conjoined onto each.
 
 ```js
 const b = await narrow({ name: 'B', base: a, delta: x });
@@ -221,7 +222,7 @@ admitting exactly what any of them admits.
 // b:  { readFile: [pathUnder(['srv', 'data'])] }
 // b': { readFile: [pathUnder(['srv', 'logs'])], access: [pathUnder(['srv', 'logs'])] }
 await join({ name: 'DataAndLogs', refs: [b, bPrime] });
-// -> { readFile: [OR(data, logs)], access: [pathUnder(['srv', 'logs'])] }
+// -> { readFile: [[data], [logs]], access: [[pathUnder(['srv', 'logs'])]] }
 ```
 
 - Every ref must carry a provenance record naming the same base. A ref the
@@ -229,13 +230,44 @@ await join({ name: 'DataAndLogs', refs: [b, bPrime] });
 - The unnarrowed base is a legal operand and absorbs, so the lattice has a
   representable top and a fold over a list needs no special case.
 - The result's method set is the union of the operands'.
-- Where two operands name the same method, each argument position is disjoined.
+- Where two operands name the same method, their rows are concatenated.
+
+A recorded delta is in disjunctive normal form: each method maps to a non-empty
+list of positional rows, each shaped like a `NarrowingDelta` entry, and the
+method admits a call that any one row admits. The delta passed to `narrow` is the
+one-row case. Disjoining position by position instead would be unsound with
+respect to the operands. For
+
+```js
+const a = await narrow({ name: 'A', base: fs, delta: { copy: [data, data] } });
+const b = await narrow({ name: 'B', base: fs, delta: { copy: [logs, logs] } });
+```
+
+it would give `copy: [OR(data, logs), OR(data, logs)]`, which admits
+`copy(data/x, logs/y)` though neither operand does. Concatenating rows gives
+`copy: [[data, data], [logs, logs]]`, which admits exactly the union.
 
 A missing method and a hole behave differently, which is easier to read as one
 rule than two: the join is a union of authority, a method absent from an operand
-contributes the empty set, and a hole contributes everything. So a method only
-one operand names appears at that operand's delta, while a hole on either side
-leaves that position unconstrained in the result.
+contributes no rows, and a hole contributes everything. So a method only one
+operand names appears at that operand's rows, while a row of holes absorbs every
+other row of its method. Beyond that absorption, rows are kept as they are, not
+deduplicated or merged.
+
+Narrowing a join distributes over its rows:
+`(r1 ∪ … ∪ rn) ∧ x = (r1 ∧ x) ∪ … ∪ (rn ∧ x)`, so the incoming delta is conjoined
+onto every row.
+
+A method with one row renders as a positional guard, as `narrow` produces.
+Positional guards have no disjunction across positions, so a method with several
+rows renders as a guard with no fixed arguments whose rest guard is
+`M.or(M.splitArray(required, optional, rest), …)`, one per row, each conjoined
+with the base's guard at every position. A rest guard matches the trailing
+arguments as one array, so with no fixed arguments it sees the whole argument
+array and each row checks arity in full. A row whose base has no rest guard gets
+`[]` as its rest, since `M.splitArray` would otherwise default it to `M.any()`
+and admit trailing arguments. The rows survive only in the provenance record: a
+receiver in another vat sees the rendered guard, not the positional form.
 
 ### Guard algebra
 
@@ -292,9 +324,6 @@ narrowed while keeping them synchronous.
 
 ## The fs capability
 
-> **In progress:** the `fs` capability described in this section has not fully
-> landed.
-
 `@metamask/kernel-platforms` vends `fs` as an exo. This replaces the previous
 `node:fs` lookalike record of caveated functions; there is no compatibility
 shim, and `existsSync` is gone, which the promises-only forwarding requires in
@@ -338,9 +367,7 @@ things in the same vocabulary the library uses:
 The capability factory compiles that into a delta and applies the same `narrow`
 the library exports, so the config-time bound is provably the root of the
 narrowing tree rather than a parallel mechanism. Root segments are absolute; an
-empty `root` would denote the entire filesystem and is a config error. Any
-platform-specific prefix is a leading segment, so a Windows drive is
-`["C:", "srv"]`.
+empty `root` would denote the entire filesystem and is a config error.
 
 Config stays JSON — it is a config file validated by superstruct — while patterns
 are Passable tagged records, so a config narrowing cannot itself be a delta and
@@ -360,15 +387,24 @@ for `fs`, one path component each; for the reversed-host-segment `fetch`
 narrowing on the roadmap, one label each, since a segment containing a dot would
 span several.
 
-**Aliasing defeats syntactic narrowing, and `fs` does not yet stop it.** Patterns
-are equally blind to the filesystem: a symlink at `/srv/data/evil -> /etc` makes
+**Aliasing defeats syntactic narrowing.** Patterns are equally blind to the
+filesystem: a symlink at `/srv/data/evil -> /etc` makes
 `['srv', 'data', 'evil', 'passwd']` satisfy `pathUnder(['srv', 'data'])`.
-`makeNoSymlinksCaveat` catches only a symlink in the final position, because
-`lstat` follows every intermediate component, so a holder of a narrowed or
-config-scoped `fs` can read outside its root if anyone can place a directory
-symlink inside it. Syntactic narrowing is sound only over a namespace that is not
-self-aliasing, and each capability owns that property for its own namespace —
-which `fs` has yet to do.
+Syntactic narrowing is sound only over a namespace that is not self-aliasing, and
+each capability owns that property for its own namespace.
+
+On Node.js, `fs` refuses any path that is not its own `realpath`: a symlink at any
+position, or on a case-insensitive filesystem a segment differing in case from the
+entry it names. Re-checking the prefix after resolving would not do, because the
+base cannot see which prefix a holder was narrowed to; refusing every alias is
+sound for all of them. It follows that `root` must be canonical — on macOS,
+`/private/var/...` rather than `/var/...`.
+
+The check races a writer who swaps a component for a symlink after it runs.
+`readFile` closes that race: it opens with `O_NOFOLLOW`, re-checks, and requires
+the path to still name the opened file. `access` has no handle to pin, so a swap
+can still reveal whether something outside the root exists. Hard links are
+aliases the check cannot see, and remain open.
 
 **Arity is not narrowable.** A delta constrains patterns at inherited positions
 and cannot drop trailing optionals or make an optional required.
@@ -387,11 +423,6 @@ or filters rather than forwarding — including the state-dependent cases such a
 provide.
 
 ## Roadmap
-
-**Close the symlink hole in `fs`.** Either resolve each path with `realpath` and
-re-check the prefix, or walk it a component at a time with `O_NOFOLLOW`. Both are
-TOCTOU-prone, and `realpath` additionally rejects a legitimately symlinked root,
-which is why this is its own change rather than a rider on the narrowing work.
 
 **Restore raw-byte reads.** `harden(buffer.transferToImmutable())` is Passable,
 with `byteArray` pass style, so `readFile` could return bytes after all. Deferred

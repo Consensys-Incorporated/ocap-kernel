@@ -11,7 +11,7 @@ export type CapabilityConfig<Name extends CapabilityName> =
 export type CapabilityFactory<Name extends CapabilityName, Options = never> = (
   config: CapabilityConfig<Name>,
   options?: Options,
-) => Capability<Name>;
+) => Capability<Name> | Promise<Capability<Name>>;
 
 export type CapabilityFactories = {
   [Key in CapabilityName]: CapabilityFactory<Key>;

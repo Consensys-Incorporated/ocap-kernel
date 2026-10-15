@@ -1,63 +1,82 @@
-import { existsSync, lstatSync } from 'node:fs';
+import { constants } from 'node:fs';
 import fs from 'node:fs/promises';
-import { relative } from 'node:path';
 
 import { makeFsSpecification } from './shared.ts';
-import type { PathLike, SyncPathCaveat } from './types.ts';
+import type { FsSpecification } from './shared.ts';
+import type { FsConfigStruct, PathSegments, SegmentsCaveat } from './types.ts';
 
 /**
- * Node.js specific symlink caveat factory using node:fs
+ * Joins absolute segments into a Node.js path.
  *
- * @returns A caveat function that validates a path against symlinks
+ * @param segments - The segments to join
+ * @returns The corresponding absolute path
  */
-const makeNoSymlinksCaveat = (): SyncPathCaveat => {
-  return (path: PathLike): void => {
-    const pathString = path.toString();
-    // eslint-disable-next-line n/no-sync
-    const stats = lstatSync(pathString);
-    if (stats.isSymbolicLink()) {
-      throw new Error(`Symlinks are prohibited: ${pathString}`);
+export const toPath = (segments: PathSegments): string =>
+  `/${segments.join('/')}`;
+
+/**
+ * Asserts that the path is its own `realpath`.
+ *
+ * A symlink at any position, or on a case-insensitive filesystem a segment
+ * differing in case from the entry it names, would let a path satisfy a
+ * prefix pattern while naming something outside it. The base cannot see which
+ * prefix a holder was narrowed to, so it refuses every alias rather than only
+ * those leaving the configured root.
+ *
+ * @param path - The absolute path to check
+ */
+export const assertCanonical = async (path: string): Promise<void> => {
+  const real = await fs.realpath(path);
+  if (real !== path) {
+    throw new Error(`Path is not canonical: ${path} resolves to ${real}`);
+  }
+};
+
+/**
+ * Node.js caveat refusing any path that is not canonical.
+ *
+ * @returns A caveat function that validates segments against aliasing
+ */
+export const makeCanonicalPathCaveat = (): SegmentsCaveat =>
+  harden(async (segments: PathSegments) => assertCanonical(toPath(segments)));
+
+/**
+ * Reads a file, refusing one reached through an alias at the time it is opened.
+ *
+ * The caveat has already run, but a component could be swapped for a symlink
+ * between it and the open. So the path is checked again after opening, and
+ * must still name the opened file: a swap either side of the open leaves the
+ * handle on a file the path no longer names.
+ *
+ * @param path - The absolute path to read
+ * @param encoding - The encoding to decode the contents with
+ * @returns The file's contents
+ */
+export const readFile = async (
+  path: string,
+  encoding: BufferEncoding,
+): Promise<string> => {
+  // eslint-disable-next-line no-bitwise -- open flags are a bitmask
+  const handle = await fs.open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    await assertCanonical(path);
+    const [opened, named] = await Promise.all([handle.stat(), fs.stat(path)]);
+    if (opened.dev !== named.dev || opened.ino !== named.ino) {
+      throw new Error(`Path changed while it was opened: ${path}`);
     }
-  };
+    return await handle.readFile({ encoding });
+  } finally {
+    await handle.close();
+  }
 };
 
-/**
- * Node.js specific root directory caveat factory using node:path
- *
- * @param rootDir - The root directory to validate paths against
- * @returns A caveat function that validates a path against the root directory
- */
-const makeRootCaveat = (rootDir: string): SyncPathCaveat => {
-  return (path: PathLike): void => {
-    const pathString = path.toString();
-    const relativePath = relative(rootDir, pathString);
-    if (relativePath.startsWith('..')) {
-      throw new Error(`Path ${pathString} is outside allowed root ${rootDir}`);
-    }
-  };
-};
-
-/**
- * Node.js specific path caveat factory using node:path tools
- *
- * @param rootDir - The root directory to validate paths against
- * @returns A caveat function that validates a path against configured constraints
- */
-const makeNodejsPathCaveat = (rootDir: string): SyncPathCaveat => {
-  const noSymlinks = makeNoSymlinksCaveat();
-  const withinRoot = makeRootCaveat(rootDir);
-
-  return harden((path: PathLike) => {
-    noSymlinks(path);
-    withinRoot(path);
-  });
-};
-
-export const { configStruct, capabilityFactory } = makeFsSpecification({
-  makeExistsSync: () => existsSync,
-  promises: {
-    makeReadFile: () => fs.readFile,
-    makeAccess: () => fs.access,
-  },
-  makePathCaveat: makeNodejsPathCaveat,
+const specification: FsSpecification = makeFsSpecification({
+  makeReadFile: () => readFile as typeof fs.readFile,
+  makeAccess: () => fs.access,
+  makePathCaveat: makeCanonicalPathCaveat,
+  toPath,
 });
+
+// eslint-disable-next-line prefer-destructuring -- annotated for declaration emit
+export const configStruct: FsConfigStruct = specification.configStruct;
+export const { capabilityFactory } = specification;

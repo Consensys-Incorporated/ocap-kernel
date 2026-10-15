@@ -11,6 +11,7 @@ import * as types from './types.ts';
 import type {
   KRef,
   KernelMessage,
+  RemoteId,
   RunLoopItem,
   RunQueueItem,
 } from './types.ts';
@@ -64,6 +65,7 @@ describe('KernelQueue', () => {
       createCrankSavepoint: vi.fn(),
       rollbackCrank: vi.fn(),
       waitForCrank: vi.fn(),
+      isInCrank: vi.fn().mockReturnValue(false),
       // Crank buffer methods
       bufferCrankOutput: vi.fn(),
       flushCrankBuffer: vi.fn().mockReturnValue([]),
@@ -953,6 +955,220 @@ describe('KernelQueue', () => {
     });
   });
 
+  it.each([
+    {
+      what: 'restart',
+      enqueue: (queue: KernelQueue): void => queue.enqueueRestartVat('v1'),
+      item: { type: 'restartVat', vatId: 'v1' },
+    },
+    {
+      what: 'termination',
+      enqueue: (queue: KernelQueue): void => queue.enqueueTerminateVat('v1'),
+      item: { type: 'terminateVat', vatId: 'v1' },
+    },
+  ])(
+    'holds a $what request made during a crank until that crank ends',
+    async ({ enqueue, item }) => {
+      const events: string[] = [];
+      (kernelStore.isInCrank as unknown as MockInstance).mockReturnValue(true);
+      (kernelStore.enqueueRun as unknown as MockInstance).mockImplementation(
+        () => events.push('enqueueRun'),
+      );
+      (kernelStore.rollbackCrank as unknown as MockInstance).mockImplementation(
+        () => events.push('rollbackCrank'),
+      );
+      (kernelStore.endCrank as unknown as MockInstance).mockImplementation(() =>
+        events.push('endCrank'),
+      );
+      (kernelStore.runQueueLength as unknown as MockInstance).mockReturnValue(
+        1,
+      );
+      (kernelStore.dequeueRun as unknown as MockInstance).mockReturnValue({
+        type: 'send',
+        target: 'ko123',
+        message: {} as KernelMessage,
+      });
+      const stop = new Error('test: stop run loop');
+      const deliver = vi
+        .fn()
+        .mockImplementationOnce(async () => {
+          enqueue(kernelQueue);
+          return { abort: true };
+        })
+        .mockRejectedValueOnce(stop);
+
+      await expect(kernelQueue.run(deliver)).rejects.toBe(stop);
+
+      expect(events.slice(0, 3)).toStrictEqual([
+        'rollbackCrank',
+        'endCrank',
+        'enqueueRun',
+      ]);
+      expect(kernelStore.enqueueRun).toHaveBeenCalledWith(item);
+    },
+  );
+
+  describe('enqueueRestartVat', () => {
+    it('enqueues a restart request', () => {
+      kernelQueue.enqueueRestartVat('v1');
+
+      expect(kernelStore.enqueueRun).toHaveBeenCalledWith({
+        type: 'restartVat',
+        vatId: 'v1',
+      });
+    });
+
+    it.each([
+      ['restart', (queue: KernelQueue) => queue.enqueueRestartVat('v1')],
+      ['termination', (queue: KernelQueue) => queue.enqueueTerminateVat('v1')],
+    ])(
+      'does not write a %s discarded before its crank ends',
+      async (_, request) => {
+        (kernelStore.isInCrank as unknown as MockInstance).mockReturnValue(
+          true,
+        );
+        (kernelStore.runQueueLength as unknown as MockInstance).mockReturnValue(
+          1,
+        );
+        (kernelStore.dequeueRun as unknown as MockInstance).mockReturnValue({
+          type: 'send',
+          target: 'ko123',
+          message: {} as KernelMessage,
+        });
+        const stop = new Error('test: stop run loop');
+        const deliver = vi
+          .fn()
+          .mockImplementationOnce(async () => {
+            request(kernelQueue);
+            kernelQueue.discardHeldRequests();
+            return undefined;
+          })
+          .mockRejectedValueOnce(stop);
+
+        await expect(kernelQueue.run(deliver)).rejects.toBe(stop);
+
+        expect(kernelStore.enqueueRun).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each([
+      ['restart', (queue: KernelQueue) => queue.enqueueRestartVat('v1')],
+      ['termination', (queue: KernelQueue) => queue.enqueueTerminateVat('v1')],
+    ])(
+      'drops a %s held by a crank that kills the run loop',
+      async (_, request) => {
+        (kernelStore.isInCrank as unknown as MockInstance).mockReturnValue(
+          true,
+        );
+        (kernelStore.runQueueLength as unknown as MockInstance).mockReturnValue(
+          1,
+        );
+        (kernelStore.dequeueRun as unknown as MockInstance).mockReturnValue({
+          type: 'send',
+          target: 'ko123',
+          message: {} as KernelMessage,
+        });
+        const failure = new Error('crank exploded');
+        const deliver = vi.fn().mockImplementationOnce(async () => {
+          request(kernelQueue);
+          throw failure;
+        });
+
+        await expect(kernelQueue.run(deliver)).rejects.toBe(failure);
+
+        // Its caller hears of the death through `onRunLoopDeath` instead.
+        expect(kernelStore.enqueueRun).not.toHaveBeenCalled();
+      },
+    );
+
+    it('refuses once the run loop is dead', async () => {
+      await killRunLoop(new Error('crank exploded'));
+
+      expect(() => kernelQueue.enqueueRestartVat('v1')).toThrow(
+        'Kernel run loop died; cannot restart a vat',
+      );
+      expect(kernelStore.enqueueRun).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('enqueueTerminateVat', () => {
+    it('enqueues a termination request with its reason', () => {
+      const reason = { body: 'because', slots: [] } as CapData<KRef>;
+
+      kernelQueue.enqueueTerminateVat('v1', reason);
+
+      expect(kernelStore.enqueueRun).toHaveBeenCalledWith({
+        type: 'terminateVat',
+        vatId: 'v1',
+        reason,
+      });
+    });
+
+    it('leaves the reason out when there is none', () => {
+      kernelQueue.enqueueTerminateVat('v1');
+
+      // `toHaveBeenCalledWith` ignores an `undefined`-valued key, and the item
+      // struct's `reason` is `exactOptional`, so the key has to be absent.
+      expect(
+        (kernelStore.enqueueRun as unknown as MockInstance).mock.calls,
+      ).toStrictEqual([[{ type: 'terminateVat', vatId: 'v1' }]]);
+    });
+
+    it('refuses a reason that carries slots', () => {
+      const reason = { body: 'because', slots: ['ko1'] } as CapData<KRef>;
+
+      expect(() => kernelQueue.enqueueTerminateVat('v1', reason)).toThrow(
+        'a termination reason cannot carry slots',
+      );
+      expect(kernelStore.enqueueRun).not.toHaveBeenCalled();
+    });
+
+    it('refuses once the run loop is dead', async () => {
+      await killRunLoop(new Error('crank exploded'));
+
+      expect(() => kernelQueue.enqueueTerminateVat('v1')).toThrow(
+        'Kernel run loop died; cannot terminate a vat',
+      );
+      expect(kernelStore.enqueueRun).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('onRunLoopDeath', () => {
+    it('tells a waiter the work will never be done', async () => {
+      const reject = vi.fn();
+      kernelQueue.onRunLoopDeath(reject);
+      const failure = new Error('crank exploded');
+
+      await killRunLoop(failure);
+
+      expect(reject).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: 'Kernel run loop died; this work will never be carried out',
+          cause: failure,
+        }),
+      );
+    });
+
+    it('tells a waiter that arrives after the death', async () => {
+      await killRunLoop(new Error('crank exploded'));
+      const reject = vi.fn();
+
+      kernelQueue.onRunLoopDeath(reject);
+
+      expect(reject).toHaveBeenCalledOnce();
+    });
+
+    it('leaves an unregistered waiter alone', async () => {
+      const reject = vi.fn();
+      const stopWatching = kernelQueue.onRunLoopDeath(reject);
+      stopWatching();
+
+      await killRunLoop(new Error('crank exploded'));
+
+      expect(reject).not.toHaveBeenCalled();
+    });
+  });
+
   describe('resolvePromises', () => {
     it('resolves kernel promises and buffers notifications for subscribers', () => {
       const endpointId = 'v1';
@@ -1271,6 +1487,12 @@ describe('KernelQueue', () => {
           vi.fn().mockResolvedValue({ terminate: { vatId: 'v1', info: {} } }),
         ),
       ).rejects.toThrow('teardown exploded');
+
+      expect(kernelStore.rollbackCrank).not.toHaveBeenCalled();
+    });
+
+    it('keeps work a delivery marked irrevocable', async () => {
+      await deliverThenDie({ irrevocable: true });
 
       expect(kernelStore.rollbackCrank).not.toHaveBeenCalled();
     });

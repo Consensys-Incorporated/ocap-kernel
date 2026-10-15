@@ -5,7 +5,7 @@
     "lib": ["ES2022", "DOM"],
     "types": ["vitest", "ses", "node"]
   },
-  "references": [{ "path": "../repo-tools" }],
+  "references": [{ "path": "../kernel-utils" }, { "path": "../repo-tools" }],
   "include": [
     "../../vitest.config.ts",
     "./src",

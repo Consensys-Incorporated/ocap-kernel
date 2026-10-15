@@ -548,6 +548,87 @@ describe('Remote Communications (Integration Tests)', () => {
       await rm(tempDir, { recursive: true, force: true });
     }
   });
+
+  it('still boots with a reap left queued for a remote', async () => {
+    // A reap against a remote waits in the persisted reap queue for the run
+    // loop's next crank. `scheduleReap` does not wake a parked run loop, so an
+    // idle kernel holds that reap indefinitely — and carries it into its next
+    // incarnation, which starts its run loop inside `Kernel.make`, before
+    // `initRemoteComms` can restore any remote to deliver it to.
+    //
+    // A peer's `bringOutYourDead` schedules one too, but the crank that takes
+    // the request wakes the loop, which spends the reap at once.
+    const tempDir = await mkdtemp(join(tmpdir(), 'kernel-test-rc-reap-'));
+    const dbFile = join(tempDir, 'victim.db');
+    try {
+      // Only the victim needs to survive a restart, so only it needs a file.
+      await kernel1.stop();
+      const victimDatabase = await makeSQLKernelDatabase({
+        dbFilename: dbFile,
+      });
+      const victimStore = makeKernelStore(victimDatabase);
+      const readReapQueue = (database: KernelDatabase): unknown =>
+        JSON.parse(database.kernelKVStore.get('reapQueue') ?? '[]');
+      const victim = await makeTestKernel(
+        'victim',
+        victimDatabase,
+        directNetwork,
+        true,
+        'kernel1-peer',
+        '01',
+      );
+
+      // One exchange, so the victim holds a remote for the peer.
+      await runTestVats(victim, makeSenderSubclusterConfig('Sender'));
+      const receiver = (await runTestVats(
+        kernel2,
+        makeReceiverSubclusterConfig('Receiver'),
+      )) as BootstrapResult;
+      await victim.queueMessage(
+        victimStore.getRootObject('v1') as KRef,
+        'sendMessage',
+        [receiver.ocapURL, 'hello', ['once']],
+      );
+
+      // Nothing touches the victim afterwards, so its loop stays parked and
+      // never delivers the reap.
+      victim.reapRemotes();
+      expect(readReapQueue(victimDatabase)).not.toStrictEqual([]);
+      await victim.stop();
+
+      // Asserted on disk, not assumed: if the victim had cranked it would have
+      // eaten its own reap while the remote still existed, and the rest would
+      // prove nothing.
+      const armed = await makeSQLKernelDatabase({ dbFilename: dbFile });
+      expect(readReapQueue(armed)).not.toStrictEqual([]);
+      armed.close();
+
+      // Twice, because without the fix the failure is unrecoverable rather
+      // than merely fatal: the crank that dies is rolled back, which puts the
+      // reap back on the queue for the boot after. With it, the first boot
+      // spends the reap and the second only shows nothing else was left.
+      const bootStates = [];
+      for (const boot of [1, 2]) {
+        const rebooted = await makeTestKernel(
+          `victim-boot${boot}`,
+          await makeSQLKernelDatabase({ dbFilename: dbFile }),
+          directNetwork,
+          false,
+          'kernel1-peer',
+          '01',
+        );
+        bootStates.push((await rebooted.getStatus()).runLoop);
+        await rebooted.stop();
+      }
+      // Asserted together rather than per boot, so a failure reports both.
+      expect(bootStates).toStrictEqual([
+        { state: 'running' },
+        { state: 'running' },
+      ]);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
 });
 
 /**

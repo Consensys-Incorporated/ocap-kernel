@@ -376,6 +376,29 @@ export type RunQueueItemBringOutYourDead = Infer<
   typeof RunQueueItemBringOutYourDeadStruct
 >;
 
+/**
+ * A request to replace a vat's worker, queued so the run loop performs it.
+ */
+const RunQueueItemRestartVatStruct = object({
+  type: literal('restartVat'),
+  vatId: VatIdStruct,
+});
+
+export type RunQueueItemRestartVat = Infer<typeof RunQueueItemRestartVatStruct>;
+
+/**
+ * A request to terminate a vat, queued so the run loop performs it.
+ */
+const RunQueueItemTerminateVatStruct = object({
+  type: literal('terminateVat'),
+  vatId: VatIdStruct,
+  reason: exactOptional(KernelCapDataStruct),
+});
+
+export type RunQueueItemTerminateVat = Infer<
+  typeof RunQueueItemTerminateVatStruct
+>;
+
 export type RunQueueItemRemoteInbound = {
   type: 'remoteInbound';
   remoteId: RemoteId;
@@ -393,6 +416,8 @@ export const RunQueueItemStruct = union([
   RunQueueItemNotifyStruct,
   RunQueueItemGCActionStruct,
   RunQueueItemBringOutYourDeadStruct,
+  RunQueueItemRestartVatStruct,
+  RunQueueItemTerminateVatStruct,
 ]);
 
 export type RunQueueItem = Infer<typeof RunQueueItemStruct>;
@@ -529,8 +554,8 @@ export type PlatformServices = {
    *
    * @param vatId - The vat id of the worker to terminate.
    * @param error - An optional error to terminate the worker with.
-   * @returns A promise that resolves when the worker has terminated
-   * or rejects if that worker does not exist.
+   * @returns A promise that resolves when the worker has terminated. For a vat
+   * with no worker, a runtime may resolve or reject.
    */
   terminate: (vatId: VatId, error?: Error) => Promise<void>;
   /**
@@ -943,6 +968,12 @@ export type CrankResult = {
   didDelivery?: EndpointId | 'kernel'; // the endpoint to which we made a delivery
   abort?: boolean; // changes should be discarded, not committed
   terminate?: { vatId: VatId; reject: boolean; info: CapData<KRef> };
+  /**
+   * The delivery has done work a caller will be told of, so a later failure in
+   * this crank, from collection or the audit, must not roll it back. Ignored
+   * alongside `abort`, which rolls back first.
+   */
+  irrevocable?: boolean;
   /**
    * Work the run loop runs once the crank has committed, skipped if it aborts.
    * For what a rollback could not undo anyway, and what must not be observable

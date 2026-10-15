@@ -44,7 +44,7 @@ type VatConstructorProps = {
   kernelQueue: KernelQueue;
   logger?: Logger | undefined;
   allowedGlobalNames?: AllowedGlobalName[] | undefined;
-  /** Called when the channel to the worker fails. */
+  /** Called when the channel ends before `terminate` or `expectClose`. */
   onStreamFailure: (error: Error) => void;
 };
 
@@ -73,8 +73,11 @@ export class VatHandle implements EndpointHandle {
   /** The vat's syscall */
   readonly #vatSyscall: VatSyscall;
 
-  /** Told when the channel to the worker fails */
+  /** Told when the channel ends before `terminate` or `expectClose` */
   readonly #onStreamFailure: (error: Error) => void;
+
+  /** Whether the kernel is closing the channel itself */
+  #closing: boolean = false;
 
   readonly #rpcClient: RpcClient<typeof vatMethodSpecs>;
 
@@ -91,7 +94,8 @@ export class VatHandle implements EndpointHandle {
    * @param params.kernelQueue - The kernel's queue.
    * @param params.logger - Optional logger for error and diagnostic output.
    * @param params.allowedGlobalNames - Optional list of allowed global names for vat endowments.
-   * @param params.onStreamFailure - Called when the channel to the worker fails.
+   * @param params.onStreamFailure - Called when the channel ends before
+   * `terminate` or `expectClose`.
    */
   // eslint-disable-next-line no-restricted-syntax
   private constructor({
@@ -161,26 +165,17 @@ export class VatHandle implements EndpointHandle {
    * @returns A promise for the vat's initial delivery result.
    */
   async #init(): Promise<VatDeliveryResult> {
-    Promise.all([this.#vatStream.drain(this.#handleMessage.bind(this))]).catch(
-      (error) => {
-        this.#logger?.error(`Unexpected read error`, error);
-        const streamError = new StreamReadError({ vatId: this.vatId }, error);
-        try {
-          // Now, not in the retirement's `terminate`: that waits for the
-          // current crank, which may be blocked on a pending command.
-          this.#rpcClient.rejectAll(streamError);
-        } finally {
-          try {
-            this.#onStreamFailure(streamError);
-          } catch (reportError) {
-            this.#logger?.error(
-              `Failed to report the dead channel of vat ${this.vatId}`,
-              reportError,
-            );
-          }
-        }
-      },
-    );
+    this.#vatStream
+      .drain(this.#handleMessage.bind(this))
+      .then(() => {
+        // A runtime may close an exited worker's channel rather than fail it,
+        // so a clean end is a lost vat too.
+        this.#reportStreamFailure(new Error('vat channel closed'));
+        return undefined;
+      })
+      .catch((error: Error) => {
+        this.#reportStreamFailure(error);
+      });
 
     return await this.sendVatCommand({
       method: 'initVat',
@@ -192,6 +187,33 @@ export class VatHandle implements EndpointHandle {
           : {}),
       },
     });
+  }
+
+  /**
+   * Fail the commands waiting on a channel that has gone, and tell the
+   * manager, unless `terminate` or `expectClose` came first.
+   *
+   * @param error - What the channel ended with.
+   */
+  #reportStreamFailure(error: Error): void {
+    if (this.#closing) {
+      return;
+    }
+    const streamError = new StreamReadError(
+      { vatId: this.vatId },
+      { cause: error },
+    );
+    // Here, not left to the manager, which ignores a handle it does not hold:
+    // one still shaking hands, or one a termination or restart has let go.
+    this.#rpcClient.rejectAll(streamError);
+    try {
+      this.#onStreamFailure(streamError);
+    } catch (reportError) {
+      this.#logger?.error(
+        `Failed to report the dead channel of vat ${this.vatId}`,
+        reportError,
+      );
+    }
   }
 
   /**
@@ -314,6 +336,16 @@ export class VatHandle implements EndpointHandle {
   }
 
   /**
+   * Treat the channel's end as the kernel's own doing, for a kernel about to
+   * stop every worker. A command still waiting is left waiting rather than
+   * failed, so the crank that sent it never commits and its item is delivered
+   * again on the next start.
+   */
+  expectClose(): void {
+    this.#closing = true;
+  }
+
+  /**
    * Closes this handle's channel to the vat worker. The store side of a vat's
    * death is `VatManager`'s.
    *
@@ -321,6 +353,7 @@ export class VatHandle implements EndpointHandle {
    * @param error - The error to terminate the vat with.
    */
   async terminate(terminating: boolean, error?: Error): Promise<void> {
+    this.#closing = true;
     if (terminating) {
       // Before `end`, which may never settle.
       this.#rpcClient.rejectAll(error ?? new VatDeletedError(this.vatId));

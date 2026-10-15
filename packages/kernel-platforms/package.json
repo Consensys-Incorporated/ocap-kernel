@@ -102,6 +102,9 @@
     "node": ">=22"
   },
   "dependencies": {
+    "@endo/exo": "^1.7.0",
+    "@endo/patterns": "^1.9.1",
+    "@metamask/kernel-utils": "workspace:^",
     "@metamask/superstruct": "^3.4.1",
     "ses": "^2.3.0"
   },
