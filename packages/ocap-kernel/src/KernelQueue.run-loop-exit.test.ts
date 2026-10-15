@@ -11,6 +11,7 @@ import type {
   CrankResult,
   EndpointMessage,
   PlatformServices,
+  VatId,
 } from './types.ts';
 import { VatHandle } from './vats/VatHandle.ts';
 import { VatSyscall } from './vats/VatSyscall.ts';
@@ -25,14 +26,34 @@ import { VatSyscall } from './vats/VatSyscall.ts';
  */
 
 /**
- * A kernel over a real store, running two mocked vats that answer `bootstrap`
- * and nothing else. A vat sent `explode` asks for the termination of a vat
- * that does not exist, which throws out of the crank and kills the run loop.
+ * A crank result asking for the termination of a vat that does not exist,
+ * which throws out of the crank and kills the run loop.
  *
- * @returns The kernel, the root of each vat, and the methods vats were sent.
+ * @param vatId - The vat whose delivery this is.
+ * @returns The crank result.
+ */
+function explosion(vatId: string): CrankResult {
+  return {
+    didDelivery: vatId as VatId,
+    terminate: {
+      vatId: 'v404',
+      reject: true,
+      info: makeFatalKernelError('INTERNAL_ERROR', 'exploded'),
+    },
+  };
+}
+
+/**
+ * A kernel over a real store, running two mocked vats that answer `bootstrap`
+ * and nothing else. A vat sent `explode` returns {@link explosion}. A vat sent
+ * `stall` holds its crank open until the test calls `release`.
+ *
+ * @returns The kernel, the root and ID of each vat, the methods vats were
+ * sent, and `release`, which ends a stalled crank with the given result.
  */
 async function setUp() {
   const received: string[] = [];
+  let releaseStall: ((result: CrankResult) => void) | undefined;
   const logger = new Logger('test');
   for (const level of ['log', 'info', 'warn', 'error', 'debug'] as const) {
     vi.spyOn(logger, level).mockImplementation(() => undefined);
@@ -68,14 +89,12 @@ async function setUp() {
             ]);
           }
           if (method === 'explode') {
-            return {
-              didDelivery: vatId,
-              terminate: {
-                vatId: 'v404',
-                reject: true,
-                info: makeFatalKernelError('INTERNAL_ERROR', 'exploded'),
-              },
-            };
+            return explosion(vatId);
+          }
+          if (method === 'stall') {
+            return new Promise<CrankResult>((resolve) => {
+              releaseStall = resolve;
+            });
           }
           return { didDelivery: vatId };
         },
@@ -97,11 +116,17 @@ async function setUp() {
       doomed: { sourceSpec: 'doomed.js' },
     },
   });
+  const vatIdOf = (sourceSpec: string): VatId =>
+    kernel.getVats().find(({ config }) => config.sourceSpec === sourceSpec)
+      ?.id as VatId;
   return {
     kernel,
     waiterRoot: vatRootKrefs.waiter as string,
     doomedRoot: vatRootKrefs.doomed as string,
+    waiterId: vatIdOf('waiter.js'),
+    doomedId: vatIdOf('doomed.js'),
     received,
+    release: (result: CrankResult): void => releaseStall?.(result),
   };
 }
 
@@ -152,30 +177,102 @@ describe('a queueMessage caller the vat has not answered', () => {
       },
       'rejected',
     ],
-    // Only because terminating the vat rejects the promises it decides;
-    // reset does not fail the kernel's waiters itself.
     [
       'is rejected when the kernel is reset',
       async ({ kernel }: Harness): Promise<void> => kernel.reset(),
       'rejected',
     ],
     [
-      'is left pending when the kernel stops (gap, #1105)',
+      'is rejected when the kernel stops',
       async ({ kernel }: Harness): Promise<void> => kernel.stop(),
-      'pending',
+      'rejected',
     ],
     [
-      'is left pending when the storage is cleared (gap, #1105)',
+      'is rejected when the storage is cleared',
       async ({ kernel }: Harness): Promise<void> => kernel.clearStorage(),
-      'pending',
+      'rejected',
     ],
   ] as const)('%s', async (_title, exit, settlement) => {
     expect(await waitThrough(exit)).toBe(settlement);
   });
+});
 
-  // No caller on main waits for a vat by id: `restartVat` hands back its
-  // handle directly. #1096 queues the restart, giving that caller a wait.
-  it.todo(
-    'after reset, a vat that reuses a vat id is never handed to a caller from before the reset',
+describe('a restartVat or terminateVat caller the run loop has not reached', () => {
+  const exits = [
+    [
+      'the run loop dies in a crank',
+      async ({ kernel, release, waiterId }: Harness): Promise<void> => {
+        release(explosion(waiterId));
+        await vi.waitFor(async () =>
+          expect((await kernel.getStatus()).runLoop.state).toBe('failed'),
+        );
+      },
+    ],
+    ...(
+      [
+        ['the kernel is reset', async (kernel: Kernel) => kernel.reset()],
+        ['the kernel stops', async (kernel: Kernel) => kernel.stop()],
+        [
+          'the storage is cleared',
+          async (kernel: Kernel) => kernel.clearStorage(),
+        ],
+      ] as const
+    ).map(
+      ([title, exit]) =>
+        [
+          title,
+          async ({ kernel, release, waiterId }: Harness): Promise<void> => {
+            const exiting = exit(kernel);
+            // The exit is waiting for the stalled crank to end, so the loop
+            // stops before it can carry out the request.
+            await delay(0);
+            release({ didDelivery: waiterId });
+            await exiting;
+          },
+        ] as const,
+    ),
+  ] as const;
+  const requests = [
+    [
+      'restartVat',
+      async ({ kernel, doomedId }: Harness): Promise<unknown> =>
+        kernel.restartVat(doomedId),
+    ],
+    [
+      'terminateVat',
+      async ({ kernel, doomedId }: Harness): Promise<unknown> =>
+        kernel.terminateVat(doomedId),
+    ],
+  ] as const;
+
+  it.each(
+    requests.flatMap(([request, makeRequest]) =>
+      exits.map(([exitTitle, exit]) => [request, exitTitle, makeRequest, exit]),
+    ),
+  )(
+    'a %s caller is rejected when %s',
+    async (_request, _exit, makeRequest, exit) => {
+      const harness = await setUp();
+      harness.kernel
+        .queueMessage(harness.waiterRoot, 'stall', [])
+        .catch(() => undefined);
+      await vi.waitFor(() => expect(harness.received).toContain('stall'));
+      let settlement: Settlement = 'pending';
+      makeRequest(harness)
+        .then(() => {
+          settlement = 'fulfilled';
+          return undefined;
+        })
+        .catch(() => {
+          settlement = 'rejected';
+        });
+      await delay(0);
+      expect(settlement).toBe('pending');
+
+      await exit(harness);
+      // Flushes the caller's settlement; not a timeout.
+      await delay(0);
+      expect(settlement).toBe('rejected');
+    },
   );
 });
