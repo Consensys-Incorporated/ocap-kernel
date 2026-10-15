@@ -198,18 +198,8 @@ export class RemoteManager {
    * Handle a peer's reported incarnation after a successful handshake.
    *
    * Compares the observed incarnation against the value persisted in the
-   * kernel store. When they differ AND a previous value was on file, the peer
-   * has truly restarted: persist the new incarnation and reset the
-   * RemoteHandle's seq dedup state, atomically with respect to the kv layer
-   * so a crash mid-reset can't leave us with the new dedup state under the
-   * old recorded incarnation.
-   *
-   * The savepoint guards only kv-layer writes (`setPeerIncarnation` plus
-   * what `persistPeerRestart` writes). Run-queue mutations
-   * (`resolvePromises`) and everything `finalizePeerRestart` touches are
-   * NOT reversible by a savepoint, so we collect the work to do inside the
-   * savepoint, commit, and then fan it out — mirroring the
-   * deferred-completion pattern in `RemoteHandle.deliverInbound`.
+   * kernel store, and when they differ queues the change for
+   * {@link applyIncarnationChange} to record in a crank of its own.
    *
    * Fires on every handshake (not only on detected change) because the
    * in-memory PeerStateManager is unreliable across receiver restart and
@@ -247,6 +237,14 @@ export class RemoteManager {
     item: RunQueueItemPeerIncarnation,
   ): Promise<CrankResult> {
     const { peerId, incarnation } = item;
+    // Remote comms stopped while the change waited its turn, and took the
+    // remote's handle with them, so the cleanup the change implies cannot run.
+    // Recording the new incarnation without it would hide the restart from the
+    // next handshake, which detects it again only while the store holds the
+    // old one.
+    if (!this.isRemoteCommsInitialized()) {
+      return {};
+    }
     const stored = this.#kernelStore.getPeerIncarnation(peerId);
     if (stored === incarnation) {
       return {};

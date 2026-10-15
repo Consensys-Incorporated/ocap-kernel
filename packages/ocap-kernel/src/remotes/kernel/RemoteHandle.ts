@@ -1573,11 +1573,11 @@ export class RemoteHandle implements RemoteEndpointHandle {
 
   /**
    * Convenience wrapper that runs the persisted and in-memory phases
-   * back-to-back. Use only outside a savepoint window — transactional
-   * callers (e.g. {@link RemoteManager.handleIncarnationChange}) must call
-   * {@link persistPeerRestart} inside the savepoint and
-   * {@link finalizePeerRestart} after release, so a kv rollback can't
-   * leave the in-memory view inconsistent with the persisted view.
+   * back-to-back. Use only outside a crank:
+   * {@link RemoteManager.applyIncarnationChange} calls
+   * {@link persistPeerRestart} inside its crank and {@link finalizePeerRestart}
+   * after the commit, so a rollback can't leave the in-memory view
+   * inconsistent with the persisted view.
    */
   handlePeerRestart(): void {
     this.persistPeerRestart();

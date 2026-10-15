@@ -985,7 +985,7 @@ describe('RemoteManager', () => {
       expect(kernelStore.getPeerIncarnation(peerId)).toBe('incarnation-A');
     });
 
-    it('rejects the promises the restarted remote was deciding only after the commit', async () => {
+    it('resets the restarted remote in memory only after the commit', async () => {
       const peerId = 'peer-deferred-rejects';
       const remote = remoteManager.establishRemote(peerId);
       kernelStore.setPeerIncarnation(peerId, 'incarnation-A');
@@ -998,8 +998,8 @@ describe('RemoteManager', () => {
         incarnation: 'incarnation-B',
       });
 
-      // Neither a rejection nor the in-memory reset is reversible by a
-      // rollback, so both wait for the crank to commit.
+      // A rollback cannot put the in-memory reset back, so it waits for the
+      // crank to commit.
       expect(finalizeSpy).not.toHaveBeenCalled();
       expect(kernelStore.getPeerIncarnation(peerId)).toBe('incarnation-B');
       await result.afterCommit?.();
@@ -1027,6 +1027,25 @@ describe('RemoteManager', () => {
       // Tearing the c-list down twice would take the new incarnation's own
       // state with it the second time.
       expect(persistSpy).toHaveBeenCalledOnce();
+    });
+
+    it('leaves a change queued before remote comms stopped for the next handshake', async () => {
+      const peerId = 'peer-restarted-during-stop';
+      const remote = remoteManager.establishRemote(peerId);
+      const persistSpy = vi.spyOn(remote, 'persistPeerRestart');
+      kernelStore.setPeerIncarnation(peerId, 'incarnation-A');
+      await getOnIncarnationChange()(peerId, 'incarnation-B');
+      remoteManager.cleanup();
+
+      const result = await remoteManager.applyIncarnationChange({
+        type: 'peerIncarnation',
+        peerId,
+        incarnation: 'incarnation-B',
+      });
+
+      expect(result).toStrictEqual({});
+      expect(persistSpy).not.toHaveBeenCalled();
+      expect(kernelStore.getPeerIncarnation(peerId)).toBe('incarnation-A');
     });
 
     it('leaves the incarnation unadvanced when persistPeerRestart throws', async () => {
