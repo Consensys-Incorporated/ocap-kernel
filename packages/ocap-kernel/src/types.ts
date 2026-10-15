@@ -402,6 +402,7 @@ export type RunQueueItemTerminateVat = Infer<
 export type RunQueueItemRemoteInbound = {
   type: 'remoteInbound';
   remoteId: RemoteId;
+  seq: number;
   message: string;
 };
 

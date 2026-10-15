@@ -1365,7 +1365,13 @@ export class RemoteHandle implements RemoteEndpointHandle {
       throw Error(`invalid message seq: ${seq}`);
     }
 
-    if (!this.#kernelQueue.acceptRemoteInbound(this.remoteId, message)) {
+    if (
+      !this.#kernelQueue.acceptRemoteInbound({
+        remoteId: this.remoteId,
+        seq,
+        message,
+      })
+    ) {
       this.#logger.log(
         `${this.#peerId.slice(0, 8)}:: refused message seq=${seq}: too many already waiting their turn`,
       );

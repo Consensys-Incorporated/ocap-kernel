@@ -60,7 +60,7 @@ async function receiveAndRunCrank(
   if (!queued) {
     return;
   }
-  const result = await remote.deliverInbound(queued[1]);
+  const result = await remote.deliverInbound(queued[0].message);
   await result.afterCommit?.();
 }
 

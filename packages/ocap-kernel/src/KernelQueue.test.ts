@@ -776,7 +776,11 @@ describe('KernelQueue', () => {
     // Written to the run queue instead, the arrival would land in whatever
     // crank happens to be open and be swallowed whole by an abort.
     it('holds an arrival out of the run queue and hands it to a crank', async () => {
-      kernelQueue.acceptRemoteInbound('r1' as RemoteId, '{"seq":1}');
+      kernelQueue.acceptRemoteInbound({
+        remoteId: 'r1' as RemoteId,
+        seq: 1,
+        message: '{"seq":1}',
+      });
       expect(kernelStore.enqueueRun).not.toHaveBeenCalled();
 
       const deliver = vi.fn().mockImplementation(() => {
@@ -787,6 +791,7 @@ describe('KernelQueue', () => {
       expect(deliver).toHaveBeenCalledWith({
         type: 'remoteInbound',
         remoteId: 'r1',
+        seq: 1,
         message: '{"seq":1}',
       });
     });
@@ -797,7 +802,11 @@ describe('KernelQueue', () => {
       {
         what: 'a message arrives',
         accept: (queue: KernelQueue) =>
-          queue.acceptRemoteInbound('r1' as RemoteId, '{"seq":1}'),
+          queue.acceptRemoteInbound({
+            remoteId: 'r1' as RemoteId,
+            seq: 1,
+            message: '{"seq":1}',
+          }),
       },
       {
         what: 'a peer restarts',
@@ -858,14 +867,26 @@ describe('KernelQueue', () => {
       await expect(kernelQueue.run(deliver)).rejects.toThrow('dead');
 
       expect(() =>
-        kernelQueue.acceptRemoteInbound('r1' as RemoteId, '{"seq":1}'),
+        kernelQueue.acceptRemoteInbound({
+          remoteId: 'r1' as RemoteId,
+          seq: 1,
+          message: '{"seq":1}',
+        }),
       ).toThrow('Kernel run loop died');
     });
 
     it("keeps a peer's messages and its incarnation change in the order they arrived", async () => {
-      kernelQueue.acceptRemoteInbound('r1' as RemoteId, '{"seq":47}');
+      kernelQueue.acceptRemoteInbound({
+        remoteId: 'r1' as RemoteId,
+        seq: 47,
+        message: '{"seq":47}',
+      });
       kernelQueue.acceptPeerIncarnation('peer-1', 'incarnation-B');
-      kernelQueue.acceptRemoteInbound('r1' as RemoteId, '{"seq":1}');
+      kernelQueue.acceptRemoteInbound({
+        remoteId: 'r1' as RemoteId,
+        seq: 1,
+        message: '{"seq":1}',
+      });
 
       const delivered: RunLoopItem[] = [];
       const deliver = vi.fn().mockImplementation((item: RunLoopItem) => {
@@ -899,7 +920,11 @@ describe('KernelQueue', () => {
           turns += 1;
           if (turns === 1) {
             // The loop found nothing and has armed its wake.
-            kernelQueue.acceptRemoteInbound('r1' as RemoteId, '{"seq":1}');
+            kernelQueue.acceptRemoteInbound({
+              remoteId: 'r1' as RemoteId,
+              seq: 1,
+              message: '{"seq":1}',
+            });
           } else if (turns > 2) {
             throw new Error(STOP_RUN_LOOP);
           }
@@ -915,20 +940,90 @@ describe('KernelQueue', () => {
 
     it('refuses an arrival from a remote with 200 already waiting', () => {
       for (let seq = 1; seq <= 200; seq += 1) {
-        kernelQueue.acceptRemoteInbound('r1' as RemoteId, `{"seq":${seq}}`);
+        kernelQueue.acceptRemoteInbound({
+          remoteId: 'r1' as RemoteId,
+          seq,
+          message: `{"seq":${seq}}`,
+        });
       }
 
       expect(
-        kernelQueue.acceptRemoteInbound('r1' as RemoteId, '{"seq":201}'),
+        kernelQueue.acceptRemoteInbound({
+          remoteId: 'r1' as RemoteId,
+          seq: 201,
+          message: '{"seq":201}',
+        }),
       ).toBe(false);
       expect(
-        kernelQueue.acceptRemoteInbound('r2' as RemoteId, '{"seq":1}'),
+        kernelQueue.acceptRemoteInbound({
+          remoteId: 'r2' as RemoteId,
+          seq: 1,
+          message: '{"seq":1}',
+        }),
+      ).toBe(true);
+    });
+
+    it("holds a new incarnation's message numbered like one of the old incarnation's", async () => {
+      kernelQueue.acceptRemoteInbound({
+        remoteId: 'r1' as RemoteId,
+        seq: 1,
+        message: '{"seq":1,"from":"A"}',
+      });
+      kernelQueue.acceptPeerIncarnation('peer-1', 'incarnation-B');
+      kernelQueue.acceptRemoteInbound({
+        remoteId: 'r1' as RemoteId,
+        seq: 1,
+        message: '{"seq":1,"from":"B"}',
+      });
+
+      const delivered: RunLoopItem[] = [];
+      const deliver = vi.fn().mockImplementation((item: RunLoopItem) => {
+        delivered.push(item);
+        if (delivered.length === 3) {
+          throw new Error(STOP_RUN_LOOP);
+        }
+        return {};
+      });
+      await expect(kernelQueue.run(deliver)).rejects.toThrow(STOP_RUN_LOOP);
+
+      expect(delivered.map((item) => item.type)).toStrictEqual([
+        'remoteInbound',
+        'peerIncarnation',
+        'remoteInbound',
+      ]);
+    });
+
+    it('holds a copy of an arrival already waiting only once', () => {
+      for (let seq = 1; seq <= 200; seq += 1) {
+        kernelQueue.acceptRemoteInbound({
+          remoteId: 'r1' as RemoteId,
+          seq: 1 + (seq % 100),
+          message: `{"seq":${1 + (seq % 100)}}`,
+        });
+      }
+
+      // The peer's retransmissions of the first hundred took no room, so the
+      // message it sends next is held.
+      expect(
+        kernelQueue.acceptRemoteInbound({
+          remoteId: 'r1' as RemoteId,
+          seq: 101,
+          message: '{"seq":101}',
+        }),
       ).toBe(true);
     });
 
     it('takes arrivals and run queue items in turns', async () => {
-      kernelQueue.acceptRemoteInbound('r1' as RemoteId, '{"seq":1}');
-      kernelQueue.acceptRemoteInbound('r1' as RemoteId, '{"seq":2}');
+      kernelQueue.acceptRemoteInbound({
+        remoteId: 'r1' as RemoteId,
+        seq: 1,
+        message: '{"seq":1}',
+      });
+      kernelQueue.acceptRemoteInbound({
+        remoteId: 'r1' as RemoteId,
+        seq: 2,
+        message: '{"seq":2}',
+      });
       (kernelStore.runQueueLength as unknown as MockInstance).mockReturnValue(
         1,
       );
@@ -1909,7 +2004,11 @@ describe('KernelQueue', () => {
       (kernelStore.runQueueLength as unknown as MockInstance).mockReturnValue(
         0,
       );
-      kernelQueue.acceptRemoteInbound('r1' as RemoteId, '{"seq":1}');
+      kernelQueue.acceptRemoteInbound({
+        remoteId: 'r1' as RemoteId,
+        seq: 1,
+        message: '{"seq":1}',
+      });
       kernelQueue.acceptPeerIncarnation('peer-1', 'incarnation-B');
 
       kernelQueue.discardQueuedWork('this message result will never arrive');

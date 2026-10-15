@@ -26,10 +26,9 @@ import type {
 import { Fail } from './utils/assert.ts';
 
 /**
- * The most arrivals held for one remote at once. A peer keeps about this many
- * messages unacknowledged, and retransmits all of them on a timeout, so a
- * refusal is usually a copy of one already waiting; any other is
- * unacknowledged, and sent again.
+ * The most arrivals held for one remote at once: as many as a peer keeps
+ * unacknowledged, so a refusal takes a peer that gave up on a window of
+ * messages and started another while this kernel still holds the first.
  */
 const MAX_ARRIVALS_PER_REMOTE = 200;
 
@@ -747,26 +746,71 @@ export class KernelQueue {
    * acknowledged until the crank that takes it commits, so an arrival this
    * kernel forgets is one the peer sends again.
    *
-   * @param remoteId - The remote the message came from.
-   * @param message - The message, as it arrived.
+   * A copy of an arrival already waiting is not held again. A peer
+   * retransmits every message it has unacknowledged on a timeout, so during
+   * a long crank its copies would otherwise fill the remote's share and turn
+   * away a message it has yet to send. Acknowledgements are cumulative, so
+   * the next one taken would then retire the refused one at the peer.
+   * Copies are looked for only behind the last incarnation change waiting,
+   * since a peer numbers a new incarnation's messages from 1 again.
+   *
+   * @param options - Options bag.
+   * @param options.remoteId - The remote the message came from.
+   * @param options.seq - The message's sequence number.
+   * @param options.message - The message, as it arrived.
    * @returns False if the remote already has `MAX_ARRIVALS_PER_REMOTE`
    * arrivals waiting and this one was refused.
    */
-  acceptRemoteInbound(remoteId: RemoteId, message: string): boolean {
+  acceptRemoteInbound({
+    remoteId,
+    seq,
+    message,
+  }: {
+    remoteId: RemoteId;
+    seq: number;
+    message: string;
+  }): boolean {
     this.assertRunLoopAlive('accept a remote message');
     const held = this.#arrivedFromRemotes.filter(
       (item) => item.type === 'remoteInbound' && item.remoteId === remoteId,
     ).length;
+    if (this.#holdsSince(remoteId, seq)) {
+      return true;
+    }
     if (held >= MAX_ARRIVALS_PER_REMOTE) {
       return false;
     }
     this.#arrivedFromRemotes.push({
       type: 'remoteInbound',
       remoteId,
+      seq,
       message,
     });
     this.#wakeTheRunLoop();
     return true;
+  }
+
+  /**
+   * Whether an arrival with this seq is already waiting for a remote, behind
+   * every incarnation change waiting. This queue does not know which peer a
+   * remote is, so it stops at the last change of any peer; a copy held ahead
+   * of one is held twice, and takes a slot it did not need.
+   *
+   * @param remoteId - The remote the message came from.
+   * @param seq - The message's sequence number.
+   * @returns True if a copy is waiting.
+   */
+  #holdsSince(remoteId: RemoteId, seq: number): boolean {
+    for (let index = this.#arrivedFromRemotes.length - 1; index >= 0; index--) {
+      const item = this.#arrivedFromRemotes[index];
+      if (item?.type === 'peerIncarnation') {
+        return false;
+      }
+      if (item?.remoteId === remoteId && item.seq === seq) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /**

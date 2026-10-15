@@ -867,6 +867,7 @@ describe('KernelRouter', () => {
         const result = await kernelRouter.deliver({
           type: 'remoteInbound',
           remoteId,
+          seq: 1,
           message: '{"seq":1}',
         });
 
@@ -885,6 +886,7 @@ describe('KernelRouter', () => {
         const result = await kernelRouter.deliver({
           type: 'remoteInbound',
           remoteId,
+          seq: 1,
           message: '{"seq":1}',
         });
 
@@ -906,6 +908,7 @@ describe('KernelRouter', () => {
         const result = await kernelRouter.deliver({
           type: 'remoteInbound',
           remoteId,
+          seq: 1,
           message: '{"seq":1,"method":"bogus"}',
         });
 
