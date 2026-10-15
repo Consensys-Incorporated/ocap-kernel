@@ -515,9 +515,9 @@ export class VatManager {
   }
 
   /**
-   * Stop treating the end of a vat's channel as a lost vat, and leave a
-   * restart that fails uncommitted, for a kernel about to stop every worker
-   * itself. `#startVat` marks a handle registered after this call too.
+   * Stop treating the end of a vat's channel as a lost vat, for a kernel about
+   * to stop every worker itself. `#startVat` marks a handle registered after
+   * this call too.
    */
   expectWorkersToStop(): void {
     this.#workersStopping = true;
@@ -865,8 +865,7 @@ export class VatManager {
    * @param vatId - The ID of the vat.
    * @returns The crank outcome: an abort and a termination if the relaunch
    *   failed or the new worker's channel was lost before this returns,
-   *   otherwise the callers' answer, for once the crank commits. Never
-   *   settles if a kernel stop cut the restart short.
+   *   otherwise the callers' answer, for once the crank commits.
    */
   async performVatRestart(vatId: VatId): Promise<CrankResult | undefined> {
     const taken = this.#takeWaiters(this.#restartWaiters, vatId);
@@ -898,18 +897,6 @@ export class VatManager {
       }
       running = await this.#relaunchVat(vatId, config);
     } catch (error) {
-      if (this.#workersStopping) {
-        // Taken as the stop's doing, whatever failed. Left uncommitted, as
-        // `VatHandle.expectClose` leaves a delivery: a rollback would let the
-        // cranks before the database closes find the vat between workers.
-        // The next start finds it as it was.
-        taken.answer(
-          new Error(`Restart of vat ${vatId} was cut short by a kernel stop`, {
-            cause: error,
-          }),
-        );
-        return new Promise<never>(() => undefined);
-      }
       // Unless retired meanwhile, as below, where an abort would undo that.
       if (this.#kernelStore.isVatActive(vatId)) {
         return this.#failRestart({ vatId, taken, error });

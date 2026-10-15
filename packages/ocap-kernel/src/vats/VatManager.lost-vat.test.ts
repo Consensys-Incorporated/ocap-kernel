@@ -427,40 +427,6 @@ describe('a vat that loses its channel mid-delivery', () => {
   );
 });
 
-describe('a delivery a kernel stop cuts off', () => {
-  it('is delivered again on the next start when the vat then loses its channel', async () => {
-    const harness = await setUp({ onDisk: true });
-    const { kernelQueue, vatManager, workers } = harness;
-    let doomedWorker: Worker | undefined;
-    workers.onDeliver('v1', async (worker) => {
-      doomedWorker = worker;
-      return 'silent';
-    });
-    kernelQueue
-      .enqueueMessage(harness.doomedRoot, 'work', [])
-      .catch(() => undefined);
-    harness.run();
-    await vi.waitFor(() => expect(doomedWorker).toBeDefined());
-
-    vatManager.expectWorkersToStop();
-    await doomedWorker?.die('close');
-    const next = await harness.reboot();
-
-    expect({
-      cutOff: next.cutOff,
-      running: vatManager.getVatIds(),
-      runLoop: kernelQueue.getRunLoopStatus().state,
-    }).toStrictEqual({
-      cutOff: true,
-      running: ['v1', 'v2'],
-      runLoop: 'running',
-    });
-    await vi.waitFor(() =>
-      expect(next.workers.methodsDelivered('v1')).toStrictEqual(['work']),
-    );
-  });
-});
-
 describe('a vat that failed to start at boot', () => {
   it('is terminated by terminateAllVats', async () => {
     const harness = await setUp({ onDisk: true });
@@ -752,38 +718,4 @@ describe('a vat that loses its channel as it launches', () => {
       });
     },
   );
-});
-
-describe('a restart a kernel stop cuts short', () => {
-  it('leaves messages to the vat for the next start', async () => {
-    const harness = await setUp({ onDisk: true });
-    const { kernelQueue, vatManager, platformServices } = harness;
-    harness.run();
-    const launch = makePromiseKit<never>();
-    let launchStarted = false;
-    vi.mocked(platformServices.launch).mockImplementationOnce(async () => {
-      launchStarted = true;
-      return launch.promise;
-    });
-    const restarting = vatManager.restartVat('v1');
-    restarting.catch(() => undefined);
-    kernelQueue
-      .enqueueMessage(harness.doomedRoot, 'afterRestart', [])
-      .catch(() => undefined);
-    await vi.waitFor(() => expect(launchStarted).toBe(true));
-
-    vatManager.expectWorkersToStop();
-    launch.reject(new Error('channel closed by the stop'));
-
-    await expect(restarting).rejects.toThrow('cut short by a kernel stop');
-    const next = await harness.reboot();
-
-    expect(next.cutOff).toBe(true);
-    await vi.waitFor(() =>
-      expect({
-        delivered: next.workers.methodsDelivered('v1'),
-        active: next.kernelStore.isVatActive('v1'),
-      }).toStrictEqual({ delivered: ['afterRestart'], active: true }),
-    );
-  });
 });

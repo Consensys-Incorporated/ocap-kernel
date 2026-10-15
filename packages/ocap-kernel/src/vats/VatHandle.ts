@@ -337,9 +337,9 @@ export class VatHandle implements EndpointHandle {
 
   /**
    * Treat the channel's end as the kernel's own doing, for a kernel about to
-   * stop every worker. A command still waiting is left waiting rather than
-   * failed, so the crank that sent it never commits and its item is delivered
-   * again on the next start.
+   * stop every worker. The run loop has stopped by then, so no crank waits on
+   * the channel; a command from outside the loop, such as a ping, is left
+   * waiting rather than failed.
    */
   expectClose(): void {
     this.#closing = true;
