@@ -887,6 +887,25 @@ describe('Kernel', () => {
       expect(workerTerminateMock).toHaveBeenCalledTimes(2);
       expect(kernel.getVatIds()).toStrictEqual([]);
     });
+
+    it('terminates the vats with the run loop stopped, then starts it again', async () => {
+      const kernel = await Kernel.make(
+        mockPlatformServices,
+        mockKernelDatabase,
+      );
+      const queueInstance = mocks.KernelQueue.lastInstance;
+      await kernel.launchSubcluster(makeSingleVatClusterConfig());
+      queueInstance.run.mockClear();
+
+      await kernel.terminateAllVats();
+
+      const [stopped] = queueInstance.stopRunLoop.mock.invocationCallOrder;
+      const [terminated] =
+        vatHandles[0]?.terminate.mock.invocationCallOrder ?? [];
+      const [restarted] = queueInstance.run.mock.invocationCallOrder;
+      expect(stopped).toBeLessThan(terminated as number);
+      expect(terminated).toBeLessThan(restarted as number);
+    });
   });
 
   describe('stop()', () => {

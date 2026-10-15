@@ -950,7 +950,8 @@ export class Kernel {
         if (this.#ioManager) {
           await this.#ioManager.destroyAllChannels();
         }
-        await this.terminateAllVats();
+        // Not `this.terminateAllVats`, which would wait for this very turn.
+        await this.#vatManager.terminateAllVats();
         this.#subclusterManager.clearSystemSubclusters();
         this.#kernelQueue.discardQueuedWork(
           'this message result will never be delivered',
@@ -971,7 +972,9 @@ export class Kernel {
    * This is for debugging purposes only.
    */
   async terminateAllVats(): Promise<void> {
-    await this.#vatManager.terminateAllVats();
+    await this.#withRunLoopStopped(async () =>
+      this.#vatManager.terminateAllVats(),
+    );
   }
 
   /**

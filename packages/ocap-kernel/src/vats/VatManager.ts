@@ -916,9 +916,9 @@ export class VatManager {
       }
     }
     if (!this.#kernelStore.isVatActive(vatId)) {
-      // Retired while this crank waited on a worker, by a `terminateAllVats`
-      // that resumed inside it. The new worker is stopped, and the state its
-      // `initVat` wrote deleted with it.
+      // Retired while this crank waited on a worker, by a writer outside the
+      // run loop, as host calls still are (#1171). The new worker is stopped,
+      // and the state its `initVat` wrote deleted with it.
       const error = new VatDeletedError(vatId);
       if (this.#vats.has(vatId)) {
         await this.#stopVat({
