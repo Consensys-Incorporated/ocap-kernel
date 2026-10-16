@@ -142,6 +142,8 @@
     "@multiformats/multiaddr": "13.0.1",
     "@multiformats/multiaddr-to-uri": "12.0.0",
     "@multiformats/dns": "1.0.9",
-    "bn.js@npm:5.2.1": "^5.2.3"
+    "bn.js@npm:5.2.1": "^5.2.3",
+    "@metamask/rpc-errors/@metamask/utils": "^12.0.0",
+    "@metamask/json-rpc-engine/@metamask/utils": "^12.0.0"
   }
 }
