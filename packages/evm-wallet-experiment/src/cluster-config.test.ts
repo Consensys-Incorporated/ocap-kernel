@@ -96,6 +96,23 @@ describe('cluster-config', () => {
       ]);
     });
 
+    it('grants the provider vat http scoped to allowedHosts', () => {
+      const config = makeWalletClusterConfig({
+        bundleBaseUrl: BUNDLE_BASE_URL,
+        allowedHosts: ['mainnet.infura.io', 'bundler'],
+      });
+
+      expect(config.vats.provider).toStrictEqual({
+        bundleSpec: `${BUNDLE_BASE_URL}/provider-vat.bundle`,
+        globals: ['URL', 'Request', 'Headers', 'Response'],
+        platformConfig: {
+          http: {
+            hosts: ['mainnet.infura.io', 'bundler'],
+          },
+        },
+      });
+    });
+
     it('requests required globals for all vats', () => {
       const config = makeWalletClusterConfig({
         bundleBaseUrl: BUNDLE_BASE_URL,

@@ -54,6 +54,7 @@
     "@libp2p/crypto": "5.1.14",
     "@libp2p/peer-id": "6.0.5",
     "@metamask/kernel-node-runtime": "workspace:^",
+    "@metamask/kernel-platforms": "workspace:^",
     "@metamask/kernel-store": "workspace:^",
     "@metamask/kernel-utils": "workspace:^",
     "@metamask/logger": "workspace:^",

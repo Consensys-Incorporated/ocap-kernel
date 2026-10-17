@@ -64,3 +64,31 @@ export async function abortableDelay(
     }
   });
 }
+
+/**
+ * Settle as `promise` does, or reject with `signal`'s reason if it aborts
+ * first. The operation itself carries on; only the wait ends.
+ *
+ * @param promise - The operation to wait for.
+ * @param signal - The signal that may cut the wait short, if any.
+ * @returns What `promise` settles with.
+ */
+export const raceAbort = async <Value>(
+  promise: Promise<Value>,
+  signal?: AbortSignal | null,
+): Promise<Value> => {
+  if (!signal) {
+    return promise;
+  }
+  signal.throwIfAborted();
+  let onAbort = (): void => undefined;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    onAbort = () => reject(signal.reason as Error);
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
+  try {
+    return await Promise.race([promise, aborted]);
+  } finally {
+    signal.removeEventListener('abort', onAbort);
+  }
+};

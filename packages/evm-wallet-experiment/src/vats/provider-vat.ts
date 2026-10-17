@@ -1,3 +1,5 @@
+import { makeFetch } from '@metamask/kernel-platforms';
+import type { HttpCapability } from '@metamask/kernel-platforms';
 import { makeDefaultExo } from '@metamask/kernel-utils/exo';
 import type { Logger } from '@metamask/logger';
 import type { Baggage } from '@metamask/ocap-kernel';
@@ -10,6 +12,8 @@ import type { Provider } from '../lib/provider.ts';
 import type { Address, ChainConfig, Hex, UserOperation } from '../types.ts';
 
 const harden = globalThis.harden ?? (<T>(value: T): T => value);
+
+declare const http: HttpCapability | undefined;
 
 /**
  * Function selector for EntryPoint.getNonce(address,uint192).
@@ -39,13 +43,21 @@ export function buildRootObject(
   _parameters: unknown,
   baggage: Baggage,
 ): object {
+  // `typeof`, because an ungranted endowment is an undeclared global.
+  const vatFetch: typeof fetch =
+    typeof http === 'undefined'
+      ? harden(async () => {
+          throw new Error('The provider vat was granted no http capability');
+        })
+      : makeFetch(http);
+
   let provider: Provider | undefined;
   let bundlerClient: ViemBundlerClient | undefined;
 
   // Restore provider from persisted chain config
   if (baggage.has('chainConfig')) {
     const chainConfig = baggage.get('chainConfig') as ChainConfig;
-    provider = makeProvider(chainConfig);
+    provider = makeProvider(chainConfig, vatFetch);
   }
 
   // Restore bundler client from persisted config
@@ -54,10 +66,10 @@ export function buildRootObject(
       bundlerUrl: string;
       chainId: number;
     };
-    bundlerClient = makeBundlerClient({
-      bundlerUrl: config.bundlerUrl,
-      chainId: config.chainId,
-    });
+    bundlerClient = makeBundlerClient(
+      { bundlerUrl: config.bundlerUrl, chainId: config.chainId },
+      vatFetch,
+    );
   }
 
   /**
@@ -80,7 +92,7 @@ export function buildRootObject(
     },
 
     async configure(chainConfig: ChainConfig): Promise<void> {
-      provider = makeProvider(chainConfig);
+      provider = makeProvider(chainConfig, vatFetch);
 
       const hardenedConfig = harden({ ...chainConfig });
       if (baggage.has('chainConfig')) {
@@ -94,10 +106,10 @@ export function buildRootObject(
       bundlerUrl: string;
       chainId: number;
     }): Promise<void> {
-      bundlerClient = makeBundlerClient({
-        bundlerUrl: config.bundlerUrl,
-        chainId: config.chainId,
-      });
+      bundlerClient = makeBundlerClient(
+        { bundlerUrl: config.bundlerUrl, chainId: config.chainId },
+        vatFetch,
+      );
 
       const hardenedBundlerConfig = harden({ ...config });
       if (baggage.has('bundlerConfig')) {
@@ -234,7 +246,7 @@ export function buildRootObject(
     },
 
     async httpGetJson(url: string): Promise<unknown> {
-      return httpGetJson(url);
+      return httpGetJson(url, vatFetch);
     },
 
     async getGasFees(): Promise<{

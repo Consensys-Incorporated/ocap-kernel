@@ -8,6 +8,7 @@
   "references": [
     { "path": "../repo-tools" },
     { "path": "../kernel-utils" },
+    { "path": "../kernel-platforms" },
     { "path": "../kernel-store" },
     { "path": "../logger" },
     { "path": "../kernel-node-runtime" },

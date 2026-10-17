@@ -8,6 +8,7 @@
     "types": []
   },
   "references": [
+    { "path": "../kernel-platforms/tsconfig.build.json" },
     { "path": "../kernel-utils/tsconfig.build.json" },
     { "path": "../logger/tsconfig.build.json" },
     { "path": "../ocap-kernel/tsconfig.build.json" }

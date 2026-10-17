@@ -339,18 +339,17 @@ ok "Location hints registered for peer $HOME_PEER_ID"
 
 info "Launching wallet subcluster..."
 
-# Extract RPC host (including port) for allowedHosts.
-# new URL(url).host includes the port for non-default ports (e.g. "evm:8545").
+# Extract the RPC hostname, without a port, for the provider vat's http config.
 AWAY_RPC_HOST=""
 if [[ -n "$CUSTOM_RPC_URL" ]]; then
   AWAY_RPC_HOST=$(echo "$CUSTOM_RPC_URL" | node -e "
     const u = require('fs').readFileSync('/dev/stdin','utf8').trim();
-    try { process.stdout.write(new URL(u).host); } catch {}
+    try { process.stdout.write(new URL(u).hostname); } catch {}
   ")
 elif [[ -n "$INFURA_KEY" ]]; then
   AWAY_RPC_HOST=$(echo "$(infura_rpc_url "$CHAIN_ID" "x")" | node -e "
     const u = require('fs').readFileSync('/dev/stdin','utf8').trim();
-    try { process.stdout.write(new URL(u).host); } catch {}
+    try { process.stdout.write(new URL(u).hostname); } catch {}
   ")
 fi
 
@@ -375,8 +374,8 @@ CONFIG=$(BUNDLE_DIR="$BUNDLE_DIR" RPC_HOST="$AWAY_RPC_HOST" node -e "
         },
         provider: {
           bundleSpec: bd + '/provider-vat.bundle',
-          globals: ['fetch', 'Request', 'Headers', 'Response'],
-          network: { allowedHosts: hosts }
+          globals: ['URL', 'Request', 'Headers', 'Response'],
+          platformConfig: { http: { hosts } }
         },
         redeemer: {
           bundleSpec: bd + '/redeemer-vat.bundle',

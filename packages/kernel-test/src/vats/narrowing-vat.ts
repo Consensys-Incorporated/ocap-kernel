@@ -1,6 +1,8 @@
 import { E } from '@endo/eventual-send';
 import { makeExo } from '@endo/exo';
 import { M } from '@endo/patterns';
+import { makeFetch } from '@metamask/kernel-platforms';
+import type { HttpMethods, HttpOptions } from '@metamask/kernel-platforms';
 import { join, narrow, pathUnder } from '@metamask/kernel-utils';
 import { makeDefaultExo } from '@metamask/kernel-utils/exo';
 
@@ -26,6 +28,7 @@ type FsExo = {
 };
 
 declare const fs: object;
+declare const http: HttpMethods;
 
 /**
  * Report an invocation's outcome, so a caller can tell a refusal from a result
@@ -44,7 +47,7 @@ const probe = async (call: () => Promise<unknown>): Promise<string> => {
 
 /**
  * Build function for a vat that narrows capabilities — ones it builds itself,
- * and the `fs` platform endowment.
+ * and the `fs` and `http` platform endowments.
  *
  * @returns The root object for the new vat.
  */
@@ -197,6 +200,46 @@ export function buildRootObject() {
       probe(
         async () => (await E(fs as FsExo).readFile(segments, 'utf8')).length,
       ),
+
+    probeHttp: async (host: string[], path: string[], options: HttpOptions) =>
+      probe(async () => {
+        const { status, body } = await E(http).request(host, path, options);
+        return `${status}:${body}`;
+      }),
+
+    probeHttpNarrowed: async (
+      prefix: string[],
+      path: string[],
+      options: HttpOptions,
+    ) => {
+      const scoped = await narrow<HttpMethods>({
+        name: 'ScopedHttp',
+        base: http,
+        delta: { request: [undefined, pathUnder(prefix)] },
+      });
+      return probe(async () => {
+        const { status, body } = await E(scoped).request(
+          ['localhost'],
+          path,
+          options,
+        );
+        return `${status}:${body}`;
+      });
+    },
+
+    // `prefix` narrows `http` by path before `makeFetch` wraps it, so a
+    // redirect out of the prefix shows the adapter's hops pass the narrowing.
+    probeAdaptedFetch: async (url: string, prefix: string[]) => {
+      const scoped = await narrow<HttpMethods>({
+        name: 'ScopedHttp',
+        base: http,
+        delta: { request: [undefined, pathUnder(prefix)] },
+      });
+      return probe(async () => {
+        const response = await makeFetch(scoped)(url);
+        return `${response.status}:${response.redirected}:${await response.text()}`;
+      });
+    },
 
     probeFsNarrowed: async (prefix: string[], segments: string[]) => {
       const scoped = await narrow<FsExo>({

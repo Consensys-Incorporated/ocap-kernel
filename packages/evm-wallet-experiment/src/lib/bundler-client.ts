@@ -95,24 +95,33 @@ const hasTimers = typeof globalThis.setTimeout === 'function';
 /**
  * Send a JSON-RPC request to the bundler with retries.
  *
- * @param bundlerUrl - The bundler RPC URL.
- * @param method - The JSON-RPC method.
- * @param params - The method parameters.
- * @param counter - Monotonic counter for JSON-RPC request IDs.
- * @param counter.value - The current counter value (mutated on each call).
+ * @param options - Options.
+ * @param options.fetchFn - The `fetch` to send it with.
+ * @param options.bundlerUrl - The bundler RPC URL.
+ * @param options.method - The JSON-RPC method.
+ * @param options.params - The method parameters.
+ * @param options.counter - Monotonic counter for JSON-RPC request IDs.
+ * @param options.counter.value - The current count, incremented on each call.
  * @returns The JSON-RPC result.
  */
-async function bundlerRpc(
-  bundlerUrl: string,
-  method: string,
-  params: unknown[] = [],
-  counter: { value: number } = { value: 0 },
-): Promise<unknown> {
+async function bundlerRpc({
+  fetchFn,
+  bundlerUrl,
+  method,
+  params,
+  counter,
+}: {
+  fetchFn: typeof fetch;
+  bundlerUrl: string;
+  method: string;
+  params: unknown[];
+  counter: { value: number };
+}): Promise<unknown> {
   counter.value += 1;
   const id = counter.value;
 
   if (!hasTimers) {
-    return bundlerRpcOnce(bundlerUrl, id, method, params);
+    return bundlerRpcOnce({ fetchFn, bundlerUrl, id, method, params });
   }
 
   let lastError: Error | undefined;
@@ -123,7 +132,7 @@ async function bundlerRpc(
       );
     }
     try {
-      return await bundlerRpcOnce(bundlerUrl, id, method, params);
+      return await bundlerRpcOnce({ fetchFn, bundlerUrl, id, method, params });
     } catch (error: unknown) {
       const { status } = error as { status?: number };
       if (status && RETRYABLE_STATUS_CODES.has(status)) {
@@ -139,19 +148,28 @@ async function bundlerRpc(
 /**
  * Send a single JSON-RPC request to the bundler (no retries).
  *
- * @param bundlerUrl - The bundler RPC URL.
- * @param id - The JSON-RPC request ID.
- * @param method - The JSON-RPC method.
- * @param params - The method parameters.
+ * @param options - Options.
+ * @param options.fetchFn - The `fetch` to send it with.
+ * @param options.bundlerUrl - The bundler RPC URL.
+ * @param options.id - The JSON-RPC request ID.
+ * @param options.method - The JSON-RPC method.
+ * @param options.params - The method parameters.
  * @returns The JSON-RPC result.
  */
-async function bundlerRpcOnce(
-  bundlerUrl: string,
-  id: number,
-  method: string,
-  params: unknown[],
-): Promise<unknown> {
-  const response = await fetch(bundlerUrl, {
+async function bundlerRpcOnce({
+  fetchFn,
+  bundlerUrl,
+  id,
+  method,
+  params,
+}: {
+  fetchFn: typeof fetch;
+  bundlerUrl: string;
+  id: number;
+  method: string;
+  params: unknown[];
+}): Promise<unknown> {
+  const response = await fetchFn(bundlerUrl, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ jsonrpc: '2.0', id, method, params }),
@@ -186,10 +204,12 @@ async function bundlerRpcOnce(
  * Create a bundler client for ERC-4337 operations.
  *
  * @param config - Bundler configuration.
+ * @param fetchFn - The `fetch` to send requests with.
  * @returns A bundler client with ERC-4337 actions.
  */
 export function makeBundlerClient(
   config: BundlerClientConfig,
+  fetchFn: typeof fetch,
 ): ViemBundlerClient {
   const bundlerUrl = config.apiKey
     ? `${config.bundlerUrl}?apikey=${config.apiKey}`
@@ -197,18 +217,24 @@ export function makeBundlerClient(
 
   // Monotonic counter for JSON-RPC request IDs, scoped to this client instance.
   const requestCounter = { value: 0 };
+  const call = async (method: string, params: unknown[]): Promise<unknown> =>
+    bundlerRpc({
+      fetchFn,
+      bundlerUrl,
+      method,
+      params,
+      counter: requestCounter,
+    });
 
   return harden({
     async sendUserOperation(options: {
       userOp: UserOp07;
       entryPointAddress: Address;
     }): Promise<Hex> {
-      return (await bundlerRpc(
-        bundlerUrl,
-        'eth_sendUserOperation',
-        [options.userOp, options.entryPointAddress],
-        requestCounter,
-      )) as Hex;
+      return (await call('eth_sendUserOperation', [
+        options.userOp,
+        options.entryPointAddress,
+      ])) as Hex;
     },
 
     async estimateUserOperationGas(options: {
@@ -219,12 +245,10 @@ export function makeBundlerClient(
       verificationGasLimit: bigint;
       preVerificationGas: bigint;
     }> {
-      const result = (await bundlerRpc(
-        bundlerUrl,
-        'eth_estimateUserOperationGas',
-        [options.userOp, options.entryPointAddress],
-        requestCounter,
-      )) as {
+      const result = (await call('eth_estimateUserOperationGas', [
+        options.userOp,
+        options.entryPointAddress,
+      ])) as {
         callGasLimit: Hex;
         verificationGasLimit: Hex;
         preVerificationGas: Hex;
@@ -241,12 +265,11 @@ export function makeBundlerClient(
       entryPointAddress: Address;
       context?: Record<string, unknown>;
     }): Promise<PaymasterSponsorResult> {
-      return (await bundlerRpc(
-        bundlerUrl,
-        'pm_sponsorUserOperation',
-        [options.userOp, options.entryPointAddress, options.context ?? {}],
-        requestCounter,
-      )) as PaymasterSponsorResult;
+      return (await call('pm_sponsorUserOperation', [
+        options.userOp,
+        options.entryPointAddress,
+        options.context ?? {},
+      ])) as PaymasterSponsorResult;
     },
 
     async getUserOperationGasPrice(): Promise<{
@@ -254,12 +277,7 @@ export function makeBundlerClient(
       standard: GasPriceResult;
       fast: GasPriceResult;
     }> {
-      return (await bundlerRpc(
-        bundlerUrl,
-        'pimlico_getUserOperationGasPrice',
-        [],
-        requestCounter,
-      )) as {
+      return (await call('pimlico_getUserOperationGasPrice', [])) as {
         slow: GasPriceResult;
         standard: GasPriceResult;
         fast: GasPriceResult;
@@ -269,12 +287,9 @@ export function makeBundlerClient(
     async getUserOperationReceipt(
       hash: Hex,
     ): Promise<UserOpReceiptResult | null> {
-      const result = (await bundlerRpc(
-        bundlerUrl,
-        'eth_getUserOperationReceipt',
-        [hash],
-        requestCounter,
-      )) as UserOpReceiptResult | undefined;
+      const result = (await call('eth_getUserOperationReceipt', [hash])) as
+        | UserOpReceiptResult
+        | undefined;
       return result ?? null;
     },
 
@@ -293,12 +308,9 @@ export function makeBundlerClient(
       const deadline = Date.now() + timeout;
 
       while (Date.now() < deadline) {
-        const receipt = (await bundlerRpc(
-          bundlerUrl,
-          'eth_getUserOperationReceipt',
-          [options.hash],
-          requestCounter,
-        )) as UserOpReceiptResult | undefined;
+        const receipt = (await call('eth_getUserOperationReceipt', [
+          options.hash,
+        ])) as UserOpReceiptResult | undefined;
         if (receipt !== null && receipt !== undefined) {
           return receipt;
         }

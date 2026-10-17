@@ -8,6 +8,7 @@ export type WalletClusterConfigOptions = {
   role?: 'home' | 'away';
   forceReset?: boolean;
   services?: string[];
+  // Each admits its subdomains too.
   allowedHosts?: string[];
 };
 
@@ -62,10 +63,12 @@ export function makeWalletClusterConfig(
       },
       provider: {
         bundleSpec: `${bundleBaseUrl}/provider-vat.bundle`,
-        globals: allowedHosts
-          ? ['fetch', 'Request', 'Headers', 'Response']
-          : [],
-        ...(allowedHosts ? { network: { allowedHosts } } : {}),
+        globals: allowedHosts ? ['URL', 'Request', 'Headers', 'Response'] : [],
+        ...(allowedHosts && {
+          platformConfig: {
+            http: { hosts: allowedHosts },
+          },
+        }),
       },
       ...auxiliaryVat,
     },

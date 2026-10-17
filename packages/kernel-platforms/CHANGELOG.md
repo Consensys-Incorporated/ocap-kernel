@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Add an `http` capability, an exo whose `request(host, path, options)` takes the host's labels reversed, as in `['com', 'example', 'api']`, so `pathUnder` can narrow it to a domain ([#1163](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1163))
+  - Config is `{ hosts: ['example.com'] }`. Each entry admits the host and its subdomains, and names no port
+  - A path segment may not be `.` or `..`, or contain `/` or `\`
+  - Redirects are returned rather than followed; in a browser, which hides a redirect's target, the request fails instead
+  - The capability factory takes an optional `fetch` to make requests with
+  - Its types are exported as `HttpCapability`, `HttpMethods`, and `HttpOptions`
+- Add `makeFetch(http)`, a `fetch` that sends each request through an `http` capability, following redirects through it too ([#1163](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1163))
+  - It supports string bodies only, and answers with an empty `url`. Aborting a `signal` rejects the `fetch`, though a request already sent completes
+  - A vat using it must request the `URL`, `Request`, `Headers`, and `Response` globals, and `crypto` to check an `integrity`
+
 ### Changed
 
 - **BREAKING:** Vend the `fs` capability as an exo taking absolute path segments, replacing the `node:fs` lookalike record of functions ([#1135](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1135))
@@ -23,8 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
-- **BREAKING:** Remove the `fetch` platform capability and its exports (`fetchConfigStruct`, `FetchCapability`, `FetchConfig`, `makeHostCaveat`, `makeCaveatedFetch`) ([#942](https://github.com/MetaMask/ocap-kernel/pull/942))
-  - `fetch` is now a vat endowment in `@metamask/ocap-kernel`; see its changelog for the migration
+- **BREAKING:** Remove the `fetch` platform capability and its exports (`fetchConfigStruct`, `FetchCapability`, `FetchConfig`, `makeHostCaveat`, `makeCaveatedFetch`), in favour of `http` ([#942](https://github.com/MetaMask/ocap-kernel/pull/942), [#1163](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1163))
 
 ## [0.1.0]
 

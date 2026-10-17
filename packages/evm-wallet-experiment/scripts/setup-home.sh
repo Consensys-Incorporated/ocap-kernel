@@ -150,7 +150,7 @@ else
   RPC_URL=$(infura_rpc_url "$CHAIN_ID" "$INFURA_KEY") || exit 1
 fi
 
-# Extract hostname from RPC URL for the fetch allowlist
+# Extract hostname from RPC URL for the provider vat's http config
 RPC_HOST=$(echo "$RPC_URL" | node -e "
   const u = require('fs').readFileSync('/dev/stdin','utf8').trim();
   const m = u.match(/^https?:\\/\\/([^/:]+)/);
@@ -342,8 +342,8 @@ CONFIG=$(BUNDLE_DIR="$BUNDLE_DIR" DM="$DELEGATION_MANAGER" RPC_HOST="$RPC_HOST" 
         },
         provider: {
           bundleSpec: bd + '/provider-vat.bundle',
-          globals: ['fetch', 'Request', 'Headers', 'Response'],
-          network: { allowedHosts: hosts }
+          globals: ['URL', 'Request', 'Headers', 'Response'],
+          platformConfig: { http: { hosts } }
         },
         delegator: {
           bundleSpec: bd + '/delegator-vat.bundle',

@@ -530,6 +530,7 @@ describe('provider-vat', () => {
       expect(result).toStrictEqual(mockResponse);
       expect(mockHttpGetJson).toHaveBeenCalledWith(
         'https://api.example.com/data',
+        expect.any(Function),
       );
     });
 
@@ -540,6 +541,18 @@ describe('provider-vat', () => {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         (root as any).httpGetJson('https://api.example.com/data'),
       ).rejects.toThrow('Network error');
+    });
+
+    it('passes a fetch that rejects when the vat has no http', async () => {
+      mockHttpGetJson.mockResolvedValueOnce({});
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      await (root as any).httpGetJson('https://api.example.com/data');
+      const vatFetch = mockHttpGetJson.mock
+        .lastCall?.[1] as () => Promise<unknown>;
+
+      await expect(vatFetch()).rejects.toThrow(
+        'The provider vat was granted no http capability',
+      );
     });
   });
 });
