@@ -229,6 +229,50 @@ describe('GC methods', () => {
       expect(kernelStore.getObjectRefCount(ko2)).toBeDefined();
     });
 
+    it('tells a remote importer too', () => {
+      kernelStore.setVatConfig('v1', { bundleName: 'vat1' });
+      kernelStore.setVatConfig('v2', { bundleName: 'vat2' });
+      kernelStore.setRemoteInfo('r1', { peerId: 'peer-1' });
+      const kref = kernelStore.initKernelObject('v1');
+      kernelStore.addCListEntry('r1', kref, 'ro-1');
+      kernelStore.addCListEntry('v2', kref, 'o-1');
+      kernelStore.setGCActions(new Set());
+
+      expect(kernelStore.getImporters(kref)).toStrictEqual(['r1', 'v2']);
+
+      kernelStore.retireKernelObjects([kref]);
+
+      expect([...kernelStore.getGCActions()]).toStrictEqual([
+        `r1 retireImport ${kref}`,
+        `v2 retireImport ${kref}`,
+      ]);
+    });
+
+    it('tells a terminated importer cleanup has not reached', () => {
+      kernelStore.setVatConfig('v1', { bundleName: 'vat1' });
+      const kref = kernelStore.initKernelObject('v1');
+      kernelStore.addCListEntry('v2', kref, 'o-1');
+      // No config for v2: termination has deleted it.
+      kernelStore.markVatAsTerminated('v2');
+      kernelStore.setGCActions(new Set());
+
+      kernelStore.retireKernelObjects([kref]);
+
+      expect([...kernelStore.getGCActions()]).toStrictEqual([
+        `v2 retireImport ${kref}`,
+      ]);
+    });
+
+    it('names a terminated vat whose config survives once', () => {
+      kernelStore.setVatConfig('v1', { bundleName: 'vat1' });
+      kernelStore.setVatConfig('v2', { bundleName: 'vat2' });
+      const kref = kernelStore.initKernelObject('v1');
+      kernelStore.addCListEntry('v2', kref, 'o-1');
+      kernelStore.markVatAsTerminated('v2');
+
+      expect(kernelStore.getImporters(kref)).toStrictEqual(['v2']);
+    });
+
     it('throws for non-array input', () => {
       expect(() => {
         kernelStore.retireKernelObjects('not-an-array' as unknown as KRef[]);

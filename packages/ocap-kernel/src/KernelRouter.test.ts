@@ -73,6 +73,9 @@ describe('KernelRouter', () => {
       krefsToErefs: vi.fn((_endpointId: string, krefs: string[]) =>
         krefs.map((kref: string) => `translated-${kref}`),
       ) as unknown as MockInstance,
+      invertRRef: vi.fn((rref: string) =>
+        rref.replace(/[+-]/u, (sign) => (sign === '+' ? '-' : '+')),
+      ) as unknown as MockInstance,
       clearReachableFlag: vi.fn(),
       deleteCListEntry: vi.fn(),
       isVatTerminated: vi.fn().mockReturnValue(false),
@@ -760,6 +763,51 @@ describe('KernelRouter', () => {
             endpointHandle[deliverMethod as keyof EndpointHandle],
           ).toHaveBeenCalledWith(krefs.map((kref) => `translated-${kref}`));
           expect(result).toStrictEqual(mockCrankResult);
+        },
+      );
+
+      it.each([
+        {
+          type: 'dropExports',
+          deliverMethod: 'deliverDropExports',
+          deleted: [],
+        },
+        {
+          type: 'retireExports',
+          deliverMethod: 'deliverRetireExports',
+          deleted: [
+            ['r1', 'ko1', 'ro-1'],
+            ['r1', 'ko2', 'ro+2'],
+          ],
+        },
+        {
+          type: 'retireImports',
+          deliverMethod: 'deliverRetireImports',
+          deleted: [
+            ['r1', 'ko1', 'ro-1'],
+            ['r1', 'ko2', 'ro+2'],
+          ],
+        },
+      ] as const)(
+        'names the refs of a $type to a remote in its frame and tears its c-list down by its own',
+        async ({ type, deliverMethod, deleted }) => {
+          (
+            kernelStore.krefsToErefs as unknown as MockInstance
+          ).mockReturnValueOnce(['ro-1', 'ro+2']);
+
+          await kernelRouter.deliver({
+            type,
+            endpointId: 'r1',
+            krefs: ['ko1', 'ko2'],
+          });
+
+          expect({
+            delivered: (
+              endpointHandle[deliverMethod] as unknown as MockInstance
+            ).mock.calls,
+            deleted: (kernelStore.deleteCListEntry as unknown as MockInstance)
+              .mock.calls,
+          }).toStrictEqual({ delivered: [[['ro+1', 'ro-2']]], deleted });
         },
       );
 

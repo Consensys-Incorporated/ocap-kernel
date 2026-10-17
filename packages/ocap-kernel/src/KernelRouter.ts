@@ -15,6 +15,7 @@ import type {
   ERef,
   KRef,
   KernelMessage,
+  RRef,
   RunQueueItem,
   RunQueueItemSend,
   RunQueueItemBringOutYourDead,
@@ -584,8 +585,13 @@ export class KernelRouter {
     if (!endpoint) {
       return { didDelivery: endpointId };
     }
+    // A remote reads an rref in its own frame, so flip it as `translateRefKtoE`
+    // does for every other delivery.
+    const delivered = isRemoteId(endpointId)
+      ? erefs.map((eref) => this.#kernelStore.invertRRef(eref as RRef))
+      : erefs;
     return await this.#deliverUnlessLost(endpointId, async () =>
-      endpoint[GC_DELIVERY[type]](erefs),
+      endpoint[GC_DELIVERY[type]](delivered),
     );
   }
 
