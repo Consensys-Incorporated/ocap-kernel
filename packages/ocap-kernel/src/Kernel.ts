@@ -220,17 +220,19 @@ export class Kernel {
       logger: this.#logger.subLogger({ tags: ['SubclusterManager'] }),
     });
 
-    this.#kernelRouter = new KernelRouter(
-      this.#kernelStore,
-      this.#kernelQueue,
-      this.#getEndpoint.bind(this),
-      this.#kernelServiceManager.invokeKernelService.bind(
+    this.#kernelRouter = new KernelRouter({
+      kernelStore: this.#kernelStore,
+      kernelQueue: this.#kernelQueue,
+      getEndpoint: this.#getEndpoint.bind(this),
+      invokeKernelService: this.#kernelServiceManager.invokeKernelService.bind(
         this.#kernelServiceManager,
       ),
-      this.#vatManager.performVatRestart.bind(this.#vatManager),
-      this.#vatManager.performVatTermination.bind(this.#vatManager),
-      this.#logger,
-    );
+      restartVat: this.#vatManager.performVatRestart.bind(this.#vatManager),
+      terminateVat: this.#vatManager.performVatTermination.bind(
+        this.#vatManager,
+      ),
+      logger: this.#logger,
+    });
 
     // Register OCAP URL services
     const { issuerService, redemptionService } =
@@ -348,7 +350,11 @@ export class Kernel {
     // Start the kernel queue processing (non-blocking)
     // This runs for the entire lifetime of the kernel
     this.#kernelQueue
-      .run(this.#kernelRouter.deliver.bind(this.#kernelRouter))
+      .run(this.#kernelRouter.deliver.bind(this.#kernelRouter), {
+        // Every remote, until `initRemoteComms` runs after this.
+        isOffline: (endpointId) =>
+          isRemoteId(endpointId) && !this.#remoteManager.hasRemote(endpointId),
+      })
       .catch((error) => this.#handleRunLoopFailure(error));
 
     // Launch new system subclusters (requires queue to be running)
@@ -433,7 +439,12 @@ export class Kernel {
    * @returns A promise that resolves when initialization is complete.
    */
   async initRemoteComms(options?: RemoteCommsOptions): Promise<void> {
-    await this.#remoteManager.initRemoteComms(options);
+    try {
+      await this.#remoteManager.initRemoteComms(options);
+    } finally {
+      // Also after a partial restore, for the remotes it did bring up.
+      this.#kernelQueue.recheckGCActions();
+    }
   }
 
   /**

@@ -185,15 +185,16 @@ function boot(
     logger,
   });
   kernel.vatManager = vatManager;
-  const kernelRouter = new KernelRouter(
+  const kernelRouter = new KernelRouter({
     kernelStore,
     kernelQueue,
-    (endpointId: EndpointId) => vatManager.getVat(endpointId as VatId),
-    () => undefined,
-    vatManager.performVatRestart.bind(vatManager),
-    vatManager.performVatTermination.bind(vatManager),
+    getEndpoint: (endpointId: EndpointId) =>
+      vatManager.getVat(endpointId as VatId),
+    invokeKernelService: () => undefined,
+    restartVat: vatManager.performVatRestart.bind(vatManager),
+    terminateVat: vatManager.performVatTermination.bind(vatManager),
     logger,
-  );
+  });
   return {
     kernelStore,
     kernelQueue,

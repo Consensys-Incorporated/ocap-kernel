@@ -719,10 +719,21 @@ export class RemoteHandle implements EndpointHandle {
    * {@link #flushTransmitQueue} holds back until this one has gone.
    *
    * @param messageBase - The delivery to make.
+   * @param options - Options bag.
+   * @param options.exemptFromCapacityLimit - Whether the pending queue's
+   * capacity limit does not apply. A GC delivery is exempt: refusing one would
+   * stop the run loop, and the remote's c-list bounds how many there can be.
    * @returns This handle's crank result, carrying the send.
    */
-  #deliverToPeer(messageBase: Delivery): CrankResult {
-    const persisted = this.#persistRemoteCommand(messageBase);
+  #deliverToPeer(
+    messageBase: Delivery,
+    {
+      exemptFromCapacityLimit = false,
+    }: { exemptFromCapacityLimit?: boolean } = {},
+  ): CrankResult {
+    const persisted = this.#persistRemoteCommand(messageBase, {
+      exemptFromCapacityLimit,
+    });
     return {
       ...this.#myCrankResult,
       afterCommit: async () => this.#transmitRemoteCommand(persisted),
@@ -768,7 +779,7 @@ export class RemoteHandle implements EndpointHandle {
    * @param messageBase - The message, before its sequence number and ack.
    * @param options - Options bag.
    * @param options.exemptFromCapacityLimit - Whether the pending queue's
-   * capacity limit does not apply, for a reply that must not fail.
+   * capacity limit does not apply.
    * @returns What transmitting it needs.
    */
   #persistRemoteCommand(
@@ -1038,10 +1049,10 @@ export class RemoteHandle implements EndpointHandle {
    * @returns the crank result.
    */
   async deliverDropExports(erefs: ERef[]): Promise<CrankResult> {
-    return this.#deliverToPeer({
-      method: 'deliver',
-      params: ['dropExports', erefs],
-    });
+    return this.#deliverToPeer(
+      { method: 'deliver', params: ['dropExports', erefs] },
+      { exemptFromCapacityLimit: true },
+    );
   }
 
   /**
@@ -1051,10 +1062,10 @@ export class RemoteHandle implements EndpointHandle {
    * @returns the crank result.
    */
   async deliverRetireExports(erefs: ERef[]): Promise<CrankResult> {
-    return this.#deliverToPeer({
-      method: 'deliver',
-      params: ['retireExports', erefs],
-    });
+    return this.#deliverToPeer(
+      { method: 'deliver', params: ['retireExports', erefs] },
+      { exemptFromCapacityLimit: true },
+    );
   }
 
   /**
@@ -1064,10 +1075,10 @@ export class RemoteHandle implements EndpointHandle {
    * @returns the crank result.
    */
   async deliverRetireImports(erefs: ERef[]): Promise<CrankResult> {
-    return this.#deliverToPeer({
-      method: 'deliver',
-      params: ['retireImports', erefs],
-    });
+    return this.#deliverToPeer(
+      { method: 'deliver', params: ['retireImports', erefs] },
+      { exemptFromCapacityLimit: true },
+    );
   }
 
   /**

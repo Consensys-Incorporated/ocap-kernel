@@ -12,6 +12,66 @@ describe('garbage-collection', () => {
       kernelStore = makeKernelStore(makeMapKernelDatabase());
     });
 
+    describe('an endpoint offline', () => {
+      function givenAnActionEach(): Record<string, string> {
+        const krefs: Record<string, string> = {};
+        for (const endpointId of ['r1', 'v1']) {
+          const kref = kernelStore.initKernelObject(endpointId);
+          kernelStore.addCListEntry(endpointId, kref, 'o+1');
+          kernelStore.setObjectRefCount(kref, {
+            reachable: 0,
+            recognizable: 1,
+          });
+          kernelStore.addGCActions([`${endpointId} dropExport ${kref}`]);
+          krefs[endpointId] = kref;
+        }
+        return krefs;
+      }
+
+      it('gives the work of the others instead', () => {
+        const krefs = givenAnActionEach();
+
+        const result = processGCActionSet(kernelStore, {
+          isOffline: (endpointId) => endpointId === 'r1',
+        });
+
+        expect(result).toStrictEqual({
+          type: 'dropExports',
+          endpointId: 'v1',
+          krefs: [krefs.v1],
+        });
+      });
+
+      it('leaves its actions in the durable set', () => {
+        const krefs = givenAnActionEach();
+        const isOffline = (endpointId: string): boolean => endpointId === 'r1';
+
+        // The first call takes `v1`'s action, leaving only the offline one.
+        processGCActionSet(kernelStore, { isOffline });
+        const result = processGCActionSet(kernelStore, { isOffline });
+
+        expect(result).toBeUndefined();
+        expect([...kernelStore.getGCActions()]).toStrictEqual([
+          `r1 dropExport ${krefs.r1}`,
+        ]);
+      });
+
+      it('gets its turn once it is back', () => {
+        const krefs = givenAnActionEach();
+
+        processGCActionSet(kernelStore, {
+          isOffline: (endpointId) => endpointId === 'r1',
+        });
+        const result = processGCActionSet(kernelStore);
+
+        expect(result).toStrictEqual({
+          type: 'dropExports',
+          endpointId: 'r1',
+          krefs: [krefs.r1],
+        });
+      });
+    });
+
     it('processes dropExport actions', () => {
       // Setup: Create object and add GC action
       const ko1 = kernelStore.initKernelObject('v1');

@@ -505,6 +505,14 @@ describe('RemoteManager', () => {
       expect(retrieved).toBe(established);
     });
 
+    it('says whether a remote has a handle', () => {
+      const established = remoteManager.establishRemote('peer123');
+      expect([
+        remoteManager.hasRemote(established.remoteId),
+        remoteManager.hasRemote('r999'),
+      ]).toStrictEqual([true, false]);
+    });
+
     it('throws error when getting non-existent remote by ID', () => {
       expect(() => remoteManager.getRemote('r999')).toThrow(
         'Remote not found: r999',

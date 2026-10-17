@@ -445,6 +445,16 @@ export class RemoteManager {
   }
 
   /**
+   * Whether a remote has a handle.
+   *
+   * @param remoteId - The ID of the remote.
+   * @returns True if `getRemote` would return one.
+   */
+  hasRemote(remoteId: RemoteId): boolean {
+    return this.#remotes.has(remoteId);
+  }
+
+  /**
    * Get a remote by its ID.
    *
    * @param remoteId - The ID of the remote.

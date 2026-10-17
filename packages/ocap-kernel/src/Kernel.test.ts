@@ -17,6 +17,7 @@ import type {
   PlatformServices,
   ClusterConfig,
   CrankResult,
+  EndpointId,
   RunQueueItem,
 } from './types.ts';
 import { VatHandle } from './vats/VatHandle.ts';
@@ -41,12 +42,19 @@ const mocks = vi.hoisted(() => {
     #deliver: ((item: RunQueueItem) => Promise<unknown>) | undefined;
 
     // Like the real run loop, this settles only if the kernel dies.
-    run = vi.fn(async (deliver: (item: RunQueueItem) => Promise<unknown>) => {
-      this.#deliver = deliver;
-      return new Promise<never>((_resolve, reject) => {
-        this.#rejectRunLoop = reject;
-      });
-    });
+    run = vi.fn(
+      async (
+        deliver: (item: RunQueueItem) => Promise<unknown>,
+        _options?: { isOffline?: (endpointId: EndpointId) => boolean },
+      ) => {
+        this.#deliver = deliver;
+        return new Promise<never>((_resolve, reject) => {
+          this.#rejectRunLoop = reject;
+        });
+      },
+    );
+
+    recheckGCActions = vi.fn();
 
     /**
      * Fail the run loop, in the order the real `KernelQueue.run` does: the
@@ -156,6 +164,8 @@ const mocks = vi.hoisted(() => {
     initIdentity = vi.fn().mockResolvedValue(undefined);
 
     initRemoteComms = vi.fn().mockResolvedValue(undefined);
+
+    hasRemote = vi.fn().mockReturnValue(false);
 
     closeConnection = vi.fn().mockResolvedValue(undefined);
 
@@ -1403,6 +1413,62 @@ describe('Kernel', () => {
   });
 
   describe('remote communications', () => {
+    it('holds GC actions back for a remote with no handle', async () => {
+      await Kernel.make(mockPlatformServices, mockKernelDatabase);
+      mocks.RemoteManager.lastInstance.hasRemote.mockImplementation(
+        (remoteId: string) => remoteId === 'r2',
+      );
+      const isOffline =
+        mocks.KernelQueue.lastInstance.run.mock.calls[0]?.[1]?.isOffline;
+
+      expect(
+        (['r1', 'r2', 'v1'] as EndpointId[]).map((endpointId) =>
+          isOffline?.(endpointId),
+        ),
+      ).toStrictEqual([true, false, false]);
+    });
+
+    describe('initRemoteComms()', () => {
+      it('wakes the run loop for GC actions once the remotes are up', async () => {
+        const kernel = await Kernel.make(
+          mockPlatformServices,
+          mockKernelDatabase,
+        );
+        let remotesUp = false;
+        mocks.RemoteManager.lastInstance.initRemoteComms.mockImplementationOnce(
+          async () => {
+            await Promise.resolve();
+            remotesUp = true;
+          },
+        );
+        const remotesUpAtRecheck: boolean[] = [];
+        mocks.KernelQueue.lastInstance.recheckGCActions.mockImplementationOnce(
+          () => remotesUpAtRecheck.push(remotesUp),
+        );
+
+        await kernel.initRemoteComms();
+
+        expect(remotesUpAtRecheck).toStrictEqual([true]);
+      });
+
+      it('wakes the run loop even when restoring the remotes fails', async () => {
+        const kernel = await Kernel.make(
+          mockPlatformServices,
+          mockKernelDatabase,
+        );
+        mocks.RemoteManager.lastInstance.initRemoteComms.mockRejectedValueOnce(
+          new Error('restore failed'),
+        );
+
+        await expect(kernel.initRemoteComms()).rejects.toThrow(
+          'restore failed',
+        );
+        expect(
+          mocks.KernelQueue.lastInstance.recheckGCActions,
+        ).toHaveBeenCalledOnce();
+      });
+    });
+
     describe('closeConnection()', () => {
       it('closes connection via RemoteManager', async () => {
         const kernel = await Kernel.make(

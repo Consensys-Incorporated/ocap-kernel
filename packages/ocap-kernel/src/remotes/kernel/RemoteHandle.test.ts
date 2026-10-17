@@ -285,6 +285,25 @@ describe('RemoteHandle', () => {
     });
   });
 
+  it.each([
+    'deliverDropExports',
+    'deliverRetireExports',
+    'deliverRetireImports',
+  ] as const)('%s goes past the pending queue capacity', async (method) => {
+    const remote = makeRemote();
+    for (let i = 0; i < 200; i += 1) {
+      await remote.deliverBringOutYourDead();
+    }
+    await expect(remote.deliverBringOutYourDead()).rejects.toThrow(
+      'pending queue at capacity',
+    );
+
+    expect(await remote[method](['ro+4'])).toStrictEqual({
+      didDelivery: remote.remoteId,
+      afterCommit: expect.any(Function),
+    });
+  });
+
   describe('bringOutYourDead', () => {
     it('sends BOYD delivery to remote when locally triggered', async () => {
       const remote = makeRemote();

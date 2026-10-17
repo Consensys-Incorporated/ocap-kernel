@@ -41,6 +41,19 @@ type MessageRoute = {
   target: KRef;
 } | null;
 
+type KernelRouterOptions = {
+  kernelStore: KernelStore;
+  kernelQueue: KernelQueue;
+  getEndpoint: (endpointId: EndpointId) => EndpointHandle;
+  invokeKernelService: (target: KRef, message: KernelMessage) => void;
+  restartVat: (vatId: VatId) => Promise<CrankResult | undefined>;
+  terminateVat: (
+    vatId: VatId,
+    reason?: CapData<KRef>,
+  ) => Promise<CrankResult | undefined>;
+  logger?: Logger;
+};
+
 /**
  * The KernelRouter is responsible for routing messages to the correct endpoint.
  *
@@ -81,26 +94,24 @@ export class KernelRouter {
   /**
    * Construct a new KernelRouter.
    *
-   * @param kernelStore - The kernel's store.
-   * @param kernelQueue - The kernel's queue.
-   * @param getEndpoint - A function that returns an endpoint handle for a given endpoint id.
-   * @param invokeKernelService - A function that calls a method on a kernel service object.
-   * @param restartVat - A function that replaces a vat's worker.
-   * @param terminateVat - A function that ends a vat.
-   * @param logger - The logger. If not provided, no logging will be done.
+   * @param options - Options bag.
+   * @param options.kernelStore - The kernel's store.
+   * @param options.kernelQueue - The kernel's queue.
+   * @param options.getEndpoint - A function that returns an endpoint handle for a given endpoint id.
+   * @param options.invokeKernelService - A function that calls a method on a kernel service object.
+   * @param options.restartVat - A function that replaces a vat's worker.
+   * @param options.terminateVat - A function that ends a vat.
+   * @param options.logger - The logger. If not provided, no logging will be done.
    */
-  constructor(
-    kernelStore: KernelStore,
-    kernelQueue: KernelQueue,
-    getEndpoint: (endpointId: EndpointId) => EndpointHandle,
-    invokeKernelService: (target: KRef, message: KernelMessage) => void,
-    restartVat: (vatId: VatId) => Promise<CrankResult | undefined>,
-    terminateVat: (
-      vatId: VatId,
-      reason?: CapData<KRef>,
-    ) => Promise<CrankResult | undefined>,
-    logger?: Logger,
-  ) {
+  constructor({
+    kernelStore,
+    kernelQueue,
+    getEndpoint,
+    invokeKernelService,
+    restartVat,
+    terminateVat,
+    logger,
+  }: KernelRouterOptions) {
     this.#kernelStore = kernelStore;
     this.#kernelQueue = kernelQueue;
     this.#getEndpoint = getEndpoint;
@@ -551,11 +562,12 @@ export class KernelRouter {
       `@@@@ deliver ${endpointId} ${type} ${JSON.stringify(krefs)}`,
     );
     const endpoint = this.#lookupEndpoint(endpointId, type);
-    // Only a skipped vat gets here without a handle; a remote throws above. One
-    // the store does not call terminated has been cleaned up whole, possibly
-    // by `nextTerminatedVatCleanup` earlier in this crank, or is still
-    // persisted. That one keeps its c-list as the vat last saw it, since a
-    // restart would bring up an incarnation still holding those erefs.
+    // Only a skipped vat gets here without a handle: a remote's GC actions wait
+    // in the set until it has one. One the store does not call terminated has
+    // been cleaned up whole, possibly by `nextTerminatedVatCleanup` earlier in
+    // this crank, or is still persisted. That one keeps its c-list as the vat
+    // last saw it, since a restart would bring up an incarnation still holding
+    // those erefs.
     if (!endpoint && !this.#kernelStore.isVatTerminated(endpointId as VatId)) {
       return { didDelivery: endpointId };
     }

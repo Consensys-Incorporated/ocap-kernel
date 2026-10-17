@@ -1640,6 +1640,78 @@ describe('KernelQueue', () => {
     });
   });
 
+  describe('GC actions for an offline endpoint', () => {
+    it("passes run's isOffline to processGCActionSet", async () => {
+      const isOffline = vi.fn();
+      (gc.processGCActionSet as unknown as MockInstance).mockImplementationOnce(
+        () => {
+          throw new Error(STOP_RUN_LOOP);
+        },
+      );
+
+      await expect(kernelQueue.run(vi.fn(), { isOffline })).rejects.toThrow(
+        STOP_RUN_LOOP,
+      );
+
+      expect(gc.processGCActionSet).toHaveBeenCalledWith(kernelStore, {
+        isOffline,
+      });
+    });
+
+    it('wakes a parked run loop to look at them again', async () => {
+      let wake!: () => void;
+      const parked = new Promise<void>((resolve) => {
+        wake = resolve;
+      });
+      (makePromiseKit as unknown as MockInstance).mockReturnValueOnce({
+        promise: parked,
+        resolve: wake,
+        reject: vi.fn(),
+      });
+      (gc.processGCActionSet as unknown as MockInstance)
+        .mockReturnValueOnce(null)
+        .mockImplementationOnce(() => {
+          throw new Error(STOP_RUN_LOOP);
+        });
+
+      const running = kernelQueue.run(vi.fn());
+      await vi.waitFor(() =>
+        expect(gc.processGCActionSet).toHaveBeenCalledOnce(),
+      );
+      kernelQueue.recheckGCActions();
+
+      await expect(running).rejects.toThrow(STOP_RUN_LOOP);
+      expect(gc.processGCActionSet).toHaveBeenCalledTimes(2);
+    });
+
+    it('does nothing to a run loop in the middle of a crank', async () => {
+      let finishDelivery!: () => void;
+      const deliver = vi.fn(
+        async () =>
+          new Promise<undefined>((resolve) => {
+            finishDelivery = () => resolve(undefined);
+          }),
+      );
+      (gc.processGCActionSet as unknown as MockInstance)
+        .mockReturnValueOnce({
+          type: 'dropExports',
+          endpointId: 'v1',
+          krefs: ['ko1'],
+        })
+        .mockImplementationOnce(() => {
+          throw new Error(STOP_RUN_LOOP);
+        });
+
+      const running = kernelQueue.run(deliver);
+      await vi.waitFor(() => expect(deliver).toHaveBeenCalledOnce());
+      kernelQueue.recheckGCActions();
+      finishDelivery();
+
+      await expect(running).rejects.toThrow(STOP_RUN_LOOP);
+      expect(gc.processGCActionSet).toHaveBeenCalledTimes(2);
+    });
+  });
+
   describe('waitForCrank', () => {
     it('handles when waitForCrank returns a delayed promise', async () => {
       let resolvePromise: ((value: void) => void) | undefined;
