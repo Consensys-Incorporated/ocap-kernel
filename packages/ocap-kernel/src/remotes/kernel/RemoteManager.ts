@@ -5,7 +5,12 @@ import { RemoteHandle } from './RemoteHandle.ts';
 import type { KernelQueue } from '../../KernelQueue.ts';
 import { makeKernelError } from '../../liveslots/kernel-marshal.ts';
 import type { KernelStore } from '../../store/index.ts';
-import type { PlatformServices, RemoteId } from '../../types.ts';
+import type {
+  CrankResult,
+  PlatformServices,
+  RemoteId,
+  RunQueueItemPeerIncarnation,
+} from '../../types.ts';
 import type {
   RemoteIdentity,
   RemoteComms,
@@ -193,18 +198,8 @@ export class RemoteManager {
    * Handle a peer's reported incarnation after a successful handshake.
    *
    * Compares the observed incarnation against the value persisted in the
-   * kernel store. When they differ AND a previous value was on file, the peer
-   * has truly restarted: persist the new incarnation and reset the
-   * RemoteHandle's seq dedup state, atomically with respect to the kv layer
-   * so a crash mid-reset can't leave us with the new dedup state under the
-   * old recorded incarnation.
-   *
-   * The savepoint guards only kv-layer writes (`setPeerIncarnation` plus
-   * what `persistPeerRestart` writes). Run-queue mutations
-   * (`resolvePromises`) and everything `finalizePeerRestart` touches are
-   * NOT reversible by a savepoint, so we collect the work to do inside the
-   * savepoint, commit, and then fan it out — mirroring the
-   * deferred-completion pattern in `RemoteHandle.deliverInbound`.
+   * kernel store, and when they differ queues the change for
+   * {@link applyIncarnationChange} to record in a crank of its own.
    *
    * Fires on every handshake (not only on detected change) because the
    * in-memory PeerStateManager is unreliable across receiver restart and
@@ -225,7 +220,35 @@ export class RemoteManager {
     if (stored === observedIncarnation) {
       return false;
     }
+    // Answered from what the store already says, because the transport needs
+    // it to finish the handshake and cannot wait for a crank. The writes it
+    // implies are queued, and ordered against anything this peer has sent.
+    this.#kernelQueue.acceptPeerIncarnation(peerId, observedIncarnation);
+    return stored !== undefined;
+  }
 
+  /**
+   * Record a peer's incarnation change, in a crank of its own.
+   *
+   * @param item - The change, as accepted at handshake time.
+   * @returns The crank outcome, carrying the work that follows the commit.
+   */
+  async applyIncarnationChange(
+    item: RunQueueItemPeerIncarnation,
+  ): Promise<CrankResult> {
+    const { peerId, incarnation } = item;
+    // Remote comms stopped while the change waited its turn, and took the
+    // remote's handle with them, so the cleanup the change implies cannot run.
+    // Recording the new incarnation without it would hide the restart from the
+    // next handshake, which detects it again only while the store holds the
+    // old one.
+    if (!this.isRemoteCommsInitialized()) {
+      return {};
+    }
+    const stored = this.#kernelStore.getPeerIncarnation(peerId);
+    if (stored === incarnation) {
+      return {};
+    }
     const isRestart = stored !== undefined;
     const remote = isRestart ? this.#remotesByPeer.get(peerId) : undefined;
 
@@ -237,52 +260,56 @@ export class RemoteManager {
       ? Array.from(this.#kernelStore.getPromisesByDecider(remote.remoteId))
       : [];
 
-    const savepoint = `peerIncarnation_${peerId}`;
-    this.#kernelStore.createSavepoint(savepoint);
-    try {
-      if (isRestart) {
-        this.#logger?.log(
-          `Peer ${peerId.slice(0, 8)} restarted (incarnation ${stored.slice(0, 8)} → ${observedIncarnation.slice(0, 8)})`,
+    if (isRestart) {
+      this.#logger?.log(
+        `Peer ${peerId.slice(0, 8)} restarted (incarnation ${stored.slice(0, 8)} → ${incarnation.slice(0, 8)})`,
+      );
+      if (remote) {
+        remote.persistPeerRestart();
+      } else {
+        // No live RemoteHandle for the peer but a persisted incarnation
+        // exists — usually a transient race during kernel boot before
+        // initRemoteComms has finished restoring remotes. The persisted
+        // bookkeeping the missing handle would have cleaned up may leak.
+        // Surfacing as a warning so operators can correlate.
+        this.#logger?.warn(
+          `Peer ${peerId.slice(0, 8)} restart detected but no live RemoteHandle; advancing persisted incarnation without c-list cleanup`,
         );
-        if (remote) {
-          remote.persistPeerRestart();
-        } else {
-          // No live RemoteHandle for the peer but a persisted incarnation
-          // exists — usually a transient race during kernel boot before
-          // initRemoteComms has finished restoring remotes. The persisted
-          // bookkeeping the missing handle would have cleaned up may leak.
-          // Surfacing as a warning so operators can correlate.
-          this.#logger?.warn(
-            `Peer ${peerId.slice(0, 8)} restart detected but no live RemoteHandle; advancing persisted incarnation without c-list cleanup`,
-          );
-        }
-      }
-      this.#kernelStore.setPeerIncarnation(peerId, observedIncarnation);
-      this.#kernelStore.releaseSavepoint(savepoint);
-    } catch (error) {
-      this.#kernelStore.rollbackSavepoint(savepoint);
-      throw error;
-    }
-
-    // Post-commit fan-out: in-memory state changes and run-queue
-    // mutations are not reversible by a savepoint, so they wait until the
-    // kv layer is durable.
-    if (isRestart && remote) {
-      remote.finalizePeerRestart();
-      if (promisesToReject.length > 0) {
-        const failure = makeKernelError(
-          'PEER_RESTARTED',
-          'Remote peer restarted (incarnation changed)',
-        );
-        for (const kpid of promisesToReject) {
-          this.#kernelQueue.resolvePromises(remote.remoteId, [
-            [kpid, true, failure],
-          ]);
-        }
       }
     }
+    this.#kernelStore.setPeerIncarnation(peerId, incarnation);
 
-    return isRestart;
+    if (!isRestart || !remote) {
+      return {};
+    }
+
+    // Rejected here, inside the crank, because resolving a promise writes:
+    // its state, its reference counts, and a notify for every subscriber.
+    // `immediate: false` buffers those notifies until the crank commits, the
+    // way a vat's own syscalls are buffered, so nothing is delivered on the
+    // strength of writes that may yet roll back. Doing it post-commit instead
+    // would put the writes outside every transaction, and would race the
+    // transport's own give-up handling, which rejects the same promises from
+    // a send continuation — the second rejection `Fail`s.
+    if (promisesToReject.length > 0) {
+      const failure = makeKernelError(
+        'PEER_RESTARTED',
+        'Remote peer restarted (incarnation changed)',
+      );
+      for (const kpid of promisesToReject) {
+        this.#kernelQueue.resolvePromises(
+          remote.remoteId,
+          [[kpid, true, failure]],
+          false,
+        );
+      }
+    }
+
+    return {
+      // The in-memory counters only, which no rollback could put back and
+      // which must not be visible before the writes above are durable.
+      afterCommit: async () => remote.finalizePeerRestart(),
+    };
   }
 
   /**

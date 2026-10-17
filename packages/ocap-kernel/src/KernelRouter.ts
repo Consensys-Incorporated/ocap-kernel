@@ -18,6 +18,7 @@ import type {
   RunLoopItem,
   RunQueueItemSend,
   RemoteEndpointHandle,
+  RunQueueItemPeerIncarnation,
   RunQueueItemBringOutYourDead,
   RunQueueItemRemoteInbound,
   RunQueueItemNotify,
@@ -37,6 +38,13 @@ const GC_DELIVERY = {
 } as const satisfies {
   [Type in GCRunQueueType]: `deliver${Capitalize<Type>}` & keyof EndpointHandle;
 };
+
+/**
+ * Every run loop item the router routes. A peer's incarnation change is not a
+ * delivery to an endpoint and is carried out by the kernel instead, so leaving
+ * it out is what keeps the exhaustiveness check below honest.
+ */
+type RoutedRunLoopItem = Exclude<RunLoopItem, RunQueueItemPeerIncarnation>;
 
 type MessageRoute = {
   endpointId?: EndpointId | 'kernel';
@@ -130,7 +138,7 @@ export class KernelRouter {
    * @param item - The message/notification to deliver.
    * @returns The crank outcome.
    */
-  async deliver(item: RunLoopItem): Promise<CrankResult | undefined> {
+  async deliver(item: RoutedRunLoopItem): Promise<CrankResult | undefined> {
     switch (item.type) {
       case 'send':
         return await this.#deliverSend(item);

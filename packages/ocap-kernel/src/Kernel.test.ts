@@ -35,14 +35,14 @@ const mocks = vi.hoisted(() => {
     #rejectRunLoop: ((error: Error) => void) | undefined;
 
     /**
-     * The router's dispatch, so queued work can be carried out as a crank
-     * would carry it out.
+     * The callback the kernel gave the run loop, for tests to drive and for
+     * queued work to be carried out as a crank would carry it out.
      */
-    #deliver: ((item: RunQueueItem) => Promise<unknown>) | undefined;
+    deliver: ((item: unknown) => Promise<unknown>) | undefined;
 
     // Like the real run loop, this settles only if the kernel dies.
-    run = vi.fn(async (deliver: (item: RunQueueItem) => Promise<unknown>) => {
-      this.#deliver = deliver;
+    run = vi.fn(async (deliver: (item: unknown) => Promise<unknown>) => {
+      this.deliver = deliver;
       return new Promise<never>((_resolve, reject) => {
         this.#rejectRunLoop = reject;
       });
@@ -108,7 +108,7 @@ const mocks = vi.hoisted(() => {
      * @param item - The item to deliver.
      */
     async #runCrank(item: RunQueueItem): Promise<void> {
-      const crankResult = (await this.#deliver?.(item)) as
+      const crankResult = (await this.deliver?.(item)) as
         | CrankResult
         | undefined;
       await crankResult?.afterCommit?.();
@@ -152,6 +152,8 @@ const mocks = vi.hoisted(() => {
     isIdentityInitialized = vi.fn().mockReturnValue(false);
 
     setMessageHandler = vi.fn();
+
+    applyIncarnationChange = vi.fn().mockResolvedValue({});
 
     initIdentity = vi.fn().mockResolvedValue(undefined);
 
@@ -309,6 +311,44 @@ describe('Kernel', () => {
       expect(launchWorkerMock).toHaveBeenCalledOnce();
       expect(makeVatHandleMock).toHaveBeenCalledOnce();
       expect(kernel2.getVatIds()).toStrictEqual(['v1']);
+    });
+  });
+
+  describe('the run loop callback', () => {
+    const makeRunningKernel = async (): Promise<void> => {
+      await Kernel.make(mockPlatformServices, mockKernelDatabase);
+    };
+
+    it('carries out a peer incarnation change itself', async () => {
+      await makeRunningKernel();
+      const item = {
+        type: 'peerIncarnation',
+        peerId: 'peer-1',
+        incarnation: 'incarnation-B',
+      };
+
+      // Not a delivery to an endpoint, so the router never sees it — and it
+      // would throw on an item type it does not know.
+      await mocks.KernelQueue.lastInstance.deliver?.(item);
+
+      expect(
+        mocks.RemoteManager.lastInstance.applyIncarnationChange,
+      ).toHaveBeenCalledWith(item);
+    });
+
+    it('does not die of an incarnation change it cannot record', async () => {
+      await makeRunningKernel();
+      mocks.RemoteManager.lastInstance.applyIncarnationChange.mockRejectedValue(
+        new Error('the store is gone'),
+      );
+
+      expect(
+        await mocks.KernelQueue.lastInstance.deliver?.({
+          type: 'peerIncarnation',
+          peerId: 'peer-1',
+          incarnation: 'incarnation-B',
+        }),
+      ).toStrictEqual({ abort: true });
     });
   });
 

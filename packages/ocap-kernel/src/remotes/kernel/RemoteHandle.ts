@@ -1579,11 +1579,11 @@ export class RemoteHandle implements RemoteEndpointHandle {
 
   /**
    * Convenience wrapper that runs the persisted and in-memory phases
-   * back-to-back. Use only outside a savepoint window — transactional
-   * callers (e.g. {@link RemoteManager.handleIncarnationChange}) must call
-   * {@link persistPeerRestart} inside the savepoint and
-   * {@link finalizePeerRestart} after release, so a kv rollback can't
-   * leave the in-memory view inconsistent with the persisted view.
+   * back-to-back. Use only outside a crank:
+   * {@link RemoteManager.applyIncarnationChange} calls
+   * {@link persistPeerRestart} inside its crank and {@link finalizePeerRestart}
+   * after the commit, so a rollback can't leave the in-memory view
+   * inconsistent with the persisted view.
    */
   handlePeerRestart(): void {
     this.persistPeerRestart();
@@ -1591,16 +1591,14 @@ export class RemoteHandle implements RemoteEndpointHandle {
   }
 
   /**
-   * Apply the in-memory side of a peer restart: discard arrivals from the
-   * incarnation that is gone, cancel timers, reject in-flight URL redemption
-   * promises, and reset sequence counters. Must be called after
-   * {@link persistPeerRestart} and after the caller's savepoint has been
-   * released, with nothing awaited in between: a send whose turn comes there
-   * finds the queue emptied in the store but not yet retired here, and writes
-   * a message of the incarnation that has ended.
+   * Apply the in-memory side of a peer restart: cancel timers, reject
+   * in-flight URL redemption promises, and reset sequence counters. Must be
+   * called after {@link persistPeerRestart} and after the caller's savepoint
+   * has been released, with nothing awaited in between: a send whose turn
+   * comes there finds the queue emptied in the store but not yet retired
+   * here, and writes a message of the incarnation that has ended.
    */
   finalizePeerRestart(): void {
-    this.#kernelQueue.discardRemoteInbound(this.remoteId);
     const pendingCount = this.#getPendingCount();
     if (this.#hasPendingMessages()) {
       this.#logger.log(
