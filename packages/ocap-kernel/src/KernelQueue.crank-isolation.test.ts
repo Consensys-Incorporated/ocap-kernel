@@ -19,7 +19,7 @@ import type {
   CrankResult,
   KRef,
   PlatformServices,
-  RunQueueItem,
+  RunLoopItem,
   VatConfig,
 } from './types.ts';
 import { VatHandle } from './vats/VatHandle.ts';
@@ -159,21 +159,21 @@ async function setUp() {
 async function abortACrankWhile(
   harness: Harness,
   act: () => Promise<void>,
-): Promise<RunQueueItem[]> {
-  const { kernelQueue, vatManager, doomed, sentinel } = harness;
+): Promise<RunLoopItem[]> {
+  const { kernelQueue, vatManager, remoteManager, doomed, sentinel } = harness;
   kernelQueue.enqueueSend(doomed, {
     methargs: kser(['work', []]),
     result: null,
   });
 
-  const delivered: RunQueueItem[] = [];
+  const delivered: RunLoopItem[] = [];
   let abortedOnce = false;
   let aborted = (): void => undefined;
   const abortDelivered = new Promise<void>((resolve) => {
     aborted = resolve;
   });
   const deliver = async (
-    item: RunQueueItem,
+    item: RunLoopItem,
   ): Promise<CrankResult | undefined> => {
     if (item.type === 'send' && item.target === doomed) {
       // The rollback put the send back; the router splats it at the dead vat.
@@ -199,6 +199,11 @@ async function abortACrankWhile(
     }
     if (item.type === 'terminateVat') {
       return await vatManager.performVatTermination(item.vatId, item.reason);
+    }
+    if (item.type === 'remoteInbound') {
+      return await remoteManager
+        .getRemote(item.remoteId)
+        .deliverInbound(item.message);
     }
     // Recorded only for the types the rows observe; anything new must be wired
     // to its real handler before a row can say what it did.
@@ -230,7 +235,7 @@ async function abortACrankWhile(
  * @param target - The object of interest.
  * @returns The method of each send to `target`, in order.
  */
-function methodsSentTo(delivered: RunQueueItem[], target: KRef): string[] {
+function methodsSentTo(delivered: RunLoopItem[], target: KRef): string[] {
   return delivered.flatMap((item) =>
     item.type === 'send' && item.target === target
       ? [(kunser(item.message.methargs) as [string])[0]]
@@ -243,7 +248,7 @@ function methodsSentTo(delivered: RunQueueItem[], target: KRef): string[] {
  * @param kpid - The promise of interest.
  * @returns The endpoint of each notify for `kpid`, in order.
  */
-function notified(delivered: RunQueueItem[], kpid: KRef): string[] {
+function notified(delivered: RunLoopItem[], kpid: KRef): string[] {
   return delivered.flatMap((item) =>
     item.type === 'notify' && item.kpid === kpid ? [item.endpointId] : [],
   );
@@ -310,7 +315,7 @@ describe('a writer acting while a crank aborts', () => {
     expect(methodsSentTo(delivered, target)).toStrictEqual([]);
   });
 
-  it('inbound remote message: the message is lost with the aborted crank (gap, #1103)', async () => {
+  it('inbound remote message: the message lands in a crank of its own', async () => {
     const harness = await setUp();
     const { kernelStore, remote, remoteManager, target } = harness;
     const targetRRef = kernelStore.allocateErefForKref(remote.remoteId, target);
@@ -329,9 +334,9 @@ describe('a writer acting while a crank aborts', () => {
           }),
         ),
       ).toBeNull();
-      expect(kernelStore.runQueueLength()).toBe(1);
+      expect(kernelStore.runQueueLength()).toBe(0);
     });
-    expect(methodsSentTo(delivered, target)).toStrictEqual([]);
+    expect(methodsSentTo(delivered, target)).toStrictEqual(['fromPeer']);
   });
 
   it('peer ACK: the acknowledged message is restored with the aborted crank (gap, #1152)', async () => {
@@ -442,7 +447,7 @@ describe('a writer acting while a crank aborts', () => {
     });
     let doomedDeliveries = 0;
     const deliver = async (
-      item: RunQueueItem,
+      item: RunLoopItem,
     ): Promise<CrankResult | undefined> => {
       if (item.type === 'send' && item.target === doomed) {
         doomedDeliveries += 1;

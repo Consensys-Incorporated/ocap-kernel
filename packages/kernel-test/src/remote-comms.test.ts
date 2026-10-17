@@ -16,7 +16,7 @@ import type {
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 
 import {
   makeTestLogger,
@@ -549,15 +549,15 @@ describe('Remote Communications (Integration Tests)', () => {
     }
   });
 
-  it('still boots after a peer asks it to bring out its dead', async () => {
-    // `bringOutYourDead` is an ordinary arm of the remote protocol: any peer
-    // can send one, unsolicited. The kernel answers by scheduling a reap
-    // against the remote it came from, in the persisted reap queue.
+  it('still boots with a reap left queued for a remote', async () => {
+    // A reap against a remote waits in the persisted reap queue for the run
+    // loop's next crank. `scheduleReap` does not wake a parked run loop, so an
+    // idle kernel holds that reap indefinitely — and carries it into its next
+    // incarnation, which starts its run loop inside `Kernel.make`, before
+    // `initRemoteComms` can restore any remote to deliver it to.
     //
-    // `scheduleReap` does not wake a parked run loop, so an idle kernel holds
-    // that reap indefinitely — and carries it into its next incarnation, which
-    // starts its run loop inside `Kernel.make`, before `initRemoteComms` can
-    // restore any remote to deliver it to.
+    // A peer's `bringOutYourDead` schedules one too, but the crank that takes
+    // the request wakes the loop, which spends the reap at once.
     const tempDir = await mkdtemp(join(tmpdir(), 'kernel-test-rc-reap-'));
     const dbFile = join(tempDir, 'victim.db');
     try {
@@ -578,7 +578,7 @@ describe('Remote Communications (Integration Tests)', () => {
         '01',
       );
 
-      // One exchange, so each kernel holds a remote for the other.
+      // One exchange, so the victim holds a remote for the peer.
       await runTestVats(victim, makeSenderSubclusterConfig('Sender'));
       const receiver = (await runTestVats(
         kernel2,
@@ -590,18 +590,10 @@ describe('Remote Communications (Integration Tests)', () => {
         [receiver.ocapURL, 'hello', ['once']],
       );
 
-      // The peer is given local work purely so its own loop cranks and sends
-      // the request; nothing touches the victim afterwards, so its loop stays
-      // parked and never delivers the reap it just queued.
-      kernel2.reapRemotes();
-      await kernel2.queueMessage(
-        makeKernelStore(kernelDatabase2).getRootObject('v1') as KRef,
-        'hello',
-        ['probe'],
-      );
-      await vi.waitFor(() =>
-        expect(readReapQueue(victimDatabase)).not.toStrictEqual([]),
-      );
+      // Nothing touches the victim afterwards, so its loop stays parked and
+      // never delivers the reap.
+      victim.reapRemotes();
+      expect(readReapQueue(victimDatabase)).not.toStrictEqual([]);
       await victim.stop();
 
       // Asserted on disk, not assumed: if the victim had cranked it would have

@@ -15,9 +15,11 @@ import type {
   ERef,
   KRef,
   KernelMessage,
-  RunQueueItem,
+  RunLoopItem,
   RunQueueItemSend,
+  RemoteEndpointHandle,
   RunQueueItemBringOutYourDead,
+  RunQueueItemRemoteInbound,
   RunQueueItemNotify,
   RunQueueItemGCAction,
   CrankResult,
@@ -128,7 +130,7 @@ export class KernelRouter {
    * @param item - The message/notification to deliver.
    * @returns The crank outcome.
    */
-  async deliver(item: RunQueueItem): Promise<CrankResult | undefined> {
+  async deliver(item: RunLoopItem): Promise<CrankResult | undefined> {
     switch (item.type) {
       case 'send':
         return await this.#deliverSend(item);
@@ -140,6 +142,8 @@ export class KernelRouter {
         return await this.#deliverGCAction(item);
       case 'bringOutYourDead':
         return await this.#deliverBringOutYourDead(item);
+      case 'remoteInbound':
+        return await this.#deliverRemoteInbound(item);
       case 'restartVat':
         return await this.#restartVat(item.vatId);
       case 'terminateVat':
@@ -587,6 +591,41 @@ export class KernelRouter {
     return await this.#deliverUnlessLost(endpointId, async () =>
       endpoint[GC_DELIVERY[type]](erefs),
     );
+  }
+
+  /**
+   * Take delivery of a message from a remote peer, in a crank of its own.
+   *
+   * The remote can be gone by the time its turn comes: the message was
+   * accepted while it was live and the queue outlives it. Throwing here would
+   * escape the crank and kill the run loop, so the message is dropped.
+   *
+   * @param item - The inbound message.
+   * @returns The crank outcome.
+   */
+  async #deliverRemoteInbound(
+    item: RunQueueItemRemoteInbound,
+  ): Promise<CrankResult> {
+    const { remoteId, message } = item;
+    const remote = this.#lookupEndpoint(remoteId, 'an inbound message', {
+      discardable: true,
+    }) as RemoteEndpointHandle | undefined;
+    if (!remote) {
+      return { didDelivery: remoteId };
+    }
+    try {
+      return await remote.deliverInbound(message);
+    } catch (error) {
+      // What a peer sends is a peer's to get wrong: an unknown method, a
+      // reference that does not resolve, a reply to a redemption that has
+      // already timed out. None of that is the kernel's to die of, and the
+      // crank has rolled back whatever the attempt started.
+      this.#logger?.error(
+        `Discarded an inbound message from ${remoteId} that could not be delivered:`,
+        error,
+      );
+      return { didDelivery: remoteId, abort: true };
+    }
   }
 
   /**
