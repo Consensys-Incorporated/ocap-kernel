@@ -4,7 +4,7 @@ import { makeSQLKernelDatabase } from '@metamask/kernel-store/sqlite/nodejs';
 import { Logger } from '@metamask/logger';
 import { kunser } from '@metamask/ocap-kernel';
 import type { ClusterConfig, Kernel, KRef } from '@metamask/ocap-kernel';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -34,6 +34,7 @@ type LevelResult = {
   target: number;
   krefs: number;
   kvRows: number;
+  dbBytes: number;
   growMsPerKref: number;
   kernelToVatMs: Stats;
   vatToVatMs: Stats;
@@ -105,11 +106,11 @@ function countKeys(kernelDatabase: KernelDatabase, glob = '*'): number {
 function toMarkdown(results: LevelResult[]): string {
   const ms = (value: number): string => value.toFixed(3);
   return [
-    '| target | krefs | kv rows | grow ms/kref | kernel→vat p50 | p95 | vat→vat p50 | p95 |',
-    '| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |',
+    '| target | krefs | kv rows | db MiB | grow ms/kref | kernel→vat p50 | p95 | vat→vat p50 | p95 |',
+    '| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |',
     ...results.map(
       (result) =>
-        `| ${result.target} | ${result.krefs} | ${result.kvRows} | ${ms(result.growMsPerKref)} | ${ms(result.kernelToVatMs.p50)} | ${ms(result.kernelToVatMs.p95)} | ${ms(result.vatToVatMs.p50)} | ${ms(result.vatToVatMs.p95)} |`,
+        `| ${result.target} | ${result.krefs} | ${result.kvRows} | ${(result.dbBytes / 2 ** 20).toFixed(1)} | ${ms(result.growMsPerKref)} | ${ms(result.kernelToVatMs.p50)} | ${ms(result.kernelToVatMs.p95)} | ${ms(result.vatToVatMs.p50)} | ${ms(result.vatToVatMs.p95)} |`,
     ),
   ].join('\n');
 }
@@ -132,9 +133,8 @@ describe('message delivery against kref count', () => {
       // A file rather than `:memory:`, so the profile includes disk I/O as a
       // deployed kernel sees it.
       dbDir = await mkdtemp(path.join(os.tmpdir(), 'kref-scaling-'));
-      const kernelDatabase = await makeSQLKernelDatabase({
-        dbFilename: path.join(dbDir, 'kernel.db'),
-      });
+      const dbFilename = path.join(dbDir, 'kernel.db');
+      const kernelDatabase = await makeSQLKernelDatabase({ dbFilename });
       const logger = new Logger({ transports: [] });
       // Reference count auditing walks the whole store every crank, so it is
       // left off here.
@@ -189,6 +189,7 @@ describe('message delivery against kref count', () => {
           target,
           krefs,
           kvRows: countKeys(kernelDatabase),
+          dbBytes: (await stat(dbFilename)).size,
           growMsPerKref,
           kernelToVatMs: summarize(kernelToVat),
           vatToVatMs: summarize(vatToVat),
