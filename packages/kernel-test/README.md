@@ -18,6 +18,13 @@ Each profile prints a table and writes it, with the platform it ran on, to
 (comma-separated), and `KREF_PERF_SAMPLES` the number of sends timed at each
 count.
 
+`concurrent-load.test.ts` holds 1e5 live krefs over 1, 8 and 64 pairs and
+sends from 1 to 256 clients at once, each sending its next message when its
+last is answered, recording throughput and latency. `LOAD_PERF_KREFS`,
+`LOAD_PERF_PAIRS`, `LOAD_PERF_CONCURRENCY` (comma-separated) and
+`LOAD_PERF_MESSAGES` (per cell) override these. To run one profile, name it:
+`yarn workspace @ocap/kernel-test test:performance concurrent-load`.
+
 Past about 3e6 krefs a vat holding them exhausts V8's default 4 GB heap. Vat
 state lives in an in-memory map in the vat's worker, so virtual objects do not
 avoid this.
