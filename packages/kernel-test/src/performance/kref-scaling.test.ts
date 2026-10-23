@@ -12,11 +12,11 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { makeTrackedKernel } from '../utils.ts';
 
 // oxlint-disable-next-line node/no-process-env
-const MAX_EXPONENT = Number(process.env.KREF_PERF_MAX_EXPONENT ?? 6);
+const MAX_EXPONENT = Number(process.env.KREF_PERF_MAX_EXPONENT ?? 7);
 // oxlint-disable-next-line node/no-process-env
 const SAMPLES = Number(process.env.KREF_PERF_SAMPLES ?? 50);
 const WARMUP_SAMPLES = 5;
-// Large enough to reach 1e6 in 100 messages, small enough that no one message
+// Large enough to reach 1e7 in 1000 messages, small enough that no one message
 // carries an unrealistic number of slots.
 const MINT_BATCH = 10_000;
 
@@ -35,6 +35,7 @@ type LevelResult = {
   krefs: number;
   kvRows: number;
   dbBytes: number;
+  rssBytes: number;
   growMsPerKref: number;
   kernelToVatMs: Stats;
   vatToVatMs: Stats;
@@ -105,12 +106,13 @@ function countKeys(kernelDatabase: KernelDatabase, glob = '*'): number {
  */
 function toMarkdown(results: LevelResult[]): string {
   const ms = (value: number): string => value.toFixed(3);
+  const mib = (bytes: number): string => (bytes / 2 ** 20).toFixed(1);
   return [
-    '| target | krefs | kv rows | db MiB | grow ms/kref | kernel→vat p50 | p95 | vat→vat p50 | p95 |',
-    '| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |',
+    '| target | krefs | kv rows | db MiB | rss MiB | grow ms/kref | kernel→vat p50 | p95 | vat→vat p50 | p95 |',
+    '| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |',
     ...results.map(
       (result) =>
-        `| ${result.target} | ${result.krefs} | ${result.kvRows} | ${(result.dbBytes / 2 ** 20).toFixed(1)} | ${ms(result.growMsPerKref)} | ${ms(result.kernelToVatMs.p50)} | ${ms(result.kernelToVatMs.p95)} | ${ms(result.vatToVatMs.p50)} | ${ms(result.vatToVatMs.p95)} |`,
+        `| ${result.target} | ${result.krefs} | ${result.kvRows} | ${mib(result.dbBytes)} | ${mib(result.rssBytes)} | ${ms(result.growMsPerKref)} | ${ms(result.kernelToVatMs.p50)} | ${ms(result.kernelToVatMs.p95)} | ${ms(result.vatToVatMs.p50)} | ${ms(result.vatToVatMs.p95)} |`,
     ),
   ].join('\n');
 }
@@ -160,6 +162,23 @@ describe('message delivery against kref count', () => {
         kunser(await kernel.queueMessage(holder as KRef, method, args));
 
       const results: LevelResult[] = [];
+      const report = {
+        date: new Date().toISOString(),
+        platform: {
+          os: `${os.platform()} ${os.release()}`,
+          arch: os.arch(),
+          cpu: os.cpus()[0]?.model,
+          cpus: os.cpus().length,
+          memoryBytes: os.totalmem(),
+          node: process.version,
+          store: 'sqlite (nodejs, file)',
+        },
+        samples: SAMPLES,
+        results,
+      };
+      const stem = `kref-scaling-${report.date.replaceAll(':', '-')}`;
+      await mkdir(OUTPUT_DIR, { recursive: true });
+
       let held = 0;
       for (let exponent = 1; exponent <= MAX_EXPONENT; exponent += 1) {
         const target = 10 ** exponent;
@@ -190,39 +209,29 @@ describe('message delivery against kref count', () => {
           krefs,
           kvRows: countKeys(kernelDatabase),
           dbBytes: (await stat(dbFilename)).size,
+          // Vat workers are threads of this process, so this covers them too.
+          rssBytes: process.memoryUsage.rss(),
           growMsPerKref,
           kernelToVatMs: summarize(kernelToVat),
           vatToVatMs: summarize(vatToVat),
         });
+        // Rewritten after every count, so that a vat running out of memory
+        // at the next one does not lose the counts already measured.
+        await writeFile(
+          new URL(`${stem}.json`, OUTPUT_DIR),
+          `${JSON.stringify(report, null, 2)}\n`,
+        );
+        await writeFile(
+          new URL(`${stem}.md`, OUTPUT_DIR),
+          `${toMarkdown(results)}\n`,
+        );
       }
 
-      const report = {
-        date: new Date().toISOString(),
-        platform: {
-          os: `${os.platform()} ${os.release()}`,
-          arch: os.arch(),
-          cpu: os.cpus()[0]?.model,
-          cpus: os.cpus().length,
-          memoryBytes: os.totalmem(),
-          node: process.version,
-          store: 'sqlite (nodejs, file)',
-        },
-        samples: SAMPLES,
-        results,
-      };
-      const markdown = toMarkdown(results);
-      await mkdir(OUTPUT_DIR, { recursive: true });
-      const stem = `kref-scaling-${report.date.replaceAll(':', '-')}`;
-      await writeFile(
-        new URL(`${stem}.json`, OUTPUT_DIR),
-        `${JSON.stringify(report, null, 2)}\n`,
-      );
-      await writeFile(new URL(`${stem}.md`, OUTPUT_DIR), `${markdown}\n`);
-      console.log(`[performance] ${stem}\n\n${markdown}\n`);
+      console.log(`[performance] ${stem}\n\n${toMarkdown(results)}\n`);
 
       expect(results).toHaveLength(MAX_EXPONENT);
     },
-    // Reaching 1e6 krefs takes minutes.
+    // Reaching 1e7 krefs takes most of this.
     60 * 60 * 1000,
   );
 });
