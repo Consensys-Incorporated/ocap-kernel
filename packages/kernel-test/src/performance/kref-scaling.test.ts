@@ -12,11 +12,16 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { makeTrackedKernel } from '../utils.ts';
 
 // oxlint-disable-next-line node/no-process-env
-const MAX_EXPONENT = Number(process.env.KREF_PERF_MAX_EXPONENT ?? 7);
+const MAX_EXPONENT = Number(process.env.KREF_PERF_MAX_EXPONENT ?? 6);
 // oxlint-disable-next-line node/no-process-env
 const SAMPLES = Number(process.env.KREF_PERF_SAMPLES ?? 50);
+// How many holder/minter pairs to spread the krefs over, one kernel each.
+// oxlint-disable-next-line node/no-process-env
+const PAIR_COUNTS = (process.env.KREF_PERF_PAIRS ?? '1,4,16,64')
+  .split(',')
+  .map(Number);
 const WARMUP_SAMPLES = 5;
-// Large enough to reach 1e7 in 1000 messages, small enough that no one message
+// Large enough to reach 1e6 in 100 messages, small enough that no one message
 // carries an unrealistic number of slots.
 const MINT_BATCH = 10_000;
 
@@ -31,6 +36,7 @@ type Stats = {
 };
 
 type LevelResult = {
+  vats: number;
   target: number;
   krefs: number;
   kvRows: number;
@@ -108,17 +114,20 @@ function toMarkdown(results: LevelResult[]): string {
   const ms = (value: number): string => value.toFixed(3);
   const mib = (bytes: number): string => (bytes / 2 ** 20).toFixed(1);
   return [
-    '| target | krefs | kv rows | db MiB | rss MiB | grow ms/kref | kernel→vat p50 | p95 | vat→vat p50 | p95 |',
-    '| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |',
+    '| vats | target | krefs | kv rows | db MiB | rss MiB | grow ms/kref | kernel→vat p50 | p95 | vat→vat p50 | p95 |',
+    '| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |',
     ...results.map(
       (result) =>
-        `| ${result.target} | ${result.krefs} | ${result.kvRows} | ${mib(result.dbBytes)} | ${mib(result.rssBytes)} | ${ms(result.growMsPerKref)} | ${ms(result.kernelToVatMs.p50)} | ${ms(result.kernelToVatMs.p95)} | ${ms(result.vatToVatMs.p50)} | ${ms(result.vatToVatMs.p95)} |`,
+        `| ${result.vats} | ${result.target} | ${result.krefs} | ${result.kvRows} | ${mib(result.dbBytes)} | ${mib(result.rssBytes)} | ${ms(result.growMsPerKref)} | ${ms(result.kernelToVatMs.p50)} | ${ms(result.kernelToVatMs.p95)} | ${ms(result.vatToVatMs.p50)} | ${ms(result.vatToVatMs.p95)} |`,
     ),
   ].join('\n');
 }
 
 const getBundleSpec = (name: string): string =>
   new URL(`./vats/${name}.bundle`, import.meta.url).toString();
+
+const sum = (counts: number[]): number =>
+  counts.reduce((total, count) => total + count, 0);
 
 describe('message delivery against kref count', () => {
   let dbDir: string | undefined;
@@ -129,9 +138,9 @@ describe('message delivery against kref count', () => {
     }
   });
 
-  it(
-    `profiles delivery from 1e1 to 1e${MAX_EXPONENT} krefs`,
-    async () => {
+  it.each(PAIR_COUNTS)(
+    `profiles delivery from 1e1 to 1e${MAX_EXPONENT} krefs over %i holder/minter pairs`,
+    async (pairs) => {
       // A file rather than `:memory:`, so the profile includes disk I/O as a
       // deployed kernel sees it.
       dbDir = await mkdtemp(path.join(os.tmpdir(), 'kref-scaling-'));
@@ -148,18 +157,22 @@ describe('message delivery against kref count', () => {
 
       const config: ClusterConfig = {
         bootstrap: 'holder',
-        forceReset: true,
         vats: {
           holder: { bundleSpec: getBundleSpec('kref-holder-vat') },
           minter: { bundleSpec: getBundleSpec('kref-minter-vat') },
         },
       };
-      const { rootKref: holder } = await kernel.launchSubcluster(config);
+      const holders: KRef[] = [];
+      for (let pair = 0; pair < pairs; pair += 1) {
+        holders.push((await kernel.launchSubcluster(config)).rootKref);
+      }
+      // Sample `n` goes to pair `n % pairs`, so that every pair is measured.
       const send = async (
+        pair: number,
         method: string,
         args: unknown[] = [],
       ): Promise<unknown> =>
-        kunser(await kernel.queueMessage(holder as KRef, method, args));
+        kunser(await kernel.queueMessage(holders[pair % pairs]!, method, args));
 
       const results: LevelResult[] = [];
       const report = {
@@ -176,35 +189,49 @@ describe('message delivery against kref count', () => {
         samples: SAMPLES,
         results,
       };
-      const stem = `kref-scaling-${report.date.replaceAll(':', '-')}`;
+      const stem = `kref-scaling-${pairs * 2}-vats-${report.date.replaceAll(':', '-')}`;
       await mkdir(OUTPUT_DIR, { recursive: true });
 
-      let held = 0;
+      const held: number[] = Array.from({ length: pairs }, () => 0);
       for (let exponent = 1; exponent <= MAX_EXPONENT; exponent += 1) {
         const target = 10 ** exponent;
+        const perPair = Math.ceil(target / pairs);
 
         const growStart = performance.now();
-        const grown = target - held;
-        while (held < target) {
-          held = (await send('grow', [
-            Math.min(MINT_BATCH, target - held),
-          ])) as number;
+        const before = sum(held);
+        // Round robin, so that every pair's c-lists grow together.
+        while (held.some((count) => count < perPair)) {
+          for (let pair = 0; pair < pairs; pair += 1) {
+            const count = held[pair]!;
+            if (count < perPair) {
+              held[pair] = (await send(pair, 'grow', [
+                Math.min(MINT_BATCH, perPair - count),
+              ])) as number;
+            }
+          }
         }
-        const growMsPerKref = (performance.now() - growStart) / grown;
+        const growMsPerKref =
+          (performance.now() - growStart) / (sum(held) - before);
 
-        const kernelToVat = await timeSends(async () => send('ping'), SAMPLES);
-        // Spread the targets across everything held, so that the lookups are
-        // not all served from the same corner of the c-lists.
-        const stride = held / SAMPLES;
+        const kernelToVat = await timeSends(
+          async (sample) => send(sample, 'ping'),
+          SAMPLES,
+        );
+        // Spread the targets across everything a pair holds, so that the
+        // lookups are not all served from the same corner of the c-lists.
+        const stride = perPair / Math.ceil(SAMPLES / pairs);
         const vatToVat = await timeSends(
           async (sample) =>
-            send('pingHeld', [Math.floor((sample + 0.5) * stride)]),
+            send(sample, 'pingHeld', [
+              Math.floor((Math.floor(sample / pairs) + 0.5) * stride) % perPair,
+            ]),
           SAMPLES,
         );
 
         const krefs = countKeys(kernelDatabase, 'ko*.owner');
         expect(krefs).toBeGreaterThanOrEqual(target);
         results.push({
+          vats: pairs * 2,
           target,
           krefs,
           kvRows: countKeys(kernelDatabase),
@@ -231,7 +258,7 @@ describe('message delivery against kref count', () => {
 
       expect(results).toHaveLength(MAX_EXPONENT);
     },
-    // Reaching 1e7 krefs takes most of this.
+    // Reaching 1e6 krefs takes minutes.
     60 * 60 * 1000,
   );
 });

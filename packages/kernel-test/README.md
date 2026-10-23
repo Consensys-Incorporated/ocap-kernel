@@ -13,8 +13,14 @@ yarn workspace @ocap/kernel-test test:performance
 
 Each profile prints a table and writes it, with the platform it ran on, to
 `logs/performance/`. `kref-scaling.test.ts` times message delivery at 1e1 to
-1e7 live krefs; `KREF_PERF_MAX_EXPONENT` lowers the ceiling and
-`KREF_PERF_SAMPLES` sets the number of sends timed at each count.
+1e6 live krefs, spread over 1, 4, 16 and 64 holder/minter vat pairs.
+`KREF_PERF_MAX_EXPONENT` sets the ceiling, `KREF_PERF_PAIRS` the pair counts
+(comma-separated), and `KREF_PERF_SAMPLES` the number of sends timed at each
+count.
+
+Past about 3e6 krefs a vat holding them exhausts V8's default 4 GB heap. Vat
+state lives in an in-memory map in the vat's worker, so virtual objects do not
+avoid this.
 
 ## Contributing
 
