@@ -2,7 +2,7 @@
   "extends": ["//"],
   "tasks": {
     "build": {
-      "outputs": ["src/vats/*.bundle"]
+      "outputs": ["src/vats/*.bundle", "src/performance/vats/*.bundle"]
     }
   }
 }
