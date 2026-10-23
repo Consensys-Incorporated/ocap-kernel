@@ -7,6 +7,7 @@ import {
   makeProfileKernel,
   mib,
   ms,
+  runClosedLoop,
   summarize,
   toMarkdown,
   writeReport,
@@ -35,42 +36,6 @@ type CellResult = {
   latencyMs: Stats;
   rssBytes: number;
 };
-
-/**
- * Send `count` messages from `concurrency` clients at once, each sending its
- * next as soon as its last is answered.
- *
- * @param options - Options bag.
- * @param options.send - Sends message `n` and resolves with the reply.
- * @param options.count - How many messages to send in all.
- * @param options.concurrency - How many clients send at once.
- * @returns The latency of each message and the time it took to send them all.
- */
-async function runClosedLoop({
-  send,
-  count,
-  concurrency,
-}: {
-  send: (message: number) => Promise<unknown>;
-  count: number;
-  concurrency: number;
-}): Promise<{ latencies: number[]; elapsedMs: number }> {
-  const latencies: number[] = [];
-  let next = 0;
-  const client = async (): Promise<void> => {
-    while (next < count) {
-      const message = next;
-      next += 1;
-      const start = performance.now();
-      const reply = await send(message);
-      latencies.push(performance.now() - start);
-      expect(reply).toBe('pong');
-    }
-  };
-  const start = performance.now();
-  await Promise.all(Array.from({ length: concurrency }, client));
-  return { latencies, elapsedMs: performance.now() - start };
-}
 
 /**
  * Render results as a Markdown table.
@@ -126,12 +91,17 @@ describe('message delivery under concurrent load', () => {
       // evenly. A vat→vat message pings a token scattered across the pair's
       // holdings, by the golden ratio, so that consecutive messages do not hit
       // neighbouring c-list entries.
-      const routes: Record<Route, (message: number) => Promise<unknown>> = {
-        'kernel→vat': async (message) => send(message, 'ping'),
-        'vat→vat': async (message) =>
-          send(message, 'pingHeld', [
-            Math.floor(((message * 0.618_033_988_75) % 1) * perPair),
-          ]),
+      const routes: Record<Route, (message: number) => Promise<void>> = {
+        'kernel→vat': async (message) => {
+          expect(await send(message, 'ping')).toBe('pong');
+        },
+        'vat→vat': async (message) => {
+          expect(
+            await send(message, 'pingHeld', [
+              Math.floor(((message * 0.618_033_988_75) % 1) * perPair),
+            ]),
+          ).toBe('pong');
+        },
       };
 
       const results: CellResult[] = [];
@@ -146,7 +116,7 @@ describe('message delivery under concurrent load', () => {
 
       for (const [route, routeSend] of Object.entries(routes) as [
         Route,
-        (message: number) => Promise<unknown>,
+        (message: number) => Promise<void>,
       ][]) {
         for (const concurrency of CONCURRENCIES) {
           await runClosedLoop({

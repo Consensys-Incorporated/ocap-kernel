@@ -185,6 +185,41 @@ export async function makeProfileKernel(pairs: number): Promise<ProfileKernel> {
 }
 
 /**
+ * Send `count` messages from `concurrency` clients at once, each sending its
+ * next as soon as its last is answered.
+ *
+ * @param options - Options bag.
+ * @param options.send - Sends message `n`, and checks the reply.
+ * @param options.count - How many messages to send in all.
+ * @param options.concurrency - How many clients send at once.
+ * @returns The latency of each message and the time it took to send them all.
+ */
+export async function runClosedLoop({
+  send,
+  count,
+  concurrency,
+}: {
+  send: (message: number) => Promise<void>;
+  count: number;
+  concurrency: number;
+}): Promise<{ latencies: number[]; elapsedMs: number }> {
+  const latencies: number[] = [];
+  let next = 0;
+  const client = async (): Promise<void> => {
+    while (next < count) {
+      const message = next;
+      next += 1;
+      const start = performance.now();
+      await send(message);
+      latencies.push(performance.now() - start);
+    }
+  };
+  const start = performance.now();
+  await Promise.all(Array.from({ length: concurrency }, client));
+  return { latencies, elapsedMs: performance.now() - start };
+}
+
+/**
  * Describe the machine a profile ran on.
  *
  * @returns The platform description.

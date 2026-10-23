@@ -25,6 +25,13 @@ last is answered, recording throughput and latency. `LOAD_PERF_KREFS`,
 `LOAD_PERF_MESSAGES` (per cell) override these. To run one profile, name it:
 `yarn workspace @ocap/kernel-test test:performance concurrent-load`.
 
+`gc-under-load.test.ts` runs rounds of one workload at a time (`ping`,
+`pingHeld`, `churn`, which mints and drops tokens, and `fetch`, which hands
+one to the kernel), reaps every vat after each round, and fails if the store
+holds more objects, promises, c-list or vatstore rows than before the load.
+`GC_PERF_KREFS`, `GC_PERF_PAIRS`, `GC_PERF_ROUNDS`, `GC_PERF_MESSAGES` and
+`GC_PERF_CONCURRENCY` override its defaults.
+
 Past about 3e6 krefs a vat holding them exhausts V8's default 4 GB heap. Vat
 state lives in an in-memory map in the vat's worker, so virtual objects do not
 avoid this.
