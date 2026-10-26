@@ -671,9 +671,11 @@ export class Kernel {
     this.#kernelStore.clear();
     this.#kernelQueue.discardArrivals();
     this.#remoteManager.releaseRestartHolds();
-    this.#vatManager.abandonQueuedWork(
-      new Error('Kernel storage was cleared; queued work was abandoned'),
+    const abandoned = new Error(
+      'Kernel storage was cleared; queued work was abandoned',
     );
+    this.#kernelQueue.discardHeldRequests(abandoned);
+    this.#vatManager.abandonQueuedWork(abandoned);
   }
 
   /**
@@ -877,9 +879,11 @@ export class Kernel {
       this.#resetKernelState();
       this.#kernelQueue.discardArrivals();
       this.#remoteManager.releaseRestartHolds();
-      this.#vatManager.abandonQueuedWork(
-        new Error('Kernel was reset; queued work was abandoned'),
+      const abandoned = new Error(
+        'Kernel was reset; queued work was abandoned',
       );
+      this.#kernelQueue.discardHeldRequests(abandoned);
+      this.#vatManager.abandonQueuedWork(abandoned);
     } catch (error) {
       this.#logger.error('Error resetting kernel:', error);
       throw error;
@@ -903,6 +907,10 @@ export class Kernel {
     // reads as the stop, not as its vat's loss. Not before the wait: a vat
     // lost in that crank must still fail the delivery waiting on it.
     this.#vatManager.expectWorkersToStop();
+    this.#kernelQueue.discardHeldRequests(
+      new Error('Kernel was stopped before taking this request'),
+      { stopping: true },
+    );
     this.#vatManager.abandonQueuedWork(
       new Error(
         'Kernel was stopped before answering; terminations already queued still take effect on its next start, restarts do not',

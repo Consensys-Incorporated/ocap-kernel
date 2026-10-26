@@ -4,6 +4,7 @@ import { vi } from 'vitest';
 import { makeMapKernelDatabase } from './storage.ts';
 import type { KernelQueue } from '../src/KernelQueue.ts';
 import { RemoteHandle } from '../src/remotes/kernel/RemoteHandle.ts';
+import type { RemoteManager } from '../src/remotes/kernel/RemoteManager.ts';
 import type {
   RemoteComms,
   RemoteMessageHandler,
@@ -82,6 +83,9 @@ export class MockRemotesFactory {
       resolvePromises: vi.fn(),
       assertRunLoopAlive: vi.fn(),
       waitForCrank: vi.fn(),
+      writeOutsideCrank: vi.fn<KernelQueue['writeOutsideCrank']>(
+        async (write) => write(),
+      ),
       run: vi.fn(),
     } as unknown as KernelQueue;
   }
@@ -163,7 +167,9 @@ export class MockRemotesFactory {
       remoteManager: {
         getRemoteComms: vi.fn().mockReturnValue(remoteComms),
         getRemoteIdentity: vi.fn().mockReturnValue(remoteComms),
-        remoteFor: vi.fn().mockReturnValue(remoteHandle),
+        withRemote: vi.fn<RemoteManager['withRemote']>(
+          async (_peerId, { use }) => use(remoteHandle),
+        ),
       },
       remoteComms,
       remoteHandle,

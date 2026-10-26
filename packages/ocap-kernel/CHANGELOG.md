@@ -80,6 +80,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A `queueMessage` made while a crank is running is no longer lost if that crank aborts; its caller used to wait forever or get another promise's value ([#1204](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1204))
+- A `queueMessage` naming a kref the kernel does not have, as its target or in an argument, rejects with `OBJECT_DELETED` instead of an internal error that leaked its result promise and could leave its target uncollectable ([#1204](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1204))
+- A store write that fails while adding to or taking from a queue, such as the run queue, no longer breaks the queue for every later read, even after a restart ([#1204](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1204))
 - Sends to a peer no longer fail or time out after it reconnects, which happened when several sends dialed it at once ([#1188](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1188))
 - A send's dial retry follows `reconnectionBaseDelayMs` and `reconnectionMaxDelayMs`, as it already followed `maxRetryAttempts`, rather than always backing off up to 10 s ([#1188](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1188))
 - Retiring a kernel object tells remote importers and terminated vats cleanup has not reached, rather than leaving them a c-list entry for the deleted kref ([#1088](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1088))
@@ -175,6 +178,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- A peer's first message or an ocap URL redemption that arrives while a crank aborts no longer leaves two peers sharing one c-list, through which either could reach objects the kernel exported to the other ([#1204](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1204))
 - An endpoint can no longer retire or abandon a kernel object it does not own, nor one it names only as an import: `abandonExports` on an import ref tore that import down unchecked ([#1085](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1085))
 - A vat's `fetch` can no longer reach a host outside its `network.allowedHosts`. The allowlist was checked against one resolution of the vat's input while `fetch` resolved it again (CWE-367), and a redirect from an allowed host to a forbidden one was followed unchecked ([#1026](https://github.com/MetaMask/ocap-kernel/pull/1026))
   - A vat's `redirect: 'follow'`, in `init` or on a `Request`, no longer reaches the hop unchecked; `manual` and `error` behave as asked. A `dispatcher` in `init` is rejected
