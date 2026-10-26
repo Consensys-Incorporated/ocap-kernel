@@ -27,6 +27,8 @@
 #                           matcher vat as its `model` parameter.
 # The matching openclaw config flag must be enabled on the gateway:
 #   gateway.http.endpoints.chatCompletions.enabled = true
+# `llm.json` stays in the OCAP home, and every later daemon start uses it,
+# until `ocap daemon purge`.
 #
 # Usage:
 #   start-matcher.sh [--relay MULTIADDR] [--no-build] [--keep-state]
@@ -150,9 +152,9 @@ if $FORCE_RESET; then
   (cd "$REPO_ROOT" && node "$OCAP_BIN" daemon purge --force >&2) || true
 fi
 
-# Provision the daemon's LLM config. Written after the purge (which may
-# delete the OCAP home) and before `daemon start` (which reads it once,
-# at startup). The token itself stays out of the file: the daemon reads
+# Provision the daemon's LLM config. Written after the purge (which
+# deletes it) and before `daemon start` (which reads it once, at
+# startup). The token itself stays out of the file: the daemon reads
 # it from OPENCLAW_GATEWAY_TOKEN, inherited from this script's
 # environment via `daemon start` below.
 mkdir -p "$OCAP_HOME_DIR"
@@ -166,14 +168,13 @@ GATEWAY_URL="${OPENCLAW_GATEWAY_URL:-http://127.0.0.1:18789}" node -e "
 " "$LLM_CONFIG_PATH"
 info "Wrote LLM config → $LLM_CONFIG_PATH"
 
-info "Starting daemon..."
-# `daemon start` fails if one is already running; detect and continue.
-# NOTE: a pre-existing daemon read (or missed) llm.json at *its* startup;
-# if it predates this script's config, restart it (`ocap daemon stop`)
-# so the languageModelService gets registered.
-if ! (cd "$REPO_ROOT" && node "$OCAP_BIN" daemon start >&2); then
-  info "daemon start failed — assuming one is already running"
-fi
+# A daemon still running under --keep-state read llm.json, and the token,
+# when it started; restart it so this run's URL and token take effect.
+info "Restarting daemon..."
+(cd "$REPO_ROOT" && node "$OCAP_BIN" daemon stop >&2) ||
+  fail "Could not stop the running daemon."
+(cd "$REPO_ROOT" && node "$OCAP_BIN" daemon start >&2) ||
+  fail "Daemon failed to start; see $OCAP_HOME_DIR/daemon.log"
 
 daemon_exec() {
   (cd "$REPO_ROOT" && node "$OCAP_BIN" daemon exec "$@")
