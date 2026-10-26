@@ -36,6 +36,7 @@ import type {
   OcapURLIssuerService,
   OcapURLRedemptionService,
 } from '@metamask/ocap-kernel';
+import { ServiceDescriptionStruct } from '@metamask/service-discovery-types';
 import type {
   ContactPoint,
   ObjectSpec,
@@ -45,6 +46,7 @@ import type {
   ServiceMatcher,
   ServiceQuery,
 } from '@metamask/service-discovery-types';
+import { validate } from '@metamask/superstruct';
 
 import type { MatchEntry, ServiceDigest } from './ranker.ts';
 import {
@@ -272,14 +274,20 @@ export function buildRootObject(
    * no serialization.
    *
    * @param query - The free-text query from the consumer.
-   * @returns The ranked matches the model returned.
+   * @returns The ranked matches the model returned, and the entries the
+   * prompt described, by id. A registration made or evicted while the model
+   * answers doesn't change what its ids refer to.
    * @throws If the LLM call fails or its reply isn't a valid match list.
    */
-  async function rankServices(query: string): Promise<MatchEntry[]> {
-    if (registry.size === 0) {
+  async function rankServices(query: string): Promise<{
+    ranked: MatchEntry[];
+    prompted: Map<string, RegisteredService>;
+  }> {
+    const prompted = new Map(registry);
+    if (prompted.size === 0) {
       // Nothing registered — no point burning a model call to learn
       // that nothing matches.
-      return [];
+      return { ranked: [], prompted };
     }
     const { languageModelService } = getServices();
     const params: ChatParams & { stream?: false } = {
@@ -289,7 +297,7 @@ export function buildRootObject(
         {
           role: 'user',
           content: formatRankingPrompt(
-            [...registry.values()].map(entryDigest),
+            [...prompted.values()].map(entryDigest),
             query,
           ),
         },
@@ -300,7 +308,7 @@ export function buildRootObject(
     if (typeof content !== 'string') {
       throw new Error('matcher vat: LLM reply contained no message content');
     }
-    return parseMatches(content);
+    return { ranked: parseMatches(content), prompted };
   }
 
   /**
@@ -389,6 +397,12 @@ export function buildRootObject(
     description: ServiceDescription,
     contact: ContactPoint,
   ): void {
+    // A stored description is read by every later ranking prompt, so one that
+    // doesn't validate would break `findServices` for every consumer.
+    const [error] = validate(description, ServiceDescriptionStruct);
+    if (error) {
+      throw new Error(`invalid service description: ${error.message}`);
+    }
     for (const supersededId of findSamePeerSameTagEntries(description)) {
       registry.delete(supersededId);
       log(
@@ -455,15 +469,14 @@ export function buildRootObject(
       _context: unknown,
       query: ServiceQuery,
     ): Promise<ServiceMatch[]> {
-      const ranked = await rankServices(query.description);
+      const { ranked, prompted } = await rankServices(query.description);
       const matches: ServiceMatch[] = [];
       let dropped = 0;
       for (const entry of ranked) {
-        const registered = registry.get(entry.id);
+        const registered = prompted.get(entry.id);
         if (!registered) {
-          // The model cited an id we don't have — it can only be a
-          // hallucination, since the prompt carried the current
-          // registry. Skip and log; don't bubble up.
+          // The model cited an id the prompt didn't carry — it can only be
+          // a hallucination. Skip and log; don't bubble up.
           dropped += 1;
           log(`model cited unknown id ${entry.id}; skipping`);
           continue;

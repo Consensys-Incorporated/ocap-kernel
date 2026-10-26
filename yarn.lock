@@ -4013,6 +4013,7 @@ __metadata:
     "@metamask/kernel-utils": "workspace:^"
     "@metamask/ocap-kernel": "workspace:^"
     "@metamask/service-discovery-types": "workspace:^"
+    "@metamask/superstruct": "npm:^3.4.1"
     "@ocap/repo-tools": "workspace:^"
     depcheck: "npm:^1.4.7"
     oxfmt: "npm:0.74.0"

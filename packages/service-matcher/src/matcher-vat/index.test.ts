@@ -82,7 +82,7 @@ function makeMockContact(options: {
  */
 function makeMockLms(
   options: {
-    replyContent?: (params: ChatParams) => string;
+    replyContent?: (params: ChatParams) => string | Promise<string>;
   } = {},
 ) {
   const calls: ChatParams[] = [];
@@ -90,13 +90,14 @@ function makeMockLms(
 
   const chat = vi.fn(async (params: ChatParams): Promise<ChatResult> => {
     calls.push(params);
+    const content = await replyContent(params);
     return {
       id: `chat-${calls.length}`,
       model: params.model,
       choices: [
         {
           index: 0,
-          message: { role: 'assistant', content: replyContent(params) },
+          message: { role: 'assistant', content },
           finish_reason: 'stop',
         },
       ],
@@ -368,6 +369,42 @@ describe('matcher vat', () => {
     });
   });
 
+  describe('description validation', () => {
+    it('refuses a description whose apiSpec is malformed, and keeps answering queries', async () => {
+      const lms = makeMockLms({
+        replyContent: () => '[{"id":"svc:0","rationale":"fits"}]',
+      });
+      mocks = makeMockServices({ lms });
+      await root.bootstrap({}, mocks.services);
+      const publicFacet = root.getPublicFacet();
+      const bad = makeMockContact({
+        description: {
+          ...sampleDescription('Bad'),
+          apiSpec: {},
+        } as unknown as ServiceDescription,
+        expectedToken: 'tok-bad',
+      });
+      const good = makeMockContact({
+        description: sampleDescription('Good'),
+        expectedToken: 'tok-good',
+      });
+
+      await expect(
+        publicFacet.registerServiceByRef(bad.contact, 'tok-bad'),
+      ).rejects.toThrow(/invalid service description/u);
+      await publicFacet.registerServiceByRef(good.contact, 'tok-good');
+
+      expect(
+        await publicFacet.findServices({ description: 'anything' }),
+      ).toStrictEqual([
+        {
+          description: sampleDescription('Good'),
+          rationale: 'fits',
+        },
+      ]);
+    });
+  });
+
   describe('registerServiceByUrl', () => {
     it('redeems the URL, confirms the token, and stores the service', async () => {
       await root.bootstrap({}, mocks.services);
@@ -561,6 +598,34 @@ describe('matcher vat', () => {
       expect(matches).toHaveLength(1);
       expect(matches[0]?.description).toStrictEqual(description);
       expect(matches[0]?.rationale).toBe('because');
+    });
+
+    it('answers with the service the prompt described when it is replaced mid-call', async () => {
+      const original = sampleDescription('Foo', 'ocap:key1@peerA', 'foo');
+      const replacement = sampleDescription('Foo', 'ocap:key2@peerA', 'foo');
+      const lms = makeMockLms({
+        // While the model is thinking, the same provider re-registers,
+        // evicting the svc:0 the prompt carried.
+        replyContent: async () => {
+          const { contact } = makeMockContact({
+            description: replacement,
+            expectedToken: 't2',
+          });
+          await root.getPublicFacet().registerServiceByRef(contact, 't2');
+          return '[{"id":"svc:0","rationale":"because"}]';
+        },
+      });
+      mocks = makeMockServices({ lms });
+      await root.bootstrap({}, mocks.services);
+      await registerOne(original);
+
+      const matches = await root.getPublicFacet().findServices({
+        description: 'whatever',
+      });
+
+      expect(matches).toStrictEqual([
+        { description: original, rationale: 'because' },
+      ]);
     });
 
     it('sends the configured model, the registry digest, and the query', async () => {
