@@ -2,6 +2,8 @@ import {
   makeKernelLanguageModelService,
   makeOpenV1NodejsService,
 } from '@metamask/kernel-language-model-service';
+import { stringify } from '@metamask/kernel-utils';
+import type { Logger } from '@metamask/logger';
 import type { Infer } from '@metamask/superstruct';
 import {
   exactOptional,
@@ -142,11 +144,13 @@ export async function resolveLlmApiKey(
  * configured provider.
  *
  * @param config - The LLM config.
+ * @param logger - Where failed calls are logged.
  * @returns A `{ name, service }` pair for
  * `kernel.registerKernelServiceObject(name, service)`.
  */
 export async function makeLlmKernelService(
   config: LlmConfig,
+  logger?: Pick<Logger, 'error'>,
 ): Promise<{ name: string; service: object }> {
   const apiKey = await resolveLlmApiKey(config);
   const { chat } = makeOpenV1NodejsService({
@@ -154,5 +158,17 @@ export async function makeLlmKernelService(
     baseUrl: config.baseUrl,
     ...(apiKey === undefined ? {} : { apiKey }),
   });
-  return makeKernelLanguageModelService(chat);
+  // The calling vat sees only the top-level message, e.g. "fetch failed";
+  // the cause that says why stays here.
+  const loggedChat: Parameters<
+    typeof makeKernelLanguageModelService
+  >[0] = async (params) => {
+    try {
+      return await chat(params);
+    } catch (error) {
+      logger?.error('languageModelService chat failed', stringify(error, 0));
+      throw error;
+    }
+  };
+  return makeKernelLanguageModelService(loggedChat);
 }

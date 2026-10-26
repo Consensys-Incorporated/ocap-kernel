@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `Kernel.make` takes `kernelServices`, kernel services registered before the run loop starts; one registered later writes into whatever crank is open ([#955](https://github.com/Consensys-Incorporated/ocap-kernel/pull/955))
+- `Kernel.make` takes `kernelServices`, kernel services registered before the run loop starts; one registered later writes into whatever crank is open ([#1215](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1215))
 - Add `getRemoteIDs` to the kernel store, listing every remote the kernel knows about ([#1088](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1088))
 - Add a `vatRelaunchTimeoutMs` option to `Kernel.make`: how long a vat restart waits for the new worker before giving up, 30 seconds by default ([#1096](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1096))
 - A `CrankResult` may carry `afterCommit`, work the run loop runs once the crank has committed and skips if it aborts, for what a rollback could not undo anyway: in-memory state, and sending a message the crank has already written down. While it runs it may not write the kernel store, since by then there is no transaction to write into ([#1101](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1101))

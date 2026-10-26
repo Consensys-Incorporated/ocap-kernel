@@ -2,7 +2,15 @@ import '@metamask/kernel-shims/endoify';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  onTestFinished,
+  vi,
+} from 'vitest';
 
 import {
   LLM_CONFIG_FILENAME,
@@ -177,6 +185,36 @@ describe('llm-config', () => {
       });
       expect(name).toBe('languageModelService');
       expect(service).toHaveProperty('chat');
+    });
+
+    it('logs a failed chat with its cause before rethrowing', async () => {
+      vi.stubGlobal(
+        'fetch',
+        vi.fn().mockRejectedValue(
+          new TypeError('fetch failed', {
+            cause: new Error('connect ECONNREFUSED 127.0.0.1:18789'),
+          }),
+        ),
+      );
+      onTestFinished(() => {
+        vi.unstubAllGlobals();
+      });
+      const logger = { error: vi.fn() };
+      const { service } = await makeLlmKernelService(
+        { provider: 'open-v1', baseUrl: 'http://127.0.0.1:18789' },
+        logger,
+      );
+
+      await expect(
+        (service as { chat: (params: object) => Promise<unknown> }).chat({
+          model: 'm',
+          messages: [{ role: 'user', content: 'hi' }],
+        }),
+      ).rejects.toThrow('fetch failed');
+      expect(logger.error).toHaveBeenCalledWith(
+        'languageModelService chat failed',
+        expect.stringContaining('connect ECONNREFUSED 127.0.0.1:18789'),
+      );
     });
   });
 });

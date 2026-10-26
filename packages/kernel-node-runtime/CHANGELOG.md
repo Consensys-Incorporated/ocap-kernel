@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `makeKernel` takes `kernelServices`, kernel services registered before the run loop starts ([#955](https://github.com/Consensys-Incorporated/ocap-kernel/pull/955))
+- `makeKernel` takes `kernelServices`, kernel services registered before the run loop starts ([#1215](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1215))
 - Add `assertSupportedPlatform`, exported from the package root and `./daemon`, which throws on Windows ([#1157](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1157))
 - Add `onRunLoopFailure` to `makeKernel`, forwarded to `Kernel.make` and called with the error that killed the kernel's run loop ([#1005](https://github.com/MetaMask/ocap-kernel/pull/1005))
 

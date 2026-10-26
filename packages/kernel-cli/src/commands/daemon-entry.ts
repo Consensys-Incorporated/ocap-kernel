@@ -137,7 +137,8 @@ async function main(): Promise<void> {
   // Built before the kernel so it is registered before the run loop starts:
   // registered later, its store writes would land in whatever crank is open.
   const llmConfig = await readLlmConfig(ocapDir);
-  const llmService = llmConfig && (await makeLlmKernelService(llmConfig));
+  const llmService =
+    llmConfig && (await makeLlmKernelService(llmConfig, logger));
 
   const { kernel, kernelDatabase } = await makeKernel({
     resetStorage: false,
