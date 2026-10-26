@@ -20,47 +20,35 @@
   "type": "module",
   "exports": {
     ".": {
-      "import": {
-        "types": "./dist/index.d.mts",
-        "default": "./dist/index.mjs"
-      },
-      "require": {
-        "types": "./dist/index.d.cts",
-        "default": "./dist/index.cjs"
-      }
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
     },
     "./file-transport": {
-      "import": {
-        "types": "./dist/file-transport.d.mts",
-        "default": "./dist/file-transport.mjs"
-      },
-      "require": {
-        "types": "./dist/file-transport.d.cts",
-        "default": "./dist/file-transport.cjs"
-      }
+      "types": "./dist/file-transport.d.ts",
+      "default": "./dist/file-transport.js"
     },
     "./package.json": "./package.json"
   },
-  "main": "./dist/index.cjs",
-  "module": "./dist/index.mjs",
-  "types": "./dist/index.d.cts",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "files": [
     "dist/"
   ],
   "scripts": {
-    "build": "ts-bridge --project tsconfig.build.json --no-references --clean",
-    "build:docs": "typedoc",
+    "build": "rimraf --glob ./dist './*.tsbuildinfo' && tsc --project tsconfig.build.json",
+    "build:docs": "npx -y -p typedoc@0.28.20 -p typescript@6.0.3 typedoc",
     "changelog:validate": "../../scripts/validate-changelog.sh @metamask/logger",
     "changelog:update": "../../scripts/update-changelog.sh @metamask/logger",
-    "clean": "rimraf --glob './*.tsbuildinfo' ./.eslintcache ./coverage ./dist ./.turbo ./logs",
-    "lint": "yarn lint:eslint && yarn lint:misc --check && yarn constraints && yarn lint:dependencies",
+    "clean": "rimraf --glob './*.tsbuildinfo' ./coverage ./dist ./.turbo ./logs",
+    "lint": "yarn lint:oxlint && yarn lint:oxfmt && yarn constraints && yarn lint:dependencies",
     "lint:dependencies": "depcheck --quiet",
-    "lint:eslint": "eslint . --cache",
-    "lint:fix": "yarn lint:eslint --fix && yarn lint:misc --write && yarn constraints --fix && yarn lint:dependencies",
-    "lint:misc": "prettier --no-error-on-unmatched-pattern '**/*.json' '**/*.md' '**/*.html' '!**/CHANGELOG.old.md' '**/*.yml' '!.yarnrc.yml' '!merged-packages/**' --ignore-path ../../.gitignore --log-level error",
+    "lint:fix": "yarn lint:oxlint --fix && oxfmt . && yarn constraints --fix && yarn lint:dependencies",
+    "lint:oxfmt": "oxfmt --check .",
+    "lint:oxlint": "oxlint .",
     "test": "vitest run --config vitest.config.ts",
     "test:clean": "yarn test --no-cache --coverage.clean",
     "test:dev": "yarn test --mode development",
+    "test:types": "tsc --project tsconfig.json",
     "test:verbose": "yarn test --reporter verbose",
     "test:watch": "vitest --config vitest.config.ts",
     "test:dev:quiet": "yarn test:dev --reporter @ocap/repo-tools/vitest-reporters/silent"
@@ -68,38 +56,20 @@
   "dependencies": {
     "@metamask/kernel-utils": "workspace:^",
     "@metamask/streams": "workspace:^",
-    "@metamask/utils": "^11.12.1"
+    "@metamask/utils": "^12.0.0"
   },
   "devDependencies": {
     "@arethetypeswrong/cli": "^0.17.4",
     "@metamask/auto-changelog": "^6.2.1",
-    "@metamask/eslint-config": "^15.0.1",
-    "@metamask/eslint-config-nodejs": "^15.0.1",
-    "@metamask/eslint-config-typescript": "^15.0.1",
     "@metamask/kernel-shims": "workspace:^",
     "@ocap/repo-tools": "workspace:^",
-    "@ts-bridge/cli": "^0.6.3",
-    "@ts-bridge/shims": "^0.1.1",
-    "@typescript-eslint/eslint-plugin": "^8.29.0",
-    "@typescript-eslint/parser": "^8.29.0",
-    "@typescript-eslint/utils": "^8.29.0",
-    "@vitest/eslint-plugin": "^1.6.14",
     "depcheck": "^1.4.7",
-    "eslint": "^9.23.0",
-    "eslint-config-prettier": "^10.1.1",
-    "eslint-import-resolver-typescript": "^4.3.1",
-    "eslint-plugin-import-x": "^4.10.0",
-    "eslint-plugin-jsdoc": "^50.6.9",
-    "eslint-plugin-n": "^17.17.0",
-    "eslint-plugin-prettier": "^5.2.6",
-    "eslint-plugin-promise": "^7.2.1",
-    "prettier": "^3.5.3",
+    "oxfmt": "0.74.0",
+    "oxlint": "1.89.0",
     "rimraf": "^6.0.1",
     "ses": "^2.3.0",
     "turbo": "^2.9.1",
-    "typedoc": "^0.28.1",
-    "typescript": "~5.8.2",
-    "typescript-eslint": "^8.29.0",
+    "typescript": "~7.0.2",
     "vite": "^8.0.6",
     "vitest": "^4.1.3"
   },

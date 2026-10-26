@@ -1,26 +1,24 @@
 import type { VatOneResolution } from '@agoric/swingset-liveslots';
-import type { Logger } from '@metamask/logger';
+import { Logger } from '@metamask/logger';
 import { makeAbortSignalMock } from '@ocap/repo-tools/test-utils';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 import { RemoteHandle } from './RemoteHandle.ts';
+import { asRRef, asRemoteId, asVatId } from '../../../test/branded.ts';
 import { createMockRemotesFactory } from '../../../test/remotes-mocks.ts';
 import { makeMapKernelDatabase } from '../../../test/storage.ts';
 import type { KernelQueue } from '../../KernelQueue.ts';
 import { makeKernelStore } from '../../store/index.ts';
 import type { KernelStore } from '../../store/index.ts';
-import { parseRef } from '../../store/utils/parse-ref.ts';
-import type { CrankResult, EndpointMessage, RRef } from '../../types.ts';
+import type { CrankResult, ERef, EndpointMessage, RRef } from '../../types.ts';
 import type { RemoteComms } from '../types.ts';
 
 let mockKernelStore: KernelStore;
 let mockRemoteComms: RemoteComms;
 let mockKernelQueue: KernelQueue;
-const mockRemoteId = 'r0';
+const mockRemoteId = asRemoteId('r0');
 const mockRemotePeerId = 'remotePeerId';
 let mockFactory: ReturnType<typeof createMockRemotesFactory>;
-
-/* eslint-disable vitest/no-conditional-expect */
 
 /**
  * Fabricate a mock remote for testing purposes
@@ -53,14 +51,13 @@ async function receiveAndRunCrank(
   remote: RemoteHandle,
   message: string,
 ): Promise<void> {
+  const { calls } = vi.mocked(mockKernelQueue.acceptRemoteInbound).mock;
+  const queuedBefore = calls.length;
   remote.receiveFromPeer(message);
-  const queued = vi
-    .mocked(mockKernelQueue.acceptRemoteInbound)
-    .mock.calls.at(-1);
-  if (!queued) {
+  if (calls.length === queuedBefore) {
     return;
   }
-  const result = await remote.deliverInbound(queued[0].message);
+  const result = await remote.deliverInbound(message);
   await result.afterCommit?.();
 }
 
@@ -123,10 +120,10 @@ describe('RemoteHandle', () => {
 
   it('deliverMessage calls sendRemoteMessage with correct delivery message', async () => {
     const remote = makeRemote();
-    const target: RRef = 'ro+1';
+    const target = asRRef('ro+1');
     const message: EndpointMessage = {
       methargs: { body: '["method",["arg1","arg2"]]', slots: [] },
-      result: 'rp-2',
+      result: asRRef('rp-2'),
     };
     const crankResult = await deliverAndCommit(
       remote.deliverMessage(target, message),
@@ -151,7 +148,7 @@ describe('RemoteHandle', () => {
   it('writes the delivery down before the crank commits, and sends it after', async () => {
     const remote = makeRemote();
 
-    const { afterCommit } = await remote.deliverMessage('ro+1', {
+    const { afterCommit } = await remote.deliverMessage(asRRef('ro+1'), {
       methargs: { body: '["m",[]]', slots: [] },
     } as EndpointMessage);
 
@@ -242,7 +239,7 @@ describe('RemoteHandle', () => {
 
   it('deliverDropExports calls sendRemoteMessage with correct delivery message', async () => {
     const remote = makeRemote();
-    const rrefs: RRef[] = ['ro+4', 'ro+5'];
+    const rrefs: RRef[] = [asRRef('ro+4'), asRRef('ro+5')];
 
     const crankResult = await deliverAndCommit(
       remote.deliverDropExports(rrefs),
@@ -265,7 +262,7 @@ describe('RemoteHandle', () => {
 
   it('deliverRetireExports calls sendRemoteMessage with correct delivery message', async () => {
     const remote = makeRemote();
-    const rrefs: RRef[] = ['ro+4', 'ro+5'];
+    const rrefs: RRef[] = [asRRef('ro+4'), asRRef('ro+5')];
 
     const crankResult = await deliverAndCommit(
       remote.deliverRetireExports(rrefs),
@@ -288,7 +285,7 @@ describe('RemoteHandle', () => {
 
   it('deliverRetireImports calls sendRemoteMessage with correct delivery message', async () => {
     const remote = makeRemote();
-    const rrefs: RRef[] = ['ro+4', 'ro+5'];
+    const rrefs: RRef[] = [asRRef('ro+4'), asRRef('ro+5')];
 
     const crankResult = await deliverAndCommit(
       remote.deliverRetireImports(rrefs),
@@ -304,6 +301,25 @@ describe('RemoteHandle', () => {
     expect(parsed.method).toBe('deliver');
     expect(parsed.params).toStrictEqual(['retireImports', rrefs]);
     expect(crankResult).toStrictEqual({
+      didDelivery: remote.remoteId,
+      afterCommit: expect.any(Function),
+    });
+  });
+
+  it.each([
+    'deliverDropExports',
+    'deliverRetireExports',
+    'deliverRetireImports',
+  ] as const)('%s goes past the pending queue capacity', async (method) => {
+    const remote = makeRemote();
+    for (let i = 0; i < 200; i += 1) {
+      await remote.deliverBringOutYourDead();
+    }
+    await expect(remote.deliverBringOutYourDead()).rejects.toThrow(
+      'pending queue at capacity',
+    );
+
+    expect(await remote[method]([asRRef('ro+4')])).toStrictEqual({
       didDelivery: remote.remoteId,
       afterCommit: expect.any(Function),
     });
@@ -351,9 +367,6 @@ describe('RemoteHandle', () => {
       });
     });
 
-    // The run loop is what drains an arrival, so a dead one would leave the
-    // peer acknowledged by a black hole. The refusal is the queue's, at the
-    // point the message is accepted rather than when its crank comes up.
     it('lets the queue refuse an arrival for a dead run loop', () => {
       const remote = makeRemote();
       const failure = new Error('Kernel run loop died; cannot accept it');
@@ -370,6 +383,38 @@ describe('RemoteHandle', () => {
           }),
         ),
       ).toThrow(failure);
+    });
+
+    it('hands the queue the sender and the highest seq committed', async () => {
+      const remote = makeRemote();
+      const notify = (seq: number): string =>
+        JSON.stringify({ seq, method: 'deliver', params: ['notify', []] });
+      await receiveAndRunCrank(remote, notify(1));
+
+      remote.receiveFromPeer(notify(2));
+
+      expect(mockKernelQueue.acceptRemoteInbound).toHaveBeenLastCalledWith({
+        remoteId: mockRemoteId,
+        peerId: mockRemotePeerId,
+        seq: 2,
+        message: notify(2),
+        highestReceivedSeq: 1,
+      });
+    });
+
+    it('warns of an arrival the queue refuses', () => {
+      const logger = new Logger('test');
+      const warn = vi.spyOn(logger, 'warn');
+      const remote = makeRemote(logger);
+      vi.mocked(mockKernelQueue.acceptRemoteInbound).mockReturnValueOnce(false);
+
+      remote.receiveFromPeer(
+        JSON.stringify({ seq: 7, method: 'deliver', params: ['notify', []] }),
+      );
+
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining('refused message seq=7'),
+      );
     });
 
     it('does not send BOYD back when remotely triggered (ping-pong prevention)', async () => {
@@ -482,7 +527,7 @@ describe('RemoteHandle', () => {
   it('redeemOcapURL calls sendRemoteMessage correctly and handles expected reply (success)', async () => {
     const remote = makeRemote();
     const mockOcapURL = 'as if it was a URL';
-    const mockURLResolutionRRef = 'ro+6';
+    const mockURLResolutionRRef = asRRef('ro+6');
     const mockURLResolutionKRef = 'ko1';
     const expectedReplyKey = '1';
 
@@ -565,9 +610,9 @@ describe('RemoteHandle', () => {
 
   it('takes delivery of deliver message', async () => {
     const remote = makeRemote();
-    const targetRRef = 'ro+1';
+    const targetRRef = asRRef('ro+1');
     const targetKRef = 'ko1';
-    const resultRRef = 'rp+2';
+    const resultRRef = asRRef('rp+2');
     const resultKRef = 'kp1';
     const message: EndpointMessage = {
       methargs: { body: '["method",["arg1","arg2"]]', slots: [] },
@@ -609,6 +654,7 @@ describe('RemoteHandle', () => {
     expect(mockKernelQueue.resolvePromises).toHaveBeenCalledWith(
       remote.remoteId,
       [[promiseKRef, false, { body: '"resolved value"', slots: [] }]],
+      false,
     );
   });
 
@@ -617,66 +663,35 @@ describe('RemoteHandle', () => {
 
     // Note that vat v1 does not exist; we're just pretending the test object
     // came from there (because it had to come from *somewhere*).
-    const koref = mockKernelStore.initKernelObject('v1');
-    const [kpref] = mockKernelStore.initKernelPromise();
+    const koref = mockKernelStore.initKernelObject(asVatId('v1'));
     mockKernelStore.initEndpoint(remote.remoteId);
 
-    // Pretend these refs had earlier been imported into the test remote from
-    // our kernel (as if they had, say, appeared in message slots) and thence were
-    // exported at the remote end.  This way they'll be here to be dropped when
-    // a request to do so is "received".
+    // Pretend this ref had earlier been imported into the test remote from our
+    // kernel (as if it had, say, appeared in message slots) and thence was
+    // exported at the remote end.  This way it'll be here to be dropped when a
+    // request to do so is "received".
     const roref = mockKernelStore.translateRefKtoE(
       remote.remoteId,
       koref,
       true,
     );
-    const rpref = mockKernelStore.translateRefKtoE(
-      remote.remoteId,
-      kpref,
-      true,
-    );
-
-    const drops = [
-      mockKernelStore.invertRRef(roref),
-      mockKernelStore.invertRRef(rpref),
-    ];
-
-    const krefs = drops.map((rref) => {
-      const result = mockKernelStore.translateRefEtoK(remote.remoteId, rref);
-      return result;
+    expect(mockKernelStore.getObjectRefCount(koref)).toStrictEqual({
+      reachable: 1,
+      recognizable: 1,
     });
-    for (const kref of krefs) {
-      const { isPromise } = parseRef(kref);
-      if (isPromise) {
-        // 1 for the unsettled promise, 1 for the remote's c-list entry
-        expect(mockKernelStore.getRefCount(kref)).toBe(2);
-      } else {
-        expect(mockKernelStore.getObjectRefCount(kref)).toStrictEqual({
-          reachable: 1,
-          recognizable: 1,
-        });
-      }
-    }
 
-    // Now have the "other end" drop them (include seq for incoming message)
+    // Now have the "other end" drop it (include seq for incoming message)
     const dropExports = JSON.stringify({
       seq: 1,
       method: 'deliver',
-      params: ['dropExports', drops],
+      params: ['dropExports', [mockKernelStore.invertRRef(asRRef(roref))]],
     });
     await receiveAndRunCrank(remote, dropExports);
 
-    for (const kref of krefs) {
-      const { isPromise } = parseRef(kref);
-      if (isPromise) {
-        expect(mockKernelStore.getRefCount(kref)).toBe(2);
-      } else {
-        expect(mockKernelStore.getObjectRefCount(kref)).toStrictEqual({
-          reachable: 0,
-          recognizable: 1,
-        });
-      }
-    }
+    expect(mockKernelStore.getObjectRefCount(koref)).toStrictEqual({
+      reachable: 0,
+      recognizable: 1,
+    });
   });
 
   it('takes delivery of deliver retireExports', async () => {
@@ -684,7 +699,7 @@ describe('RemoteHandle', () => {
 
     // Note that vat v1 does not exist; we're just pretending the test object
     // came from there (because it had to come from *somewhere*).
-    const koref = mockKernelStore.initKernelObject('v1');
+    const koref = mockKernelStore.initKernelObject(asVatId('v1'));
     mockKernelStore.initEndpoint(remote.remoteId);
 
     // Pretend this ref had earlier been imported into the test remote from our
@@ -697,7 +712,7 @@ describe('RemoteHandle', () => {
       true,
     );
 
-    const toRetireRRef = mockKernelStore.invertRRef(roref);
+    const toRetireRRef = mockKernelStore.invertRRef(roref as RRef);
 
     const kref = mockKernelStore.translateRefEtoK(
       remote.remoteId,
@@ -729,7 +744,7 @@ describe('RemoteHandle', () => {
     const remote = makeRemote();
 
     // An object, as if it had been imported from the other end (and thus exported here)
-    const roref = 'ro+1';
+    const roref = asRRef('ro+1');
     const koref = mockKernelStore.translateRefEtoK(remote.remoteId, roref);
 
     // As if we're no longer using it (which, in fact, we weren't), which is a
@@ -749,6 +764,55 @@ describe('RemoteHandle', () => {
       mockKernelStore.translateRefKtoE(remote.remoteId, koref, false),
     ).toThrow(`unmapped kref "${koref}" endpoint="${remote.remoteId}"`);
     expect(mockKernelStore.erefToKref(remote.remoteId, roref)).toBeUndefined();
+  });
+
+  it.each([
+    { method: 'retireImports', rref: asRRef('ro+1') },
+    { method: 'retireExports', rref: asRRef('ro-1') },
+    { method: 'dropExports', rref: asRRef('ro-1') },
+  ])(
+    'ignores a $method naming an rref it no longer has',
+    async ({ method, rref }) => {
+      const logger = new Logger();
+      vi.spyOn(logger, 'warn');
+      const remote = makeRemote(logger);
+      mockKernelStore.initEndpoint(remote.remoteId);
+
+      const delivery = JSON.stringify({
+        seq: 1,
+        method: 'deliver',
+        params: [method, [rref]],
+      });
+
+      await receiveAndRunCrank(remote, delivery);
+      expect(mockKernelStore.erefToKref(remote.remoteId, rref)).toBeUndefined();
+      expect(logger.warn).toHaveBeenCalledWith(
+        `${mockRemotePeerId.slice(0, 8)}:: ${method} names ${rref}, which is not in the c-list; skipped`,
+      );
+    },
+  );
+
+  it.each([
+    { method: 'retireImports', rref: 'ro-1' },
+    { method: 'retireExports', rref: 'ro+1' },
+    { method: 'dropExports', rref: 'rp-1' },
+    { method: 'dropExports', rref: 'ko1' },
+  ])('refuses a $method naming $rref', async ({ method, rref }) => {
+    const remote = makeRemote();
+    mockKernelStore.initEndpoint(remote.remoteId);
+
+    const delivery = JSON.stringify({
+      seq: 1,
+      method: 'deliver',
+      params: [method, [rref]],
+    });
+
+    await expect(remote.deliverInbound(delivery)).rejects.toThrow(
+      `${method} names ${rref}, which is not`,
+    );
+    expect(
+      mockKernelStore.erefToKref(remote.remoteId, rref as ERef),
+    ).toBeUndefined();
   });
 
   it('takes delivery of bogus deliver', async () => {
@@ -789,12 +853,11 @@ describe('RemoteHandle', () => {
     // Verify reply was sent with seq/ack via sendRemoteMessage
     expect(mockRemoteComms.sendRemoteMessage).toHaveBeenCalled();
     const sentMessage = JSON.parse(
-      mockRemoteComms.sendRemoteMessage.mock.calls[0]?.[1] ?? '{}',
+      vi.mocked(mockRemoteComms.sendRemoteMessage).mock.calls[0]?.[1] ?? '{}',
     );
     expect(sentMessage.method).toBe('redeemURLReply');
     expect(sentMessage.params).toStrictEqual([true, mockReplyKey, replyRRef]);
     expect(sentMessage.seq).toBe(1); // First outgoing message gets seq 1
-    // Reply is sent after commit, so ACK can be piggybacked
     expect(sentMessage.ack).toBe(1);
     expect(
       mockKernelStore.translateRefKtoE(remote.remoteId, replyKRef, false),
@@ -827,7 +890,7 @@ describe('RemoteHandle', () => {
     // Verify error reply was sent with seq/ack via sendRemoteMessage
     expect(mockRemoteComms.sendRemoteMessage).toHaveBeenCalled();
     const sentMessage = JSON.parse(
-      mockRemoteComms.sendRemoteMessage.mock.calls[0]?.[1] ?? '{}',
+      vi.mocked(mockRemoteComms.sendRemoteMessage).mock.calls[0]?.[1] ?? '{}',
     );
     expect(sentMessage.method).toBe('redeemURLReply');
     expect(sentMessage.params).toStrictEqual([
@@ -836,11 +899,10 @@ describe('RemoteHandle', () => {
       errorMessage,
     ]);
     expect(sentMessage.seq).toBe(1); // First outgoing message gets seq 1
-    // Reply is sent after commit, so ACK can be piggybacked
     expect(sentMessage.ack).toBe(1);
   });
 
-  it('handleRemoteMessage rejects bogus message type', async () => {
+  it('rejects a bogus message type', async () => {
     const remote = makeRemote();
     // Include seq for incoming message
     const request = JSON.stringify({
@@ -987,8 +1049,8 @@ describe('RemoteHandle', () => {
     const remote = makeRemote();
     const mockOcapURL1 = 'url1';
     const mockOcapURL2 = 'url2';
-    const mockURLResolutionRRef1 = 'ro+1';
-    const mockURLResolutionRRef2 = 'ro+2';
+    const mockURLResolutionRRef1 = asRRef('ro+1');
+    const mockURLResolutionRRef2 = asRRef('ro+2');
 
     // Start two concurrent redemptions
     const promise1 = remote.redeemOcapURL(mockOcapURL1);
@@ -1251,8 +1313,6 @@ describe('RemoteHandle', () => {
 
       await receiveAndRunCrank(remote, standaloneAck);
 
-      // An acknowledgement is not a delivery: it is handled where it arrives
-      // and never reaches the run queue.
       expect(mockKernelQueue.acceptRemoteInbound).not.toHaveBeenCalled();
     });
 
@@ -1293,7 +1353,8 @@ describe('RemoteHandle', () => {
     });
 
     it('acknowledges a retransmission the crank will discard as a duplicate', async () => {
-      let sendAck: (() => void) | undefined;
+      const noAck = (): void => undefined;
+      let sendAck = noAck;
       vi.spyOn(globalThis, 'setTimeout').mockImplementation(((
         callback: () => void,
       ) => {
@@ -1308,13 +1369,10 @@ describe('RemoteHandle', () => {
       });
       await receiveAndRunCrank(remote, message);
       vi.mocked(mockRemoteComms.sendRemoteMessage).mockClear();
-      sendAck = undefined;
+      sendAck = noAck;
 
-      // The peer retransmits, which is it telling us it never got our
-      // acknowledgement. Arming the timer only for messages the crank accepts
-      // would leave it retransmitting to silence until it tore the link down.
       await receiveAndRunCrank(remote, message);
-      sendAck?.();
+      sendAck();
 
       expect(mockRemoteComms.sendRemoteMessage).toHaveBeenCalledOnce();
     });
@@ -1334,8 +1392,6 @@ describe('RemoteHandle', () => {
         }),
       );
 
-      // A piggybacked ack dropped here leaves the kernel retransmitting a
-      // message the peer has already taken.
       expect(
         mockKernelStore.getPendingMessage(mockRemoteId, 1),
       ).toBeUndefined();
@@ -1808,12 +1864,14 @@ describe('RemoteHandle', () => {
     });
 
     /**
-     * Trigger the most recent ACK timer (skipping any cleared/no-op slots).
+     * Trigger the most recent timer still armed, once: one that has fired or
+     * been cleared is skipped, so a handle that arms no new one stops here.
      */
     function fireLastAckTimer(): void {
       for (let i = pendingTimers.length - 1; i >= 0; i -= 1) {
         const timer = pendingTimers[i];
         if (timer && timer.delay > 0) {
+          pendingTimers[i] = { callback: () => undefined, delay: 0 };
           timer.callback();
           return;
         }
@@ -1868,7 +1926,7 @@ describe('RemoteHandle', () => {
       expect(sendCalls).toHaveLength(2);
     });
 
-    it('aborts retransmit and fires give-up when sendRemoteMessage signals peer restart', async () => {
+    it('stops retransmitting at a peer restart and gives up only when the retries run out', async () => {
       const onGiveUp = vi.fn();
       const remote = RemoteHandle.make({
         remoteId: mockRemoteId,
@@ -1901,9 +1959,66 @@ describe('RemoteHandle', () => {
       fireLastAckTimer();
       await drainSends();
 
-      // Only iteration 1 runs before the terminal error short-circuits.
       expect(mockRemoteComms.sendRemoteMessage).toHaveBeenCalledTimes(1);
+      expect(onGiveUp).not.toHaveBeenCalled();
+
+      // The first expiry was retry 1 of MAX_RETRIES (3); the fourth gives up.
+      for (let expiry = 2; expiry <= 4; expiry += 1) {
+        fireLastAckTimer();
+        await drainSends();
+      }
       expect(onGiveUp).toHaveBeenCalledWith(mockRemotePeerId);
+    });
+
+    it('does not give up on a remote a restart holds', async () => {
+      const onGiveUp = vi.fn();
+      const remote = RemoteHandle.make({
+        remoteId: mockRemoteId,
+        peerId: mockRemotePeerId,
+        kernelStore: mockKernelStore,
+        kernelQueue: mockKernelQueue,
+        remoteComms: mockRemoteComms,
+        ackTimeoutMs: 100,
+        onGiveUp,
+      });
+      await deliverAndCommit(
+        remote.deliverNotify([['rp+1', false, { body: '"a"', slots: [] }]]),
+      );
+      // Unanswered while the peer was down.
+      for (let expiry = 1; expiry <= 3; expiry += 1) {
+        fireLastAckTimer();
+        await drainSends();
+      }
+
+      remote.holdForRestart();
+      // Sent while held, which arms the timer again.
+      await deliverAndCommit(
+        remote.deliverNotify([['rp+2', false, { body: '"b"', slots: [] }]]),
+      );
+      for (let expiry = 1; expiry <= 4; expiry += 1) {
+        fireLastAckTimer();
+        await drainSends();
+      }
+
+      expect(onGiveUp).not.toHaveBeenCalled();
+    });
+
+    it('sends no standalone ACK while held for a restart', async () => {
+      const remote = makeRemote();
+      await receiveAndRunCrank(
+        remote,
+        JSON.stringify({
+          seq: 1,
+          method: 'deliver',
+          params: ['bringOutYourDead'],
+        }),
+      );
+      remote.holdForRestart();
+
+      // The delayed-ACK timer, the only one armed.
+      fireLastAckTimer();
+      await drainSends();
+      expect(mockRemoteComms.sendRemoteMessage).not.toHaveBeenCalled();
     });
 
     it('logs and continues on transient send errors', async () => {
@@ -1941,12 +2056,6 @@ describe('RemoteHandle', () => {
 
   describe('first-send terminal errors', () => {
     it.each([
-      [
-        'PeerRestartedError',
-        Object.assign(new Error('peer restarted'), {
-          name: 'PeerRestartedError',
-        }),
-      ],
       [
         'IntentionalCloseError',
         Object.assign(new Error('intentional close'), {
@@ -1989,6 +2098,134 @@ describe('RemoteHandle', () => {
         expect(onGiveUp).toHaveBeenCalledWith(mockRemotePeerId);
       },
     );
+
+    it('leaves a peer restart to the incarnation crank', async () => {
+      const onGiveUp = vi.fn();
+      const remote = RemoteHandle.make({
+        remoteId: mockRemoteId,
+        peerId: mockRemotePeerId,
+        kernelStore: mockKernelStore,
+        kernelQueue: mockKernelQueue,
+        remoteComms: mockRemoteComms,
+        ackTimeoutMs: 100,
+        onGiveUp,
+      });
+
+      vi.mocked(mockRemoteComms.sendRemoteMessage).mockRejectedValueOnce(
+        Object.assign(new Error('peer restarted'), {
+          name: 'PeerRestartedError',
+        }),
+      );
+
+      const redeem = remote.redeemOcapURL('ocap:something@peer,relay');
+      await drainSends();
+      expect(onGiveUp).not.toHaveBeenCalled();
+
+      remote.finalizePeerRestart();
+      await expect(redeem).rejects.toThrow('Remote peer restarted');
+    });
+  });
+
+  describe('restart hold', () => {
+    it('sends nothing while held, and sends again once the restart is handled', async () => {
+      const remote = makeRemote();
+      remote.holdForRestart();
+
+      await deliverAndCommit(remote.deliverBringOutYourDead());
+      expect(mockRemoteComms.sendRemoteMessage).not.toHaveBeenCalled();
+
+      remote.handlePeerRestart();
+      await deliverAndCommit(remote.deliverBringOutYourDead());
+      expect(sentStrings().map((sent) => JSON.parse(sent).seq)).toStrictEqual([
+        1,
+      ]);
+    });
+
+    it('refuses a redemption while held, writing nothing down', async () => {
+      const remote = makeRemote();
+      remote.holdForRestart();
+
+      await expect(remote.redeemOcapURL('ocap:x@peer')).rejects.toThrow(
+        'Remote peer restarted',
+      );
+      expect(
+        mockKernelStore.getPendingMessage(mockRemoteId, 1),
+      ).toBeUndefined();
+    });
+
+    it('retires the sends waiting their turn, which a release does not revive', async () => {
+      const remote = makeRemote();
+      let finishFirst!: () => void;
+      vi.mocked(mockRemoteComms.sendRemoteMessage).mockImplementationOnce(
+        async () =>
+          new Promise<undefined>((resolve) => {
+            finishFirst = () => resolve(undefined);
+          }),
+      );
+      await deliverAndCommit(remote.deliverBringOutYourDead());
+      await deliverAndCommit(remote.deliverBringOutYourDead());
+      expect(sentStrings()).toHaveLength(1);
+
+      remote.holdForRestart();
+      // The wipe that discards the waiting restart.
+      mockKernelStore.clearRemoteSeqState(mockRemoteId);
+      remote.releaseRestartHold();
+      finishFirst();
+      await drainSends();
+      expect(sentStrings()).toHaveLength(1);
+
+      await deliverAndCommit(remote.deliverBringOutYourDead());
+      expect(sentStrings().map((sent) => JSON.parse(sent).seq)).toStrictEqual([
+        1, 1,
+      ]);
+    });
+
+    /**
+     * A notify from the peer.
+     *
+     * @param seq - Its sequence number.
+     * @returns The message, as it arrives.
+     */
+    const notifyFromPeer = (seq: number): string =>
+      JSON.stringify({
+        seq,
+        method: 'deliver',
+        params: ['notify', [['rp+3', false, { body: '"v"', slots: [] }]]],
+      });
+
+    it('takes the replacing incarnation’s first message once a wipe releases it', async () => {
+      const remote = makeRemote();
+      await receiveAndRunCrank(remote, notifyFromPeer(1));
+      remote.holdForRestart();
+      mockKernelStore.clearRemoteSeqState(mockRemoteId);
+      remote.releaseRestartHold();
+
+      await receiveAndRunCrank(remote, notifyFromPeer(1));
+      expect(mockKernelQueue.resolvePromises).toHaveBeenCalledTimes(2);
+    });
+
+    it('leaves a pending redemption to its timeout when a wipe releases the hold', async () => {
+      const remote = makeRemote();
+      const settled = vi.fn();
+      remote.redeemOcapURL('ocap:x@peer').then(settled).catch(settled);
+      await drainSends();
+      remote.holdForRestart();
+      mockKernelStore.clearRemoteSeqState(mockRemoteId);
+      remote.releaseRestartHold();
+      await drainSends();
+
+      expect(settled).not.toHaveBeenCalled();
+      remote.cleanup();
+    });
+
+    it('leaves a remote that no restart holds as it is when released', async () => {
+      const remote = makeRemote();
+      await receiveAndRunCrank(remote, notifyFromPeer(1));
+      remote.releaseRestartHold();
+
+      await receiveAndRunCrank(remote, notifyFromPeer(1));
+      expect(mockKernelQueue.resolvePromises).toHaveBeenCalledOnce();
+    });
   });
 
   describe('handlePeerRestart c-list teardown', () => {
@@ -1997,7 +2234,7 @@ describe('RemoteHandle', () => {
 
       // Seed an object export from the peer (peer-allocated eref ro+5
       // mapped to a fresh kernel object).
-      const eref = 'ro+5';
+      const eref = asRRef('ro+5');
       const kref = mockKernelStore.exportFromEndpoint(mockRemoteId, eref);
 
       // Sanity: c-list is populated in both directions before restart.

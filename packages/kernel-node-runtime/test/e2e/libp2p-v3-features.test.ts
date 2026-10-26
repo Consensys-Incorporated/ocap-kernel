@@ -101,13 +101,19 @@ describe.sequential('libp2p v3 Features E2E', () => {
     it(
       'recovers queued message after peer:disconnect triggers reconnection',
       async () => {
+        // The fast test backoff spends the default 10 connection attempts a
+        // minute while kernel2 is down, and every send after that fails.
+        const reconnectOptions = {
+          ...testBackoffOptions,
+          maxConnectionAttemptsPerMinute: 500,
+        };
         const { aliceRef, bobURL } = await setupAliceAndBob(
           kernel1,
           kernel2,
           kernelStore1,
           kernelStore2,
           testRelays,
-          testBackoffOptions,
+          reconnectOptions,
         );
 
         // Establish initial communication
@@ -132,16 +138,15 @@ describe.sequential('libp2p v3 Features E2E', () => {
           [bobURL, 'hello', ['Alice']],
         );
 
-        // Restart kernel2 — reconnection loop delivers the queued message
+        // Restart kernel2; kernel1's ACK retransmit delivers the queued message
         const bobConfig = makeRemoteVatConfig('Bob');
         const restartResult = await restartKernelAndReloadVat(
           dbFilename2,
           false,
           testRelays,
           bobConfig,
-          testBackoffOptions,
+          reconnectOptions,
         );
-        // eslint-disable-next-line require-atomic-updates
         kernel2 = restartResult.kernel;
 
         const result = kunser(await recoveryPromise) as string;

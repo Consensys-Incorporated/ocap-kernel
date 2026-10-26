@@ -143,7 +143,7 @@ After=network.target
 Type=simple
 User=root
 WorkingDirectory=/root/ocap-kernel
-ExecStart=/root/.nvm/versions/node/v24.14.0/bin/node packages/kernel-cli/dist/app.mjs relay
+ExecStart=/root/.nvm/versions/node/v24.14.0/bin/node packages/kernel-cli/dist/app.js relay
 Restart=on-failure
 
 [Install]

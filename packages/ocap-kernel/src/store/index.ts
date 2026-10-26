@@ -124,7 +124,7 @@ type CachedValueField = {
  * @returns A KernelStore object that maps various persistent kernel data
  * structures onto `kdb`.
  */
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+// oxlint-disable-next-line typescript/explicit-function-return-type
 export function makeKernelStore(kdb: KernelDatabase, logger?: Logger) {
   // Initialize core state
 
@@ -311,7 +311,6 @@ export function makeKernelStore(kdb: KernelDatabase, logger?: Logger) {
     if (existing) {
       return existing;
     }
-    // eslint-disable-next-line n/no-unsupported-features/node-builtins
     const newId = globalThis.crypto.randomUUID();
     context.kv.set('incarnationId', newId);
     return newId;

@@ -63,9 +63,9 @@ function callOnce(socket, request) {
      * Detach both listeners so we don't double-fire on the socket.
      */
     const detach = () => {
-      // eslint-disable-next-line no-use-before-define
+      // oxlint-disable-next-line no-use-before-define
       socket.removeListener('data', onData);
-      // eslint-disable-next-line no-use-before-define
+      // oxlint-disable-next-line no-use-before-define
       socket.removeListener('error', onError);
     };
     /**

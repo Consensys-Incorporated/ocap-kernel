@@ -206,7 +206,7 @@ async function generateKeyPair(
   localId: number | undefined,
 ): Promise<PrivateKey> {
   let seed;
-  // eslint-disable-next-line no-negated-condition
+  // oxlint-disable-next-line no-negated-condition
   if (localId !== undefined) {
     if (localId < 1 || localId > 255) {
       throw new Error(`localId must be a Uint8 1<=255. Received: ${localId}`);
@@ -215,7 +215,6 @@ async function generateKeyPair(
     seed = new Uint8Array(32);
     seed[0] = localId;
   } else {
-    // eslint-disable-next-line n/no-unsupported-features/node-builtins
     seed = globalThis.crypto.getRandomValues(new Uint8Array(32));
   }
   return await generateKeyPairFromSeed('Ed25519', seed);

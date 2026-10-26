@@ -11,7 +11,7 @@ import type { TestPowers } from '../test-powers.ts';
  * @param vatPowers.logger - The logger for the vat.
  * @returns The root object.
  */
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+// oxlint-disable-next-line typescript/explicit-function-return-type
 export async function buildRootObject(vatPowers: TestPowers) {
   const tlog = unwrapTestLogger(vatPowers, 'endowment-user');
 
@@ -54,7 +54,9 @@ export async function buildRootObject(vatPowers: TestPowers) {
         },
       };
       try {
-        const response = await fetch(twoFaced as unknown as RequestInfo);
+        const response = await fetch(
+          twoFaced as unknown as Parameters<typeof fetch>[0],
+        );
         tlog(`fetched: ${response.headers.get('x-fetched-url')}`);
       } catch (error) {
         tlog(`error: ${String(error)}`);
@@ -89,6 +91,7 @@ export async function buildRootObject(vatPowers: TestPowers) {
        */
       class SpoofedRequest extends Request {
         /** @returns The decoy URL, not the URL this request was built with. */
+        // @ts-expect-error Deliberately shadows the `url` property with a getter.
         override get url(): string {
           return decoyUrl;
         }

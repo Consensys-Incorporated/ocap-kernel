@@ -7,7 +7,7 @@ import { describe, it } from 'vitest';
 import { runLmsChatKernelTest } from './lms-chat.ts';
 
 describe.sequential('lms-kernel', () => {
-  // eslint-disable-next-line vitest/expect-expect
+  // oxlint-disable-next-line vitest/expect-expect
   it('sends a chat message through the kernel and receives a response', async () => {
     const { chat } = makeOpenV1NodejsService({
       endowments: { fetch: makeMockOpenV1Fetch(['Hello.']) },

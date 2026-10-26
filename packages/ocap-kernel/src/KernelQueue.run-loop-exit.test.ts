@@ -11,10 +11,12 @@ import type {
   CrankResult,
   EndpointMessage,
   PlatformServices,
+  KRef,
   VatId,
 } from './types.ts';
 import { VatHandle } from './vats/VatHandle.ts';
 import { VatSyscall } from './vats/VatSyscall.ts';
+import { asVatId } from '../test/branded.ts';
 
 /*
  * Invariant M2: each kind of caller waiting on queued work is rejected, not
@@ -32,11 +34,11 @@ import { VatSyscall } from './vats/VatSyscall.ts';
  * @param vatId - The vat whose delivery this is.
  * @returns The crank result.
  */
-function explosion(vatId: string): CrankResult {
+function explosion(vatId: VatId): CrankResult {
   return {
-    didDelivery: vatId as VatId,
+    didDelivery: vatId,
     terminate: {
-      vatId: 'v404',
+      vatId: asVatId('v404'),
       reject: true,
       info: makeFatalKernelError('INTERNAL_ERROR', 'exploded'),
     },
@@ -117,12 +119,16 @@ async function setUp() {
     },
   });
   const vatIdOf = (sourceSpec: string): VatId =>
-    kernel.getVats().find(({ config }) => config.sourceSpec === sourceSpec)
-      ?.id as VatId;
+    kernel
+      .getVats()
+      .find(
+        ({ config }) =>
+          'sourceSpec' in config && config.sourceSpec === sourceSpec,
+      )?.id as VatId;
   return {
     kernel,
-    waiterRoot: vatRootKrefs.waiter as string,
-    doomedRoot: vatRootKrefs.doomed as string,
+    waiterRoot: vatRootKrefs.waiter as KRef,
+    doomedRoot: vatRootKrefs.doomed as KRef,
     waiterId: vatIdOf('waiter.js'),
     doomedId: vatIdOf('doomed.js'),
     received,
@@ -165,16 +171,30 @@ async function waitThrough(
   return settlement;
 }
 
+async function explodeInCrank({ kernel, doomedRoot }: Harness): Promise<void> {
+  kernel.queueMessage(doomedRoot, 'explode', []).catch(() => undefined);
+  await vi.waitFor(async () =>
+    expect((await kernel.getStatus()).runLoop.state).toBe('failed'),
+  );
+}
+
+/**
+ * End the crank a vat sent `stall` holds open by killing the run loop.
+ *
+ * @param harness - The kernel and the stalled crank's `release`.
+ */
+async function explodeStalledCrank(harness: Harness): Promise<void> {
+  harness.release(explosion(harness.waiterId));
+  await vi.waitFor(async () =>
+    expect((await harness.kernel.getStatus()).runLoop.state).toBe('failed'),
+  );
+}
+
 describe('a queueMessage caller the vat has not answered', () => {
   it.each([
     [
       'is rejected when the run loop dies in a crank',
-      async ({ kernel, doomedRoot }: Harness): Promise<void> => {
-        kernel.queueMessage(doomedRoot, 'explode', []).catch(() => undefined);
-        await vi.waitFor(async () =>
-          expect((await kernel.getStatus()).runLoop.state).toBe('failed'),
-        );
-      },
+      explodeInCrank,
       'rejected',
     ],
     [
@@ -199,15 +219,7 @@ describe('a queueMessage caller the vat has not answered', () => {
 
 describe('a restartVat or terminateVat caller the run loop has not reached', () => {
   const exits = [
-    [
-      'the run loop dies in a crank',
-      async ({ kernel, release, waiterId }: Harness): Promise<void> => {
-        release(explosion(waiterId));
-        await vi.waitFor(async () =>
-          expect((await kernel.getStatus()).runLoop.state).toBe('failed'),
-        );
-      },
-    ],
+    ['the run loop dies in a crank', explodeStalledCrank],
     ...(
       [
         ['the kernel is reset', async (kernel: Kernel) => kernel.reset()],
@@ -247,7 +259,9 @@ describe('a restartVat or terminateVat caller the run loop has not reached', () 
 
   it.each(
     requests.flatMap(([request, makeRequest]) =>
-      exits.map(([exitTitle, exit]) => [request, exitTitle, makeRequest, exit]),
+      exits.map(
+        ([exitTitle, exit]) => [request, exitTitle, makeRequest, exit] as const,
+      ),
     ),
   )(
     'a %s caller is rejected when %s',
@@ -275,4 +289,21 @@ describe('a restartVat or terminateVat caller the run loop has not reached', () 
       expect(settlement).toBe('rejected');
     },
   );
+});
+
+describe('a queueMessage caller whose message waits for the open crank', () => {
+  it('is rejected when that crank kills the run loop', async () => {
+    const { kernel, waiterRoot, doomedRoot, doomedId, received, release } =
+      await setUp();
+    kernel.queueMessage(doomedRoot, 'stall', []).catch(() => undefined);
+    await vi.waitFor(() => expect(received).toContain('stall'));
+
+    const answered = kernel.queueMessage(waiterRoot, 'work', []);
+    release(explosion(doomedId));
+
+    await expect(answered).rejects.toThrow(
+      'Kernel run loop died; this message result will never be delivered',
+    );
+    expect(received).not.toContain('work');
+  });
 });

@@ -1,6 +1,6 @@
 import { makeSQLKernelDatabase } from '@metamask/kernel-store/sqlite/nodejs';
 import { waitUntilQuiescent } from '@metamask/kernel-utils';
-import type { VatId } from '@metamask/ocap-kernel';
+import type { KRef, VatId } from '@metamask/ocap-kernel';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -12,7 +12,7 @@ import {
 
 describe('logger', () => {
   it('captures logs from vat', async () => {
-    const vatId: VatId = 'v1';
+    const vatId = 'v1' as VatId;
     const name = 'Alice';
     const { logger, entries } = makeTestLogger();
     const database = await makeSQLKernelDatabase({});
@@ -31,7 +31,7 @@ describe('logger', () => {
     expect(vats).toStrictEqual([vatId]);
 
     await waitUntilQuiescent();
-    await kernel.queueMessage('ko4', 'foo', []);
+    await kernel.queueMessage('ko4' as KRef, 'foo', []);
 
     await waitUntilQuiescent();
     const vatLogs = extractTestLogs(entries, vatId);

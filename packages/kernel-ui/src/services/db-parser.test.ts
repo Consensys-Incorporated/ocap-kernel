@@ -1,3 +1,4 @@
+import type { KRef } from '@metamask/ocap-kernel';
 import { describe, it, expect } from 'vitest';
 
 import type { ObjectRegistry } from '../types.ts';
@@ -108,7 +109,7 @@ describe('parseObjectRegistry', () => {
           exportedPromises: [
             {
               eref: 'p+5',
-              kref: 'kp2',
+              kref: 'kp2' as KRef,
               state: 'fulfilled',
               toVats: ['v2'],
               value: {
@@ -118,7 +119,7 @@ describe('parseObjectRegistry', () => {
             },
             {
               eref: 'p+6',
-              kref: 'kp3',
+              kref: 'kp3' as KRef,
               state: 'fulfilled',
               toVats: ['v3'],
               value: {
@@ -131,13 +132,13 @@ describe('parseObjectRegistry', () => {
             {
               eref: 'o-1',
               fromVat: 'v2',
-              kref: 'ko2',
+              kref: 'ko2' as KRef,
               refCount: '1,1',
             },
             {
               eref: 'o-2',
               fromVat: 'v3',
-              kref: 'ko3',
+              kref: 'ko3' as KRef,
               refCount: '1,1',
             },
           ],
@@ -145,7 +146,7 @@ describe('parseObjectRegistry', () => {
             {
               eref: 'p-1',
               fromVat: null,
-              kref: 'kp1',
+              kref: 'kp1' as KRef,
               state: 'fulfilled',
               value: {
                 body: '#"#undefined"',
@@ -155,14 +156,14 @@ describe('parseObjectRegistry', () => {
             {
               eref: 'p-2',
               fromVat: null,
-              kref: 'kp4',
+              kref: 'kp4' as KRef,
               state: 'fulfilled',
               value: {
                 body: '#"$0.Alleged: SharedObject"',
                 slots: [
                   {
                     eref: 'o+10',
-                    kref: 'ko4',
+                    kref: 'ko4' as KRef,
                     vat: 'v1',
                   },
                 ],
@@ -176,14 +177,14 @@ describe('parseObjectRegistry', () => {
           ownedObjects: [
             {
               eref: 'o+0',
-              kref: 'ko1',
+              kref: 'ko1' as KRef,
               refCount: '1,1',
               revoked: 'false',
               toVats: [],
             },
             {
               eref: 'o+10',
-              kref: 'ko4',
+              kref: 'ko4' as KRef,
               refCount: '3,3',
               revoked: 'false',
               toVats: ['v2'],
@@ -196,7 +197,7 @@ describe('parseObjectRegistry', () => {
             {
               eref: 'o-1',
               fromVat: 'v1',
-              kref: 'ko4',
+              kref: 'ko4' as KRef,
               refCount: '3,3',
             },
           ],
@@ -204,7 +205,7 @@ describe('parseObjectRegistry', () => {
             {
               eref: 'p-1',
               fromVat: 'v1',
-              kref: 'kp2',
+              kref: 'kp2' as KRef,
               state: 'fulfilled',
               value: {
                 body: '#"vat Bob got "hello" from Alice"',
@@ -219,7 +220,7 @@ describe('parseObjectRegistry', () => {
           ownedObjects: [
             {
               eref: 'o+0',
-              kref: 'ko2',
+              kref: 'ko2' as KRef,
               refCount: '1,1',
               revoked: 'true',
               toVats: ['v1'],
@@ -233,7 +234,7 @@ describe('parseObjectRegistry', () => {
             {
               eref: 'p-1',
               fromVat: 'v1',
-              kref: 'kp3',
+              kref: 'kp3' as KRef,
               state: 'fulfilled',
               value: {
                 body: '#"vat Carol got "hello" from Alice"',
@@ -248,7 +249,7 @@ describe('parseObjectRegistry', () => {
           ownedObjects: [
             {
               eref: 'o+0',
-              kref: 'ko3',
+              kref: 'ko3' as KRef,
               refCount: '1,1',
               revoked: 'false',
               toVats: ['v1'],

@@ -28,7 +28,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
-OCAP_BIN="$REPO_ROOT/packages/kernel-cli/dist/app.mjs"
+OCAP_BIN="$REPO_ROOT/packages/kernel-cli/dist/app.js"
 CONSUMER_HOME="${OCAP_CONSUMER_HOME:-${HOME}/.ocap-consumer}"
 MATCHER_HOME="${HOME}/.ocap"
 LLM_BRIDGE_PID_PATH="$MATCHER_HOME/matcher-llm-bridge.pid"

@@ -41,7 +41,7 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   main().catch((error: unknown) => {
     const message =
       error instanceof Error ? (error.stack ?? error.message) : String(error);
-    // eslint-disable-next-line no-console
+    // oxlint-disable-next-line no-console
     console.error(`[llm-bridge] fatal: ${message}`);
     process.exitCode = 1;
   });
@@ -52,14 +52,14 @@ if (import.meta.url === `file://${process.argv[1]}`) {
  */
 async function main(): Promise<void> {
   const socketPath =
-    // eslint-disable-next-line n/no-process-env
+    // oxlint-disable-next-line node/no-process-env
     process.env.LLM_BRIDGE_SOCKET ?? process.argv[2];
   if (!socketPath) {
     throw new Error(
       'expected the kernel IO socket path as the first positional argument or in $LLM_BRIDGE_SOCKET',
     );
   }
-  // eslint-disable-next-line n/no-process-env
+  // oxlint-disable-next-line node/no-process-env
   const token = process.env.OPENCLAW_GATEWAY_TOKEN;
   if (!token) {
     throw new Error(
@@ -67,14 +67,14 @@ async function main(): Promise<void> {
     );
   }
   const baseUrl =
-    // eslint-disable-next-line n/no-process-env
+    // oxlint-disable-next-line node/no-process-env
     process.env.OPENCLAW_GATEWAY_URL ?? DEFAULT_GATEWAY_URL;
   const model =
-    // eslint-disable-next-line n/no-process-env
+    // oxlint-disable-next-line node/no-process-env
     process.env.OPENCLAW_AGENT_MODEL ?? DEFAULT_AGENT_MODEL;
 
   const log = (message: string): void => {
-    // eslint-disable-next-line no-console
+    // oxlint-disable-next-line no-console
     console.error(`[llm-bridge] ${message}`);
   };
   const client = makeOpenClawClient({ baseUrl, token, model, log });

@@ -3,7 +3,7 @@ import { makePromiseKit } from '@endo/promise-kit';
 import { stringify } from '@metamask/kernel-utils';
 
 import { processGCActionSet } from './garbage-collection/garbage-collection.ts';
-import { kser } from './liveslots/kernel-marshal.ts';
+import { kser, makeKernelError } from './liveslots/kernel-marshal.ts';
 import type { KernelStore } from './store/index.ts';
 import type {
   CrankResult,
@@ -11,6 +11,7 @@ import type {
   KRef,
   KernelMessage,
   KernelOneResolution,
+  PeerArrival,
   RemoteId,
   RunLoopStatus,
   RunLoopItem,
@@ -23,20 +24,51 @@ import type {
   RunQueueItemSend,
   VatId,
 } from './types.ts';
+import { insistKRef } from './types.ts';
 import { Fail } from './utils/assert.ts';
 
 /**
- * The most arrivals held for one remote at once: as many as a peer keeps
- * unacknowledged, so a refusal takes a peer that gave up on a window of
- * messages and started another while this kernel still holds the first.
+ * The most arrivals held for one remote at once, matching the window a peer
+ * keeps unacknowledged (`MAX_PENDING_MESSAGES` in `RemoteHandle.ts`). A peer
+ * goes past it only after giving up on a window this kernel still holds, or
+ * with GC deliveries and `redeemURL` replies, which are exempt from that
+ * window.
  */
 const MAX_ARRIVALS_PER_REMOTE = 200;
 
-type HeldRequest = RunQueueItemRestartVat | RunQueueItemTerminateVat;
+type Subscription = {
+  resolve: (value: CapData<KRef>) => void;
+  reject: (reason: unknown) => void;
+};
+
+type HeldMessage = {
+  type: 'queueMessage';
+  target: KRef;
+  methargs: CapData<KRef>;
+  subscription: Subscription;
+};
+
+type HeldWrite = {
+  type: 'write';
+  write: () => void;
+  reject: (error: Error) => void;
+  outlivesStop: boolean;
+};
+
+type HeldRequest =
+  | RunQueueItemRestartVat
+  | RunQueueItemTerminateVat
+  | HeldMessage
+  | HeldWrite;
+
+type NotThenable<Value> = Value extends { then: unknown } ? never : Value;
 
 /** What a caller awaiting queued work is told when the run loop dies. */
 const DEAD_RUN_LOOP_WORK =
   'Kernel run loop died; this work will never be carried out';
+
+const DEAD_RUN_LOOP_RESULT =
+  'Kernel run loop died; this message result will never be delivered';
 
 type RunLoopState =
   | Exclude<RunLoopStatus, { state: 'failed' }>
@@ -59,13 +91,7 @@ export class KernelQueue {
   ) => Promise<void>;
 
   /** Message results that the kernel itself has subscribed to */
-  readonly subscriptions: Map<
-    KRef,
-    {
-      resolve: (value: CapData<KRef>) => void;
-      reject: (reason: unknown) => void;
-    }
-  > = new Map();
+  readonly subscriptions: Map<KRef, Subscription> = new Map();
 
   /**
    * Resolutions made during this crank of promises that have kernel
@@ -82,12 +108,15 @@ export class KernelQueue {
    * Requests made while a crank was open, for the run loop to write once it
    * ends, unless it ends by killing the loop. Written into the crank, they
    * would be rolled back with it if it aborts, and their callers would wait on
-   * work nothing is going to do.
+   * work nothing is going to do, or be left holding IDs the store gives out
+   * again.
    */
   #heldRequests: HeldRequest[] = [];
 
   /** Thunk to signal run queue transition from empty to non-empty */
   #wakeUpTheRunQueue: (() => void) | null;
+
+  #isOffline: (endpointId: EndpointId) => boolean = () => false;
 
   /**
    * Whether the run loop's catch may still roll this crank's delivery back.
@@ -114,13 +143,12 @@ export class KernelQueue {
    */
   #runLoopState: RunLoopState = { state: 'idle' };
 
-  /** What peers have sent, waiting for a crank to take delivery of it. */
-  readonly #arrivedFromRemotes: (
-    | RunQueueItemRemoteInbound
-    | RunQueueItemPeerIncarnation
-  )[] = [];
+  readonly #arrivedFromRemotes: PeerArrival[] = [];
 
-  /** Whether the last crank took an arrival, so the run queue goes next. */
+  /** How many arrivals each waiting restart has had taken ahead of it. */
+  readonly #takenAhead = new WeakMap<RunQueueItemPeerIncarnation, number>();
+
+  /** Whether the last pick between arrivals and the run queue was an arrival. */
   #tookArrivalLast = false;
 
   /**
@@ -152,21 +180,29 @@ export class KernelQueue {
   }
 
   /**
-   * The kernel's run loop: take an item off the run queue, deliver it,
-   * repeat. Note that this loops forever: the returned promise never resolves.
-   * If it rejects with anything but `run loop already started`, the kernel is
-   * dead — see {@link getRunLoopStatus}.
+   * The kernel's run loop: take an item off the run queue or from the peers'
+   * arrivals, deliver it, repeat, until {@link stopRunLoop} stops it between
+   * cranks. If it rejects with anything but `run loop already started`, the
+   * kernel is dead — see {@link getRunLoopStatus}.
    *
    * @param deliver - A function that delivers an item to the kernel.
-   * @returns A promise that rejects with the `Error` that killed the run loop.
+   * @param options - Options bag.
+   * @param options.isOffline - Whether an endpoint cannot take a GC delivery
+   * now.
+   * @returns A promise that resolves when the loop stops, or rejects with the
+   * `Error` that killed it.
    */
   async run(
     deliver: (item: RunLoopItem) => Promise<CrankResult | undefined>,
+    {
+      isOffline = () => false,
+    }: { isOffline?: (endpointId: EndpointId) => boolean } = {},
   ): Promise<void> {
     this.#runLoopState.state === 'running' && Fail`run loop already started`;
     this.#runLoopState.state === 'failed' &&
       Fail`run loop died and cannot be run again`;
     this.#runLoopState = { state: 'running' };
+    this.#isOffline = isOffline;
     try {
       return await this.#runLoop(deliver);
     } catch (error) {
@@ -184,7 +220,8 @@ export class KernelQueue {
   }
 
   /**
-   * Take an item off the run queue, deliver it, repeat.
+   * Take an item off the run queue or from the peers' arrivals, deliver it,
+   * repeat.
    *
    * @param deliver - A function that delivers an item to the kernel.
    */
@@ -204,6 +241,7 @@ export class KernelQueue {
       // Boxed, so a crank that threw `undefined` stays distinguishable from one
       // that did not throw.
       let crankFailure: { error: unknown } | undefined;
+      let heldFailure: { error: unknown } | undefined;
 
       this.#kernelStore.startCrank();
       this.#deliveryRollbackAllowed = true;
@@ -245,8 +283,10 @@ export class KernelQueue {
               this.#kernelStore.rollbackCrank('delivery');
             } catch (rollbackError) {
               // The original failure stays the `cause`, since that is the root
-              // cause an operator needs; the rollback failure is named here.
-              throw new Error(
+              // cause an operator needs. `errors` keeps the rollback failure's
+              // own chain, such as the write SQLite rolled the crank back on.
+              throw new AggregateError(
+                [error, rollbackError],
                 `Run loop died and its crank could not be rolled back: ${String(rollbackError)}`,
                 { cause: error },
               );
@@ -260,9 +300,14 @@ export class KernelQueue {
       } finally {
         this.#endCrank(crankFailure);
         if (!crankFailure) {
-          this.#enqueueHeldRequests();
+          try {
+            this.#writeHeldRequests();
+          } catch (error) {
+            // Rethrown once `afterCommit` has run: the crank has committed.
+            heldFailure = { error };
+          }
         }
-        if (wakeUpPromise) {
+        if (wakeUpPromise && !heldFailure) {
           await wakeUpPromise;
         }
       }
@@ -270,7 +315,21 @@ export class KernelQueue {
       // writes this reports on are not there to report. Guarded rather than
       // `await afterCommit?.()`, which would yield a microtask on every crank.
       if (afterCommit) {
-        await afterCommit();
+        try {
+          await afterCommit();
+        } catch (error) {
+          if (!heldFailure) {
+            throw error;
+          }
+          throw new AggregateError(
+            [heldFailure.error, error],
+            `Run loop died writing a held request, and its crank's afterCommit failed: ${String(error)}`,
+            { cause: heldFailure.error },
+          );
+        }
+      }
+      if (heldFailure) {
+        throw heldFailure.error;
       }
     }
   }
@@ -293,7 +352,7 @@ export class KernelQueue {
     }
     this.#stopRequest ??= makePromiseKit<void>();
     // A parked loop is not going to reach the check on its own.
-    this.#wakeTheRunLoop();
+    this.#wakeRunLoop();
     await this.#stopRequest.promise;
     // Read after the wait, not before it: the loop may have died rather than
     // stopped, and a caller that restarted a dead loop would be told it had
@@ -311,7 +370,8 @@ export class KernelQueue {
   discardQueuedWork(why: string): void {
     // Inbound remote work too: it has not reached the run queue yet, and a
     // peer incarnation change applied after a reset would write pre-reset peer
-    // bookkeeping back into a wiped store.
+    // bookkeeping back into a wiped store. A remote held for a restart
+    // discarded here stays held until `RemoteManager.releaseRestartHolds`.
     this.#arrivedFromRemotes.length = 0;
     this.#abandonSubscriptions(new Error(`Kernel state was discarded; ${why}`));
   }
@@ -332,9 +392,9 @@ export class KernelQueue {
 
   /**
    * Tell a caller waiting on queued work if the run loop dies before carrying
-   * it out. `subscriptions` covers a message's result; a request with no kernel
-   * promise behind it — a vat restart or termination — has nothing else that
-   * would settle it.
+   * it out. `subscriptions` and the held requests cover a message's result and
+   * a held write; a request with no kernel promise behind it — a vat restart
+   * or termination — has nothing else that would settle it.
    *
    * @param reject - How to tell the caller.
    * @returns A function that unregisters it, for the caller's own `finally`.
@@ -366,10 +426,20 @@ export class KernelQueue {
         : new Error(String(error), { cause: error });
     this.#runLoopState = { state: 'failed', error: failure };
     this.#abandonSubscriptions(
-      this.#makeDeadRunLoopError(
-        'Kernel run loop died; this message result will never be delivered',
-      ),
+      this.#makeDeadRunLoopError(DEAD_RUN_LOOP_RESULT),
     );
+
+    const held = this.#heldRequests;
+    this.#heldRequests = [];
+    for (const item of held) {
+      if (item.type === 'queueMessage') {
+        item.subscription.reject(
+          this.#makeDeadRunLoopError(DEAD_RUN_LOOP_RESULT),
+        );
+      } else if (item.type === 'write') {
+        item.reject(this.#makeDeadRunLoopError(DEAD_RUN_LOOP_WORK));
+      }
+    }
 
     const abandoned = [...this.#pendingWorkWaiters];
     this.#pendingWorkWaiters.clear();
@@ -441,13 +511,15 @@ export class KernelQueue {
   }
 
   /**
-   * Get the next item from the kernel run queue.
-   * **ATTN:** Mutates the kernel store if the queue is not empty.
+   * Take the next item for the run loop.
+   * **ATTN:** Removes it from the kernel store or from the arrivals.
    *
-   * @returns The next item in the run queue, or undefined if the queue is empty.
+   * @returns The next item, or undefined if nothing is waiting.
    */
   #getNextRunQueueItem(): RunLoopItem | undefined {
-    const gcAction = processGCActionSet(this.#kernelStore);
+    const gcAction = processGCActionSet(this.#kernelStore, {
+      isOffline: this.#isOffline,
+    });
     if (gcAction) {
       return gcAction;
     }
@@ -459,8 +531,7 @@ export class KernelQueue {
 
     // Arrivals and the run queue take turns, so a peer that sends faster than
     // cranks finish cannot hold up the kernel's own work.
-    const arrivalFirst =
-      !this.#tookArrivalLast || this.#kernelStore.runQueueLength() === 0;
+    const arrivalFirst = !this.#tookArrivalLast;
     this.#tookArrivalLast = false;
     if (arrivalFirst) {
       const arrival = this.#takeArrival();
@@ -483,10 +554,7 @@ export class KernelQueue {
    *
    * @returns The arrival, or undefined if none is waiting.
    */
-  #takeArrival():
-    | RunQueueItemRemoteInbound
-    | RunQueueItemPeerIncarnation
-    | undefined {
+  #takeArrival(): PeerArrival | undefined {
     const arrival = this.#arrivedFromRemotes.shift();
     this.#tookArrivalLast = arrival !== undefined;
     return arrival;
@@ -507,7 +575,8 @@ export class KernelQueue {
       if (!crankFailure) {
         throw endCrankError;
       }
-      throw new Error(
+      throw new AggregateError(
+        [crankFailure.error, endCrankError],
         `Run loop died and its crank could not be ended: ${String(endCrankError)}`,
         { cause: crankFailure.error },
       );
@@ -597,30 +666,37 @@ export class KernelQueue {
   }
 
   /**
+   * Wake a run loop parked on an empty queue, for GC actions it skipped while
+   * their endpoint was offline.
+   */
+  recheckGCActions(): void {
+    this.#wakeRunLoop();
+  }
+
+  /**
+   * Wake the run loop if it is parked on an empty queue.
+   */
+  #wakeRunLoop(): void {
+    const wakeUpTheRunQueue = this.#wakeUpTheRunQueue;
+    if (wakeUpTheRunQueue) {
+      this.#wakeUpTheRunQueue = null;
+      wakeUpTheRunQueue();
+    }
+  }
+
+  /**
    * Add an item to the tail of the kernel's run queue.
    *
    * @param item - The item to add.
    */
   #enqueueRun(item: RunQueueItem): void {
     this.#kernelStore.enqueueRun(item);
+    // Wake on any non-empty queue rather than only on the empty->1
+    // transition. A sleeping run loop plus a non-empty queue is a
+    // permanent wedge, so err towards a spurious wake: the resolver is
+    // cleared as it fires, and the loop re-checks the queue on waking.
     if (this.#kernelStore.runQueueLength() > 0) {
-      this.#wakeTheRunLoop();
-    }
-  }
-
-  /**
-   * Wake a sleeping run loop, if one is sleeping.
-   *
-   * Woken on any work at all rather than only on the empty-to-one transition.
-   * A sleeping run loop with work waiting is a permanent wedge, so err towards
-   * a spurious wake: the resolver is cleared as it fires, and the loop
-   * re-checks for work on waking.
-   */
-  #wakeTheRunLoop(): void {
-    if (this.#wakeUpTheRunQueue) {
-      const wakeUpTheRunQueue = this.#wakeUpTheRunQueue;
-      this.#wakeUpTheRunQueue = null;
-      wakeUpTheRunQueue();
+      this.#wakeRunLoop();
     }
   }
 
@@ -684,12 +760,15 @@ export class KernelQueue {
 
   /**
    * Queue a message to be delivered from the kernel to an object in an endpoint.
+   * Held until the open crank, if any, has ended.
    *
    * @param target - The object to which the message is directed.
    * @param method - The method to be invoked.
    * @param args - Message arguments.
    *
-   * @returns a promise for the (CapData encoded) result of the message invocation.
+   * @returns a promise for the (CapData encoded) result of the message
+   * invocation. It rejects with `OBJECT_DELETED` if the kernel does not have
+   * the target or a kref in the arguments by the time the message is written.
    */
   async enqueueMessage(
     target: KRef,
@@ -698,15 +777,79 @@ export class KernelQueue {
   ): Promise<CapData<KRef>> {
     // Nothing is draining the run queue, so a returned promise could never settle.
     this.assertRunLoopAlive('queue a message');
+    insistKRef(target);
     // TODO(#562): Use logger instead.
-    // eslint-disable-next-line no-console
+    // oxlint-disable-next-line no-console
     console.debug('enqueueMessage', target, method, args);
-    const result = this.#kernelStore.initKernelPromise()[0];
     const { promise, resolve, reject } = makePromiseKit<CapData<KRef>>();
-    this.subscriptions.set(result, { resolve, reject });
-    this.enqueueSend(target, {
+    this.#enqueueRequest({
+      type: 'queueMessage',
+      target,
       methargs: kser([method, args]),
-      result,
+      subscription: { resolve, reject },
+    });
+    return promise;
+  }
+
+  /**
+   * Write a `queueMessage` call. A store fault is thrown; for a held message
+   * it kills the run loop, which tells the caller.
+   *
+   * @param message - The call.
+   */
+  #writeMessage(message: HeldMessage): void {
+    const { target, methargs, subscription } = message;
+    // Checked first: outside a crank nothing rolls back, and `enqueueSend`
+    // refusing a missing kref partway would keep what it charged before it.
+    const missing = [target, ...methargs.slots].find(
+      (kref) => !this.#kernelStore.kernelRefExists(kref),
+    );
+    if (missing !== undefined) {
+      subscription.reject(
+        makeKernelError(
+          'OBJECT_DELETED',
+          `${missing} does not exist; it may have been deleted`,
+        ),
+      );
+      return;
+    }
+    const [result] = this.#kernelStore.initKernelPromise();
+    this.enqueueSend(target, { methargs, result });
+    // Last: a write that threw must leave no subscription behind.
+    this.subscriptions.set(result, subscription);
+  }
+
+  /**
+   * Make a write now if no crank is open, or else once the open crank ends.
+   *
+   * @param write - The write. It must make every write before it returns:
+   * the run loop does not wait for a promise, so what it writes after an
+   * `await` lands in whichever crank is open by then. The type refuses a
+   * promise returned bare, not one inside an object.
+   * @param options - Options bag.
+   * @param options.outlivesStop - Whether a write held when the kernel stops
+   * is still made.
+   * @returns A promise for what `write` returns or throws. It rejects if the
+   * run loop dies first, or if a stop, reset or `clearStorage` discards the
+   * write.
+   */
+  async writeOutsideCrank<Result>(
+    write: () => NotThenable<Result>,
+    { outlivesStop = false }: { outlivesStop?: boolean } = {},
+  ): Promise<Result> {
+    this.assertRunLoopAlive('write outside a crank');
+    const { promise, resolve, reject } = makePromiseKit<Result>();
+    this.#enqueueRequest({
+      type: 'write',
+      write: () => {
+        try {
+          resolve(write());
+        } catch (error) {
+          reject(error);
+        }
+      },
+      reject,
+      outlivesStop,
     });
     return promise;
   }
@@ -738,101 +881,161 @@ export class KernelQueue {
    * Accept a message from a remote peer, for the run loop to take delivery of
    * in a crank of its own.
    *
-   * Held in memory rather than written to the run queue: a message arrives
-   * whenever the transport says so, which is usually while a crank is open,
-   * and writing it there would put it inside that crank's transaction — an
-   * abort would swallow it, which is the defect this whole shape exists to
-   * remove. Nothing is lost by not persisting it, because the peer is not
-   * acknowledged until the crank that takes it commits, so an arrival this
-   * kernel forgets is one the peer sends again.
+   * Held in memory, not on the run queue: a message can arrive while a crank
+   * is open, and written there it would join that crank's transaction and
+   * vanish with its abort. The peer is acknowledged only once the crank that
+   * takes the message commits, so one lost in a crash is resent.
    *
-   * A copy of an arrival already waiting is not held again. A peer
-   * retransmits every message it has unacknowledged on a timeout, so during
-   * a long crank its copies would otherwise fill the remote's share and turn
-   * away a message it has yet to send. Acknowledgements are cumulative, so
-   * the next one taken would then retire the refused one at the peer.
-   * Copies are looked for only behind the last incarnation change waiting,
-   * since a peer numbers a new incarnation's messages from 1 again.
+   * A peer retransmits everything unacknowledged on a timeout, and its copies
+   * would fill the remote's share and turn away messages it has yet to send.
+   * So a copy of a message waiting, or of one a committed crank has taken, is
+   * not held, and a copy held before its original committed stops taking a
+   * slot once it has. A refused message is lost if a later one is taken first,
+   * since that one's acknowledgement covers it.
+   *
+   * One that arrives while a restart of the peer waits to be recorded is taken
+   * ahead of it, against the incarnation that sent it: the transport reads
+   * nothing from the new incarnation until then, so what arrives was read late
+   * off the old one's channel. An incarnation that has ended left about a
+   * window's worth unacknowledged, and past `MAX_ARRIVALS_PER_REMOTE` one is
+   * refused, or a peer still sending on that channel would hold the restart,
+   * and every arrival behind it, back for as long as it sends.
    *
    * @param options - Options bag.
    * @param options.remoteId - The remote the message came from.
+   * @param options.peerId - The peer that sent it.
    * @param options.seq - The message's sequence number.
    * @param options.message - The message, as it arrived.
+   * @param options.highestReceivedSeq - The highest sequence number from this
+   * remote that a committed crank has taken.
    * @returns False if the remote already has `MAX_ARRIVALS_PER_REMOTE`
-   * arrivals waiting and this one was refused.
+   * uncommitted arrivals waiting, or its waiting restart has had that many
+   * taken ahead of it, and this one was refused.
    */
   acceptRemoteInbound({
     remoteId,
+    peerId,
     seq,
     message,
+    highestReceivedSeq,
   }: {
     remoteId: RemoteId;
+    peerId: string;
     seq: number;
     message: string;
+    highestReceivedSeq: number;
   }): boolean {
     this.assertRunLoopAlive('accept a remote message');
-    const held = this.#arrivedFromRemotes.filter(
-      (item) => item.type === 'remoteInbound' && item.remoteId === remoteId,
-    ).length;
-    if (this.#holdsSince(remoteId, seq)) {
+    if (seq <= highestReceivedSeq) {
       return true;
     }
-    if (held >= MAX_ARRIVALS_PER_REMOTE) {
+    const held = this.#arrivedFromRemotes.filter(
+      (item): item is RunQueueItemRemoteInbound =>
+        item.type === 'remoteInbound' &&
+        item.remoteId === remoteId &&
+        item.peerId === peerId &&
+        item.seq > highestReceivedSeq,
+    );
+    if (held.some((item) => item.seq === seq)) {
+      return true;
+    }
+    if (held.length >= MAX_ARRIVALS_PER_REMOTE) {
       return false;
     }
-    this.#arrivedFromRemotes.push({
+    const arrival: RunQueueItemRemoteInbound = {
       type: 'remoteInbound',
       remoteId,
+      peerId,
       seq,
       message,
-    });
-    this.#wakeTheRunLoop();
+    };
+    const restart = this.#waitingRestart(peerId);
+    if (restart === undefined) {
+      this.#arrivedFromRemotes.push(arrival);
+    } else {
+      const ahead = (this.#takenAhead.get(restart) ?? 0) + 1;
+      if (ahead > MAX_ARRIVALS_PER_REMOTE) {
+        return false;
+      }
+      this.#takenAhead.set(restart, ahead);
+      this.#arrivedFromRemotes.splice(
+        this.#arrivedFromRemotes.indexOf(restart),
+        0,
+        arrival,
+      );
+    }
+    this.#wakeRunLoop();
     return true;
   }
 
   /**
-   * Whether an arrival with this seq is already waiting for a remote, behind
-   * every incarnation change waiting. This queue does not know which peer a
-   * remote is, so it stops at the last change of any peer; a copy held ahead
-   * of one is held twice, and takes a slot it did not need.
+   * Accept a peer's incarnation change, for the run loop to carry out in a
+   * crank of its own, behind everything the peer sent before it.
    *
-   * @param remoteId - The remote the message came from.
-   * @param seq - The message's sequence number.
-   * @returns True if a copy is waiting.
+   * A restart reported while another of the peer's waits takes that one's
+   * place rather than queueing a crank of its own, or a peer reporting a new
+   * incarnation on every handshake would queue one for each. Nothing waits
+   * behind the one replaced, since every handshake from it reported a restart
+   * and the transport kept its channel closed.
+   *
+   * @param options - Options bag.
+   * @param options.peerId - The peer.
+   * @param options.incarnation - The incarnation it reports.
+   * @param options.restart - Whether it replaces an incarnation the kernel knew
+   * the peer by.
    */
-  #holdsSince(remoteId: RemoteId, seq: number): boolean {
-    for (let index = this.#arrivedFromRemotes.length - 1; index >= 0; index--) {
-      const item = this.#arrivedFromRemotes[index];
-      if (item?.type === 'peerIncarnation') {
-        return false;
-      }
-      if (item?.remoteId === remoteId && item.seq === seq) {
-        return true;
-      }
+  acceptPeerIncarnation({
+    peerId,
+    incarnation,
+    restart,
+  }: {
+    peerId: string;
+    incarnation: string;
+    restart: boolean;
+  }): void {
+    this.assertRunLoopAlive('accept a peer incarnation change');
+    const waiting = restart ? this.#waitingRestart(peerId) : undefined;
+    if (waiting === undefined) {
+      this.#arrivedFromRemotes.push({
+        type: 'peerIncarnation',
+        peerId,
+        incarnation,
+        restart,
+      });
+    } else {
+      waiting.incarnation = incarnation;
     }
-    return false;
+    this.#wakeRunLoop();
   }
 
   /**
-   * Accept a peer's incarnation change, for the run loop to carry out in a
-   * crank of its own.
+   * Find the restart of a peer that waits for its crank.
    *
-   * Held with the arrivals, and behind any this peer has already sent: the
-   * messages ahead of it belong to the incarnation that is ending and are its
-   * to account for, and the ones behind it to the incarnation that is
-   * starting.
-   *
-   * @param peerId - The peer that restarted.
-   * @param incarnation - The incarnation it now reports.
+   * @param peerId - The peer.
+   * @returns The waiting change, or undefined if none is a restart.
    */
-  acceptPeerIncarnation(peerId: string, incarnation: string): void {
-    this.assertRunLoopAlive('accept a peer incarnation change');
-    this.#arrivedFromRemotes.push({
-      type: 'peerIncarnation',
-      peerId,
-      incarnation,
-    });
-    this.#wakeTheRunLoop();
+  #waitingRestart(peerId: string): RunQueueItemPeerIncarnation | undefined {
+    return this.#arrivedFromRemotes.find(
+      (item): item is RunQueueItemPeerIncarnation =>
+        item.type === 'peerIncarnation' &&
+        item.peerId === peerId &&
+        item.restart,
+    );
+  }
+
+  /**
+   * List the incarnations a peer reported in changes still waiting for their
+   * cranks.
+   *
+   * @param peerId - The peer.
+   * @returns The incarnations, oldest first.
+   */
+  waitingIncarnations(peerId: string): string[] {
+    return this.#arrivedFromRemotes.flatMap((item) =>
+      item.type === 'peerIncarnation' && item.peerId === peerId
+        ? [item.incarnation]
+        : [],
+    );
   }
 
   /**
@@ -855,27 +1058,73 @@ export class KernelQueue {
     if (this.#kernelStore.isInCrank()) {
       this.#heldRequests.push(item);
     } else {
-      this.#enqueueRun(item);
+      this.#writeRequest(item);
     }
   }
 
   /**
-   * Forget the requests held for the open crank to write once it ends, for a
-   * kernel discarding its run queue: not in the store yet, they would outlive
-   * a wipe of it.
+   * Write a request now.
+   *
+   * @param item - The request.
    */
-  discardHeldRequests(): void {
-    this.#heldRequests = [];
+  #writeRequest(item: HeldRequest): void {
+    switch (item.type) {
+      case 'queueMessage':
+        this.#writeMessage(item);
+        break;
+      case 'write':
+        item.write();
+        break;
+      default:
+        this.#enqueueRun(item);
+    }
+  }
+
+  /**
+   * Forget the requests held for the open crank to write once it ends, and
+   * reject the caller of each held message or write, for a kernel that is
+   * stopping or wiping its store. Not in the store yet, they would outlive a
+   * wipe of it. A restart or termination's caller is told by `VatManager`.
+   *
+   * @param error - What to tell the caller of a forgotten message or write.
+   * @param options - Options bag.
+   * @param options.stopping - Whether the kernel is only stopping, which
+   * keeps the writes made to outlive a stop.
+   */
+  discardHeldRequests(
+    error: Error,
+    { stopping = false }: { stopping?: boolean } = {},
+  ): void {
+    const isKept = (item: HeldRequest): boolean =>
+      stopping && item.type === 'write' && item.outlivesStop;
+    const held = this.#heldRequests;
+    this.#heldRequests = held.filter(isKept);
+    for (const item of held) {
+      if (isKept(item)) {
+        continue;
+      }
+      if (item.type === 'queueMessage') {
+        item.subscription.reject(error);
+      } else if (item.type === 'write') {
+        item.reject(error);
+      }
+    }
   }
 
   /**
    * Write the requests held while the crank that just ended was open.
    */
-  #enqueueHeldRequests(): void {
-    const held = this.#heldRequests;
-    this.#heldRequests = [];
-    for (const item of held) {
-      this.#enqueueRun(item);
+  #writeHeldRequests(): void {
+    // Each taken off only once written: one that throws kills the run loop,
+    // and `#failRunLoop` must still find it and the rest to tell their
+    // callers.
+    for (;;) {
+      const [item] = this.#heldRequests;
+      if (item === undefined) {
+        return;
+      }
+      this.#writeRequest(item);
+      this.#heldRequests.shift();
     }
   }
 
@@ -926,10 +1175,9 @@ export class KernelQueue {
 
   /**
    * Process a set of promise resolutions coming from an endpoint.
-   * When immediate is false (for vat syscalls), notifications and kernel
-   * subscription callbacks are deferred until the crank buffer is flushed on
-   * successful crank completion. When immediate is true (for remote message
-   * handling), effects are immediate.
+   * Pass `immediate` false from inside a crank: notifications, messages queued
+   * on each promise, and kernel subscription callbacks then wait for the crank
+   * buffer's flush, which an aborted crank skips.
    *
    * @param endpointId - The endpoint doing the resolving, if there is one.
    * @param resolutions - One or more resolutions, to be processed as a group.

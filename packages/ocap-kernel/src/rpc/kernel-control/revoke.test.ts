@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import { revokeHandler } from './revoke.ts';
+import { asKRef } from '../../../test/branded.ts';
 import type { Kernel } from '../../Kernel.ts';
 
 describe('revokeHandler', () => {
@@ -12,7 +13,7 @@ describe('revokeHandler', () => {
   });
 
   it('should revoke object and return null', async () => {
-    const kref = 'ko1';
+    const kref = asKRef('ko1');
     const result = revokeHandler.implementation(
       { kernel: mockKernel },
       { kref },
@@ -26,7 +27,7 @@ describe('revokeHandler', () => {
     vi.mocked(mockKernel.revoke).mockImplementation(() => {
       throw error;
     });
-    const kref = 'ko1';
+    const kref = asKRef('ko1');
     expect(() =>
       revokeHandler.implementation({ kernel: mockKernel }, { kref }),
     ).toThrow(error);

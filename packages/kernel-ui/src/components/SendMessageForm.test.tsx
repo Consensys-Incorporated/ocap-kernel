@@ -1,4 +1,5 @@
 import { stringify } from '@metamask/kernel-utils';
+import type { KRef } from '@metamask/ocap-kernel';
 import { setupOcapKernelMock } from '@ocap/repo-tools/test-utils';
 import {
   render,
@@ -41,19 +42,20 @@ describe('SendMessageForm Component', () => {
     gcActions: '',
     reapQueue: '',
     terminatedVats: '',
+    ocapUrls: [],
     vats: {
       vat1: {
         overview: { name: 'TestVat1', bundleSpec: '' },
         ownedObjects: [
           {
-            kref: 'ko1',
+            kref: 'ko1' as KRef,
             eref: 'eref1',
             refCount: '1',
             toVats: [],
             revoked: 'false',
           },
           {
-            kref: 'ko2',
+            kref: 'ko2' as KRef,
             eref: 'eref2',
             refCount: '1',
             toVats: [],
@@ -68,7 +70,7 @@ describe('SendMessageForm Component', () => {
         overview: { name: 'TestVat2', bundleSpec: '' },
         ownedObjects: [
           {
-            kref: 'ko3',
+            kref: 'ko3' as KRef,
             eref: 'eref3',
             refCount: '1',
             toVats: [],
@@ -77,7 +79,7 @@ describe('SendMessageForm Component', () => {
         ],
         importedObjects: [
           {
-            kref: 'ko4',
+            kref: 'ko4' as KRef,
             eref: 'eref4',
             refCount: '1',
             fromVat: 'vat1',

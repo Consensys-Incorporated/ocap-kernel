@@ -75,6 +75,7 @@ describe('resolveFetchInput', () => {
 
   it('reads a Request subclass through the internal slot, not an overridden getter', () => {
     class SpoofedRequest extends Request {
+      // @ts-expect-error Deliberately shadows the `url` property with a getter.
       override get url(): string {
         return 'https://example.test/decoy';
       }

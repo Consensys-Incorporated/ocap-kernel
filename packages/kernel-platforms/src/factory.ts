@@ -72,9 +72,9 @@ export const makePlatformFactory = <
         // 3. The generic constraints align between the factory and config
         // This is a limitation of TypeScript's type system with dynamic property access
         const capability = await factory(
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          // oxlint-disable-next-line typescript/no-explicit-any
           capabilityConfig as any,
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          // oxlint-disable-next-line typescript/no-explicit-any
           capabilityOptions as any,
         );
 

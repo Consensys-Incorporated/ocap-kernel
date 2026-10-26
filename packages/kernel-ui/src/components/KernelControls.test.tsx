@@ -1,3 +1,4 @@
+import type { SubclusterId, VatId } from '@metamask/ocap-kernel';
 import { render, screen, cleanup } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -76,11 +77,11 @@ describe('KernelControls', () => {
     mockUseKernelActions();
     mockUseVats([
       {
-        id: 'v1',
+        id: 'v1' as VatId,
         source: 'source',
         parameters: '',
         creationOptions: '',
-        subclusterId: 'subcluster1',
+        subclusterId: 'subcluster1' as SubclusterId,
       },
     ]);
     render(<KernelControls />);
@@ -95,11 +96,11 @@ describe('KernelControls', () => {
     mockUseKernelActions({ terminateAllVats });
     mockUseVats([
       {
-        id: 'v1',
+        id: 'v1' as VatId,
         source: 'source',
         parameters: '',
         creationOptions: '',
-        subclusterId: 'subcluster1',
+        subclusterId: 'subcluster1' as SubclusterId,
       },
     ]);
     render(<KernelControls />);

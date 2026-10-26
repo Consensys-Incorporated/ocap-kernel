@@ -11,7 +11,7 @@ const { makePromiseKit } = makePromiseKitMock();
 describe('NodejsPlatformServices', () => {
   let testWorkerFile: string;
   const vatIdCounter = makeCounter();
-  const getTestVatId = (): VatId => `v${vatIdCounter()}`;
+  const getTestVatId = (): VatId => `v${vatIdCounter()}` as VatId;
 
   describe('hello-world', () => {
     testWorkerFile = getTestWorkerFile('hello-world');

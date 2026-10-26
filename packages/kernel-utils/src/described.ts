@@ -292,7 +292,7 @@ const describedInterface = (
  * `nothing`) each yield a `{ pattern, schema }` pair; `arg` names a positional
  * parameter; `method` and `interface` assemble them.
  */
-// eslint-disable-next-line id-length -- `S` is the intended terse public namespace, mirroring `@endo/patterns`'s `M`.
+// oxlint-disable-next-line id-length -- `S` is the intended terse public namespace, mirroring `@endo/patterns`'s `M`.
 export const S = harden({
   string,
   number,

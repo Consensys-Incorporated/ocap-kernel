@@ -60,7 +60,7 @@ fail() { echo "[start-ocap-jsonrpc-vat] ERROR: $*" >&2; exit 1; }
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PKG_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPO_ROOT="$(cd "$PKG_DIR/../.." && pwd)"
-OCAP_BIN="$REPO_ROOT/packages/kernel-cli/dist/app.mjs"
+OCAP_BIN="$REPO_ROOT/packages/kernel-cli/dist/app.js"
 BUNDLE_FILE="$PKG_DIR/src/vat/index.bundle"
 
 OCAP_HOME_DIR="${OCAP_HOME_ARG:-${OCAP_HOME:-${HOME}/.ocap}}"

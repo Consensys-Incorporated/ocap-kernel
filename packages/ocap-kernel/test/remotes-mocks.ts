@@ -4,13 +4,14 @@ import { vi } from 'vitest';
 import { makeMapKernelDatabase } from './storage.ts';
 import type { KernelQueue } from '../src/KernelQueue.ts';
 import { RemoteHandle } from '../src/remotes/kernel/RemoteHandle.ts';
+import type { RemoteManager } from '../src/remotes/kernel/RemoteManager.ts';
 import type {
   RemoteComms,
   RemoteMessageHandler,
 } from '../src/remotes/types.ts';
 import type { KernelStore } from '../src/store/index.ts';
 import { makeKernelStore } from '../src/store/index.ts';
-import type { PlatformServices } from '../src/types.ts';
+import type { PlatformServices, RemoteId } from '../src/types.ts';
 
 /**
  * Default configuration for mock remotes components
@@ -78,9 +79,13 @@ export class MockRemotesFactory {
       enqueueNotify: vi.fn(),
       acceptRemoteInbound: vi.fn().mockReturnValue(true),
       acceptPeerIncarnation: vi.fn(),
+      waitingIncarnations: vi.fn().mockReturnValue([]),
       resolvePromises: vi.fn(),
       assertRunLoopAlive: vi.fn(),
       waitForCrank: vi.fn(),
+      writeOutsideCrank: vi.fn<KernelQueue['writeOutsideCrank']>(
+        async (write) => write(),
+      ),
       run: vi.fn(),
     } as unknown as KernelQueue;
   }
@@ -125,7 +130,7 @@ export class MockRemotesFactory {
     const mockKernelQueue = this.makeMockKernelQueue();
 
     return RemoteHandle.make({
-      remoteId: this.config.remoteId as string,
+      remoteId: this.config.remoteId as RemoteId,
       peerId: this.config.remotePeerId as string,
       kernelStore: this.config.kernelStore as KernelStore,
       kernelQueue: mockKernelQueue,
@@ -162,7 +167,9 @@ export class MockRemotesFactory {
       remoteManager: {
         getRemoteComms: vi.fn().mockReturnValue(remoteComms),
         getRemoteIdentity: vi.fn().mockReturnValue(remoteComms),
-        remoteFor: vi.fn().mockReturnValue(remoteHandle),
+        withRemote: vi.fn<RemoteManager['withRemote']>(
+          async (_peerId, { use }) => use(remoteHandle),
+        ),
       },
       remoteComms,
       remoteHandle,

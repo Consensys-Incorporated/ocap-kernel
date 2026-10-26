@@ -3,6 +3,7 @@ import { passStyleOf } from '@endo/pass-style';
 import { describe, it, expect, vi } from 'vitest';
 
 import { extractSingleRef } from './extract-ref.ts';
+import { asKRef } from '../../../test/branded.ts';
 import { kunser, krefOf } from '../../liveslots/kernel-marshal.ts';
 import type { KRef } from '../../types.ts';
 
@@ -26,8 +27,8 @@ describe('extract-ref', () => {
     const mockedKrefOf = vi.mocked(krefOf);
 
     it.each([
-      { type: 'remotable', expected: 'ko123' },
-      { type: 'promise', expected: 'kp456' },
+      { type: 'remotable', expected: asKRef('ko123') },
+      { type: 'promise', expected: asKRef('kp456') },
     ])('returns the kref when style is $type', ({ type, expected }) => {
       const capData: CapData<KRef> = { body: 'test', slots: [] };
       const mockValue = { type };

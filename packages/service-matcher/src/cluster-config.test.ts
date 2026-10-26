@@ -16,7 +16,8 @@ describe('makeMatcherClusterConfig', () => {
       'ocapURLIssuerService',
       'ocapURLRedemptionService',
     ]);
-    expect(config.vats[MATCHER_VAT_NAME]?.bundleSpec).toBe(
+    expect(config.vats[MATCHER_VAT_NAME]).toHaveProperty(
+      'bundleSpec',
       `file:///tmp/matcher/${MATCHER_BUNDLE_FILENAME}`,
     );
   });

@@ -13,12 +13,13 @@ import type {
   CrankResult,
   KRef,
   PlatformServices,
-  RunQueueItem,
+  RunLoopItem,
   VatConfig,
   VatId,
 } from '../types.ts';
 import { VatHandle } from './VatHandle.ts';
 import { VatManager } from './VatManager.ts';
+import { asVatId, asVRef } from '../../test/branded.ts';
 
 type KernelDatabase = Awaited<ReturnType<typeof makeSQLKernelDatabase>>;
 
@@ -37,7 +38,7 @@ const config: VatConfig = { sourceSpec: 'test.js' };
  */
 async function setUp({
   kdb,
-  vatIds = ['v1'],
+  vatIds = [asVatId('v1')],
   terminateWorker = async () => undefined,
 }: {
   kdb?: KernelDatabase;
@@ -90,14 +91,14 @@ async function setUp({
     await launch(vatId);
   }
 
-  const gateOwner = 'v99';
+  const gateOwner = asVatId('v99');
   kernelStore.initEndpoint(gateOwner);
-  const gate: KRef = kernelStore.exportFromEndpoint(gateOwner, 'o+1');
+  const gate: KRef = kernelStore.exportFromEndpoint(gateOwner, asVRef('o+1'));
   const gateKit = makePromiseKit<void>();
   const crankOpen = makePromiseKit<void>();
-  const delivered: RunQueueItem[] = [];
+  const delivered: RunLoopItem[] = [];
   const deliver = async (
-    item: RunQueueItem,
+    item: RunLoopItem,
   ): Promise<CrankResult | undefined> => {
     delivered.push(item);
     if (item.type === 'terminateVat') {
@@ -150,16 +151,18 @@ describe('VatManager queued termination', () => {
 
       // An outside caller asks while a crank is open, so the request is held
       // in KernelQueue's memory until that crank ends.
-      const termination = vatManager.terminateVat('v1');
+      const termination = vatManager.terminateVat(asVatId('v1'));
       termination.catch(() => undefined);
 
       // `Kernel.reset`, after its `waitForCrank`, which can resume inside this
       // very crank: tear the vats down, wipe the store, abandon queued work.
-      await vatManager.stopVat('v1', true);
+      await vatManager.stopVat(asVatId('v1'), true);
       kernelStore.reset();
-      vatManager.abandonQueuedWork(
-        new Error('Kernel was reset; queued work was abandoned'),
+      const abandoned = new Error(
+        'Kernel was reset; queued work was abandoned',
       );
+      harness.kernelQueue.discardHeldRequests(abandoned);
+      vatManager.abandonQueuedWork(abandoned);
       await expect(termination).rejects.toThrow('Kernel was reset');
 
       // A vat launched into the fresh kernel gets the first id again.
@@ -171,7 +174,7 @@ describe('VatManager queued termination', () => {
       await settle();
 
       expect({
-        newVatActive: kernelStore.isVatActive('v1'),
+        newVatActive: kernelStore.isVatActive(asVatId('v1')),
         terminationsDelivered: harness.delivered.filter(
           (item) => item.type === 'terminateVat',
         ),
@@ -182,7 +185,7 @@ describe('VatManager queued termination', () => {
       const workerStopping = makePromiseKit<void>();
       const releaseWorker = makePromiseKit<void>();
       const harness = await setUp({
-        vatIds: ['v1', 'v2'],
+        vatIds: [asVatId('v1'), asVatId('v2')],
         // `terminateAllVats` goes newest first, so it is stopping v2 when the
         // queued termination of v1 runs.
         terminateWorker: async (vatId) => {
@@ -197,14 +200,14 @@ describe('VatManager queued termination', () => {
 
       const terminatingAll = vatManager.terminateAllVats();
       await workerStopping.promise;
-      await vatManager.terminateVat('v1');
+      await vatManager.terminateVat(asVatId('v1'));
 
       releaseWorker.resolve();
 
       expect(await terminatingAll).toBeUndefined();
       expect([
-        kernelStore.isVatActive('v1'),
-        kernelStore.isVatActive('v2'),
+        kernelStore.isVatActive(asVatId('v1')),
+        kernelStore.isVatActive(asVatId('v2')),
       ]).toStrictEqual([false, false]);
     });
   });
@@ -213,7 +216,7 @@ describe('VatManager queued termination', () => {
     it('carries out a termination abandoned by stop on the next start', async () => {
       const first = await setUp();
       // Queued, but the run loop never got to it before the kernel stopped.
-      const termination = first.vatManager.terminateVat('v1');
+      const termination = first.vatManager.terminateVat(asVatId('v1'));
       termination.catch(() => undefined);
       first.vatManager.abandonQueuedWork(
         new Error(
@@ -221,19 +224,19 @@ describe('VatManager queued termination', () => {
         ),
       );
       await expect(termination).rejects.toThrow('Kernel was stopped');
-      expect(first.kernelStore.isVatActive('v1')).toBe(true);
+      expect(first.kernelStore.isVatActive(asVatId('v1'))).toBe(true);
 
       // The next start: a new kernel over the same database relaunches its
       // persisted vats and starts its run loop.
       const second = await setUp({ kdb: first.kdb, vatIds: [] });
-      await second.vatManager.runVat('v1', config);
+      await second.vatManager.runVat(asVatId('v1'), config);
       second.run();
       await settle();
 
       expect(second.delivered).toStrictEqual([
         { type: 'terminateVat', vatId: 'v1' },
       ]);
-      expect(second.kernelStore.isVatActive('v1')).toBe(false);
+      expect(second.kernelStore.isVatActive(asVatId('v1'))).toBe(false);
     });
   });
 });

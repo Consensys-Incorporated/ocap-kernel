@@ -18,9 +18,12 @@ import type {
 
 // Thin cast for calling exo methods directly in tests without going through
 // HandledPromise (which is not available in the test environment).
-// eslint-disable-next-line id-length
+// oxlint-disable-next-line id-length
 const E = (obj: unknown) =>
-  obj as Record<string, (...args: unknown[]) => Promise<unknown>>;
+  obj as Record<
+    'f' | 'getBalance' | 'transfer' | typeof GET_DESCRIPTION,
+    (...args: unknown[]) => Promise<unknown>
+  >;
 
 // Sheafify and build a section over the union guard of all providers. Used by
 // tests that exercise dispatch behavior without caring which guard variant is
@@ -48,7 +51,7 @@ const buildUnionSection = <MetaData extends Record<string, unknown>>(
 describe('sheafify', () => {
   it('single-section bypass: policy not invoked', async () => {
     let policyCalled = false;
-    // eslint-disable-next-line require-yield
+    // oxlint-disable-next-line require-yield
     const policy: Policy<{ cost: number }> = async function* (_candidates) {
       policyCalled = true;
       // unreachable — fast path bypasses policy for single section
@@ -135,7 +138,7 @@ describe('sheafify', () => {
     expect(await E(wallet).getBalance('alice')).toBe(42);
   });
 
-  // eslint-disable-next-line vitest/prefer-lowercase-title
+  // oxlint-disable-next-line vitest/prefer-lowercase-title
   it('GET_INTERFACE_GUARD returns collected guard', () => {
     const providers: Provider<{ cost: number }>[] = [
       {
@@ -167,10 +170,10 @@ describe('sheafify', () => {
         yield candidates[0]!;
       },
     );
-    const guard = wallet[GET_INTERFACE_GUARD]();
+    const guard = (wallet as Section)[GET_INTERFACE_GUARD]?.();
     expect(guard).toBeDefined();
 
-    const { methodGuards } = getInterfaceGuardPayload(guard);
+    const { methodGuards } = getInterfaceGuardPayload(guard!);
     expect(methodGuards).toHaveProperty('getBalance');
   });
 
@@ -322,10 +325,10 @@ describe('sheafify', () => {
         yield candidates[0]!;
       },
     );
-    const guard = wallet[GET_INTERFACE_GUARD]();
+    const guard = (wallet as Section)[GET_INTERFACE_GUARD]?.();
     expect(guard).toBeDefined();
 
-    const { methodGuards } = getInterfaceGuardPayload(guard);
+    const { methodGuards } = getInterfaceGuardPayload(guard!);
     expect(methodGuards).toHaveProperty('getBalance');
   });
 
@@ -448,7 +451,7 @@ describe('sheafify', () => {
     const wallet = buildUnionSection<Meta>(
       'Wallet',
       providers,
-      // eslint-disable-next-line require-yield
+      // oxlint-disable-next-line require-yield
       async function* (_candidates) {
         policyCalled = true;
       },
@@ -616,7 +619,7 @@ describe('sheafify', () => {
     const wallet = buildUnionSection<Meta>(
       'Wallet',
       providers,
-      // eslint-disable-next-line require-yield
+      // oxlint-disable-next-line require-yield
       async function* (_candidates) {
         policyCalled = true;
       },
@@ -904,7 +907,9 @@ describe('getSection with explicit guard', () => {
       getBalance: M.call(M.string()).returns(M.number()),
     });
 
-    const schema = { getBalance: { description: 'Get account balance.' } };
+    const schema = {
+      getBalance: { description: 'Get account balance.', args: {} },
+    };
 
     const section = sheafify({
       name: 'Wallet',

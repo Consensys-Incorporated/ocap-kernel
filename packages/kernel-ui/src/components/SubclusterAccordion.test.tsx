@@ -1,3 +1,4 @@
+import type { SubclusterId, VatId } from '@metamask/ocap-kernel';
 import { render, screen, cleanup } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { describe, it, expect, vi, afterEach } from 'vitest';
@@ -79,15 +80,15 @@ vi.mock('./VatTable.tsx', () => ({
 describe('SubclusterAccordion', () => {
   const mockVats: VatRecord[] = [
     {
-      id: 'vat-1',
-      subclusterId: 'subcluster-1',
+      id: 'vat-1' as VatId,
+      subclusterId: 'subcluster-1' as SubclusterId,
       source: 'source-1',
       parameters: 'params-1',
       creationOptions: 'options-1',
     },
     {
-      id: 'vat-2',
-      subclusterId: 'subcluster-1',
+      id: 'vat-2' as VatId,
+      subclusterId: 'subcluster-1' as SubclusterId,
       source: 'source-2',
       parameters: 'params-2',
       creationOptions: 'options-2',
@@ -110,7 +111,7 @@ describe('SubclusterAccordion', () => {
   };
 
   const defaultProps = {
-    id: 'subcluster-1',
+    id: 'subcluster-1' as SubclusterId,
     vats: mockVats,
     config: mockConfig,
     ...mockActions,

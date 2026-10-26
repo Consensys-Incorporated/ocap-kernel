@@ -3,25 +3,11 @@ import { EventEmitter } from 'node:events';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { register } from '../openclaw-plugin/index.ts';
+import type { OpenClawPluginApi } from '../openclaw-plugin/types.ts';
 
 vi.mock('node:child_process', () => ({ spawn: vi.fn() }));
 
-type ToolResponse = {
-  content: { type: 'text'; text: string }[];
-};
-
-type ToolDefinition = {
-  name: string;
-  execute: (
-    id: string,
-    params?: Record<string, string>,
-  ) => Promise<ToolResponse>;
-};
-
-type PluginApi = {
-  pluginConfig?: Record<string, unknown>;
-  registerTool: (tool: ToolDefinition) => void;
-};
+type ToolDefinition = Parameters<OpenClawPluginApi['registerTool']>[0];
 
 type MockReadable = EventEmitter & {
   setEncoding: (encoding: string) => void;
@@ -96,7 +82,7 @@ function makeSpawnResult(options: {
  */
 function setupPlugin(): Map<string, ToolDefinition> {
   const tools = new Map<string, ToolDefinition>();
-  const api: PluginApi = {
+  const api: OpenClawPluginApi = {
     pluginConfig: {
       ocapCliPath: 'ocap',
       walletKref: 'ko4',
@@ -159,7 +145,7 @@ describe('openclaw wallet plugin', () => {
     const tool = tools.get('wallet_capabilities');
     expect(tool).toBeDefined();
 
-    const result = await tool!.execute('req-2');
+    const result = await tool!.execute('req-2', {});
     const parsed = JSON.parse(result.content[0]?.text ?? '{}');
 
     expect(parsed).toStrictEqual({

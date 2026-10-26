@@ -9,7 +9,7 @@ import { describe, expect, it } from 'vitest';
 
 import { getBundleSpec, makeKernel, makeTestLogger } from './utils.ts';
 
-const V1_ROOT: KRef = 'ko4';
+const V1_ROOT = 'ko4' as KRef;
 
 /**
  * Launch the narrowing vat.

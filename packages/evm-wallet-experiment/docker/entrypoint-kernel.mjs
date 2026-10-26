@@ -1,4 +1,4 @@
-/* eslint-disable n/no-process-env, n/no-process-exit, n/no-sync, import-x/no-unresolved */
+/* oxlint-disable node/no-process-env, node/no-sync */
 /**
  * Generic kernel entrypoint for Docker E2E containers.
  *
@@ -38,7 +38,7 @@ mkdirSync('/logs', { recursive: true });
 const logStream = createWriteStream(`/logs/${NAME}.log`, { flags: 'w' });
 for (const stream of [process.stdout, process.stderr]) {
   const original = stream.write.bind(stream);
-  // eslint-disable-next-line jsdoc/require-jsdoc
+  // oxlint-disable-next-line ocap/require-jsdoc
   stream.write = (chunk, ...args) => {
     logStream.write(chunk);
     return original(chunk, ...args);

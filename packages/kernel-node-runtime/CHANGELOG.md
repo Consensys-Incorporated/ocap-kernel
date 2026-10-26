@@ -24,6 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **BREAKING:** Drop `platformOptions.fetch` from `makeNodeJsVatSupervisor` ([#942](https://github.com/MetaMask/ocap-kernel/pull/942))
   - `fetch` is now a vat endowment; stub `globalThis.fetch` directly if needed
 
+### Removed
+
+- **BREAKING:** Remove the CommonJS build; the package is ESM-only. Its entry points are `.js` and `.d.ts` files, formerly `.mjs`/`.cjs` and `.d.mts`/`.d.cts` ([#1186](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1186))
+
 ### Fixed
 
 - A vat worker that exits after its handshake has its channel failed with its exit code, so the kernel notices the vat is gone and says why ([#1161](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1161))

@@ -2,6 +2,7 @@ import '@ocap/repo-tools/test-utils/mock-endoify';
 import { Logger } from '@metamask/logger';
 import type { SyntaxNode } from 'tree-sitter';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import type { MockInstance } from 'vitest';
 
 import * as identifiers from './parse/identifiers.ts';
 import { prepareEvaluation } from './prepare-evaluation.ts';
@@ -292,14 +293,13 @@ describe('prepareEvaluation', () => {
 
   describe('with logger', () => {
     let logger: Logger;
-    let infoSpy: ReturnType<typeof vi.spyOn>;
-    let subLoggerSpy: ReturnType<typeof vi.fn>;
+    let infoSpy: MockInstance<Logger['info']>;
+    let subLoggerSpy: MockInstance<Logger['subLogger']>;
 
     beforeEach(() => {
       logger = new Logger('test');
       infoSpy = vi.spyOn(logger, 'info');
-      subLoggerSpy = vi.fn().mockReturnValue({ info: infoSpy });
-      logger.subLogger = subLoggerSpy;
+      subLoggerSpy = vi.spyOn(logger, 'subLogger').mockReturnValue(logger);
     });
 
     it.each([

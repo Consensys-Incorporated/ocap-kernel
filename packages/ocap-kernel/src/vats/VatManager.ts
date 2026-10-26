@@ -836,14 +836,13 @@ export class VatManager {
   }
 
   /**
-   * Reject every caller waiting on queued work, for a kernel discarding its
-   * run queue. Vat ids are reused once the store is cleared, so a waiter left
-   * behind would be answered with an unrelated vat.
+   * Reject every caller waiting on queued work, for a kernel that is stopping
+   * or discarding its run queue. Vat ids are reused once the store is cleared,
+   * so a waiter left behind would be answered with an unrelated vat.
    *
    * @param error - What to reject them with.
    */
   abandonQueuedWork(error: Error): void {
-    this.#kernelQueue.discardHeldRequests();
     for (const waiters of [
       this.#restartWaiters,
       this.#terminationWaiters,

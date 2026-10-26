@@ -63,7 +63,7 @@ export async function ensureDaemon(socketPath: string): Promise<void> {
   process.stderr.write('Starting daemon...\n');
 
   const currentDir = dirname(fileURLToPath(import.meta.url));
-  const entryPath = join(currentDir, 'daemon-entry.mjs');
+  const entryPath = join(currentDir, 'daemon-entry.js');
 
   const child = spawn(process.execPath, [entryPath], {
     detached: true,

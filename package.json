@@ -17,16 +17,15 @@
     "build:docs": "yarn workspaces foreach --all --exclude @ocap/monorepo --exclude @ocap/extension --parallel --interlaced --verbose run build:docs",
     "changelog:update": "yarn workspaces foreach --all --no-private --parallel --interlaced --verbose run changelog:update",
     "changelog:validate": "yarn workspaces foreach --all --no-private --parallel --interlaced --verbose run changelog:validate",
-    "clean": "rimraf --glob './*.tsbuildinfo' ./.eslintcache ./coverage ./.turbo && yarn workspaces foreach --all --parallel --interlaced --verbose run clean",
+    "clean": "rimraf --glob './*.tsbuildinfo' ./coverage ./.turbo && yarn workspaces foreach --all --parallel --interlaced --verbose run clean",
     "create-package": "tsx packages/create-package/src/index.ts",
-    "lint": "yarn constraints && yarn lint:eslint && yarn lint:misc --check && yarn lint:dependencies",
+    "lint": "yarn constraints && yarn lint:oxlint && yarn lint:oxfmt && yarn lint:dependencies",
     "lint:dependencies": "yarn dedupe --check >/dev/null && yarn depcheck --quiet && yarn workspaces foreach --all --parallel --verbose run lint:dependencies",
     "lint:dependencies:fix": "yarn dedupe >/dev/null && yarn depcheck --quiet && yarn workspaces foreach --all --parallel --verbose run lint:dependencies",
-    "lint:eslint": "yarn eslint . --cache",
-    "lint:fix": "yarn constraints --fix && yarn lint:eslint --fix && yarn lint:misc --write && yarn lint:dependencies:fix",
-    "lint:misc": "prettier --no-error-on-unmatched-pattern '**/*.json' '**/*.md' '**/*.html'  '**/*.yml' '!**/CHANGELOG.old.md' '!.yarnrc.yml' '!CLAUDE.md' '!merged-packages/**' --ignore-path .gitignore  --log-level warn",
-    "postinstall": "patch-package && simple-git-hooks && yarn rebuild:native",
-    "prepack": "./scripts/prepack.sh",
+    "lint:fix": "yarn constraints --fix && yarn lint:oxlint --fix && oxfmt && yarn lint:dependencies:fix",
+    "lint:oxfmt": "oxfmt --check",
+    "lint:oxlint": "oxlint",
+    "postinstall": "simple-git-hooks && yarn rebuild:native",
     "rebuild:native": "./scripts/rebuild-native.sh",
     "test": "vitest run",
     "test:dev": "yarn exec turbo run test:dev",
@@ -35,6 +34,7 @@
     "test:e2e:ci": "yarn workspaces foreach --all run test:e2e:ci",
     "test:e2e:local": "yarn workspaces foreach --all run test:e2e:local",
     "test:integration": "yarn workspaces foreach --all run test:integration",
+    "test:types": "yarn exec turbo run test:types --continue --output-logs=errors-only",
     "test:verbose": "yarn test --reporter verbose",
     "test:watch": "vitest",
     "why:batch": "./scripts/why-batch.sh"
@@ -44,11 +44,12 @@
     "post-rewrite": "yarn lint:dependencies"
   },
   "lint-staged": {
-    "*.{js,mjs,cjs,ts,mts,cts}": [
-      "eslint --fix"
+    "*.{js,jsx,mjs,cjs,ts,tsx,mts,cts}": [
+      "oxlint --fix",
+      "oxfmt --no-error-on-unmatched-pattern"
     ],
     "!(CHANGELOG|CLAUDE).{json,html,md,yml}": [
-      "prettier --write"
+      "oxfmt --no-error-on-unmatched-pattern"
     ]
   },
   "devDependencies": {
@@ -58,54 +59,32 @@
     "@lavamoat/preinstall-always-fail": "^2.1.0",
     "@metamask/auto-changelog": "^6.2.1",
     "@metamask/create-release-branch": "^4.2.2",
-    "@metamask/eslint-config": "^15.0.1",
-    "@metamask/eslint-config-nodejs": "^15.0.1",
-    "@metamask/eslint-config-typescript": "^15.0.1",
-    "@metamask/eslint-config-vitest": "^15.0.1",
     "@metamask/kernel-cli": "workspace:^",
-    "@ts-bridge/cli": "^0.6.3",
-    "@ts-bridge/shims": "^0.1.1",
+    "@ocap/lint-config": "workspace:^",
     "@types/lodash": "^4.17.16",
     "@types/node": "^22.13.1",
     "@types/setimmediate": "^1.0.4",
     "@types/webextension-polyfill": "^0",
-    "@typescript-eslint/eslint-plugin": "^8.29.0",
-    "@typescript-eslint/parser": "^8.29.0",
-    "@typescript-eslint/utils": "^8.29.0",
     "@vitest/coverage-v8": "^4.1.3",
-    "@vitest/eslint-plugin": "^1.6.14",
     "@yarnpkg/types": "^4.0.1",
     "depcheck": "^1.4.7",
-    "eslint": "^9.23.0",
-    "eslint-config-prettier": "^10.1.1",
-    "eslint-import-resolver-typescript": "^4.3.1",
-    "eslint-plugin-import-x": "^4.10.0",
-    "eslint-plugin-jsdoc": "^50.6.9",
-    "eslint-plugin-n": "^17.17.0",
-    "eslint-plugin-prettier": "^5.2.6",
-    "eslint-plugin-promise": "^7.2.1",
-    "eslint-plugin-react": "^7.37.5",
-    "eslint-plugin-react-hooks": "^5.2.0",
-    "globals": "^16.0.0",
     "lint-staged": "^15.5.0",
     "lodash": "^4.17.21",
-    "patch-package": "^8.0.0",
+    "oxfmt": "0.74.0",
+    "oxlint": "1.89.0",
+    "oxlint-tsgolint": "7.0.2004",
     "playwright": "^1.59.1",
-    "prettier": "^3.5.3",
-    "prettier-plugin-packagejson": "^2.5.10",
     "rimraf": "^6.0.1",
     "semver": "^7.7.1",
     "simple-git-hooks": "^2.12.1",
     "tsx": "^4.20.6",
     "turbo": "^2.9.1",
-    "typedoc": "^0.28.1",
-    "typescript": "~5.8.2",
-    "typescript-eslint": "^8.29.0",
+    "typescript": "~7.0.2",
     "vite": "^8.0.6",
     "vitest": "^4.1.3",
     "vitest-fetch-mock": "^0.4.5"
   },
-  "packageManager": "yarn@4.12.0",
+  "packageManager": "yarn@4.18.1",
   "engines": {
     "node": ">=22"
   },
@@ -114,8 +93,6 @@
       "$root$": true,
       "@metamask/kernel-cli>@metamask/logger>@metamask/streams": true,
       "@lavamoat/preinstall-always-fail": false,
-      "eslint-import-resolver-typescript>unrs-resolver": false,
-      "eslint-plugin-import-x>unrs-resolver": false,
       "simple-git-hooks": false,
       "tsx>esbuild": false,
       "vite>esbuild": false,
@@ -142,6 +119,8 @@
     "@multiformats/multiaddr": "13.0.1",
     "@multiformats/multiaddr-to-uri": "12.0.0",
     "@multiformats/dns": "1.0.9",
-    "bn.js@npm:5.2.1": "^5.2.3"
+    "bn.js@npm:5.2.1": "^5.2.3",
+    "@metamask/rpc-errors/@metamask/utils": "^12.0.0",
+    "@metamask/json-rpc-engine/@metamask/utils": "^12.0.0"
   }
 }

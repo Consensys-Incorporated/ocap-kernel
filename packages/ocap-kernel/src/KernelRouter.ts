@@ -15,6 +15,7 @@ import type {
   ERef,
   KRef,
   KernelMessage,
+  RRef,
   RunLoopItem,
   RunQueueItemSend,
   RemoteEndpointHandle,
@@ -39,17 +40,24 @@ const GC_DELIVERY = {
   [Type in GCRunQueueType]: `deliver${Capitalize<Type>}` & keyof EndpointHandle;
 };
 
-/**
- * Every run loop item the router routes. A peer's incarnation change is not a
- * delivery to an endpoint and is carried out by the kernel instead, so leaving
- * it out is what keeps the exhaustiveness check below honest.
- */
-type RoutedRunLoopItem = Exclude<RunLoopItem, RunQueueItemPeerIncarnation>;
-
 type MessageRoute = {
   endpointId?: EndpointId | 'kernel';
   target: KRef;
 } | null;
+
+type KernelRouterOptions = {
+  kernelStore: KernelStore;
+  kernelQueue: KernelQueue;
+  getEndpoint: (endpointId: EndpointId) => EndpointHandle;
+  invokeKernelService: (target: KRef, message: KernelMessage) => void;
+  restartVat: (vatId: VatId) => Promise<CrankResult | undefined>;
+  terminateVat: (
+    vatId: VatId,
+    reason?: CapData<KRef>,
+  ) => Promise<CrankResult | undefined>;
+  applyIncarnationChange: (item: RunQueueItemPeerIncarnation) => CrankResult;
+  logger?: Logger;
+};
 
 /**
  * The KernelRouter is responsible for routing messages to the correct endpoint.
@@ -85,38 +93,48 @@ export class KernelRouter {
     reason?: CapData<KRef>,
   ) => Promise<CrankResult | undefined>;
 
+  /**
+   * A function that records a peer's incarnation change. Synchronous: an
+   * await between taking the change and recording it would let a handshake
+   * find the incarnation neither waiting nor recorded, and queue it again.
+   */
+  readonly #applyIncarnationChange: (
+    item: RunQueueItemPeerIncarnation,
+  ) => CrankResult;
+
   /** The logger, if any. */
   readonly #logger: Logger | undefined;
 
   /**
    * Construct a new KernelRouter.
    *
-   * @param kernelStore - The kernel's store.
-   * @param kernelQueue - The kernel's queue.
-   * @param getEndpoint - A function that returns an endpoint handle for a given endpoint id.
-   * @param invokeKernelService - A function that calls a method on a kernel service object.
-   * @param restartVat - A function that replaces a vat's worker.
-   * @param terminateVat - A function that ends a vat.
-   * @param logger - The logger. If not provided, no logging will be done.
+   * @param options - Options bag.
+   * @param options.kernelStore - The kernel's store.
+   * @param options.kernelQueue - The kernel's queue.
+   * @param options.getEndpoint - A function that returns an endpoint handle for a given endpoint id.
+   * @param options.invokeKernelService - A function that calls a method on a kernel service object.
+   * @param options.restartVat - A function that replaces a vat's worker.
+   * @param options.terminateVat - A function that ends a vat.
+   * @param options.applyIncarnationChange - A function that records a peer's incarnation change.
+   * @param options.logger - The logger. If not provided, no logging will be done.
    */
-  constructor(
-    kernelStore: KernelStore,
-    kernelQueue: KernelQueue,
-    getEndpoint: (endpointId: EndpointId) => EndpointHandle,
-    invokeKernelService: (target: KRef, message: KernelMessage) => void,
-    restartVat: (vatId: VatId) => Promise<CrankResult | undefined>,
-    terminateVat: (
-      vatId: VatId,
-      reason?: CapData<KRef>,
-    ) => Promise<CrankResult | undefined>,
-    logger?: Logger,
-  ) {
+  constructor({
+    kernelStore,
+    kernelQueue,
+    getEndpoint,
+    invokeKernelService,
+    restartVat,
+    terminateVat,
+    applyIncarnationChange,
+    logger,
+  }: KernelRouterOptions) {
     this.#kernelStore = kernelStore;
     this.#kernelQueue = kernelQueue;
     this.#getEndpoint = getEndpoint;
     this.#invokeKernelService = invokeKernelService;
     this.#restartVat = restartVat;
     this.#terminateVat = terminateVat;
+    this.#applyIncarnationChange = applyIncarnationChange;
     this.#logger = logger;
   }
 
@@ -138,7 +156,7 @@ export class KernelRouter {
    * @param item - The message/notification to deliver.
    * @returns The crank outcome.
    */
-  async deliver(item: RoutedRunLoopItem): Promise<CrankResult | undefined> {
+  async deliver(item: RunLoopItem): Promise<CrankResult | undefined> {
     switch (item.type) {
       case 'send':
         return await this.#deliverSend(item);
@@ -156,6 +174,8 @@ export class KernelRouter {
         return await this.#restartVat(item.vatId);
       case 'terminateVat':
         return await this.#terminateVat(item.vatId, item.reason);
+      case 'peerIncarnation':
+        return this.#applyIncarnationChange(item);
       default:
         // @ts-expect-error Runtime does not respect "never".
         Fail`unsupported or unknown run queue item type ${item.type}`;
@@ -563,11 +583,12 @@ export class KernelRouter {
       `@@@@ deliver ${endpointId} ${type} ${JSON.stringify(krefs)}`,
     );
     const endpoint = this.#lookupEndpoint(endpointId, type);
-    // Only a skipped vat gets here without a handle; a remote throws above. One
-    // the store does not call terminated has been cleaned up whole, possibly
-    // by `nextTerminatedVatCleanup` earlier in this crank, or is still
-    // persisted. That one keeps its c-list as the vat last saw it, since a
-    // restart would bring up an incarnation still holding those erefs.
+    // Only a skipped vat gets here without a handle: a remote's GC actions wait
+    // in the set until it has one. One the store does not call terminated has
+    // been cleaned up whole, possibly by `nextTerminatedVatCleanup` earlier in
+    // this crank, or is still persisted. That one keeps its c-list as the vat
+    // last saw it, since a restart would bring up an incarnation still holding
+    // those erefs.
     if (!endpoint && !this.#kernelStore.isVatTerminated(endpointId as VatId)) {
       return { didDelivery: endpointId };
     }
@@ -596,8 +617,13 @@ export class KernelRouter {
     if (!endpoint) {
       return { didDelivery: endpointId };
     }
+    // A remote reads an rref in its own frame, so flip it as `translateRefKtoE`
+    // does for every other delivery.
+    const delivered = isRemoteId(endpointId)
+      ? erefs.map((eref) => this.#kernelStore.invertRRef(eref as RRef))
+      : erefs;
     return await this.#deliverUnlessLost(endpointId, async () =>
-      endpoint[GC_DELIVERY[type]](erefs),
+      endpoint[GC_DELIVERY[type]](delivered),
     );
   }
 
@@ -614,22 +640,30 @@ export class KernelRouter {
   async #deliverRemoteInbound(
     item: RunQueueItemRemoteInbound,
   ): Promise<CrankResult> {
-    const { remoteId, message } = item;
+    const { remoteId, peerId, seq, message } = item;
     const remote = this.#lookupEndpoint(remoteId, 'an inbound message', {
       discardable: true,
     }) as RemoteEndpointHandle | undefined;
     if (!remote) {
       return { didDelivery: remoteId };
     }
+    // The remote ID has gone to another peer since, as after a reset (#1208).
+    // Delivered, the message would be read against that peer's c-list and
+    // answered to it.
+    if (remote.peerId !== peerId) {
+      this.#logger?.warn(
+        `Dropped inbound message seq=${seq} from peer ${peerId}: ${remoteId} is now another peer's`,
+      );
+      return { didDelivery: remoteId };
+    }
     try {
       return await remote.deliverInbound(message);
     } catch (error) {
-      // What a peer sends is a peer's to get wrong: an unknown method, a
-      // reference that does not resolve, a reply to a redemption that has
-      // already timed out. None of that is the kernel's to die of, and the
-      // crank has rolled back whatever the attempt started.
+      // What a peer sends can fail here: an unknown method, a reference that
+      // does not resolve, a reply to a redemption that has timed out. None of
+      // it is the kernel's to die of.
       this.#logger?.error(
-        `Discarded an inbound message from ${remoteId} that could not be delivered:`,
+        `Discarded inbound message seq=${seq} from ${remoteId}, which could not be delivered:`,
         error,
       );
       return { didDelivery: remoteId, abort: true };

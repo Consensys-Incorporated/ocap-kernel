@@ -104,7 +104,7 @@ export function parseOcapURL(ocapURL: string): OcapURLParts {
  * @returns pair of the peer id corresponding to the given key, and the seed string.
  */
 async function generateKeyInfo(seedString?: string): Promise<[string, string]> {
-  // eslint-disable-next-line n/no-unsupported-features/node-builtins, no-param-reassign
+  // oxlint-disable-next-line no-param-reassign
   seedString ??= toHex(globalThis.crypto.getRandomValues(new Uint8Array(32)));
   const keyPair = await generateKeyPairFromSeed('Ed25519', fromHex(seedString));
   const peerId = peerIdFromPrivateKey(keyPair).toString();
@@ -204,7 +204,7 @@ export async function initRemoteIdentity(
     kernelStore.setRelayEntries(merged);
   }
 
-  /* eslint-disable no-param-reassign */
+  /* oxlint-disable no-param-reassign */
   const possiblePeerId = kernelStore.getRemoteIdentityValue('peerId');
   if (possiblePeerId) {
     // If a mnemonic is provided but identity already exists, throw an error
@@ -232,11 +232,10 @@ export async function initRemoteIdentity(
   if (possibleOcapURLKey) {
     ocapURLKey = fromHex(possibleOcapURLKey);
   } else {
-    // eslint-disable-next-line n/no-unsupported-features/node-builtins
     ocapURLKey = globalThis.crypto.getRandomValues(new Uint8Array(32));
     kernelStore.setRemoteIdentityValue('ocapURLKey', toHex(ocapURLKey));
   }
-  /* eslint-enable no-param-reassign */
+  /* oxlint-enable no-param-reassign */
   const cipher = AES_GCM.create();
 
   const KREF_MIN_LEN = 16;

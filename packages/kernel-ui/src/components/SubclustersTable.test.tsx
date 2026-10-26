@@ -1,9 +1,11 @@
+import type { SubclusterId, VatId } from '@metamask/ocap-kernel';
 import { render, screen, cleanup } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import { SubclustersTable } from './SubclustersTable.tsx';
 import { useVats } from '../hooks/useVats.ts';
+import type { Subclusters } from '../hooks/useVats.ts';
 import type { VatRecord } from '../types.ts';
 
 // Mock the useVats hook
@@ -14,15 +16,15 @@ vi.mock('../hooks/useVats.ts', () => ({
 describe('SubclustersTable Component', () => {
   const mockVats: VatRecord[] = [
     {
-      id: 'vat-1',
-      subclusterId: 'subcluster-1',
+      id: 'vat-1' as VatId,
+      subclusterId: 'subcluster-1' as SubclusterId,
       source: 'source-1',
       parameters: 'params-1',
       creationOptions: '',
     },
     {
-      id: 'vat-2',
-      subclusterId: 'subcluster-1',
+      id: 'vat-2' as VatId,
+      subclusterId: 'subcluster-1' as SubclusterId,
       source: 'source-2',
       parameters: 'params-2',
       creationOptions: '',
@@ -40,10 +42,10 @@ describe('SubclustersTable Component', () => {
     },
   };
 
-  const mockSubclusters = [
+  const mockSubclusters: Subclusters = [
     {
-      id: 'subcluster-1',
-      vats: ['vat-1', 'vat-2'],
+      id: 'subcluster-1' as SubclusterId,
+      vats: { 'vat-1': 'vat-1' as VatId, 'vat-2': 'vat-2' as VatId },
       config: {
         bootstrap: 'bootstrap-1',
         vats: mockVatConfig,

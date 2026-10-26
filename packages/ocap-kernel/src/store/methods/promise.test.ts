@@ -5,6 +5,7 @@ import { getBaseMethods } from './base.ts';
 import { getPromiseMethods } from './promise.ts';
 import { getQueueMethods } from './queue.ts';
 import { getRefCountMethods } from './refcount.ts';
+import { asKRef, asVatId } from '../../../test/branded.ts';
 import type { KRef, KernelMessage, VatId } from '../../types.ts';
 import type { StoreContext } from '../types.ts';
 import * as promiseRefModule from '../utils/promise-ref.ts';
@@ -141,7 +142,7 @@ describe('promise store methods', () => {
 
   describe('getKernelPromise', () => {
     it('retrieves an unresolved promise without decider', () => {
-      const kpid = 'kp123';
+      const kpid = asKRef('kp123');
       mockKV.set(`${kpid}.state`, 'unresolved');
       mockKV.set(`${kpid}.subscribers`, '["v1", "v2"]');
 
@@ -154,7 +155,7 @@ describe('promise store methods', () => {
     });
 
     it('retrieves an unresolved promise with decider', () => {
-      const kpid = 'kp123';
+      const kpid = asKRef('kp123');
       mockKV.set(`${kpid}.state`, 'unresolved');
       mockKV.set(`${kpid}.decider`, 'v3');
       mockKV.set(`${kpid}.subscribers`, '["v1", "v2"]');
@@ -169,7 +170,7 @@ describe('promise store methods', () => {
     });
 
     it('retrieves a fulfilled promise', () => {
-      const kpid = 'kp123';
+      const kpid = asKRef('kp123');
       mockKV.set(`${kpid}.state`, 'fulfilled');
       mockKV.set(`${kpid}.value`, '{"body":"someValue","slots":[]}');
 
@@ -182,7 +183,7 @@ describe('promise store methods', () => {
     });
 
     it('retrieves a rejected promise', () => {
-      const kpid = 'kp123';
+      const kpid = asKRef('kp123');
       mockKV.set(`${kpid}.state`, 'rejected');
       mockKV.set(`${kpid}.value`, '{"body":"error","slots":[]}');
 
@@ -195,7 +196,7 @@ describe('promise store methods', () => {
     });
 
     it('throws for unknown promise', () => {
-      const kpid = 'kp999';
+      const kpid = asKRef('kp999');
 
       expect(() => promiseMethods.getKernelPromise(kpid)).toThrow(
         `unknown kernel promise ${kpid}`,
@@ -203,7 +204,7 @@ describe('promise store methods', () => {
     });
 
     it('throws for unknown promise state', () => {
-      const kpid = 'kp123';
+      const kpid = asKRef('kp123');
       mockKV.set(`${kpid}.state`, 'invalid-state');
 
       expect(() => promiseMethods.getKernelPromise(kpid)).toThrow(
@@ -214,7 +215,7 @@ describe('promise store methods', () => {
 
   describe('deleteKernelPromise', () => {
     it('removes all data associated with a kernel promise', () => {
-      const kpid = 'kp123';
+      const kpid = asKRef('kp123');
       mockKV.set(`${kpid}.state`, 'unresolved');
       mockKV.set(`${kpid}.decider`, 'v1');
       mockKV.set(`${kpid}.subscribers`, '["v2", "v3"]');
@@ -246,7 +247,7 @@ describe('promise store methods', () => {
 
   describe('addPromiseSubscriber', () => {
     it('adds a new subscriber to an unresolved promise', () => {
-      const kpid = 'kp123';
+      const kpid = asKRef('kp123');
       const vatId = 'v2' as VatId;
       mockKV.set(`${kpid}.state`, 'unresolved');
       mockKV.set(`${kpid}.subscribers`, '["v1"]');
@@ -257,7 +258,7 @@ describe('promise store methods', () => {
     });
 
     it('does not add duplicate subscribers', () => {
-      const kpid = 'kp123';
+      const kpid = asKRef('kp123');
       const vatId = 'v1' as VatId;
       mockKV.set(`${kpid}.state`, 'unresolved');
       mockKV.set(`${kpid}.subscribers`, '["v1"]');
@@ -268,7 +269,7 @@ describe('promise store methods', () => {
     });
 
     it('throws if promise is already resolved', () => {
-      const kpid = 'kp123';
+      const kpid = asKRef('kp123');
       const vatId = 'v2' as VatId;
       mockKV.set(`${kpid}.state`, 'fulfilled');
       mockKV.set(`${kpid}.value`, '{"body":"someValue","slots":[]}');
@@ -281,7 +282,7 @@ describe('promise store methods', () => {
 
   describe('setPromiseDecider', () => {
     it('sets the decider for a kernel promise', () => {
-      const kpid = 'kp123';
+      const kpid = asKRef('kp123');
       const vatId = 'v1' as VatId;
 
       promiseMethods.setPromiseDecider(kpid, vatId);
@@ -301,14 +302,14 @@ describe('promise store methods', () => {
 
   describe('resolveKernelPromise', () => {
     it('fulfills a promise and returns queued messages', () => {
-      const kpid = 'kp123';
+      const kpid = asKRef('kp123');
       const value: CapData<KRef> = {
         body: 'someValue',
-        slots: ['o+1', 'o+2'],
+        slots: ['o+1' as KRef, 'o+2' as KRef],
       };
       const message1: KernelMessage = {
-        methargs: { body: 'method1', slots: ['ko7'] },
-        result: 'kp8',
+        methargs: { body: 'method1', slots: [asKRef('ko7')] },
+        result: asKRef('kp8'),
       };
       const message2: KernelMessage = {
         methargs: { body: 'method2', slots: [] },
@@ -354,7 +355,7 @@ describe('promise store methods', () => {
     });
 
     it('rejects a promise and enqueues pending messages', () => {
-      const kpid = 'kp123';
+      const kpid = asKRef('kp123');
       const value: CapData<KRef> = { body: 'error', slots: [] };
 
       mockKV.set(`${kpid}.state`, 'unresolved');
@@ -375,10 +376,10 @@ describe('promise store methods', () => {
 
   describe('enqueuePromiseMessage', () => {
     it('adds a message to the promise queue', () => {
-      const kpid = 'kp123';
+      const kpid = asKRef('kp123');
       const message = {
         methargs: { body: 'test', slots: [] },
-        result: null as string | null,
+        result: null as KRef | null,
       };
       promiseMethods.enqueuePromiseMessage(kpid, message);
       expect(mockProvideStoredQueue).toHaveBeenCalledWith(kpid, false);
@@ -386,10 +387,10 @@ describe('promise store methods', () => {
     });
 
     it('takes a reference on everything the queued message carries', () => {
-      const kpid = 'kp123';
+      const kpid = asKRef('kp123');
       const message: KernelMessage = {
-        methargs: { body: 'test', slots: ['ko1', 'kp2'] },
-        result: 'kp3',
+        methargs: { body: 'test', slots: [asKRef('ko1'), asKRef('kp2')] },
+        result: asKRef('kp3'),
       };
 
       promiseMethods.enqueuePromiseMessage(kpid, message);
@@ -405,7 +406,7 @@ describe('promise store methods', () => {
 
   describe('getKernelPromiseMessageQueue', () => {
     it('retrieves all messages from the promise queue', () => {
-      const kpid = 'kp123';
+      const kpid = asKRef('kp123');
       const message1: KernelMessage = {
         method: 'method1',
       } as unknown as KernelMessage;
@@ -426,7 +427,7 @@ describe('promise store methods', () => {
     });
 
     it('returns an empty array for an empty queue', () => {
-      const kpid = 'kp123';
+      const kpid = asKRef('kp123');
 
       mockQueue.dequeue.mockReturnValue(undefined);
 
@@ -491,7 +492,9 @@ describe('promise store methods', () => {
       givenCListPromise('v1', 'p+1', 'kp101', undefined, 'fulfilled');
       givenCListPromise('v1', 'p+2', 'kp102', 'v1');
 
-      const result = Array.from(promiseMethods.getPromisesByDecider('v1'));
+      const result = Array.from(
+        promiseMethods.getPromisesByDecider(asVatId('v1')),
+      );
 
       expect(result).toStrictEqual(['kp102']);
     });
@@ -501,7 +504,9 @@ describe('promise store methods', () => {
       mockKV.set('v1.c.o+1', 'ko1');
       mockKV.set('v1.c.ko1', 'R o+1');
 
-      const result = Array.from(promiseMethods.getPromisesByDecider('v1'));
+      const result = Array.from(
+        promiseMethods.getPromisesByDecider(asVatId('v1')),
+      );
 
       expect(result).toStrictEqual(['kp101']);
     });
@@ -519,10 +524,10 @@ describe('promise store methods', () => {
 
   describe('getKpidsToRetire', () => {
     it('returns the original promise kpid when there are no promises in the resolution value', () => {
-      const origKpid = 'kp123';
+      const origKpid = asKRef('kp123');
       const origValue: CapData<KRef> = {
         body: 'someValue',
-        slots: ['ko1', 'ko2'], // non-promise slots
+        slots: [asKRef('ko1'), asKRef('ko2')], // non-promise slots
       };
 
       const result = promiseMethods.getKpidsToRetire(origKpid, origValue);
@@ -531,14 +536,14 @@ describe('promise store methods', () => {
     });
 
     it('returns kpids of resolved promises found in the resolution value', () => {
-      const origKpid = 'kp123';
-      const resolvedPromise1 = 'kp456';
-      const resolvedPromise2 = 'kp789';
+      const origKpid = asKRef('kp123');
+      const resolvedPromise1 = asKRef('kp456');
+      const resolvedPromise2 = asKRef('kp789');
 
       // Set up a resolution value with promise references
       const origValue: CapData<KRef> = {
         body: 'value with promises',
-        slots: ['ko1', resolvedPromise1, resolvedPromise2],
+        slots: [asKRef('ko1'), resolvedPromise1, resolvedPromise2],
       };
 
       // Set up the promises in the KV store
@@ -570,8 +575,8 @@ describe('promise store methods', () => {
     });
 
     it('handles promises with nested promise references', () => {
-      const origKpid = 'kp100';
-      const promise1 = 'kp101';
+      const origKpid = asKRef('kp100');
+      const promise1 = asKRef('kp101');
       const promise2 = 'kp102';
       const promise3 = 'kp103';
 
@@ -622,8 +627,8 @@ describe('promise store methods', () => {
     });
 
     it('handles cyclic promise references', () => {
-      const origKpid = 'kp200';
-      const promise1 = 'kp201';
+      const origKpid = asKRef('kp200');
+      const promise1 = asKRef('kp201');
       const promise2 = 'kp202';
 
       // Original promise resolves to promise1
@@ -662,9 +667,9 @@ describe('promise store methods', () => {
     });
 
     it('only includes resolved promises', () => {
-      const origKpid = 'kp300';
-      const resolvedPromise = 'kp301';
-      const unresolvedPromise = 'kp302';
+      const origKpid = asKRef('kp300');
+      const resolvedPromise = asKRef('kp301');
+      const unresolvedPromise = asKRef('kp302');
 
       // Original promise has both resolved and unresolved promises
       const origValue: CapData<KRef> = {

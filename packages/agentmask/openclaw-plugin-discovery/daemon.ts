@@ -28,8 +28,8 @@ async function spawnCli(options: {
 }): Promise<ExecResult> {
   const { cliPath, args, timeoutMs } = options;
 
-  const command = cliPath.endsWith('.mjs') ? 'node' : cliPath;
-  const spawnArgs = cliPath.endsWith('.mjs') ? [cliPath, ...args] : args;
+  const command = cliPath.endsWith('.js') ? 'node' : cliPath;
+  const spawnArgs = cliPath.endsWith('.js') ? [cliPath, ...args] : args;
 
   return new Promise((resolve, reject) => {
     const child = spawn(command, spawnArgs, {
@@ -105,7 +105,7 @@ export type DaemonCaller = {
  */
 export function makeDaemonCaller(options: {
   cliPath: string;
-  ocapHome?: string;
+  ocapHome?: string | undefined;
   timeoutMs: number;
 }): DaemonCaller {
   const { cliPath, ocapHome, timeoutMs } = options;

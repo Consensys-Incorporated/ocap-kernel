@@ -24,7 +24,7 @@ jobs:
       - name: Check pull request merge queue status
         id: check-skip-merge-queue
         if: github.event_name == 'merge_group'
-        uses: MetaMask/github-tools/.github/actions/check-skip-merge-queue@7e0d74bc7b79ce9601e52f58d5e4d36c19591df9 # v1
+        uses: MetaMask/github-tools/.github/actions/check-skip-merge-queue@b1b556ff7ab5b6054698d078c661a7b149b8609e # v1
 
   detect-changes:
     name: Detect changes
@@ -69,7 +69,7 @@ jobs:
             [[ -z "$file" ]] && continue
 
             case "$file" in
-              # CI workflow files (also lint-worthy for prettier on .yml)
+              # CI workflow files (also lint-worthy for oxfmt on .yml)
               .github/workflows/*)
                 HAS_CI=true
                 HAS_LINT_TARGETS=true
@@ -80,12 +80,13 @@ jobs:
                 HAS_CODE=true
                 HAS_LINT_TARGETS=true
                 ;;
-              # Documentation (lint-worthy for prettier, but not code)
+              # Documentation (lint-worthy for oxfmt, but not code)
               *.md|*.txt|docs/*|LICENSE*)
                 HAS_LINT_TARGETS=true
                 ;;
-              # Config/tooling (lint-worthy but not code)
-              .eslintrc*|.prettierrc*|.editorconfig|.gitignore|.gitattributes|.nvmrc|.yarnrc*)
+              # Config/tooling (lint-worthy but not code). The oxfmt config is
+              # a build input (repo-tools formats HTML with it), so it counts as code.
+              .oxlintrc*|oxlint.config.*|.editorconfig|.gitignore|.gitattributes|.nvmrc|.yarnrc*)
                 HAS_LINT_TARGETS=true
                 ;;
               # Everything else is code (source, tests, package.json, tsconfig, lockfile, etc.)

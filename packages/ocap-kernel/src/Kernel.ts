@@ -122,7 +122,7 @@ export class Kernel {
    * crank, and throw on any mismatch. Intended for tests and debugging; the
    * audit walks the whole store.
    */
-  // eslint-disable-next-line no-restricted-syntax
+  // oxlint-disable-next-line ocap/no-restricted-syntax
   private constructor(
     platformServices: PlatformServices,
     kernelDatabase: KernelDatabase,
@@ -227,17 +227,22 @@ export class Kernel {
       logger: this.#logger.subLogger({ tags: ['SubclusterManager'] }),
     });
 
-    this.#kernelRouter = new KernelRouter(
-      this.#kernelStore,
-      this.#kernelQueue,
-      this.#getEndpoint.bind(this),
-      this.#kernelServiceManager.invokeKernelService.bind(
+    this.#kernelRouter = new KernelRouter({
+      kernelStore: this.#kernelStore,
+      kernelQueue: this.#kernelQueue,
+      getEndpoint: this.#getEndpoint.bind(this),
+      invokeKernelService: this.#kernelServiceManager.invokeKernelService.bind(
         this.#kernelServiceManager,
       ),
-      this.#vatManager.performVatRestart.bind(this.#vatManager),
-      this.#vatManager.performVatTermination.bind(this.#vatManager),
-      this.#logger,
-    );
+      restartVat: this.#vatManager.performVatRestart.bind(this.#vatManager),
+      terminateVat: this.#vatManager.performVatTermination.bind(
+        this.#vatManager,
+      ),
+      applyIncarnationChange: this.#remoteManager.applyIncarnationChange.bind(
+        this.#remoteManager,
+      ),
+      logger: this.#logger,
+    });
 
     // Register OCAP URL services
     const { issuerService, redemptionService } =
@@ -374,26 +379,10 @@ export class Kernel {
       throw Error(`cannot start the run loop while it is ${state}`);
     }
     this.#kernelQueue
-      .run(async (item) => {
-        // Not a delivery to an endpoint, so not the router's to route: a peer
-        // restarting is the kernel's own bookkeeping, and for a peer with no
-        // live remote there is no endpoint to route it to at all.
-        if (item.type !== 'peerIncarnation') {
-          return await this.#kernelRouter.deliver(item);
-        }
-        try {
-          return await this.#remoteManager.applyIncarnationChange(item);
-        } catch (error) {
-          // A peer restarting is the peer's doing, and the crank has rolled
-          // back whatever this started. The handshake that queued it is long
-          // answered, and the peer will hand us its incarnation again on the
-          // next one.
-          this.#logger.error(
-            `Could not record the incarnation change for peer ${item.peerId}:`,
-            error,
-          );
-          return { abort: true };
-        }
+      .run(this.#kernelRouter.deliver.bind(this.#kernelRouter), {
+        // Every remote, until `initRemoteComms` runs after this.
+        isOffline: (endpointId) =>
+          isRemoteId(endpointId) && !this.#remoteManager.hasRemote(endpointId),
       })
       .catch((error) => this.#handleRunLoopFailure(error));
   }
@@ -523,7 +512,12 @@ export class Kernel {
    * @returns A promise that resolves when initialization is complete.
    */
   async initRemoteComms(options?: RemoteCommsOptions): Promise<void> {
-    await this.#remoteManager.initRemoteComms(options);
+    try {
+      await this.#remoteManager.initRemoteComms(options);
+    } finally {
+      // Also after a partial restore, for the remotes it did bring up.
+      this.#kernelQueue.recheckGCActions();
+    }
   }
 
   /**
@@ -748,9 +742,12 @@ export class Kernel {
       this.#kernelQueue.discardQueuedWork(
         'this message result will never be delivered',
       );
-      this.#vatManager.abandonQueuedWork(
-        new Error('Kernel storage was cleared; queued work was abandoned'),
+      this.#remoteManager.releaseRestartHolds();
+      const abandoned = new Error(
+        'Kernel storage was cleared; queued work was abandoned',
       );
+      this.#kernelQueue.discardHeldRequests(abandoned);
+      this.#vatManager.abandonQueuedWork(abandoned);
     });
   }
 
@@ -768,7 +765,7 @@ export class Kernel {
     if (isRemoteId(endpointId)) {
       return this.#remoteManager.getRemote(endpointId);
     }
-    // eslint-disable-next-line @typescript-eslint/restrict-template-expressions
+    // oxlint-disable-next-line typescript/restrict-template-expressions
     throw Error(`invalid endpoint ID ${endpointId}`);
   }
 
@@ -956,9 +953,12 @@ export class Kernel {
         this.#kernelQueue.discardQueuedWork(
           'this message result will never be delivered',
         );
-        this.#vatManager.abandonQueuedWork(
-          new Error('Kernel was reset; queued work was abandoned'),
+        this.#remoteManager.releaseRestartHolds();
+        const abandoned = new Error(
+          'Kernel was reset; queued work was abandoned',
         );
+        this.#kernelQueue.discardHeldRequests(abandoned);
+        this.#vatManager.abandonQueuedWork(abandoned);
         this.#resetKernelState();
       } catch (error) {
         this.#logger.error('Error resetting kernel:', error);
@@ -993,6 +993,10 @@ export class Kernel {
         this.#kernelQueue.discardQueuedWork(
           'the kernel was stopped before this message result was delivered',
         );
+        // All of them, since this loop never runs again to write them.
+        this.#kernelQueue.discardHeldRequests(
+          new Error('Kernel was stopped before taking this request'),
+        );
         this.#vatManager.abandonQueuedWork(
           new Error(
             'Kernel was stopped before answering; terminations already queued still take effect on its next start, restarts do not',
@@ -1000,6 +1004,10 @@ export class Kernel {
         );
         try {
           this.#kernelStore.recordLastActiveTime();
+        } catch (error) {
+          this.#logger.error('could not record last active time', error);
+        }
+        try {
           await this.#platformServices.stopRemoteComms();
           this.#remoteManager.cleanup();
           await this.#platformServices.terminateAll();

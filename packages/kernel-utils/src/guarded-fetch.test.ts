@@ -150,7 +150,6 @@ const redirectRoutes =
  */
 const streamBody = (text: string): RequestInit => ({
   // ReadableStream is flagged experimental for Node 22, but this case works.
-  // eslint-disable-next-line n/no-unsupported-features/node-builtins
   body: new ReadableStream({
     start: (controller) => {
       controller.enqueue(new TextEncoder().encode(text));
@@ -530,7 +529,7 @@ describe('makeGuardedFetch', () => {
 
       const response = await guarded(
         `http://localhost:${server.port}/`,
-        init as RequestInit,
+        init as unknown as RequestInit,
       );
 
       expect(await response.text()).toBe('landed');
@@ -822,14 +821,13 @@ describe('makeGuardedFetch', () => {
     const scriptFetch = (...responses: Response[]) => {
       const remaining = [...responses];
       return vi.fn(
-        async (_input: RequestInfo | URL, _init?: RequestInit) =>
+        async (_input: Parameters<typeof fetch>[0], _init?: RequestInit) =>
           remaining.shift() as Response,
       );
     };
 
     it('discards the body of a redirect it does not return', async () => {
       let cancelled = false;
-      // eslint-disable-next-line n/no-unsupported-features/node-builtins
       const redirectBody = new ReadableStream({
         cancel: () => {
           cancelled = true;
@@ -950,7 +948,6 @@ describe('makeGuardedFetch', () => {
         ),
         guard: allowLocalhost,
       });
-      // eslint-disable-next-line n/no-unsupported-features/node-builtins
       vi.spyOn(ReadableStream.prototype, 'cancel').mockRejectedValue(
         new Error('already gone'),
       );
@@ -1219,7 +1216,7 @@ describe('makeGuardedFetch', () => {
 
       const response = await guarded(`http://localhost:${start.port}/start`, {
         method: 'POST',
-        body: makeBody() as RequestInit['body'],
+        body: makeBody() as NonNullable<RequestInit['body']>,
       });
 
       expect(await response.text()).toBe('landed');

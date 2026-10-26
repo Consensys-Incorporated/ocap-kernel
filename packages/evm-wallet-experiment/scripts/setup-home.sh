@@ -137,7 +137,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PKG_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPO_ROOT="$(cd "$PKG_ROOT/../.." && pwd)"
 BUNDLE_DIR="$PKG_ROOT/src/vats"
-OCAP_BIN="$REPO_ROOT/packages/kernel-cli/dist/app.mjs"
+OCAP_BIN="$REPO_ROOT/packages/kernel-cli/dist/app.js"
 
 if [[ ! -f "$OCAP_BIN" ]]; then
   echo "Error: ocap CLI not found at $OCAP_BIN. Run 'yarn workspace @metamask/kernel-cli build' first." >&2

@@ -13,12 +13,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - On Node 24.20.0, 12.x aborts the process during teardown: `Statement::~Statement` reaches `RemoveEnvironmentCleanupHook` after the environment is gone, and Node asserts. The tests it kills have already passed, so it surfaces as a worker dying rather than as a failure anyone can read
   - Nothing in this package's driver changes. The 13.x major touches none of `prepare`, `run`, `get`, `all`, `iterate`, `pluck`, `transaction`, `exec`, or `close`
 
+### Removed
+
+- **BREAKING:** Remove the CommonJS build; the package is ESM-only. Its entry points are `.js` and `.d.ts` files, formerly `.mjs`/`.cjs` and `.d.mts`/`.d.cts` ([#1186](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1186))
+- **BREAKING:** Remove `sqlite/nodejs.js` and `sqlite/wasm.js`, the CommonJS mirrors of the `./sqlite/*` exports for Browserify ([#1186](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1186))
+
 ### Fixed
 
-- After SQLite rolls a transaction back on its own, as it can on a full disk or an I/O error, the wasm driver no longer throws `cannot commit - no transaction is active` from later savepoint releases ([#1089](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1089))
+- A failed `COMMIT` or outermost `RELEASE`, a `SAVEPOINT` that fails in a transaction `createSavepoint` opened for it, or a Node vat store update or `clear` whose own rollback fails, now discards that transaction instead of leaving it open with nothing meant to end it. Every later write joined it and reported success, then vanished on close or was committed by an unrelated savepoint's release ([#1094](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1094))
+- Once an abort fails, both drivers refuse every write until the database is reopened, instead of reporting success for one that cannot land ([#1094](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1094))
+- A savepoint name the driver rejects no longer leaves a transaction open behind it ([#1094](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1094))
+- Once SQLite has rolled back a transaction on its own, both drivers refuse writes instead of committing each alone, until one of its savepoints is rolled back or released. That call throws `SQLite already ended the transaction holding savepoint <name>`, with the error of the write SQLite rolled back on as `cause` ([#1094](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1094))
+- A wasm vat store update that fails reports its own error, not that of an abort that failed after it ([#1094](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1094))
+- After SQLite rolls a transaction back on its own, as it can on a full disk or an I/O error, the transactions that follow commit: the wasm driver threw `cannot commit - no transaction is active` from each of their releases, and the Node driver never committed them if savepoints had been open ([#1089](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1089), [#1094](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1094))
 - A read or write that fails in the wasm driver no longer makes every later call to the same operation throw `SQLITE_MISUSE` ([#1089](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1089))
 - A COMMIT that fails in the wasm driver no longer keeps a read lock on the database after the transaction rolls back, which made `DROP TABLE` and `VACUUM` fail until the next commit ([#1092](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1092))
-- After SQLite rolls a transaction back on its own, the Node driver commits the writes under a later savepoint instead of leaving them in a transaction that never commits ([#1089](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1089))
 - Neither SQLite driver logs the contents of the store any more: the Node driver opens the database without `verbose`, and the wasm driver no longer logs kv keys and values. Both wrote vat state in plain text to whatever logger the embedder supplied ([#1086](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1086))
 - `rollbackSavepoint` discards the enclosing transaction when `ROLLBACK TO` itself fails, instead of leaving the savepoint on its stack and the transaction open ([#1005](https://github.com/MetaMask/ocap-kernel/pull/1005))
   - Nothing would ever commit or abort that transaction, so every later write on the connection silently joined it, reported success, and vanished on close. Discarding it also discards the work of every savepoint below the one being rolled back

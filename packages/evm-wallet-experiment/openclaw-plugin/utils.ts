@@ -156,8 +156,8 @@ export async function resolveToken(options: {
 // ---------------------------------------------------------------------------
 
 type TransactionResult = {
-  txHash?: string;
-  userOpHash?: string;
+  txHash?: string | undefined;
+  userOpHash?: string | undefined;
   explorerUrl: string;
   pendingUserOp: boolean;
 };
@@ -207,7 +207,7 @@ async function resolvePendingUserOp(options: {
       return { txHash, userOpHash: hash, pendingUserOp: false };
     }
   } catch (error: unknown) {
-    // eslint-disable-next-line no-console
+    // oxlint-disable-next-line no-console
     console.warn(
       'UserOp receipt resolution failed:',
       error instanceof Error ? error.message : error,
@@ -265,7 +265,7 @@ export async function resolveTransactionResult(options: {
       explorerUrl = `${baseUrl}/tx/${txHash}`;
     }
   } catch (error: unknown) {
-    // eslint-disable-next-line no-console
+    // oxlint-disable-next-line no-console
     console.warn(
       'Transaction result resolution failed:',
       error instanceof Error ? error.message : error,
@@ -292,8 +292,8 @@ export async function resolveTransactionResult(options: {
  */
 export function formatTxResult(
   result: {
-    txHash?: string;
-    userOpHash?: string;
+    txHash?: string | undefined;
+    userOpHash?: string | undefined;
     explorerUrl: string;
     pendingUserOp: boolean;
   },

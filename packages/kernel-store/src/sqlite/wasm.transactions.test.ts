@@ -99,22 +99,29 @@ describe('the wasm driver on real SQLite', () => {
     expect(db.inTransaction).toBe(false);
   });
 
-  it('commits a write made after SQLite ends the transaction itself', async () => {
+  it('refuses writes once SQLite rolls back the transaction a savepoint is in', async () => {
     const kdb = await makeDb();
     kdb.createSavepoint('t0');
-    failWithFullDisk(kdb, () => kdb.kernelKVStore.set('key', tooBig));
-
-    kdb.makeVatStore('v1').updateKVData([['key', 'value']], []);
-
-    expect(() => kdb.executeQuery('COMMIT TRANSACTION')).toThrow(
-      'cannot commit - no transaction is active',
+    failWithFullDisk(kdb, () =>
+      kdb.makeVatStore('v1').updateKVData([['key', tooBig]], []),
     );
-    expect(kdb.makeVatStore('v1').getKVData()).toStrictEqual([
-      ['key', 'value'],
-    ]);
+
+    expect(() => kdb.kernelKVStore.set('key', 'value')).toThrow(
+      expect.objectContaining({
+        message: expect.stringContaining('refusing writes'),
+        cause: expect.objectContaining({
+          message: expect.stringContaining('database or disk is full'),
+        }),
+      }),
+    );
+    expect(() =>
+      kdb.makeVatStore('v1').updateKVData([['key', 'value']], []),
+    ).toThrow('refusing writes');
+    expect(kdb.kernelKVStore.get('key')).toBeUndefined();
+    expect(kdb.makeVatStore('v1').getKVData()).toStrictEqual([]);
   });
 
-  it('frees the database after a COMMIT fails and the transaction rolls back', async () => {
+  it('ends the transaction and frees the database after a COMMIT fails', async () => {
     const kdb = await makeDb();
     // A deferred foreign key fails the COMMIT and leaves the transaction open.
     kdb.executeQuery('PRAGMA foreign_keys = ON');
@@ -127,22 +134,67 @@ describe('the wasm driver on real SQLite', () => {
     expect(() => kdb.releaseSavepoint('t0')).toThrow(
       'FOREIGN KEY constraint failed',
     );
-    kdb.createSavepoint('t0');
-    kdb.rollbackSavepoint('t0');
 
+    expect(() => kdb.executeQuery('ROLLBACK TRANSACTION')).toThrow(
+      'no transaction is active',
+    );
+    // Checked before a later commit steps the failed COMMIT again and resets it.
     expect(() => kdb.executeQuery('DROP TABLE child')).not.toThrow();
+    kdb.kernelKVStore.set('after', 'value');
+    expect(kdb.kernelKVStore.get('after')).toBe('value');
   });
 
   it('takes the next crank in a transaction of its own', async () => {
     const kdb = await makeDb();
     kdb.createSavepoint('t0');
     failWithFullDisk(kdb, () => kdb.kernelKVStore.set('key', tooBig));
-    expect(() => kdb.rollbackSavepoint('t0')).toThrow('no such savepoint: t0');
+    expect(() => kdb.rollbackSavepoint('t0')).toThrow(
+      'SQLite already ended the transaction holding savepoint t0',
+    );
 
     kdb.createSavepoint('t0');
     kdb.kernelKVStore.set('key', 'value');
     kdb.releaseSavepoint('t0');
 
     expect(kdb.kernelKVStore.get('key')).toBe('value');
+  });
+
+  it('discards the transaction when the outermost RELEASE fails', async () => {
+    const kdb = await makeDb();
+    kdb.createSavepoint('t0');
+    kdb.kernelKVStore.set('crank', 'dequeued');
+    // Released behind the driver's back, so its own RELEASE finds no t0. The
+    // transaction stays open, since a BEGIN opened it.
+    kdb.executeQuery('RELEASE SAVEPOINT t0');
+
+    expect(() => kdb.releaseSavepoint('t0')).toThrow('no such savepoint: t0');
+
+    expect(() => kdb.executeQuery('ROLLBACK TRANSACTION')).toThrow(
+      'no transaction is active',
+    );
+    expect(kdb.kernelKVStore.get('crank')).toBeUndefined();
+  });
+
+  it('discards the transaction a vatstore update began when a write in it fails', async () => {
+    const kdb = await makeDb();
+    // RAISE(ABORT) undoes only the statement, leaving the transaction open.
+    kdb.executeQuery(
+      "CREATE TRIGGER refuse BEFORE INSERT ON kv_vatstore WHEN NEW.key = 'bad' BEGIN SELECT RAISE(ABORT, 'refused'); END",
+    );
+
+    expect(() =>
+      kdb.makeVatStore('v1').updateKVData(
+        [
+          ['good', 'value'],
+          ['bad', 'value'],
+        ],
+        [],
+      ),
+    ).toThrow('refused');
+
+    expect(() => kdb.executeQuery('ROLLBACK TRANSACTION')).toThrow(
+      'no transaction is active',
+    );
+    expect(kdb.makeVatStore('v1').getKVData()).toStrictEqual([]);
   });
 });

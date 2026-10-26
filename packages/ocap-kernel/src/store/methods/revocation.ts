@@ -9,7 +9,7 @@ import { isPromiseRef } from '../utils/promise-ref.ts';
  * @param ctx - The store context.
  * @returns The revocation methods.
  */
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+// oxlint-disable-next-line typescript/explicit-function-return-type
 export const getRevocationMethods = (ctx: StoreContext) => {
   const { getRevokedKey } = getBaseMethods(ctx.kv);
 

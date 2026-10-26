@@ -38,6 +38,7 @@ import type {
   RegistrationToken,
   ServiceDescription,
   ServiceMatch,
+  ServiceMatcher,
   ServiceQuery,
 } from '@metamask/service-discovery-types';
 
@@ -115,7 +116,7 @@ type VatPowers = {
  * @returns The vat root exo, exposing `bootstrap`, `getPublicFacet`,
  * `getMatcherUrl`, `listAll`, and `unregister`.
  */
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+// oxlint-disable-next-line typescript/explicit-function-return-type
 export function buildRootObject(
   vatPowers: VatPowers,
   _parameters: Record<string, unknown>,
@@ -136,7 +137,7 @@ export function buildRootObject(
   const log = (...args: unknown[]): void => {
     // Forwarded to the daemon's log file via the kernel's console
     // plumbing. Prefix tags the source so it's easy to grep.
-    // eslint-disable-next-line no-console
+    // oxlint-disable-next-line no-console
     console.log('[matcher]', ...args);
   };
 
@@ -601,7 +602,7 @@ export function buildRootObject(
   // re-incarnation, the stored ref is rehydrated to the same kref.
   const publicFacet = provide('publicFacet', () =>
     makeMatcherFacet(),
-  ) as ContactPoint;
+  ) as ServiceMatcher;
 
   return makeDefaultExo('matcherVatRoot', {
     async bootstrap(_vats: Record<string, unknown>, incoming: Services) {

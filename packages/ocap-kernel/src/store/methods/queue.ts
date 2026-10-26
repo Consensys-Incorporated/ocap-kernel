@@ -8,7 +8,7 @@ import type { StoreContext } from '../types.ts';
  * @returns A queue store object that maps various persistent kernel data
  * structures onto `kv`.
  */
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+// oxlint-disable-next-line typescript/explicit-function-return-type
 export function getQueueMethods(ctx: StoreContext) {
   /**
    * Find out how long some queue is.
@@ -38,8 +38,10 @@ export function getQueueMethods(ctx: StoreContext) {
     // that sentinel into a concrete (and wrong) count, and since the
     // result is no longer negative it would never be re-read.
     runQueueLength();
-    ctx.runQueueLengthCache += 1;
     ctx.runQueue.enqueue(message);
+    // Counted only once written, so that a write that fails leaves the count
+    // right.
+    ctx.runQueueLengthCache += 1;
   }
 
   /**

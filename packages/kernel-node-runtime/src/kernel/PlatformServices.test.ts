@@ -127,7 +127,7 @@ describe('NodejsPlatformServices', () => {
 
   const workerFilePath = 'unused';
   const vatIdCounter = makeCounter();
-  const getTestVatId = (): VatId => `v${vatIdCounter()}`;
+  const getTestVatId = (): VatId => `v${vatIdCounter()}` as VatId;
 
   describe('launch', () => {
     it('creates a NodeWorker and returns a NodeWorkerDuplexStream', async () => {
@@ -264,13 +264,13 @@ describe('NodejsPlatformServices', () => {
       vi.mocked(NodeWorker).mockImplementationOnce(function () {
         return worker;
       });
-      const handshake = makePromiseKit<void>();
+      const handshake = makePromiseKit<undefined>();
       mocks.stream.synchronize.mockReturnValueOnce(handshake.promise);
       const launching = service.launch(testVatId);
       await delay(0);
 
       worker.emit('exit', 1);
-      handshake.resolve();
+      handshake.resolve(undefined);
       await delay(0);
 
       await expect(launching).rejects.toThrowError(

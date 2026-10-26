@@ -14,10 +14,10 @@ import type { Candidate, Policy, PolicyContext } from './types.ts';
 // ---------------------------------------------------------------------------
 
 type Meta = { id: string; cost: number };
-type C = Candidate<Partial<Meta>>;
+type MetaCandidate = Candidate<Partial<Meta>>;
 
-const makeCandidate = (id: string, cost = 0): C => ({
-  exo: {} as C['exo'],
+const makeCandidate = (id: string, cost = 0): MetaCandidate => ({
+  exo: {} as MetaCandidate['exo'],
   metadata: { id, cost },
 });
 
@@ -39,10 +39,10 @@ const ctx: PolicyContext<Meta> = {
  */
 const driveToExhaustion = async (
   policy: Policy<Meta>,
-  candidates: C[],
+  candidates: MetaCandidate[],
   context: PolicyContext<Meta> = ctx,
-): Promise<{ yielded: C[]; receivedErrors: unknown[][] }> => {
-  const yielded: C[] = [];
+): Promise<{ yielded: MetaCandidate[]; receivedErrors: unknown[][] }> => {
+  const yielded: MetaCandidate[] = [];
   const receivedErrors: unknown[][] = [];
   const errors: unknown[] = [];
   const gen = policy(candidates, context);
@@ -68,10 +68,10 @@ const driveToExhaustion = async (
  */
 const driveWithSuccessOn = async (
   policy: Policy<Meta>,
-  candidates: C[],
+  candidates: MetaCandidate[],
   successOn: number,
   context: PolicyContext<Meta> = ctx,
-): Promise<C> => {
+): Promise<MetaCandidate> => {
   const errors: unknown[] = [];
   const gen = policy(candidates, context);
   let attempt = 0;
@@ -120,7 +120,11 @@ describe('proxyPolicy', () => {
       makeCandidate('b'),
       makeCandidate('c'),
     ];
-    const inner = async function* (): AsyncGenerator<C, void, unknown[]> {
+    const inner = async function* (): AsyncGenerator<
+      MetaCandidate,
+      void,
+      unknown[]
+    > {
       yield candidateA;
       yield candidateB;
       yield candidateC;
@@ -134,7 +138,11 @@ describe('proxyPolicy', () => {
     const [candidateA, candidateB] = [makeCandidate('a'), makeCandidate('b')];
     const receivedByInner: unknown[][] = [];
 
-    const inner = async function* (): AsyncGenerator<C, void, unknown[]> {
+    const inner = async function* (): AsyncGenerator<
+      MetaCandidate,
+      void,
+      unknown[]
+    > {
       const errors1: unknown[] = yield candidateA;
       receivedByInner.push(errors1);
       const errors2: unknown[] = yield candidateB;
@@ -149,7 +157,11 @@ describe('proxyPolicy', () => {
   });
 
   it('stops when inner generator is done', async () => {
-    const inner = async function* (): AsyncGenerator<C, void, unknown[]> {
+    const inner = async function* (): AsyncGenerator<
+      MetaCandidate,
+      void,
+      unknown[]
+    > {
       // immediately done
     };
 
@@ -164,7 +176,11 @@ describe('proxyPolicy', () => {
       makeCandidate('c'),
     ];
 
-    const inner = async function* (): AsyncGenerator<C, void, unknown[]> {
+    const inner = async function* (): AsyncGenerator<
+      MetaCandidate,
+      void,
+      unknown[]
+    > {
       let errors: unknown[] = yield candidateA;
       // stop after first failure
       if (errors.length > 0) {
@@ -241,7 +257,7 @@ describe('withFilter', () => {
   it('returns the inner policy generator directly (no extra wrapping)', () => {
     // withFilter is a pure input transform — it returns the inner policy's
     // generator, not a new proxy generator.
-    const innerGen = {} as AsyncGenerator<C, void, unknown[]>;
+    const innerGen = {} as AsyncGenerator<MetaCandidate, void, unknown[]>;
     const inner: Policy<Meta> = vi.fn(() => innerGen);
     const policy = withFilter<Meta>(() => true)(inner);
 
@@ -291,7 +307,7 @@ describe('withRanking', () => {
   });
 
   it('returns the inner policy generator directly (no extra wrapping)', () => {
-    const innerGen = {} as AsyncGenerator<C, void, unknown[]>;
+    const innerGen = {} as AsyncGenerator<MetaCandidate, void, unknown[]>;
     const inner: Policy<Meta> = vi.fn(() => innerGen);
     const policy = withRanking<Meta>(() => 0)(inner);
 

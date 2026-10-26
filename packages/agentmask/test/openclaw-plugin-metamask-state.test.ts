@@ -82,6 +82,7 @@ describe('resolveCapability', () => {
       kref: 'ko5',
       name: 'PersonalMessageSigner',
       description: 'sign messages',
+      methods: undefined,
     });
     expect(resolveCapability('PersonalMessageSigner', state)).toBe('ko5');
   });
@@ -92,6 +93,7 @@ describe('resolveCapability', () => {
       kref: 'ko5',
       name: 'PersonalMessageSigner',
       description: 'sign',
+      methods: undefined,
     });
     expect(() => resolveCapability('Unknown', state)).toThrow(
       /Unknown capability.*PersonalMessageSigner/u,

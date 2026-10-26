@@ -34,7 +34,7 @@ import { Fail, assert } from '../../utils/assert.ts';
  * @returns A translator object that maps various kernel data structures
  * onto `kv`.
  */
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+// oxlint-disable-next-line typescript/explicit-function-return-type
 export function getTranslators(ctx: StoreContext) {
   const { krefToEref, erefToKref, allocateErefForKref } = getCListMethods(ctx);
   const { setReachableFlag } = getReachableMethods(ctx);
@@ -49,7 +49,7 @@ export function getTranslators(ctx: StoreContext) {
    * @returns a copy of `rref` with '+'/'-' changed to '-'/'+'.
    */
   function invertRRef(rref: RRef): RRef {
-    // eslint-disable-next-line require-unicode-regexp
+    // oxlint-disable-next-line require-unicode-regexp
     const parts = rref.match(/^(r[op])([-+])(\d+)$/);
     assert(parts?.length === 4);
     return `${parts[1]}${parts[2] === '+' ? '-' : '+'}${parts[3]}` as RRef;
@@ -286,7 +286,7 @@ export function getTranslators(ctx: StoreContext) {
       }
       default: {
         // Compile-time exhaustiveness check
-        // eslint-disable-next-line @typescript-eslint/restrict-template-expressions
+        // oxlint-disable-next-line typescript/restrict-template-expressions
         throw Error(`vat ${vatId} issued unknown syscall ${vso[0]}`);
       }
     }

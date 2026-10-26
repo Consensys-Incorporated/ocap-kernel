@@ -6,7 +6,7 @@ export const makeLoggingMiddleware =
   async ({ next }) => {
     const start = performance.now();
     try {
-      // eslint-disable-next-line n/callback-return
+      // oxlint-disable-next-line node/callback-return
       await next();
     } finally {
       const duration = performance.now() - start;

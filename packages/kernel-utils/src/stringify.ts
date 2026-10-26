@@ -41,6 +41,12 @@ function stringifyError(error: Error): Record<string, unknown> {
         : stringify(error.cause);
   }
 
+  if (error instanceof AggregateError) {
+    errorObject.errors = error.errors.map((inner: unknown) =>
+      inner instanceof Error ? stringifyError(inner) : stringify(inner),
+    );
+  }
+
   // By our convention, these properties may be present on errors
   // and should be preserved.
   if (hasProperty(error, 'code')) {

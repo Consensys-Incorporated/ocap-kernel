@@ -13,9 +13,9 @@ describe('kernel-platforms index', () => {
     const capabilityName: CapabilityName = 'fs';
     expect(capabilityName).toBe('fs');
 
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    // oxlint-disable-next-line typescript/no-unused-vars
     type TestCapability = Capability<'fs'>;
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    // oxlint-disable-next-line typescript/no-unused-vars
     type TestConfig = CapabilityConfig<'fs'>;
 
     expect(true).toBe(true);

@@ -1,7 +1,7 @@
 import { delay, stringify } from '@metamask/kernel-utils';
 import { describe, expect, it, vi } from 'vitest';
 
-import type { ChromeRuntime } from './chrome.d.ts';
+import type { ChromeRuntime } from './chrome.ts';
 import type {
   MessageEnvelope,
   ChromeRuntimeTarget,

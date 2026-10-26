@@ -312,6 +312,23 @@ describe('transport.initTransport', () => {
       });
     });
 
+    it('passes the reconnection backoff to ConnectionFactory.make', async () => {
+      const { ConnectionFactory } = await import('./connection-factory.ts');
+
+      await initTransport(
+        '0xabcd',
+        { relays: [], reconnectionBaseDelayMs: 10, reconnectionMaxDelayMs: 50 },
+        vi.fn(),
+      );
+
+      expect(ConnectionFactory.make).toHaveBeenCalledWith(
+        expect.objectContaining({
+          reconnectionBaseDelayMs: 10,
+          reconnectionMaxDelayMs: 50,
+        }),
+      );
+    });
+
     it('passes directTransports to ConnectionFactory.make', async () => {
       const { ConnectionFactory } = await import('./connection-factory.ts');
       const keySeed = '0xabcd';
@@ -618,9 +635,8 @@ describe('transport.initTransport', () => {
     });
 
     it('treats StreamResetError as connection loss, not intentional close', async () => {
-      const { StreamResetError: MockStreamResetError } = await import(
-        '@libp2p/interface'
-      );
+      const { StreamResetError: MockStreamResetError } =
+        await import('@libp2p/interface');
       let inboundHandler: ((channel: MockChannel) => void) | undefined;
       mockConnectionFactory.onInboundConnection.mockImplementation(
         (handler) => {
@@ -709,7 +725,7 @@ describe('transport.initTransport', () => {
       let shouldResolve = false;
       const poll = async (): Promise<Uint8Array> => {
         // Wait until stop is called
-        // eslint-disable-next-line no-unmodified-loop-condition
+        // oxlint-disable-next-line no-unmodified-loop-condition
         while (!shouldResolve) {
           await new Promise<void>((resolve) => {
             setImmediate(() => resolve());
@@ -908,7 +924,7 @@ describe('transport.initTransport', () => {
       const { abortableDelay } = await import('@metamask/kernel-utils');
 
       (abortableDelay as ReturnType<typeof vi.fn>).mockImplementation(
-        // eslint-disable-next-line @typescript-eslint/promise-function-async, @typescript-eslint/no-misused-promises
+        // oxlint-disable-next-line typescript/promise-function-async, typescript/no-misused-promises
         (_ms: number, signal?: AbortSignal) => {
           if (signal?.aborted) {
             return Promise.reject(new AbortError());
@@ -1799,9 +1815,8 @@ describe('transport.initTransport', () => {
       const { abortableDelay } = await import('@metamask/kernel-utils');
       (abortableDelay as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
 
-      const { isRetryableNetworkError } = await import(
-        '@metamask/kernel-errors'
-      );
+      const { isRetryableNetworkError } =
+        await import('@metamask/kernel-errors');
       vi.mocked(isRetryableNetworkError).mockReturnValue(false);
 
       // Initial dial fails with retryable error, reconnection dial fails with non-retryable
@@ -2725,7 +2740,7 @@ describe('transport.initTransport', () => {
       // Verify handshake was sent (first write)
       expect(mockChannel.msgStream.write).toHaveBeenCalled();
       const { calls } = mockChannel.msgStream.write.mock;
-      const firstWrite = new TextDecoder().decode(calls[0][0] as Uint8Array);
+      const firstWrite = new TextDecoder().decode(calls[0]?.[0] as Uint8Array);
       const handshakeMsg = JSON.parse(firstWrite);
       expect(handshakeMsg).toStrictEqual({
         method: 'handshake',
@@ -2733,9 +2748,97 @@ describe('transport.initTransport', () => {
       });
 
       // Second write should be the actual message
-      const secondWrite = new TextDecoder().decode(calls[1][0] as Uint8Array);
+      const secondWrite = new TextDecoder().decode(calls[1]?.[0] as Uint8Array);
       expect(secondWrite).toContain('hello');
     });
+
+    it('sends one handshake and starts one read loop when concurrent sends share a dial', async () => {
+      const mockChannel = createMockChannel('peer-1');
+      mockConnectionFactory.dialIdempotent.mockResolvedValue(mockChannel);
+      const handshakeAck = JSON.stringify({
+        method: 'handshakeAck',
+        params: { incarnationId: 'remote-incarnation-id' },
+      });
+      mockChannel.msgStream.read
+        .mockResolvedValueOnce(new TextEncoder().encode(handshakeAck))
+        .mockReturnValue(
+          new Promise<Uint8Array | undefined>(() => {
+            /* Never resolves - normal read loop */
+          }),
+        );
+
+      const { sendRemoteMessage } = await initTransport(
+        '0x1234',
+        { handshakeTimeoutMs: 50 },
+        vi.fn(),
+        undefined, // onRemoteGiveUp
+        'test-incarnation-id',
+      );
+
+      await Promise.all([
+        sendRemoteMessage('peer-1', makeTestMessage('first')),
+        sendRemoteMessage('peer-1', makeTestMessage('second')),
+      ]);
+
+      const writtenMethods = mockChannel.msgStream.write.mock.calls.map(
+        ([bytes]) =>
+          JSON.parse(new TextDecoder().decode(bytes as Uint8Array)).method,
+      );
+      expect(writtenMethods).toStrictEqual(['handshake', 'deliver', 'deliver']);
+      // The handshake's read, then a single read loop.
+      expect(mockChannel.msgStream.read).toHaveBeenCalledTimes(2);
+    });
+
+    it.each([
+      { outcome: 'fails', reply: 'handshake', restart: false },
+      { outcome: 'reports a restart', reply: 'handshakeAck', restart: true },
+    ])(
+      'gives concurrent sends the outcome of a shared handshake that $outcome',
+      async ({ reply, restart }) => {
+        const mockChannel = createMockChannel('peer-1');
+        mockConnectionFactory.dialIdempotent.mockResolvedValue(mockChannel);
+        mockChannel.msgStream.read.mockResolvedValueOnce(
+          new TextEncoder().encode(
+            JSON.stringify({
+              method: reply,
+              params: { incarnationId: 'remote-incarnation-id' },
+            }),
+          ),
+        );
+        const onIncarnationChange = vi.fn().mockResolvedValue(restart);
+
+        const { sendRemoteMessage } = await initTransport(
+          '0x1234',
+          { handshakeTimeoutMs: 50 },
+          vi.fn(),
+          undefined, // onRemoteGiveUp
+          'test-incarnation-id',
+          onIncarnationChange,
+        );
+
+        const sends = [
+          sendRemoteMessage('peer-1', makeTestMessage('first')),
+          sendRemoteMessage('peer-1', makeTestMessage('second')),
+        ];
+        await Promise.allSettled(sends);
+
+        const error = restart ? /Remote peer restarted/u : 'Handshake failed';
+        for (const send of sends) {
+          await expect(send).rejects.toThrow(error);
+        }
+        const writtenMethods = mockChannel.msgStream.write.mock.calls.map(
+          ([bytes]) =>
+            JSON.parse(new TextDecoder().decode(bytes as Uint8Array)).method,
+        );
+        expect(writtenMethods).toStrictEqual(['handshake']);
+        expect(mockChannel.msgStream.read).toHaveBeenCalledTimes(1);
+        expect(mockConnectionFactory.closeChannel).toHaveBeenCalledWith(
+          mockChannel,
+          'peer-1',
+        );
+        expect(onIncarnationChange).toHaveBeenCalledTimes(restart ? 1 : 0);
+      },
+    );
 
     it('does not send handshake when no incarnationId provided', async () => {
       const mockChannel = createMockChannel('peer-1');
@@ -2760,7 +2863,7 @@ describe('transport.initTransport', () => {
       // Should only have the actual message, no handshake
       expect(mockChannel.msgStream.write).toHaveBeenCalledTimes(1);
       const writeCall = new TextDecoder().decode(
-        mockChannel.msgStream.write.mock.calls[0][0] as Uint8Array,
+        mockChannel.msgStream.write.mock.calls[0]?.[0] as Uint8Array,
       );
       const parsedMsg = JSON.parse(writeCall);
       expect(parsedMsg.method).not.toBe('handshake');
@@ -2815,7 +2918,7 @@ describe('transport.initTransport', () => {
         expect(mockInboundChannel.msgStream.write).toHaveBeenCalled();
       });
       const ackWrite = new TextDecoder().decode(
-        mockInboundChannel.msgStream.write.mock.calls[0][0] as Uint8Array,
+        mockInboundChannel.msgStream.write.mock.calls[0]?.[0] as Uint8Array,
       );
       const ackMsg = JSON.parse(ackWrite);
       expect(ackMsg).toStrictEqual({
@@ -3015,6 +3118,79 @@ describe('transport.initTransport', () => {
 
       // No reconnect attempt: dialIdempotent is only the original dial.
       expect(mockConnectionFactory.dialIdempotent).toHaveBeenCalledTimes(1);
+    });
+
+    it('spends no reconnection attempt on a restart the kernel reports again', async () => {
+      let reconnecting = false;
+      mockReconnectionManager.isReconnecting.mockImplementation(
+        () => reconnecting,
+      );
+      mockReconnectionManager.startReconnection.mockImplementation(() => {
+        reconnecting = true;
+        return true;
+      });
+      mockReconnectionManager.stopReconnection.mockImplementation(() => {
+        reconnecting = false;
+      });
+      mockReconnectionManager.calculateBackoff.mockReturnValue(0);
+      const { abortableDelay } = await import('@metamask/kernel-utils');
+      (abortableDelay as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+      const handshakeAck = new TextEncoder().encode(
+        JSON.stringify({
+          method: 'handshakeAck',
+          params: { incarnationId: 'remote-incarnation' },
+        }),
+      );
+      const makeAckingChannel = (): MockChannel => {
+        const channel = createMockChannel('remote-peer');
+        channel.msgStream.read.mockResolvedValueOnce(handshakeAck);
+        return channel;
+      };
+      const firstChannel = makeAckingChannel();
+      firstChannel.msgStream.write
+        .mockResolvedValueOnce(undefined)
+        .mockRejectedValueOnce(
+          Object.assign(new Error('Connection lost'), { code: 'ECONNRESET' }),
+        );
+      mockConnectionFactory.dialIdempotent
+        .mockResolvedValueOnce(firstChannel)
+        .mockResolvedValueOnce(makeAckingChannel())
+        .mockResolvedValueOnce(makeAckingChannel())
+        .mockResolvedValueOnce(makeAckingChannel());
+      // The kernel reports a restart on every handshake until its crank
+      // records it.
+      const onIncarnationChange = vi
+        .fn()
+        .mockResolvedValueOnce(false)
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(true)
+        .mockResolvedValue(false);
+
+      const { sendRemoteMessage } = await initTransport(
+        '0x1234',
+        { maxRetryAttempts: 3 },
+        vi.fn().mockResolvedValue(''),
+        undefined,
+        'local-incarnation',
+        onIncarnationChange,
+      );
+
+      await expect(
+        sendRemoteMessage('remote-peer', makeTestMessage('lost')),
+      ).rejects.toThrow('Connection lost');
+
+      await vi.waitFor(() => {
+        expect(mockReconnectionManager.stopReconnection).toHaveBeenCalledWith(
+          'remote-peer',
+        );
+      });
+      expect(onIncarnationChange).toHaveBeenCalledTimes(4);
+      expect(
+        mockReconnectionManager.shouldRetry.mock.calls.map(
+          ([, budget]) => budget,
+        ),
+      ).toStrictEqual([3, 3, 4]);
     });
 
     it('rejects the inbound channel when kernel detects a restart on inbound handshake', async () => {

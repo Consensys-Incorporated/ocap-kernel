@@ -148,7 +148,7 @@ export function split<
     return { predicate, receiveInput, stream };
   });
 
-  // eslint-disable-next-line no-void
+  // oxlint-disable-next-line no-void
   void (async () => {
     let error: Error | undefined;
     try {

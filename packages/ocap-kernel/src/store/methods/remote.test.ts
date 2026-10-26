@@ -181,6 +181,27 @@ describe('remote store methods', () => {
     });
   });
 
+  describe('getRemoteIDs', () => {
+    it('lists every remote the kernel knows about', () => {
+      mockGetPrefixedKeys.mockReturnValue([
+        `remote.${remoteId1}`,
+        `remote.${remoteId2}`,
+      ]);
+
+      expect(remoteMethods.getRemoteIDs()).toStrictEqual([
+        remoteId1,
+        remoteId2,
+      ]);
+      expect(mockGetPrefixedKeys).toHaveBeenCalledWith('remote.');
+    });
+
+    it('lists nothing when no remotes are extant', () => {
+      mockGetPrefixedKeys.mockReturnValue([]);
+
+      expect(remoteMethods.getRemoteIDs()).toStrictEqual([]);
+    });
+  });
+
   describe('getRemoteSeqState', () => {
     it('returns undefined when no state exists', () => {
       const result = remoteMethods.getRemoteSeqState(remoteId1);

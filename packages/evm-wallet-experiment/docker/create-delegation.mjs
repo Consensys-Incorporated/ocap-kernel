@@ -1,4 +1,4 @@
-/* eslint-disable */
+/* oxlint-disable */
 /**
  * Create a delegation on the home kernel and push it to the away node over CapTP.
  *

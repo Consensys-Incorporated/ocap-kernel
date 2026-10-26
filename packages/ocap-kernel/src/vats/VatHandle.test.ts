@@ -8,6 +8,7 @@ import { TestDuplexStream } from '@ocap/repo-tools/test-utils/streams';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { MockInstance } from 'vitest';
 
+import { asSubclusterId, asVatId } from '../../test/branded.ts';
 import type { KernelQueue } from '../KernelQueue.ts';
 import { makeKernelStore } from '../store/index.ts';
 import type { KernelStore } from '../store/index.ts';
@@ -52,7 +53,7 @@ const makeVat = async ({
     vat: await VatHandle.make({
       kernelQueue: null as unknown as KernelQueue,
       kernelStore: mockKernelStore,
-      vatId: 'v0',
+      vatId: asVatId('v0'),
       vatConfig: { sourceSpec: 'not-really-there.js' },
       vatStream,
       logger,
@@ -252,7 +253,7 @@ describe('VatHandle', () => {
       sendVatCommandMock.mockReset();
       const mockResult: VatDeliveryResult = [[[], []], null];
       sendVatCommandMock.mockResolvedValueOnce(mockResult);
-      const vrefs: VRef[] = ['kp123', 'kp456'];
+      const vrefs: VRef[] = ['kp123' as VRef, 'kp456' as VRef];
       await vat.deliverDropExports(vrefs);
       expect(sendVatCommandMock).toHaveBeenCalledTimes(1);
       expect(sendVatCommandMock).toHaveBeenCalledWith({
@@ -268,7 +269,7 @@ describe('VatHandle', () => {
       sendVatCommandMock.mockReset();
       const mockResult: VatDeliveryResult = [[[], []], null];
       sendVatCommandMock.mockResolvedValueOnce(mockResult);
-      const vrefs: VRef[] = ['kp123', 'kp456'];
+      const vrefs: VRef[] = ['kp123' as VRef, 'kp456' as VRef];
       await vat.deliverRetireExports(vrefs);
       expect(sendVatCommandMock).toHaveBeenCalledTimes(1);
       expect(sendVatCommandMock).toHaveBeenCalledWith({
@@ -284,7 +285,7 @@ describe('VatHandle', () => {
       sendVatCommandMock.mockReset();
       const mockResult: VatDeliveryResult = [[[], []], null];
       sendVatCommandMock.mockResolvedValueOnce(mockResult);
-      const vrefs: VRef[] = ['kp123', 'kp456'];
+      const vrefs: VRef[] = ['kp123' as VRef, 'kp456' as VRef];
       await vat.deliverRetireImports(vrefs);
       expect(sendVatCommandMock).toHaveBeenCalledTimes(1);
       expect(sendVatCommandMock).toHaveBeenCalledWith({
@@ -340,7 +341,11 @@ describe('VatHandle', () => {
       // terminate will remove the vat from the subcluster
       // so we need to add the vat to a subcluster
       mockKernelStore.addSubcluster({ bootstrap: 'test', vats: {} });
-      mockKernelStore.addSubclusterVat('s1', 'test', 'v0');
+      mockKernelStore.addSubclusterVat(
+        asSubclusterId('s1'),
+        'test',
+        asVatId('v0'),
+      );
 
       // Create a pending message that should be rejected on terminate
       const messagePromise = vat.sendVatCommand({
@@ -370,7 +375,7 @@ describe('VatHandle', () => {
       const vat = await VatHandle.make({
         kernelQueue: null as unknown as KernelQueue,
         kernelStore: mockKernelStore,
-        vatId: 'v0',
+        vatId: asVatId('v0'),
         vatConfig: { sourceSpec: 'not-really-there.js' },
         // `end` never settles until released, so a rejection that arrives
         // before then is one that did not wait for the channel to close.
@@ -397,7 +402,7 @@ describe('VatHandle', () => {
     it('leaves pending commands alone across a restart', async () => {
       const { vat } = await makeVat();
       const settled = vi.fn();
-      // eslint-disable-next-line promise/catch-or-return
+      // oxlint-disable-next-line promise/catch-or-return
       vat
         .sendVatCommand({ method: 'ping' as const, params: [] })
         .then(settled, settled);

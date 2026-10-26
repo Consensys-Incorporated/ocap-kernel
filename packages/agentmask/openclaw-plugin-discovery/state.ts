@@ -100,7 +100,7 @@ export function isKref(value: string): boolean {
 export function extractKref(value: unknown):
   | {
       kref: string;
-      alleged?: string;
+      alleged?: string | undefined;
     }
   | undefined {
   if (typeof value === 'string') {

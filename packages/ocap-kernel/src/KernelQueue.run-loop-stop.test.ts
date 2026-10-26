@@ -4,6 +4,7 @@ import { describe, it, expect, vi } from 'vitest';
 import { KernelQueue } from './KernelQueue.ts';
 import { makeKernelStore } from './store/index.ts';
 import type { RunQueueItem } from './types.ts';
+import { asVatId } from '../test/branded.ts';
 
 /**
  * What a caller actually gets when the run loop stops, against a real store —
@@ -23,11 +24,11 @@ describe('the window a stopped run loop opens', () => {
   }> {
     const kdb = await makeSQLKernelDatabase({ dbFilename: ':memory:' });
     const kernelStore = makeKernelStore(kdb);
-    kernelStore.initEndpoint('v1');
+    kernelStore.initEndpoint(asVatId('v1'));
     for (let queued = 0; queued < items; queued += 1) {
       kernelStore.enqueueRun({
         type: 'send',
-        target: kernelStore.initKernelObject('v1'),
+        target: kernelStore.initKernelObject(asVatId('v1')),
         message: { methargs: { body: '', slots: [] }, result: null },
       } as unknown as RunQueueItem);
     }
@@ -64,7 +65,9 @@ describe('the window a stopped run loop opens', () => {
     await stopped;
     await running;
 
-    kernelStore.setVatConfig('v9', { bundleName: 'written-between-cranks' });
+    kernelStore.setVatConfig(asVatId('v9'), {
+      bundleName: 'written-between-cranks',
+    });
 
     // A crank that aborts everything it did must not take this with it, which
     // is what happened when the control plane merely waited out the crank in
@@ -73,7 +76,7 @@ describe('the window a stopped run loop opens', () => {
     await kernelQueue.stopRunLoop();
     await abortingRun;
 
-    expect(kernelStore.getVatConfig('v9')).toStrictEqual({
+    expect(kernelStore.getVatConfig(asVatId('v9'))).toStrictEqual({
       bundleName: 'written-between-cranks',
     });
   });

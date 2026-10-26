@@ -2,6 +2,7 @@ import type { CapData } from '@endo/marshal';
 import { makeSQLKernelDatabase } from '@metamask/kernel-store/sqlite/nodejs';
 import { waitUntilQuiescent } from '@metamask/kernel-utils';
 import { kunser } from '@metamask/ocap-kernel';
+import type { KRef, VatId } from '@metamask/ocap-kernel';
 import { unlink } from 'node:fs/promises';
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
 
@@ -13,7 +14,7 @@ import {
   runTestVats,
 } from './utils.ts';
 
-const v1Root = 'ko4';
+const v1Root = 'ko4' as KRef;
 
 describe('persistent storage', { timeout: 20_000 }, () => {
   let logger: ReturnType<typeof makeTestLogger>;
@@ -101,7 +102,7 @@ describe('persistent storage', { timeout: 20_000 }, () => {
     const { bootstrapResult: launch1Result, rootKref: coordinatorRoot } =
       await kernel1.launchSubcluster(multiVatCluster);
     await waitUntilQuiescent();
-    expect(kunser(launch1Result as CapData<string>)).toBe(
+    expect(kunser(launch1Result as CapData<KRef>)).toBe(
       'Coordinator initialized with 2 workers',
     );
     const workResult1 = await runResume(kernel1, coordinatorRoot);
@@ -152,7 +153,7 @@ describe('persistent storage', { timeout: 20_000 }, () => {
     );
     await runTestVats(kernel, testSubcluster);
     await runResume(kernel, v1Root);
-    await kernel.restartVat('v1');
+    await kernel.restartVat('v1' as VatId);
     const resumeResult = await runResume(kernel, v1Root);
     expect(resumeResult).toBe('Counter incremented to: 3');
   });
@@ -166,7 +167,7 @@ describe('persistent storage', { timeout: 20_000 }, () => {
       logger.logger.subLogger({ tags: ['test'] }),
     );
     const { bootstrapResult } = await kernel1.launchSubcluster(testSubcluster);
-    expect(kunser(bootstrapResult as CapData<string>)).toBe(
+    expect(kunser(bootstrapResult as CapData<KRef>)).toBe(
       'Counter initialized with count: 1',
     );
     await waitUntilQuiescent();

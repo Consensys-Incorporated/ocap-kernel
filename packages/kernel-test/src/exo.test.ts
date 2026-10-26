@@ -27,7 +27,7 @@ const testSubcluster = {
 };
 
 // First vat root object is ko4 due to the kernel facet and other kernel service objects being created before any vats.
-const exoTestRoot: KRef = 'ko4';
+const exoTestRoot = 'ko4' as KRef;
 
 describe('virtual objects functionality', async () => {
   let kernel: Kernel;
@@ -105,9 +105,11 @@ describe('virtual objects functionality', async () => {
     );
     await waitUntilQuiescent();
     const counterRef = counterResult.slots[0] as KRef;
-    const incrementResult = await kernel.queueMessage(counterRef, 'increment', [
-      5,
-    ]);
+    const incrementResult = await kernel.queueMessage(
+      counterRef,
+      'increment',
+      [5],
+    );
     // Verify the increment result
     expect(kunser(incrementResult)).toBe(47);
     await waitUntilQuiescent();

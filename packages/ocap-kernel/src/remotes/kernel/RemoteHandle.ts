@@ -1,7 +1,10 @@
 import type { VatOneResolution } from '@agoric/swingset-liveslots';
 import type { CapData } from '@endo/marshal';
 import { makePromiseKit } from '@endo/promise-kit';
-import { isTerminalSendError } from '@metamask/kernel-errors';
+import {
+  isTerminalSendError,
+  PeerRestartedError,
+} from '@metamask/kernel-errors';
 import { Logger } from '@metamask/logger';
 
 import {
@@ -20,7 +23,7 @@ import type {
   KernelOneResolution,
   CrankResult,
 } from '../../types.ts';
-import { insistERef } from '../../types.ts';
+import { insistERef, isRRef } from '../../types.ts';
 import type { RemoteComms } from '../types.ts';
 
 /** How long to wait for ACK before retransmitting (ms). */
@@ -120,6 +123,21 @@ function hasPending(window: SeqWindow): boolean {
  */
 function countPending(window: SeqWindow): number {
   return hasPending(window) ? window.nextSendSeq - window.startSeq + 1 : 0;
+}
+
+/**
+ * Whether a send failed because the peer restarted. Not a reason to give up:
+ * the crank that records the restart empties this remote's queue and rejects
+ * its promises as `PEER_RESTARTED`, and a give-up would abandon the queue and
+ * reject the redemptions outside that crank. Unless a restart holds the
+ * remote, the ACK timer stays armed, so a restart the kernel never learns of
+ * still ends in a give-up.
+ *
+ * @param error - What the send threw.
+ * @returns True if the peer restarted.
+ */
+function isPeerRestart(error: unknown): boolean {
+  return error instanceof Error && error.name === PeerRestartedError.name;
 }
 
 type RemoteCommand = {
@@ -227,6 +245,14 @@ export class RemoteHandle implements RemoteEndpointHandle {
    */
   #outboundQueueId: number = 0;
 
+  /**
+   * Set while a restart of the peer waits for the crank that records it.
+   * Everything this handle would send meanwhile belongs to the incarnation
+   * that has ended, and a handshake that finishes after the commit would let
+   * it through to the one that replaced it.
+   */
+  #heldForRestart: boolean = false;
+
   /** Retry count for pending messages (reset on ACK). */
   #retryCount: number = 0;
 
@@ -256,7 +282,7 @@ export class RemoteHandle implements RemoteEndpointHandle {
    * @param params.onGiveUp - Optional callback when we give up on this remote.
    * @param params.ackTimeoutMs - Optional ACK timeout in ms. Defaults to ACK_TIMEOUT_MS.
    */
-  // eslint-disable-next-line no-restricted-syntax
+  // oxlint-disable-next-line ocap/no-restricted-syntax
   private constructor({
     remoteId,
     peerId,
@@ -298,6 +324,15 @@ export class RemoteHandle implements RemoteEndpointHandle {
     const remote = new RemoteHandle(params);
     remote.#restorePersistedState();
     return remote;
+  }
+
+  /**
+   * The peer ID of the remote kernel this is connected to.
+   *
+   * @returns The peer ID.
+   */
+  get peerId(): string {
+    return this.#peerId;
   }
 
   /**
@@ -433,7 +468,6 @@ export class RemoteHandle implements RemoteEndpointHandle {
 
   /**
    * Process an incoming ACK (cumulative - acknowledges all messages up to ackSeq).
-   * Uses crash-safe ordering: update startSeq first, then delete acked messages.
    *
    * Measures the queue from memory, unlike {@link #rejectAllPending}, and must
    * keep doing so: memory stops at what has actually been sent, so a peer
@@ -479,6 +513,13 @@ export class RemoteHandle implements RemoteEndpointHandle {
     // Crash-safe dequeue: persist updated startSeq first, then delete messages
     // On crash recovery, orphan entries (seq < startSeq) will be cleaned lazily
     this.#kernelStore.setRemoteStartSeq(this.remoteId, this.#startSeq);
+    // Memory's start passes the store's end where a rollback took back a
+    // give-up and the message it abandoned. Moved with it, as
+    // `#rejectAllPending` moves both, or after a restart the next message is
+    // numbered below the start and is never sent.
+    if (stored.nextSendSeq < this.#startSeq - 1) {
+      this.#kernelStore.setRemoteNextSendSeq(this.remoteId, this.#startSeq - 1);
+    }
     const lastAcked = Math.min(this.#startSeq - 1, stored.nextSendSeq);
     for (let seq = stored.startSeq; seq <= lastAcked; seq += 1) {
       this.#kernelStore.deletePendingMessage(this.remoteId, seq);
@@ -515,7 +556,7 @@ export class RemoteHandle implements RemoteEndpointHandle {
    */
   #handleAckTimeout(): void {
     this.#ackTimeoutHandle = undefined;
-    if (!this.#hasPendingMessages()) {
+    if (!this.#hasPendingMessages() || this.#heldForRestart) {
       return;
     }
 
@@ -551,20 +592,16 @@ export class RemoteHandle implements RemoteEndpointHandle {
   /**
    * Retransmit all pending messages.
    *
-   * Awaits each send, so a peer-restart detection during the first can
-   * short-circuit the rest: clearRemoteSeqState (called by persistPeerRestart)
-   * deletes both the seq counters and the `remotePending.*` payloads, so
-   * `getPendingMessage` returns undefined for subsequent iterations and the
-   * loop bound (`seq <= this.#nextSendSeq`, now 0) terminates immediately.
-   * Were they to run concurrently, one that found the channel the first had
-   * just registered would bypass the outbound handshake's stale-delivery
+   * Awaits each send, so a peer restart the first one runs into stops the
+   * rest. Were they to run concurrently, one that found the channel the first
+   * had just registered would bypass the outbound handshake's stale-delivery
    * guard and write a pre-restart payload on it. {@link #outboundChain} keeps
    * them apart from a flush running at the same time, for the same reason.
    *
-   * Terminal errors (intentional close, network stopped, peer-restart-detected
-   * throw) abort the loop instead of being logged-and-skipped: continuing
-   * would just rebuild the queue against a known-unreachable peer and
-   * produce identical failures on every retry until MAX_RETRIES is hit.
+   * Terminal errors (intentional close, network stopped) abort the loop
+   * instead of being logged-and-skipped: continuing would just rebuild the
+   * queue against a known-unreachable peer and produce identical failures on
+   * every retry until MAX_RETRIES is hit.
    */
   async #retransmitPending(): Promise<void> {
     for (let seq = this.#startSeq; seq <= this.#nextSendSeq; seq += 1) {
@@ -578,6 +615,9 @@ export class RemoteHandle implements RemoteEndpointHandle {
       try {
         await this.#sendInOrder(seq, messageString);
       } catch (error) {
+        if (isPeerRestart(error)) {
+          break;
+        }
         if (isTerminalSendError(error)) {
           this.#logger.log(
             `${this.#peerId.slice(0, 8)}:: aborting retransmit (${(error as Error).message})`,
@@ -615,7 +655,7 @@ export class RemoteHandle implements RemoteEndpointHandle {
   async #sendInOrder(seq: number, messageString: string): Promise<void> {
     const queue = this.#outboundQueueId;
     const sent = this.#outboundChain.then(async () => {
-      if (queue !== this.#outboundQueueId) {
+      if (queue !== this.#outboundQueueId || this.#heldForRestart) {
         this.#logger.log(
           `${this.#peerId.slice(0, 8)}:: message ${seq} retired before it reached the wire`,
         );
@@ -705,7 +745,7 @@ export class RemoteHandle implements RemoteEndpointHandle {
    */
   #sendStandaloneAck(): void {
     const ackValue = this.#getAckValue();
-    if (ackValue === undefined) {
+    if (ackValue === undefined || this.#heldForRestart) {
       return;
     }
     const ackMessage = JSON.stringify({ ack: ackValue });
@@ -735,10 +775,21 @@ export class RemoteHandle implements RemoteEndpointHandle {
    * {@link #flushTransmitQueue} holds back until this one has gone.
    *
    * @param messageBase - The delivery to make.
+   * @param options - Options bag.
+   * @param options.exemptFromCapacityLimit - Whether the pending queue's
+   * capacity limit does not apply. A GC delivery is exempt: refusing one would
+   * stop the run loop, and the remote's c-list bounds how many there can be.
    * @returns This handle's crank result, carrying the send.
    */
-  #deliverToPeer(messageBase: Delivery): CrankResult {
-    const persisted = this.#persistRemoteCommand(messageBase);
+  #deliverToPeer(
+    messageBase: Delivery,
+    {
+      exemptFromCapacityLimit = false,
+    }: { exemptFromCapacityLimit?: boolean } = {},
+  ): CrankResult {
+    const persisted = this.#persistRemoteCommand(messageBase, {
+      exemptFromCapacityLimit,
+    });
     return {
       ...this.#myCrankResult,
       afterCommit: async () => this.#transmitRemoteCommand(persisted),
@@ -779,7 +830,7 @@ export class RemoteHandle implements RemoteEndpointHandle {
    * @param messageBase - The message, before its sequence number and ack.
    * @param options - Options bag.
    * @param options.exemptFromCapacityLimit - Whether the pending queue's
-   * capacity limit does not apply, for a reply that must not fail.
+   * capacity limit does not apply.
    * @param options.ack - The receipt to piggyback, when this crank is recording
    * one the handle has not caught up to yet.
    * @returns What transmitting it needs.
@@ -847,12 +898,9 @@ export class RemoteHandle implements RemoteEndpointHandle {
    * @param persisted - What that call returned.
    */
   #transmitRemoteCommand(persisted: PersistedCommand): void {
-    // A peer restart between the persist and here empties the pending queue,
-    // payloads and all, so a message still in it is one still owed to the peer
-    // this handle is talking to. One that is gone belongs to an incarnation
-    // that is gone, and sending it would spend a sequence number the new
-    // incarnation has not seen — which it would then drop as a duplicate when
-    // this handle numbers a real message with it.
+    // Until #1105, a reset or clearStorage can wipe the store while this
+    // message's crank is still open, taking the message and the session it was
+    // numbered in, so it is owed to no one.
     if (
       this.#kernelStore.getPendingMessage(this.remoteId, persisted.seq) ===
       undefined
@@ -988,18 +1036,14 @@ export class RemoteHandle implements RemoteEndpointHandle {
 
     // Send the message (non-blocking - don't wait for ACK).
     //
-    // Terminal verdicts from the transport (peer restarted, intentional
-    // close, network stopped) mean the message we just persisted will
-    // never be delivered as-is: reject all pending now and signal give-up
-    // rather than letting the message linger until ACK timeout × MAX_RETRIES.
-    //
-    // For PeerRestartedError specifically, the kernel-side
-    // `onIncarnationChange` callback ran `persistPeerRestart` and
-    // `finalizePeerRestart` synchronously *before* the transport threw, so
-    // most of the cleanup below is already a no-op. The guards inside
-    // `#rejectAllPending` and `rejectPendingRedemptions` keep this safe;
-    // calling `#onGiveUp` again exercises an idempotent path.
+    // Terminal verdicts from the transport (intentional close, network
+    // stopped) mean the message we just persisted will never be delivered
+    // as-is: reject all pending now and signal give-up rather than letting
+    // the message linger until ACK timeout × MAX_RETRIES.
     this.#sendInOrder(seq, messageString).catch((error) => {
+      if (isPeerRestart(error)) {
+        return;
+      }
       if (isTerminalSendError(error)) {
         const reason = (error as Error).message;
         this.#clearAckTimeout();
@@ -1052,10 +1096,10 @@ export class RemoteHandle implements RemoteEndpointHandle {
    * @returns the crank result.
    */
   async deliverDropExports(erefs: ERef[]): Promise<CrankResult> {
-    return this.#deliverToPeer({
-      method: 'deliver',
-      params: ['dropExports', erefs],
-    });
+    return this.#deliverToPeer(
+      { method: 'deliver', params: ['dropExports', erefs] },
+      { exemptFromCapacityLimit: true },
+    );
   }
 
   /**
@@ -1065,10 +1109,10 @@ export class RemoteHandle implements RemoteEndpointHandle {
    * @returns the crank result.
    */
   async deliverRetireExports(erefs: ERef[]): Promise<CrankResult> {
-    return this.#deliverToPeer({
-      method: 'deliver',
-      params: ['retireExports', erefs],
-    });
+    return this.#deliverToPeer(
+      { method: 'deliver', params: ['retireExports', erefs] },
+      { exemptFromCapacityLimit: true },
+    );
   }
 
   /**
@@ -1078,10 +1122,10 @@ export class RemoteHandle implements RemoteEndpointHandle {
    * @returns the crank result.
    */
   async deliverRetireImports(erefs: ERef[]): Promise<CrankResult> {
-    return this.#deliverToPeer({
-      method: 'deliver',
-      params: ['retireImports', erefs],
-    });
+    return this.#deliverToPeer(
+      { method: 'deliver', params: ['retireImports', erefs] },
+      { exemptFromCapacityLimit: true },
+    );
   }
 
   /**
@@ -1132,10 +1176,40 @@ export class RemoteHandle implements RemoteEndpointHandle {
    * @param erefs - The refs of the exports to be dropped.
    */
   #dropExports(erefs: ERef[]): void {
-    const krefs = erefs.map((ref) =>
-      this.#kernelStore.translateRefEtoK(this.remoteId, ref),
-    );
+    const krefs = this.#knownKrefs('dropExports', erefs);
     performDropImports(krefs, this.remoteId, this.#kernelStore);
+  }
+
+  /**
+   * Look up the krefs of the objects a GC delivery names. It can name an rref
+   * the receiver has already let go of, as when a `retireImports` and a
+   * `retireExports` cross on the wire, so one with no c-list entry is skipped
+   * rather than minted. The c-list can't tell that from an rref it never had,
+   * hence the warning.
+   *
+   * @param method - The GC delivery.
+   * @param erefs - The rrefs it names.
+   * @returns The krefs of those still in the c-list.
+   */
+  #knownKrefs(
+    method: 'dropExports' | 'retireExports' | 'retireImports',
+    erefs: ERef[],
+  ): KRef[] {
+    // The peer's exports are `ro+N` here, and ours to it `ro-N`.
+    const prefix = method === 'retireImports' ? 'ro+' : 'ro-';
+    return erefs.flatMap((ref) => {
+      if (!isRRef(ref) || !ref.startsWith(prefix)) {
+        throw Error(`${method} names ${String(ref)}, which is not ${prefix}N`);
+      }
+      const kref = this.#kernelStore.erefToKref(this.remoteId, ref);
+      if (kref === undefined) {
+        this.#logger.warn(
+          `${this.#peerId.slice(0, 8)}:: ${method} names ${ref}, which is not in the c-list; skipped`,
+        );
+        return [];
+      }
+      return [kref];
+    });
   }
 
   /**
@@ -1144,9 +1218,7 @@ export class RemoteHandle implements RemoteEndpointHandle {
    * @param erefs - The refs of the exports to be retired.
    */
   #retireExports(erefs: ERef[]): void {
-    const krefs = erefs.map((ref) =>
-      this.#kernelStore.translateRefEtoK(this.remoteId, ref),
-    );
+    const krefs = this.#knownKrefs('retireExports', erefs);
     performRetireImports(krefs, this.remoteId, this.#kernelStore);
   }
 
@@ -1156,9 +1228,7 @@ export class RemoteHandle implements RemoteEndpointHandle {
    * @param erefs - The refs of the imports to be retired.
    */
   #retireImports(erefs: ERef[]): void {
-    const krefs = erefs.map((ref) =>
-      this.#kernelStore.translateRefEtoK(this.remoteId, ref),
-    );
+    const krefs = this.#knownKrefs('retireImports', erefs);
     performExportCleanup(krefs, true, this.remoteId, this.#kernelStore);
   }
 
@@ -1194,7 +1264,9 @@ export class RemoteHandle implements RemoteEndpointHandle {
             ];
           },
         );
-        this.#kernelQueue.resolvePromises(this.remoteId, kResolutions);
+        // Buffered for the crank's flush, so a host caller hears nothing an
+        // abort takes back.
+        this.#kernelQueue.resolvePromises(this.remoteId, kResolutions, false);
         break;
       }
       case 'dropExports': {
@@ -1213,13 +1285,11 @@ export class RemoteHandle implements RemoteEndpointHandle {
         break;
       }
       case 'bringOutYourDead': {
-        // Queue work like the arms above: `scheduleReap` is consumed only by the
-        // run loop, via `nextReapAction`.
         this.#kernelStore.scheduleReap(this.remoteId);
         break;
       }
       default:
-        // eslint-disable-next-line @typescript-eslint/restrict-template-expressions
+        // oxlint-disable-next-line typescript/restrict-template-expressions
         throw Error(`unknown remote delivery method ${method}`);
     }
   }
@@ -1269,13 +1339,7 @@ export class RemoteHandle implements RemoteEndpointHandle {
         method: 'redeemURLReply',
         params: [success, data.replyKey, value],
       },
-      {
-        // exempt from capacity limit - this a reply that mustn't fail and is not vat-initiated
-        exemptFromCapacityLimit: true,
-        // The request being replied to. This crank records the receipt, so the
-        // acknowledgement is durable exactly when the reply is.
-        ack,
-      },
+      { exemptFromCapacityLimit: true, ack },
     );
   }
 
@@ -1328,10 +1392,9 @@ export class RemoteHandle implements RemoteEndpointHandle {
   /**
    * Take a message off the wire from this peer.
    *
-   * Acknowledgements and validation happen here, at receive time: they are
-   * idempotent and must not wait for a turn in the run queue. The message
-   * itself is processed in {@link deliverInbound}, in a crank of its own,
-   * rather than in a savepoint nested inside whichever crank is open.
+   * Acknowledgements and seq validation happen here, on arrival, since they
+   * must not wait for a crank. The message itself is processed in
+   * {@link deliverInbound}, in a crank of its own.
    *
    * @param message - The message, as it arrived.
    */
@@ -1368,11 +1431,13 @@ export class RemoteHandle implements RemoteEndpointHandle {
     if (
       !this.#kernelQueue.acceptRemoteInbound({
         remoteId: this.remoteId,
+        peerId: this.#peerId,
         seq,
         message,
+        highestReceivedSeq: this.#highestReceivedSeq,
       })
     ) {
-      this.#logger.log(
+      this.#logger.warn(
         `${this.#peerId.slice(0, 8)}:: refused message seq=${seq}: too many already waiting their turn`,
       );
     }
@@ -1387,11 +1452,6 @@ export class RemoteHandle implements RemoteEndpointHandle {
   async deliverInbound(message: string): Promise<CrankResult> {
     const command = JSON.parse(message) as RemoteCommand;
 
-    // Against memory, not the store. The run loop finishes a crank's
-    // post-commit work, which moves memory, before it starts the next, so the
-    // two agree here except where a peer restart's reset was rolled back: the
-    // store then has the old incarnation's receipts back, and would take the
-    // new incarnation's first messages for duplicates.
     if (command.seq <= this.#highestReceivedSeq) {
       this.#persistAcknowledged();
       this.#logger.log(
@@ -1429,14 +1489,13 @@ export class RemoteHandle implements RemoteEndpointHandle {
         deferredCompletion = this.#handleRedeemURLReply(...params);
         break;
       default:
-        // eslint-disable-next-line @typescript-eslint/restrict-template-expressions
+        // oxlint-disable-next-line typescript/restrict-template-expressions
         throw Error(`unknown remote message type ${method}`);
     }
 
     this.#kernelStore.setRemoteHighestReceivedSeq(this.remoteId, seq);
     this.#persistAcknowledged();
 
-    // Written down inside the crank; only sending it waits for the commit.
     const reply =
       deferredCompletion?.type === 'redeemURL'
         ? this.#persistRedeemURLReply(deferredCompletion, seq)
@@ -1459,7 +1518,8 @@ export class RemoteHandle implements RemoteEndpointHandle {
         this.#completeHandleRedeemURLReply(deferredCompletion);
       }
 
-      // Restart delayed ACK timer, which may have been cleared by transmitting.
+      // Armed again for this receipt: the timer set on arrival may have fired
+      // with the one before, or been cleared by transmitting.
       this.#startDelayedAck();
     };
   }
@@ -1472,6 +1532,11 @@ export class RemoteHandle implements RemoteEndpointHandle {
    * @returns a promise for the kref of the object designated by `url`.
    */
   async redeemOcapURL(url: string): Promise<KRef> {
+    // Written down now, it would outlast the rejection the restart gives it
+    // and reach the incarnation that replaced the peer's.
+    if (this.#heldForRestart) {
+      throw Error('Remote peer restarted');
+    }
     const replyKey = `${this.#redemptionCounter}`;
     this.#redemptionCounter += 1;
     const { promise, resolve, reject } = makePromiseKit<KRef>();
@@ -1557,17 +1622,15 @@ export class RemoteHandle implements RemoteEndpointHandle {
   }
 
   /**
-   * Persist the peer-restart side effects (kv-only). Reversible by the
-   * caller's savepoint: if `forgetEndpointImports` throws (e.g. corrupt
-   * c-list entry, refcount underflow) and the caller rolls back, no
-   * in-memory state has been disturbed.
+   * Tear down the session with the incarnation that has ended, for the crank
+   * that records the peer's restart. The send counters are reset here too,
+   * rather than after the commit with the rest: until they agree with the
+   * store, anything that writes the send window writes the old one back.
+   * Resetting them is not undone if the crank rolls back, which costs nothing:
+   * that crank never rolls back without the run loop dying.
    *
    * Pairs with {@link finalizePeerRestart}, which the caller MUST invoke
-   * exactly once after `releaseSavepoint` succeeds. Splitting the work
-   * keeps non-reversible mutations (timers, rejected redemption promises,
-   * in-memory seq counters) out of the savepoint window — those would
-   * leave the in-memory view inconsistent with the persisted view if the
-   * kv layer rolled back.
+   * exactly once after the crank commits.
    */
   persistPeerRestart(): void {
     this.#logger.log(
@@ -1575,15 +1638,19 @@ export class RemoteHandle implements RemoteEndpointHandle {
     );
     this.#kernelStore.clearRemoteSeqState(this.remoteId);
     this.#kernelStore.forgetEndpointImports(this.remoteId);
+    const pendingCount = this.#getPendingCount();
+    if (pendingCount > 0) {
+      this.#logger.log(
+        `${this.#peerId.slice(0, 8)}:: discarding ${pendingCount} pending messages due to peer restart`,
+      );
+    }
+    this.#resetSendState();
   }
 
   /**
-   * Convenience wrapper that runs the persisted and in-memory phases
-   * back-to-back. Use only outside a crank:
-   * {@link RemoteManager.applyIncarnationChange} calls
-   * {@link persistPeerRestart} inside its crank and {@link finalizePeerRestart}
-   * after the commit, so a rollback can't leave the in-memory view
-   * inconsistent with the persisted view.
+   * Run {@link persistPeerRestart} and {@link finalizePeerRestart} back to
+   * back, for tests: the kernel splits them around the commit of the crank
+   * that records the restart.
    */
   handlePeerRestart(): void {
     this.persistPeerRestart();
@@ -1591,30 +1658,66 @@ export class RemoteHandle implements RemoteEndpointHandle {
   }
 
   /**
-   * Apply the in-memory side of a peer restart: cancel timers, reject
-   * in-flight URL redemption promises, and reset sequence counters. Must be
-   * called after {@link persistPeerRestart} and after the caller's savepoint
-   * has been released, with nothing awaited in between: a send whose turn
-   * comes there finds the queue emptied in the store but not yet retired
-   * here, and writes a message of the incarnation that has ended.
+   * Send nothing to the peer until {@link finalizePeerRestart} or
+   * {@link releaseRestartHold}, letting go of the sends already waiting their
+   * turn. The ACK timer is cleared, and does nothing while held: it could only
+   * give up, which would abandon the queue and reject the redemptions outside
+   * the crank that handles the restart, or in a kernel whose run loop has died.
+   */
+  holdForRestart(): void {
+    this.#heldForRestart = true;
+    this.#outboundQueueId += 1;
+    this.#clearAckTimeout();
+  }
+
+  /**
+   * Start the session over if a restart holds it, for a kernel that discarded
+   * the waiting change along with its store. Released as it stands, this
+   * handle would take the first messages of the incarnation that replaced the
+   * peer's for repeats of the old one's. Pending redemptions are left to their
+   * timeouts, as for a remote no restart holds.
+   */
+  releaseRestartHold(): void {
+    if (this.#heldForRestart) {
+      this.#resetSendState();
+      this.#highestReceivedSeq = 0;
+      this.#endHold();
+    }
+  }
+
+  /**
+   * Apply the rest of a peer restart once the crank that ran
+   * {@link persistPeerRestart} has committed.
    */
   finalizePeerRestart(): void {
-    const pendingCount = this.#getPendingCount();
-    if (this.#hasPendingMessages()) {
-      this.#logger.log(
-        `${this.#peerId.slice(0, 8)}:: discarding ${pendingCount} pending messages due to peer restart`,
-      );
-    }
+    // Here, not in the crank with the send counters: until the commit, the
+    // handshake keeps the new incarnation's channel closed, so what arrives was
+    // read off the old one and is judged against its session.
+    this.#highestReceivedSeq = 0;
+    this.rejectPendingRedemptions('Remote peer restarted');
+    this.#endHold();
+  }
+
+  /**
+   * Let go of what the session with the old incarnation left in memory, and
+   * send again.
+   */
+  #endHold(): void {
     this.#clearAckTimeout();
     this.#clearDelayedAck();
-    this.rejectPendingRedemptions('Remote peer restarted');
+    this.#retryCount = 0;
+    this.#outboundQueueId += 1;
+    this.#heldForRestart = false;
+    this.#remoteGcRequested = false;
+  }
+
+  /**
+   * Forget the send sequence numbers of a session the store no longer holds.
+   */
+  #resetSendState(): void {
     this.#nextSendSeq = 0;
-    this.#highestReceivedSeq = 0;
     this.#startSeq = 0;
     this.#lastTransmittedSeq = 0;
     this.#awaitingTransmit.clear();
-    this.#retryCount = 0;
-    this.#outboundQueueId += 1;
-    this.#remoteGcRequested = false;
   }
 }

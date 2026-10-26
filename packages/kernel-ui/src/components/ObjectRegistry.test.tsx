@@ -1,3 +1,4 @@
+import type { KRef } from '@metamask/ocap-kernel';
 import {
   render,
   screen,
@@ -37,19 +38,20 @@ describe('ObjectRegistry Component', () => {
     gcActions: 'test gc actions',
     reapQueue: 'test reap queue',
     terminatedVats: 'test terminated vats',
+    ocapUrls: [],
     vats: {
       vat1: {
         overview: { name: 'TestVat1', bundleSpec: '' },
         ownedObjects: [
           {
-            kref: 'kref1',
+            kref: 'kref1' as KRef,
             eref: 'eref1',
             refCount: '1',
             revoked: 'false',
             toVats: ['vat2'],
           },
           {
-            kref: 'kref2',
+            kref: 'kref2' as KRef,
             eref: 'eref2',
             refCount: '2',
             revoked: 'false',
@@ -57,19 +59,24 @@ describe('ObjectRegistry Component', () => {
           },
         ],
         importedObjects: [
-          { kref: 'kref3', eref: 'eref3', refCount: '1', fromVat: 'vat2' },
+          {
+            kref: 'kref3' as KRef,
+            eref: 'eref3',
+            refCount: '1',
+            fromVat: 'vat2',
+          },
         ],
         importedPromises: [
           {
-            kref: 'promise1',
+            kref: 'promise1' as KRef,
             eref: 'eref-promise1',
             state: 'pending',
             value: {
               body: '',
               slots: [
-                { kref: 'slot1', eref: 'eref-slot1', vat: 'vat2' },
-                { kref: 'slot2', eref: '', vat: 'vat2' },
-                { kref: 'slot3', eref: null, vat: 'vat2' },
+                { kref: 'slot1' as KRef, eref: 'eref-slot1', vat: 'vat2' },
+                { kref: 'slot2' as KRef, eref: '', vat: 'vat2' },
+                { kref: 'slot3' as KRef, eref: null, vat: 'vat2' },
               ],
             },
             fromVat: 'vat2',
@@ -77,14 +84,18 @@ describe('ObjectRegistry Component', () => {
         ],
         exportedPromises: [
           {
-            kref: 'promise2',
+            kref: 'promise2' as KRef,
             eref: 'eref-promise2',
             state: 'fulfilled',
             value: {
               body: 'value',
               slots: [
-                { kref: 'exported-slot1', eref: 'exported-eref1', vat: null },
-                { kref: 'exported-slot2', eref: null, vat: null },
+                {
+                  kref: 'exported-slot1' as KRef,
+                  eref: 'exported-eref1',
+                  vat: null,
+                },
+                { kref: 'exported-slot2' as KRef, eref: null, vat: null },
               ],
             },
             toVats: ['vat2'],
@@ -368,8 +379,8 @@ describe('ObjectRegistry Component', () => {
       expandVat(container, 'TestVat1', 'vat1');
       const revokeButton = screen.getByTestId('revoke-button-kref1');
       expect(revokeButton).toBeInTheDocument();
-      expect(revokeButton?.textContent).toStrictEqual(expectedText);
-      expect(revokeButton)[expectEnabled ? 'toBeEnabled' : 'toBeDisabled']();
+      expect(revokeButton.textContent).toStrictEqual(expectedText);
+      expect(revokeButton).toHaveProperty('disabled', !expectEnabled);
     },
   );
 
@@ -396,12 +407,13 @@ describe('ObjectRegistry Component', () => {
       gcActions: 'test',
       reapQueue: 'test',
       terminatedVats: 'test',
+      ocapUrls: [],
       vats: {
         singularVat: {
           overview: { name: 'SingleVat', bundleSpec: '' },
           ownedObjects: [
             {
-              kref: 'kref1',
+              kref: 'kref1' as KRef,
               eref: 'eref1',
               refCount: '1',
               revoked: 'false',
@@ -411,7 +423,7 @@ describe('ObjectRegistry Component', () => {
           importedObjects: [],
           importedPromises: [
             {
-              kref: 'promise1',
+              kref: 'promise1' as KRef,
               eref: 'eref-promise1',
               state: 'pending',
               value: { body: '', slots: [] },
@@ -447,12 +459,13 @@ describe('ObjectRegistry Component', () => {
       gcActions: 'test',
       reapQueue: 'test',
       terminatedVats: 'test',
+      ocapUrls: [],
       vats: {
         emptyVat: {
           overview: { name: 'EmptyVat', bundleSpec: '' },
           ownedObjects: [
             {
-              kref: 'kref1',
+              kref: 'kref1' as KRef,
               eref: 'eref1',
               refCount: '1',
               revoked: 'false',
@@ -460,11 +473,16 @@ describe('ObjectRegistry Component', () => {
             }, // Empty toVats
           ],
           importedObjects: [
-            { kref: 'kref2', eref: 'eref2', refCount: '1', fromVat: null }, // Null fromVat
+            {
+              kref: 'kref2' as KRef,
+              eref: 'eref2',
+              refCount: '1',
+              fromVat: null,
+            }, // Null fromVat
           ],
           importedPromises: [
             {
-              kref: 'promise1',
+              kref: 'promise1' as KRef,
               eref: 'eref-promise1',
               state: 'pending',
               value: { body: 'test', slots: [] }, // Empty slots
@@ -473,7 +491,7 @@ describe('ObjectRegistry Component', () => {
           ],
           exportedPromises: [
             {
-              kref: 'promise2',
+              kref: 'promise2' as KRef,
               eref: 'eref-promise2',
               state: 'fulfilled',
               value: { body: 'test', slots: [] }, // Empty slots

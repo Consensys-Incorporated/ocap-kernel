@@ -291,7 +291,7 @@ export class KernelServiceManager {
         string,
         (...methodArgs: unknown[]) => unknown
       >;
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+      // oxlint-disable-next-line typescript/no-non-null-assertion
       const resultPromise = E(service)[method]!(...args);
       Promise.resolve(resultPromise)
         .then((resultValue) => {

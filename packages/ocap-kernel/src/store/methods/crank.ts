@@ -11,7 +11,7 @@ import type { CrankBufferItem, Savepoint, StoreContext } from '../types.ts';
  * @param kdb - The kernel database.
  * @returns The crank methods.
  */
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+// oxlint-disable-next-line typescript/explicit-function-return-type
 export function getCrankMethods(ctx: StoreContext, kdb: KernelDatabase) {
   /**
    * Start a crank.
@@ -80,9 +80,8 @@ export function getCrankMethods(ctx: StoreContext, kdb: KernelDatabase) {
    *
    * @param restored - The savepoint being rolled back to, whose snapshot of
    * `maybeFreeKrefs` is the "before" this restores.
-   * @param rollbackError - The error the rollback threw, if it threw. Kept as
-   * the `cause` should reverting fail too, since it is the root cause an
-   * operator needs.
+   * @param rollbackError - The error the rollback or release threw, if it
+   * threw.
    */
   function revertStateBeneathRollback(
     restored: Savepoint,
@@ -109,7 +108,7 @@ export function getCrankMethods(ctx: StoreContext, kdb: KernelDatabase) {
         throw revertError;
       }
       throw new Error(
-        `Crank rollback failed and its caches could not be reverted: ${String(revertError)}`,
+        `Crank's savepoints were lost and its caches could not be reverted: ${String(revertError)}`,
         { cause: rollbackError },
       );
     }
@@ -119,10 +118,23 @@ export function getCrankMethods(ctx: StoreContext, kdb: KernelDatabase) {
    * Release all savepoints.
    */
   function releaseAllSavepoints(): void {
-    if (ctx.savepoints.length > 0) {
-      kdb.releaseSavepoint('t0');
-      ctx.savepoints.length = 0;
+    const [outermost] = ctx.savepoints;
+    if (outermost === undefined) {
+      return;
     }
+    try {
+      kdb.releaseSavepoint('t0');
+    } catch (error) {
+      // The store has discarded the crank's writes and its savepoints, unless
+      // `t0` is nested in a savepoint taken outside the run loop. If the abort
+      // doing that failed, this reload still sees those writes, and the store
+      // refuses every write until it is reopened. A `t0` left listed would make
+      // `reset` throw before restoring its keys.
+      ctx.savepoints.length = 0;
+      revertStateBeneathRollback(outermost, error);
+      throw error;
+    }
+    ctx.savepoints.length = 0;
   }
 
   /**

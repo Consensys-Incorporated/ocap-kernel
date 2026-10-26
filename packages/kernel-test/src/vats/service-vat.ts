@@ -4,6 +4,8 @@ import { makeDefaultExo } from '@metamask/kernel-utils/exo';
 import { unwrapTestLogger } from '../test-powers.ts';
 import type { TestPowers } from '../test-powers.ts';
 
+type TestService = { getStuff: (obj: unknown, tag: string) => string };
+
 /**
  * Build function for running a test of kernel service objects.
  *
@@ -13,22 +15,22 @@ import type { TestPowers } from '../test-powers.ts';
  * @param parameters.name - The name of the vat.
  * @returns The root object for the new vat.
  */
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+// oxlint-disable-next-line typescript/explicit-function-return-type
 export function buildRootObject(
   vatPowers: TestPowers,
   parameters: { name?: string } = {},
 ) {
   const name = parameters?.name ?? 'anonymous';
   const tlog = unwrapTestLogger(vatPowers, name);
-  // eslint-disable-next-line no-console
+  // oxlint-disable-next-line no-console
   console.log(`buildRootObject "${name}"`);
 
   const thing = makeDefaultExo('thing', {});
-  let testService: unknown;
+  let testService: TestService;
   tlog(`buildRootObject "${name}"`);
 
   const mainVatRoot = makeDefaultExo('root', {
-    async bootstrap(_vats: unknown, services: { testService: unknown }) {
+    async bootstrap(_vats: unknown, services: { testService: TestService }) {
       tlog(`vat ${name} is bootstrap`);
       testService = services.testService;
     },
@@ -39,6 +41,7 @@ export function buildRootObject(
     },
     async goBadly() {
       try {
+        // @ts-expect-error Deliberately calls a method the service lacks.
         const serviceResult = await E(testService).nonexistentMethod(
           thing,
           'hello',

@@ -1,9 +1,3 @@
-/* eslint-disable n/no-unsupported-features/node-builtins -- the crypto
-   global is "experimental" before Node 23 by ESLint's Node-builtins
-   rule, but we also need to handle the SES-vat case where the
-   endowment lands as a bare `crypto` Compartment global. Both code
-   paths reference the same Web Crypto shape and are stable here. */
-
 /**
  * Generate an opaque cryptographic-random token for service registration.
  *
@@ -36,4 +30,3 @@ export function makeRegistrationToken(): string {
   cryptoSource.getRandomValues(bytes);
   return [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }
-/* eslint-enable n/no-unsupported-features/node-builtins */

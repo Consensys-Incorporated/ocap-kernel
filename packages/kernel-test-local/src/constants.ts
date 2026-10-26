@@ -21,7 +21,7 @@ const LMS_PROVIDERS = {
 
 export type LmsProvider = keyof typeof LMS_PROVIDERS;
 
-// eslint-disable-next-line n/no-process-env
+// oxlint-disable-next-line node/no-process-env
 const rawProvider = process?.env?.LMS_PROVIDER ?? 'ollama';
 export const LMS_PROVIDER: LmsProvider =
   rawProvider in LMS_PROVIDERS ? (rawProvider as LmsProvider) : 'ollama';
@@ -33,5 +33,5 @@ export const LMS_CHAT_MODEL = LMS_PROVIDERS[LMS_PROVIDER].model;
  * Logger tags to ignore, parsed from the LOGGER_IGNORE environment variable.
  */
 export const IGNORE_TAGS =
-  // eslint-disable-next-line n/no-process-env
+  // oxlint-disable-next-line node/no-process-env
   process?.env?.LOGGER_IGNORE?.split(',')?.map((tag) => tag.trim()) ?? [];

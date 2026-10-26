@@ -1,7 +1,6 @@
 {
   "compilerOptions": {
     "allowImportingTsExtensions": true,
-    "composite": true,
     "erasableSyntaxOnly": true,
     "exactOptionalPropertyTypes": true,
     "forceConsistentCasingInFileNames": true,
@@ -10,6 +9,7 @@
     "moduleResolution": "Node16",
     "noErrorTruncation": true,
     "noUncheckedIndexedAccess": true,
+    "noUncheckedSideEffectImports": true,
     "resolveJsonModule": true,
     "rewriteRelativeImportExtensions": true,
     "strict": true,

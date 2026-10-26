@@ -57,7 +57,7 @@ function makeMockContact(options: {
       );
     }
   });
-  const initiateContact = vi.fn(async () => ({}));
+  const initiateContact = vi.fn<ContactPoint['initiateContact']>();
   const contact: ContactPoint = {
     getServiceDescription,
     confirmServiceRegistration,
@@ -201,20 +201,18 @@ function makeFakeBaggage() {
  *
  * @returns The fake vatPowers.
  */
-function makeFakeVatPowers() {
+function makeFakeVatPowers(): Parameters<typeof buildRootObject>[0] {
   return {
     VatData: {
       makeKindHandle: (tag: string) => ({ kind: tag }),
-      defineDurableKind: (
-        _kindHandle: unknown,
-        init: (...args: never[]) => unknown,
-        behavior: Record<string, (...args: unknown[]) => unknown>,
-      ) => {
-        return (...args: never[]) => {
+      defineDurableKind: (_kindHandle, init, behavior) => {
+        return (...args) => {
           const state = init(...args);
           const facet: Record<string, unknown> = {};
           const context = harden({ state, self: facet });
-          for (const [name, fn] of Object.entries(behavior)) {
+          for (const [name, fn] of Object.entries(
+            behavior as Record<string, (...args: unknown[]) => unknown>,
+          )) {
             facet[name] = (...callArgs: unknown[]) => fn(context, ...callArgs);
           }
           return facet;

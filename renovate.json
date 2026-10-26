@@ -45,10 +45,25 @@
       "groupName": "npm dependencies"
     },
     {
+      "description": "The design-system packages declare peer dependencies on design-tokens, so a minor bump to one can require a major bump to another. Their major updates therefore land in the npm dependencies PR rather than the separate major PR.",
+      "matchManagers": ["npm"],
+      "matchPackageNames": [
+        "@metamask/design-system-*",
+        "@metamask/design-tokens"
+      ],
+      "separateMajorMinor": false
+    },
+    {
       "description": "4.5.1 was published without its generated .d.ts files, so `makeCapTP` resolves to `any` and builds fail under noImplicitAny. Unpin once a release ships declarations again.",
       "matchManagers": ["npm"],
       "matchPackageNames": ["@endo/captp"],
       "allowedVersions": "<=4.5.0"
+    },
+    {
+      "description": "pass-style 2.0.1 and patterns 2.x republish the 1.x code, but Endo's own packages still depend on ^1, so adopting ^2 installs a second copy of each. Allow 2.x once @endo/exo and @endo/marshal depend on it.",
+      "matchManagers": ["npm"],
+      "matchPackageNames": ["@endo/pass-style", "@endo/patterns"],
+      "allowedVersions": "<2"
     }
   ]
 }

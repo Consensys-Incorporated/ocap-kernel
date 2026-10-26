@@ -11,15 +11,18 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Kernel } from './Kernel.ts';
 import { kser } from './liveslots/kernel-marshal.ts';
 import type {
-  VatId,
   VatConfig,
   OnRunLoopFailure,
   PlatformServices,
   ClusterConfig,
   CrankResult,
+  EndpointId,
+  RunLoopItem,
   RunQueueItem,
+  SubclusterId,
 } from './types.ts';
 import { VatHandle } from './vats/VatHandle.ts';
+import { asKRef, asSubclusterId, asVatId } from '../test/branded.ts';
 import { makeMapKernelDatabase } from '../test/storage.ts';
 
 const mocks = vi.hoisted(() => {
@@ -35,10 +38,10 @@ const mocks = vi.hoisted(() => {
     #rejectRunLoop: ((error: Error) => void) | undefined;
 
     /**
-     * The callback the kernel gave the run loop, for tests to drive and for
-     * queued work to be carried out as a crank would carry it out.
+     * The router's dispatch, so queued work can be carried out as a crank
+     * would carry it out.
      */
-    deliver: ((item: unknown) => Promise<unknown>) | undefined;
+    #deliver: ((item: RunLoopItem) => Promise<unknown>) | undefined;
 
     #stopRunLoopLoop: (() => void) | undefined;
 
@@ -46,14 +49,21 @@ const mocks = vi.hoisted(() => {
 
     // Like the real run loop, this settles only when the kernel dies or the
     // loop is stopped, and the state it reports follows.
-    run = vi.fn(async (deliver: (item: unknown) => Promise<unknown>) => {
-      this.deliver = deliver;
-      this.#running = true;
-      return new Promise<void>((resolve, reject) => {
-        this.#rejectRunLoop = reject;
-        this.#stopRunLoopLoop = resolve;
-      });
-    });
+    run = vi.fn(
+      async (
+        deliver: (item: RunLoopItem) => Promise<unknown>,
+        _options?: { isOffline?: (endpointId: EndpointId) => boolean },
+      ) => {
+        this.#deliver = deliver;
+        this.#running = true;
+        return new Promise<void>((resolve, reject) => {
+          this.#rejectRunLoop = reject;
+          this.#stopRunLoopLoop = resolve;
+        });
+      },
+    );
+
+    recheckGCActions = vi.fn();
 
     /**
      * Fail the run loop, in the order the real `KernelQueue.run` does: the
@@ -134,7 +144,7 @@ const mocks = vi.hoisted(() => {
      * @param item - The item to deliver.
      */
     async #runCrank(item: RunQueueItem): Promise<void> {
-      const crankResult = (await this.deliver?.(item)) as
+      const crankResult = (await this.#deliver?.(item)) as
         | CrankResult
         | undefined;
       await crankResult?.afterCommit?.();
@@ -165,6 +175,8 @@ const mocks = vi.hoisted(() => {
 
     waitForCrank = vi.fn().mockResolvedValue(undefined);
 
+    writeOutsideCrank = vi.fn(async (write: () => unknown) => write());
+
     resolvePromises = vi.fn();
   }
 
@@ -179,11 +191,15 @@ const mocks = vi.hoisted(() => {
 
     setMessageHandler = vi.fn();
 
-    applyIncarnationChange = vi.fn().mockResolvedValue({});
+    applyIncarnationChange = vi.fn().mockReturnValue({});
+
+    releaseRestartHolds = vi.fn();
 
     initIdentity = vi.fn().mockResolvedValue(undefined);
 
     initRemoteComms = vi.fn().mockResolvedValue(undefined);
+
+    hasRemote = vi.fn().mockReturnValue(false);
 
     closeConnection = vi.fn().mockResolvedValue(undefined);
 
@@ -340,44 +356,6 @@ describe('Kernel', () => {
     });
   });
 
-  describe('the run loop callback', () => {
-    const makeRunningKernel = async (): Promise<void> => {
-      await Kernel.make(mockPlatformServices, mockKernelDatabase);
-    };
-
-    it('carries out a peer incarnation change itself', async () => {
-      await makeRunningKernel();
-      const item = {
-        type: 'peerIncarnation',
-        peerId: 'peer-1',
-        incarnation: 'incarnation-B',
-      };
-
-      // Not a delivery to an endpoint, so the router never sees it — and it
-      // would throw on an item type it does not know.
-      await mocks.KernelQueue.lastInstance.deliver?.(item);
-
-      expect(
-        mocks.RemoteManager.lastInstance.applyIncarnationChange,
-      ).toHaveBeenCalledWith(item);
-    });
-
-    it('does not die of an incarnation change it cannot record', async () => {
-      await makeRunningKernel();
-      mocks.RemoteManager.lastInstance.applyIncarnationChange.mockRejectedValue(
-        new Error('the store is gone'),
-      );
-
-      expect(
-        await mocks.KernelQueue.lastInstance.deliver?.({
-          type: 'peerIncarnation',
-          peerId: 'peer-1',
-          incarnation: 'incarnation-B',
-        }),
-      ).toStrictEqual({ abort: true });
-    });
-  });
-
   describe('queueMessage()', () => {
     it('enqueues a message and returns the result', async () => {
       const kernel = await Kernel.make(
@@ -385,7 +363,7 @@ describe('Kernel', () => {
         mockKernelDatabase,
       );
       await kernel.launchSubcluster(makeSingleVatClusterConfig());
-      const result = await kernel.queueMessage('ko1', 'hello', []);
+      const result = await kernel.queueMessage(asKRef('ko1'), 'hello', []);
       expect(result).toStrictEqual({ body: '{"result":"ok"}', slots: [] });
     });
 
@@ -397,9 +375,9 @@ describe('Kernel', () => {
       mocks.KernelQueue.lastInstance.enqueueMessage.mockRejectedValueOnce(
         kser(new Error('vat rejection message')),
       );
-      await expect(kernel.queueMessage('ko1', 'hello', [])).rejects.toThrow(
-        'vat rejection message',
-      );
+      await expect(
+        kernel.queueMessage(asKRef('ko1'), 'hello', []),
+      ).rejects.toThrow('vat rejection message');
     });
 
     it('propagates non-CapData rejections as-is', async () => {
@@ -411,9 +389,9 @@ describe('Kernel', () => {
       mocks.KernelQueue.lastInstance.enqueueMessage.mockRejectedValueOnce(
         internalError,
       );
-      await expect(kernel.queueMessage('ko1', 'hello', [])).rejects.toThrow(
-        'internal kernel error',
-      );
+      await expect(
+        kernel.queueMessage(asKRef('ko1'), 'hello', []),
+      ).rejects.toThrow('internal kernel error');
     });
   });
 
@@ -494,7 +472,7 @@ describe('Kernel', () => {
       const { subclusters } = await kernel.getStatus();
       const [firstSubcluster] = subclusters;
       expect(firstSubcluster).toBeDefined();
-      const subclusterId = firstSubcluster?.id as string;
+      const subclusterId = firstSubcluster?.id as SubclusterId;
       expect(subclusterId).toBeDefined();
       await kernel.terminateSubcluster(subclusterId);
       expect(terminateWorkerMock).toHaveBeenCalledTimes(2);
@@ -507,9 +485,9 @@ describe('Kernel', () => {
         mockPlatformServices,
         mockKernelDatabase,
       );
-      await expect(kernel.terminateSubcluster('non-existent')).rejects.toThrow(
-        'Subcluster does not exist.',
-      );
+      await expect(
+        kernel.terminateSubcluster('non-existent' as SubclusterId),
+      ).rejects.toThrow('Subcluster does not exist.');
     });
   });
 
@@ -524,7 +502,7 @@ describe('Kernel', () => {
       const { subclusters } = await kernel.getStatus();
       const [firstSubcluster] = subclusters;
       expect(firstSubcluster).toBeDefined();
-      const subclusterId = firstSubcluster?.id as string;
+      const subclusterId = firstSubcluster?.id as SubclusterId;
       expect(subclusterId).toBeDefined();
       const subcluster = kernel.getSubcluster(subclusterId);
       expect(subcluster).toBeDefined();
@@ -537,7 +515,7 @@ describe('Kernel', () => {
         mockKernelDatabase,
       );
       // Use valid subcluster ID format (s + number) that doesn't exist
-      expect(kernel.getSubcluster('s999')).toBeUndefined();
+      expect(kernel.getSubcluster(asSubclusterId('s999'))).toBeUndefined();
     });
   });
 
@@ -552,11 +530,13 @@ describe('Kernel', () => {
       const { subclusters } = await kernel.getStatus();
       const [firstSubcluster] = subclusters;
       expect(firstSubcluster).toBeDefined();
-      const subclusterId = firstSubcluster?.id as string;
+      const subclusterId = firstSubcluster?.id as SubclusterId;
       expect(subclusterId).toBeDefined();
-      expect(kernel.isVatInSubcluster('v1', subclusterId)).toBe(true);
+      expect(kernel.isVatInSubcluster(asVatId('v1'), subclusterId)).toBe(true);
       // Use valid subcluster ID format (s + number) that doesn't match
-      expect(kernel.isVatInSubcluster('v1', 's999')).toBe(false);
+      expect(
+        kernel.isVatInSubcluster(asVatId('v1'), asSubclusterId('s999')),
+      ).toBe(false);
     });
   });
 
@@ -577,7 +557,7 @@ describe('Kernel', () => {
       const { subclusters } = await kernel.getStatus();
       const [firstSubcluster] = subclusters;
       expect(firstSubcluster).toBeDefined();
-      const subclusterId = firstSubcluster?.id as string;
+      const subclusterId = firstSubcluster?.id as SubclusterId;
       expect(subclusterId).toBeDefined();
       const vatIds = kernel.getSubclusterVats(subclusterId);
       expect(vatIds).toStrictEqual(['v1', 'v2']);
@@ -593,6 +573,21 @@ describe('Kernel', () => {
       const clearSpy = vi.spyOn(mockKernelDatabase, 'clear');
       await kernel.clearStorage();
       expect(clearSpy).toHaveBeenCalledOnce();
+    });
+
+    it('discards the queued work, then releases the restart holds', async () => {
+      const kernel = await Kernel.make(
+        mockPlatformServices,
+        mockKernelDatabase,
+      );
+      await kernel.clearStorage();
+      const { discardQueuedWork } = mocks.KernelQueue.lastInstance;
+      const { releaseRestartHolds } = mocks.RemoteManager.lastInstance;
+      expect(discardQueuedWork).toHaveBeenCalledOnce();
+      expect(releaseRestartHolds).toHaveBeenCalledOnce();
+      expect(discardQueuedWork.mock.invocationCallOrder[0]).toBeLessThan(
+        releaseRestartHolds.mock.invocationCallOrder[0] as number,
+      );
     });
   });
 
@@ -808,7 +803,7 @@ describe('Kernel', () => {
           () => undefined,
         );
 
-        const terminating = kernel.terminateVat('v1');
+        const terminating = kernel.terminateVat(asVatId('v1'));
         await kernel[method]();
 
         await expect(terminating).rejects.toThrow(message);
@@ -822,7 +817,7 @@ describe('Kernel', () => {
       );
       await kernel.launchSubcluster(makeSingleVatClusterConfig());
 
-      await kernel.terminateVat('v1');
+      await kernel.terminateVat(asVatId('v1'));
 
       expect(
         mocks.KernelQueue.lastInstance.enqueueTerminateVat,
@@ -836,7 +831,7 @@ describe('Kernel', () => {
       );
       await kernel.launchSubcluster(makeSingleVatClusterConfig());
       expect(kernel.getVatIds()).toStrictEqual(['v1']);
-      await kernel.terminateVat('v1');
+      await kernel.terminateVat(asVatId('v1'));
       expect(vatHandles[0]?.terminate).toHaveBeenCalledOnce();
       expect(terminateWorkerMock).toHaveBeenCalledOnce();
       expect(kernel.getVatIds()).toStrictEqual([]);
@@ -847,7 +842,7 @@ describe('Kernel', () => {
         mockPlatformServices,
         mockKernelDatabase,
       );
-      const nonExistentVatId: VatId = 'v9';
+      const nonExistentVatId = asVatId('v9');
       await expect(async () =>
         kernel.terminateVat(nonExistentVatId),
       ).rejects.toThrow(VatNotFoundError);
@@ -862,7 +857,7 @@ describe('Kernel', () => {
       await kernel.launchSubcluster(makeSingleVatClusterConfig());
       vatHandles[0]?.terminate.mockRejectedValueOnce('Test error');
 
-      await kernel.terminateVat('v1');
+      await kernel.terminateVat(asVatId('v1'));
 
       expect(kernel.getVatIds()).toStrictEqual([]);
     });
@@ -909,6 +904,35 @@ describe('Kernel', () => {
   });
 
   describe('stop()', () => {
+    it.each([
+      {
+        method: 'clearStorage',
+        args: [
+          new Error('Kernel storage was cleared; queued work was abandoned'),
+        ],
+      },
+      {
+        method: 'reset',
+        args: [new Error('Kernel was reset; queued work was abandoned')],
+      },
+      {
+        method: 'stop',
+        args: [new Error('Kernel was stopped before taking this request')],
+      },
+    ] as const)(
+      'discards the requests held for the open crank on $method',
+      async ({ method, args }) => {
+        const kernel = await Kernel.make(
+          mockPlatformServices,
+          mockKernelDatabase,
+        );
+        await kernel[method]();
+        expect(
+          mocks.KernelQueue.lastInstance.discardHeldRequests,
+        ).toHaveBeenCalledExactlyOnceWith(...args);
+      },
+    );
+
     it('gracefully stops the kernel without terminating vats', async () => {
       const workerTerminateAllMock = vi
         .spyOn(mockPlatformServices, 'terminateAll')
@@ -1091,6 +1115,39 @@ describe('Kernel', () => {
       expect(timestamp).toBeGreaterThanOrEqual(before);
       expect(timestamp).toBeLessThanOrEqual(after);
     });
+
+    it('releases everything even if the timestamp cannot be written', async () => {
+      const stopRemoteCommsMock = vi
+        .spyOn(mockPlatformServices, 'stopRemoteComms')
+        .mockResolvedValue(undefined);
+      const workerTerminateAllMock = vi
+        .spyOn(mockPlatformServices, 'terminateAll')
+        .mockResolvedValue(undefined);
+      const closeSpy = vi.spyOn(mockKernelDatabase, 'close');
+      const logger = new Logger('test');
+      const logErrorSpy = vi.spyOn(logger, 'error');
+      const kernel = await Kernel.make(
+        mockPlatformServices,
+        mockKernelDatabase,
+        { logger },
+      );
+      const refusal = new Error('refusing further writes on this connection');
+      vi.spyOn(mockKernelDatabase.kernelKVStore, 'set').mockImplementation(
+        () => {
+          throw refusal;
+        },
+      );
+
+      await kernel.stop();
+
+      expect(stopRemoteCommsMock).toHaveBeenCalledOnce();
+      expect(workerTerminateAllMock).toHaveBeenCalledOnce();
+      expect(closeSpy).toHaveBeenCalledOnce();
+      expect(logErrorSpy).toHaveBeenCalledWith(
+        'could not record last active time',
+        refusal,
+      );
+    });
   });
 
   describe('restartVat()', () => {
@@ -1101,7 +1158,7 @@ describe('Kernel', () => {
       );
       await kernel.launchSubcluster(makeSingleVatClusterConfig());
 
-      const returnedHandle = await kernel.restartVat('v1');
+      const returnedHandle = await kernel.restartVat(asVatId('v1'));
 
       expect(
         mocks.KernelQueue.lastInstance.enqueueRestartVat,
@@ -1122,7 +1179,7 @@ describe('Kernel', () => {
       const queue = mocks.KernelQueue.lastInstance;
       queue.enqueueRestartVat.mockImplementationOnce(() => undefined);
 
-      const restarting = kernel.restartVat('v1');
+      const restarting = kernel.restartVat(asVatId('v1'));
       queue.killRunLoop(new Error('run loop boom'));
 
       await expect(restarting).rejects.toThrow('run loop boom');
@@ -1144,7 +1201,7 @@ describe('Kernel', () => {
           () => undefined,
         );
 
-        const restarting = kernel.restartVat('v1');
+        const restarting = kernel.restartVat(asVatId('v1'));
         await kernel[method]();
 
         await expect(restarting).rejects.toThrow(message);
@@ -1156,7 +1213,9 @@ describe('Kernel', () => {
         mockPlatformServices,
         mockKernelDatabase,
       );
-      await expect(kernel.restartVat('v999')).rejects.toThrow(VatNotFoundError);
+      await expect(kernel.restartVat(asVatId('v999'))).rejects.toThrow(
+        VatNotFoundError,
+      );
       expect(vatHandles).toHaveLength(0);
       expect(launchWorkerMock).not.toHaveBeenCalled();
       expect(
@@ -1173,7 +1232,7 @@ describe('Kernel', () => {
       );
       await kernel.launchSubcluster(makeSingleVatClusterConfig());
       vatHandles[0]?.ping.mockResolvedValueOnce('pong');
-      const result = await kernel.pingVat('v1');
+      const result = await kernel.pingVat(asVatId('v1'));
       expect(vatHandles[0]?.ping).toHaveBeenCalledTimes(1);
       expect(result).toBe('pong');
     });
@@ -1183,7 +1242,7 @@ describe('Kernel', () => {
         mockPlatformServices,
         mockKernelDatabase,
       );
-      const nonExistentVatId: VatId = 'v9';
+      const nonExistentVatId = asVatId('v9');
       await expect(async () =>
         kernel.pingVat(nonExistentVatId),
       ).rejects.toThrow(VatNotFoundError);
@@ -1197,7 +1256,9 @@ describe('Kernel', () => {
       await kernel.launchSubcluster(makeSingleVatClusterConfig());
       const pingError = new Error('Ping failed');
       vatHandles[0]?.ping.mockRejectedValueOnce(pingError);
-      await expect(async () => kernel.pingVat('v1')).rejects.toThrow(pingError);
+      await expect(async () => kernel.pingVat(asVatId('v1'))).rejects.toThrow(
+        pingError,
+      );
     });
   });
 
@@ -1210,6 +1271,21 @@ describe('Kernel', () => {
       await kernel.reset();
       expect(clearSpy).toHaveBeenCalled();
       expect(kernel.getVatIds()).toHaveLength(0);
+    });
+
+    it('discards the queued work, then releases the restart holds', async () => {
+      const kernel = await Kernel.make(
+        mockPlatformServices,
+        makeMapKernelDatabase(),
+      );
+      await kernel.reset();
+      const { discardQueuedWork } = mocks.KernelQueue.lastInstance;
+      const { releaseRestartHolds } = mocks.RemoteManager.lastInstance;
+      expect(discardQueuedWork).toHaveBeenCalledOnce();
+      expect(releaseRestartHolds).toHaveBeenCalledOnce();
+      expect(discardQueuedWork.mock.invocationCallOrder[0]).toBeLessThan(
+        releaseRestartHolds.mock.invocationCallOrder[0] as number,
+      );
     });
 
     it('clears system subcluster roots', async () => {
@@ -1329,7 +1405,7 @@ describe('Kernel', () => {
         kind: 'a non-native thenable',
         makeHandler: (handlerError: Error) => (): PromiseLike<void> => ({
           then: (_onFulfilled, onRejected) =>
-            onRejected?.(handlerError) as PromiseLike<void>,
+            onRejected?.(handlerError) as PromiseLike<never>,
         }),
       },
     ])(
@@ -1497,9 +1573,9 @@ describe('Kernel', () => {
         mockKernelDatabase,
       );
       await kernel.launchSubcluster(makeSingleVatClusterConfig());
-      expect(kernel.isRevoked('ko1')).toBe(false);
-      kernel.revoke('ko1');
-      expect(kernel.isRevoked('ko1')).toBe(true);
+      expect(kernel.isRevoked(asKRef('ko1'))).toBe(false);
+      kernel.revoke(asKRef('ko1'));
+      expect(kernel.isRevoked(asKRef('ko1'))).toBe(true);
     });
 
     it('throws when revoking a promise', async () => {
@@ -1508,7 +1584,7 @@ describe('Kernel', () => {
         mockKernelDatabase,
       );
       await kernel.launchSubcluster(makeSingleVatClusterConfig());
-      expect(() => kernel.revoke('kp1')).toThrow(Error);
+      expect(() => kernel.revoke(asKRef('kp1'))).toThrow(Error);
     });
   });
 
@@ -1521,17 +1597,91 @@ describe('Kernel', () => {
       const config = makeSingleVatClusterConfig();
       await kernel.launchSubcluster(config);
       // Pinning existing vat root should return the kref
-      expect(kernel.pinVatRoot('v1')).toBe('ko4');
+      expect(kernel.pinVatRoot(asVatId('v1'))).toBe('ko4');
       // Pinning non-existent vat should throw
-      expect(() => kernel.pinVatRoot('v2')).toThrow(VatNotFoundError);
+      expect(() => kernel.pinVatRoot(asVatId('v2'))).toThrow(VatNotFoundError);
       // Unpinning existing vat root should succeed
-      expect(() => kernel.unpinVatRoot('v1')).not.toThrow();
+      expect(() => kernel.unpinVatRoot(asVatId('v1'))).not.toThrow();
       // Unpinning non-existent vat should throw
-      expect(() => kernel.unpinVatRoot('v3')).toThrow(VatNotFoundError);
+      expect(() => kernel.unpinVatRoot(asVatId('v3'))).toThrow(
+        VatNotFoundError,
+      );
     });
   });
 
   describe('remote communications', () => {
+    it('hands a peer incarnation change to the remote manager', async () => {
+      await Kernel.make(mockPlatformServices, mockKernelDatabase);
+      const deliver = mocks.KernelQueue.lastInstance.run.mock.calls[0]?.[0];
+      const change = {
+        type: 'peerIncarnation',
+        peerId: 'peer-1',
+        incarnation: 'incarnation-B',
+        restart: true,
+      } as const;
+
+      expect(await deliver?.(change)).toStrictEqual({});
+      expect(
+        mocks.RemoteManager.lastInstance.applyIncarnationChange,
+      ).toHaveBeenCalledWith(change);
+    });
+
+    it('holds GC actions back for a remote with no handle', async () => {
+      await Kernel.make(mockPlatformServices, mockKernelDatabase);
+      mocks.RemoteManager.lastInstance.hasRemote.mockImplementation(
+        (remoteId: string) => remoteId === 'r2',
+      );
+      const isOffline =
+        mocks.KernelQueue.lastInstance.run.mock.calls[0]?.[1]?.isOffline;
+
+      expect(
+        (['r1', 'r2', 'v1'] as EndpointId[]).map((endpointId) =>
+          isOffline?.(endpointId),
+        ),
+      ).toStrictEqual([true, false, false]);
+    });
+
+    describe('initRemoteComms()', () => {
+      it('wakes the run loop for GC actions once the remotes are up', async () => {
+        const kernel = await Kernel.make(
+          mockPlatformServices,
+          mockKernelDatabase,
+        );
+        let remotesUp = false;
+        mocks.RemoteManager.lastInstance.initRemoteComms.mockImplementationOnce(
+          async () => {
+            await Promise.resolve();
+            remotesUp = true;
+          },
+        );
+        const remotesUpAtRecheck: boolean[] = [];
+        mocks.KernelQueue.lastInstance.recheckGCActions.mockImplementationOnce(
+          () => remotesUpAtRecheck.push(remotesUp),
+        );
+
+        await kernel.initRemoteComms();
+
+        expect(remotesUpAtRecheck).toStrictEqual([true]);
+      });
+
+      it('wakes the run loop even when restoring the remotes fails', async () => {
+        const kernel = await Kernel.make(
+          mockPlatformServices,
+          mockKernelDatabase,
+        );
+        mocks.RemoteManager.lastInstance.initRemoteComms.mockRejectedValueOnce(
+          new Error('restore failed'),
+        );
+
+        await expect(kernel.initRemoteComms()).rejects.toThrow(
+          'restore failed',
+        );
+        expect(
+          mocks.KernelQueue.lastInstance.recheckGCActions,
+        ).toHaveBeenCalledOnce();
+      });
+    });
+
     describe('closeConnection()', () => {
       it('closes connection via RemoteManager', async () => {
         const kernel = await Kernel.make(

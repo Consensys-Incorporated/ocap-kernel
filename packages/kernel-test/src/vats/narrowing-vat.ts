@@ -48,7 +48,7 @@ const probe = async (call: () => Promise<unknown>): Promise<string> => {
  *
  * @returns The root object for the new vat.
  */
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+// oxlint-disable-next-line typescript/explicit-function-return-type
 export function buildRootObject() {
   const base = makeExo(
     'Store',

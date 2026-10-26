@@ -5,9 +5,25 @@ import { encodeTransfer } from './erc20.ts';
 import { METHOD_CATALOG } from './method-catalog.ts';
 import type { Address, DelegationGrant, Execution, Hex } from '../types.ts';
 
+export type TransferNativeFacet = {
+  transferNative: (to: Address, amount: bigint) => Promise<Hex>;
+};
+
+export type TransferFungibleFacet = {
+  transferFungible: (
+    token: Address,
+    to: Address,
+    amount: bigint,
+  ) => Promise<Hex>;
+};
+
 export type DelegationSection =
-  | { exo: object; method: 'transferNative' }
-  | { exo: object; method: 'transferFungible'; token: Address };
+  | { exo: TransferNativeFacet; method: 'transferNative' }
+  | {
+      exo: TransferFungibleFacet;
+      method: 'transferFungible';
+      token: Address;
+    };
 
 type DelegationTwinOptions = {
   grant: DelegationGrant;

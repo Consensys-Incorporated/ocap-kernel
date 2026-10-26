@@ -39,9 +39,9 @@ export const observeJson = (value: JsonObservation): string =>
  * An abstract REPL message with JSON and REPL string serialization capabilities.
  */
 export abstract class ReplMessage<
-    Type extends ReplMessageType,
-    Body extends Record<JsonKey, JsonObservation | SyntaxNode>,
-  >
+  Type extends ReplMessageType,
+  Body extends Record<JsonKey, JsonObservation | SyntaxNode>,
+>
   extends Message<Type, Body>
   implements ReplObservable, JsonObservable
 {

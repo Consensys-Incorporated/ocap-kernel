@@ -298,6 +298,7 @@ describe('makeCaveatedFetch', () => {
 
   it('rejects a Request subclass that overrides its url getter', async () => {
     class SpoofedRequest extends Request {
+      // @ts-expect-error Deliberately shadows the `url` property with a getter.
       override get url(): string {
         return 'https://example.test/decoy';
       }

@@ -100,7 +100,7 @@ info "Relay: $RELAY_ADDR"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PKG_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPO_ROOT="$(cd "$PKG_DIR/../.." && pwd)"
-OCAP_BIN="$REPO_ROOT/packages/kernel-cli/dist/app.mjs"
+OCAP_BIN="$REPO_ROOT/packages/kernel-cli/dist/app.js"
 ECHO_BUNDLE="$PKG_DIR/src/echo-service/index.bundle"
 RNG_BUNDLE="$PKG_DIR/src/random-number-service/index.bundle"
 

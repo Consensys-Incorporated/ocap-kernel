@@ -2,7 +2,7 @@ import '@metamask/kernel-shims/endoify';
 import { NodeWorkerDuplexStream } from '@metamask/streams';
 import { parentPort } from 'node:worker_threads';
 
-import { Logger, makeStreamTransport } from '../../dist/index.mjs';
+import { Logger, makeStreamTransport } from '../../dist/index.js';
 
 main().catch(console.error);
 

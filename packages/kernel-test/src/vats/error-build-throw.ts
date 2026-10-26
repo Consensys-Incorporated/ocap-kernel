@@ -1,4 +1,4 @@
-// eslint-disable-next-line no-console
+// oxlint-disable-next-line no-console
 console.log('build throw');
 
 /**
@@ -6,7 +6,7 @@ console.log('build throw');
  * This function always throws and never returns.
  */
 export function buildRootObject(): never {
-  // eslint-disable-next-line no-console
+  // oxlint-disable-next-line no-console
   console.log('buildRootObject');
   throw new Error('from buildRootObject');
 }

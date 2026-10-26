@@ -3,7 +3,7 @@ import { describe, it, expect, vi } from 'vitest';
 
 import type { HandleLaunch } from './launch.ts';
 import { launchSpec, launchHandler } from './launch.ts';
-import type { VatConfig } from '../../types.ts';
+import type { VatConfig, VatId } from '../../types.ts';
 
 describe('launch', () => {
   describe('launchSpec', () => {
@@ -129,7 +129,7 @@ describe('launch', () => {
       };
 
       const params = {
-        vatId: 'vat-123',
+        vatId: 'vat-123' as VatId,
         vatConfig: {
           bundleName: 'test-vat',
         },
@@ -152,7 +152,7 @@ describe('launch', () => {
       };
 
       const params = {
-        vatId: 'test-vat-id',
+        vatId: 'test-vat-id' as VatId,
         vatConfig: {
           bundleName: 'test-vat-name',
         },
@@ -173,7 +173,7 @@ describe('launch', () => {
       };
 
       const params = {
-        vatId: 'failing-vat',
+        vatId: 'failing-vat' as VatId,
         vatConfig: {
           bundleName: 'failing-vat',
         },
@@ -210,7 +210,7 @@ describe('launch', () => {
       };
 
       const params = {
-        vatId: 'complex-vat-id',
+        vatId: 'complex-vat-id' as VatId,
         vatConfig: complexVatConfig as VatConfig,
       };
 
@@ -234,7 +234,7 @@ describe('launch', () => {
       };
 
       const params = {
-        vatId: 'async-vat',
+        vatId: 'async-vat' as VatId,
         vatConfig: {
           bundleName: 'async-vat',
         },

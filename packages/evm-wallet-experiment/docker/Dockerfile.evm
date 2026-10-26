@@ -18,7 +18,7 @@ COPY --from=foundry /usr/local/bin/cast /usr/local/bin/cast
 
 # Pinned to match yarn.lock in the monorepo (@ocap/evm-wallet-experiment).
 RUN npm init -y > /dev/null 2>&1 && \
-    npm install viem@2.46.2 @metamask/smart-accounts-kit@0.3.0
+    npm install viem@2.56.8 @metamask/smart-accounts-kit@2.0.0
 
 COPY packages/evm-wallet-experiment/docker/deploy-contracts.mjs /app/deploy-contracts.mjs
 COPY packages/evm-wallet-experiment/docker/entrypoint-evm.sh /app/entrypoint-evm.sh

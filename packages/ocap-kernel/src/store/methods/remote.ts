@@ -29,7 +29,7 @@ const PEER_INCARNATION_BASE = 'peerIncarnation.';
  * @param ctx - The store context.
  * @returns A vat store object that maps various persistent kernel data
  */
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+// oxlint-disable-next-line typescript/explicit-function-return-type
 export function getRemoteMethods(ctx: StoreContext) {
   const { kv } = ctx;
   const { getPrefixedKeys } = getBaseMethods(ctx.kv);
@@ -45,6 +45,17 @@ export function getRemoteMethods(ctx: StoreContext) {
       const remoteInfo = getRemoteInfo(remoteId);
       yield { remoteId, remoteInfo };
     }
+  }
+
+  /**
+   * The IDs of every remote the kernel knows about.
+   *
+   * @returns The remote IDs.
+   */
+  function getRemoteIDs(): RemoteId[] {
+    return Array.from(getPrefixedKeys(REMOTE_INFO_BASE)).map(
+      (remoteKey) => remoteKey.slice(REMOTE_INFO_BASE_LEN) as RemoteId,
+    );
   }
 
   /**
@@ -254,10 +265,10 @@ export function getRemoteMethods(ctx: StoreContext) {
   }
 
   /**
-   * Get the last observed incarnationId for a peer. This is the value most
-   * recently negotiated via handshake; it survives kernel restart so that the
-   * receiver can detect a peer restart even when its in-memory PeerStateManager
-   * has been rebuilt empty.
+   * Get the incarnationId the kernel last recorded for a peer, which lags a
+   * handshake that reported a new one until that change's crank. It survives
+   * kernel restart so that the receiver can detect a peer restart even when
+   * its in-memory PeerStateManager has been rebuilt empty.
    *
    * @param peerId - The peer whose incarnation is sought.
    * @returns The persisted incarnationId, or undefined if none recorded yet.
@@ -299,6 +310,7 @@ export function getRemoteMethods(ctx: StoreContext) {
 
   return {
     getAllRemoteRecords,
+    getRemoteIDs,
     getRemoteInfo,
     setRemoteInfo,
     deleteRemoteInfo,

@@ -1,4 +1,4 @@
-import type { VatConfig } from '@metamask/ocap-kernel';
+import type { SubclusterId, VatConfig, VatId } from '@metamask/ocap-kernel';
 import { setupOcapKernelMock } from '@ocap/repo-tools/test-utils';
 import { waitFor, renderHook } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -20,8 +20,8 @@ describe('useVats', () => {
   const mockSendMessage = vi.fn();
   const mockLogMessage = vi.fn();
   const mockSetSelectedVatId = vi.fn();
-  const mockVatId = 'vat1';
-  const mockSubclusterId = 'subcluster1';
+  const mockVatId = 'vat1' as VatId;
+  const mockSubclusterId = 'subcluster1' as SubclusterId;
 
   const mockStatus = {
     vats: [

@@ -72,7 +72,7 @@ describe('far-generator', () => {
       const generated = makePromiseKit<string>();
       const error = new Error('test');
       const result = makeExoGenerator(
-        // eslint-disable-next-line require-yield
+        // oxlint-disable-next-line require-yield
         (async function* () {
           generated.resolve('threw');
           throw error;

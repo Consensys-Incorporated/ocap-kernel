@@ -5,17 +5,10 @@ ignores:
   - '@metamask/kernel-cli'
   - '@ocap/repo-tools'
 
-  # eslint and prettier
-  - '@*/eslint-*'
-  - '@typescript-eslint/*'
-  - 'eslint'
-  - 'eslint-*'
-  - 'prettier-plugin-*'
-  - 'typescript-eslint'
-
-  # @ts-bridge
-  - '@ts-bridge/cli'
-  - '@ts-bridge/shims'
+  # oxlint and oxfmt
+  - 'oxfmt'
+  - 'oxlint'
+  - 'oxlint-tsgolint'
 
   # vitest
   - 'vite'

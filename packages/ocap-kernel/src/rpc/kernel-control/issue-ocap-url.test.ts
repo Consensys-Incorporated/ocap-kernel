@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import { issueOcapURLHandler } from './issue-ocap-url.ts';
+import { asKRef } from '../../../test/branded.ts';
 import type { Kernel } from '../../Kernel.ts';
 
 describe('issueOcapURLHandler', () => {
@@ -12,7 +13,7 @@ describe('issueOcapURLHandler', () => {
   });
 
   it('returns the issued OCAP URL', async () => {
-    const kref = 'ko1';
+    const kref = asKRef('ko1');
     const result = await issueOcapURLHandler.implementation(
       { kernel: mockKernel },
       { kref },
@@ -27,7 +28,7 @@ describe('issueOcapURLHandler', () => {
     await expect(
       issueOcapURLHandler.implementation(
         { kernel: mockKernel },
-        { kref: 'ko1' },
+        { kref: asKRef('ko1') },
       ),
     ).rejects.toThrow(error);
   });

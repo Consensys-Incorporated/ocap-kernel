@@ -128,7 +128,7 @@ async function connectOnce(socketPath: string): Promise<Socket> {
   return await new Promise((resolve, reject) => {
     const socket = createConnection(socketPath);
     const onConnect = (): void => {
-      // eslint-disable-next-line @typescript-eslint/no-use-before-define
+      // oxlint-disable-next-line typescript/no-use-before-define
       socket.removeListener('error', onError);
       resolve(socket);
     };

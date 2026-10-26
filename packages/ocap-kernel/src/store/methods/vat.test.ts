@@ -7,7 +7,14 @@ import * as promiseModule from './promise.ts';
 import * as reachableModule from './reachable.ts';
 import * as refCountModule from './refcount.ts';
 import { getVatMethods } from './vat.ts';
-import type { RemoteId, VatConfig, VatId } from '../../types.ts';
+import { asVRef } from '../../../test/branded.ts';
+import type {
+  RemoteId,
+  VatConfig,
+  VatId,
+  EndpointId,
+  ERef,
+} from '../../types.ts';
 import type { StoreContext } from '../types.ts';
 
 // Mock the parseRef function
@@ -274,7 +281,7 @@ describe('vat store methods', () => {
 
   describe('deleteEndpoint', () => {
     it('deletes all keys related to the endpoint', () => {
-      const endpointId = 'e1';
+      const endpointId = 'e1' as EndpointId;
 
       // The c-list holds both directions of each pair under one prefix
       mockKV.set(`${endpointId}.c.o-1`, 'ko1');
@@ -304,7 +311,7 @@ describe('vat store methods', () => {
     });
 
     it('does nothing if endpoint has no associated keys', () => {
-      const endpointId = 'nonexistent';
+      const endpointId = 'nonexistent' as EndpointId;
 
       mockGetPrefixedKeys.mockReturnValue([]);
 
@@ -463,7 +470,7 @@ describe('vat store methods', () => {
   describe('exportFromEndpoint', () => {
     it('creates a kernel promise for an exported promise', () => {
       const vatId = 'v1' as VatId;
-      const vref = 'p+42'; // Promise export reference
+      const vref = asVRef('p+42'); // Promise export reference
 
       const result = vatMethods.exportFromEndpoint(vatId, vref);
 
@@ -478,7 +485,7 @@ describe('vat store methods', () => {
 
     it('creates a kernel object for an exported object', () => {
       const vatId = 'v1' as VatId;
-      const vref = 'o+42'; // Object export reference
+      const vref = asVRef('o+42'); // Object export reference
 
       const result = vatMethods.exportFromEndpoint(vatId, vref);
 
@@ -490,7 +497,7 @@ describe('vat store methods', () => {
 
     it('throws an error for non-export reference', () => {
       const vatId = 'v1' as VatId;
-      const vref = 'o-42'; // Import reference, not export
+      const vref = asVRef('o-42'); // Import reference, not export
 
       expect(() => vatMethods.exportFromEndpoint(vatId, vref)).toThrow(
         'is not an export reference',
@@ -499,7 +506,7 @@ describe('vat store methods', () => {
 
     it('throws an error for non-vat reference', () => {
       const vatId = 'v1' as VatId;
-      const vref = 'ko42'; // Kernel reference, not vat reference
+      const vref = 'ko42' as ERef; // Kernel reference, not vat reference
 
       expect(() => vatMethods.exportFromEndpoint(vatId, vref)).toThrow(
         'is not an ERef',
@@ -669,7 +676,9 @@ describe('vat store methods', () => {
       // Override the logger on context with a spy by re-creating vatMethods
       // pointing at a context with a logger that captures warns.
       const ctxWithLogger = { ...context, logger: { warn: warnSpy } };
-      const localVatMethods = getVatMethods(ctxWithLogger as StoreContext);
+      const localVatMethods = getVatMethods(
+        ctxWithLogger as unknown as StoreContext,
+      );
 
       expect(() =>
         localVatMethods.forgetEndpointImports(endpointId),

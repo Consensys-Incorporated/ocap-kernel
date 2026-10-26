@@ -93,7 +93,7 @@ export function encryptMnemonic({
   mnemonic: string;
   password: string;
   salt?: string;
-  pbkdf2Iterations?: number;
+  pbkdf2Iterations?: number | undefined;
 }): EncryptedMnemonicData {
   const passwordBytes = new TextEncoder().encode(password);
   const salt = saltEncoded
@@ -134,7 +134,7 @@ export function decryptMnemonic({
 }: {
   data: EncryptedMnemonicData;
   password: string;
-  pbkdf2Iterations?: number;
+  pbkdf2Iterations?: number | undefined;
 }): string {
   const passwordBytes = new TextEncoder().encode(password);
   const salt = hexToBytes(data.salt);

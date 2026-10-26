@@ -115,7 +115,7 @@ export const makeChatAgent = ({
       }: { invocationBudget?: number; logger?: Logger } = {},
     ): Promise<Result> => {
       const effectiveJudgment =
-        judgment ?? ((result: unknown): result is Result => true);
+        judgment ?? ((_result: unknown): _result is Result => true);
       const objective = { intent, judgment: effectiveJudgment };
       const context = { capabilities: agentCapabilities };
 

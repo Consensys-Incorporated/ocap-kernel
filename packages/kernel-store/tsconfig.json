@@ -1,11 +1,9 @@
 {
   "extends": "../../tsconfig.packages.json",
   "compilerOptions": {
-    "baseUrl": "./",
     "lib": ["ES2022"],
     "types": ["vitest", "ses"]
   },
-  "references": [{ "path": "../logger" }],
   "include": [
     "../../vitest.config.ts",
     "./src",

@@ -80,7 +80,7 @@ export async function retry<Result>(
   let attempt = 0;
   const isInfinite = maxAttempts === 0;
   // Loop until success or we hit a finite cap. 0 = infinite attempts.
-  // eslint-disable-next-line no-unmodified-loop-condition
+  // oxlint-disable-next-line no-unmodified-loop-condition
   while (isInfinite || attempt < maxAttempts) {
     if (options?.signal?.aborted) {
       throw new AbortError();

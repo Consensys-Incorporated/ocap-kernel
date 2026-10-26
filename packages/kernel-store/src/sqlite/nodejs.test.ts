@@ -6,6 +6,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import { SQL_QUERIES } from './common.ts';
 import { makeSQLKernelDatabase, getDBFilename } from './nodejs.ts';
+import type { KernelDatabase } from '../types.ts';
 
 const mockKVData = [
   { key: 'key1', value: 'value1' },
@@ -304,6 +305,79 @@ describe('makeSQLKernelDatabase', () => {
       expect(mockDb.exec).toHaveBeenCalledWith('ROLLBACK TO SAVEPOINT t1');
       expect(mockAbort.run).toHaveBeenCalledOnce();
     });
+  });
+
+  it.each([
+    {
+      what: 'a kv write',
+      write: (kdb: KernelDatabase) => kdb.kernelKVStore.set('k', 'v'),
+    },
+    {
+      what: 'a kv delete',
+      write: (kdb: KernelDatabase) => kdb.kernelKVStore.delete('k'),
+    },
+    {
+      what: 'a clear',
+      write: (kdb: KernelDatabase) => kdb.clear(),
+    },
+    {
+      what: 'a vatstore delete',
+      write: (kdb: KernelDatabase) => kdb.deleteVatStore('v1'),
+    },
+    {
+      what: 'a vatstore update',
+      write: (kdb: KernelDatabase) =>
+        kdb.makeVatStore('v1').updateKVData([['k', 'v']], []),
+    },
+  ])(
+    'refuses $what once SQLite rolls the transaction back',
+    async ({ write }) => {
+      const kdb = await makeSQLKernelDatabase({});
+      kdb.createSavepoint('t0');
+      mockDb.inTransaction = false;
+      mockStatement.run.mockClear();
+
+      expect(() => write(kdb)).toThrow('refusing writes until');
+      expect(mockStatement.run).not.toHaveBeenCalled();
+    },
+  );
+
+  it('logs an abort that fails while discarding a transaction', async () => {
+    const entries: LogEntry[] = [];
+    const logger = new Logger({ transports: [makeArrayTransport(entries)] });
+    const kdb = await makeSQLKernelDatabase({ logger });
+    kdb.createSavepoint('t0');
+    mockDb.exec.mockImplementationOnce(() => {
+      throw new Error('SQLITE_IOERR');
+    });
+    mockAbort.run.mockImplementationOnce(() => {
+      throw new Error('SQLITE_IOERR: abort');
+    });
+
+    expect(() => kdb.rollbackSavepoint('t0')).toThrow('SQLITE_IOERR');
+
+    expect(entries).toContainEqual(
+      expect.objectContaining({
+        level: 'error',
+        message: 'failed to discard transaction after rollback',
+      }),
+    );
+  });
+
+  it('discards a vatstore update that better-sqlite3 could not roll back', async () => {
+    const kdb = await makeSQLKernelDatabase({});
+    // `db.transaction` began it, a write failed, and so did its ROLLBACK.
+    mockDb.transaction.mockImplementationOnce(() => () => {
+      mockDb.inTransaction = true;
+      throw new Error('SQLITE_IOERR: ROLLBACK');
+    });
+
+    expect(() => kdb.makeVatStore('v1').updateKVData([['k', 'v']], [])).toThrow(
+      'SQLITE_IOERR: ROLLBACK',
+    );
+
+    expect(mockAbort.run).toHaveBeenCalledOnce();
+    expect(mockDb.inTransaction).toBe(false);
   });
 
   describe('close functionality', () => {

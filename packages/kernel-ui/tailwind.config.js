@@ -4,7 +4,7 @@ import { brandColor } from '@metamask/design-tokens';
 module.exports = {
   darkMode: 'class',
   presets: [
-    // eslint-disable-next-line n/global-require
+    // oxlint-disable-next-line node/global-require
     require('@metamask/design-system-tailwind-preset'),
   ],
   content: [

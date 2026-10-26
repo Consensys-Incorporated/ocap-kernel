@@ -14,8 +14,8 @@ import {
 describe('endowments', () => {
   it('can use endowments', async () => {
     const expectedResponse = 'Hello, world!';
-    const vatId: VatId = 'v1';
-    const v1Root: KRef = 'ko4';
+    const vatId = 'v1' as VatId;
+    const v1Root = 'ko4' as KRef;
     const { logger, entries } = makeTestLogger();
     const database = await makeSQLKernelDatabase({});
     const kernel = await makeKernel(
@@ -68,8 +68,8 @@ describe('endowments', () => {
 
   // CWE-367 regression. Both probes live in the endowment-fetch vat bundle.
   it('confines a vat that resolves a fetch input differently on each read', async () => {
-    const vatId: VatId = 'v1';
-    const v1Root: KRef = 'ko4';
+    const vatId = 'v1' as VatId;
+    const v1Root = 'ko4' as KRef;
     const { logger, entries } = makeTestLogger();
     const database = await makeSQLKernelDatabase({});
     const kernel = await makeKernel(
@@ -121,8 +121,8 @@ describe('endowments', () => {
 
   // Regression test for the unchecked redirect hop; see `makeGuardedFetch`.
   it('confines a vat whose allowed host redirects it elsewhere', async () => {
-    const vatId: VatId = 'v1';
-    const v1Root: KRef = 'ko4';
+    const vatId = 'v1' as VatId;
+    const v1Root = 'ko4' as KRef;
     const { logger, entries } = makeTestLogger();
     const database = await makeSQLKernelDatabase({});
     const kernel = await makeKernel(
@@ -174,8 +174,8 @@ describe('endowments', () => {
 
   // The digest is spent on the body the chain ends on; see `makeGuardedFetch`.
   it('checks a vat’s integrity against the resource a redirect led to', async () => {
-    const vatId: VatId = 'v1';
-    const v1Root: KRef = 'ko4';
+    const vatId = 'v1' as VatId;
+    const v1Root = 'ko4' as KRef;
     const { logger, entries } = makeTestLogger();
     const database = await makeSQLKernelDatabase({});
     const kernel = await makeKernel(
