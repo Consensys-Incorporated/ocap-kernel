@@ -1,3 +1,4 @@
+import type { CapData } from '@endo/marshal';
 import { makeSQLKernelDatabase } from '@metamask/kernel-store/sqlite/nodejs';
 import { delay } from '@metamask/kernel-utils';
 import type { JsonRpcMessage } from '@metamask/kernel-utils';
@@ -12,6 +13,7 @@ import {
   makeFatalKernelError,
 } from './liveslots/kernel-marshal.ts';
 import { initRemoteComms } from './remotes/kernel/remote-comms.ts';
+import { OcapURLManager } from './remotes/kernel/OcapURLManager.ts';
 import { RemoteManager } from './remotes/kernel/RemoteManager.ts';
 import type { RemoteComms } from './remotes/types.ts';
 import { makeKernelStore } from './store/index.ts';
@@ -44,6 +46,7 @@ vi.mock('./remotes/kernel/remote-comms.ts', async () => {
 
 const STOP_RUN_LOOP = 'test: stop run loop';
 const PEER_ID = '12D3KooWPeer1';
+const NEW_PEER_ID = '12D3KooWPeer2';
 
 type Harness = Awaited<ReturnType<typeof setUp>>;
 
@@ -111,8 +114,21 @@ async function setUp() {
     kernelStore,
   });
 
+  const persistedForPeer: [string, boolean][] = [];
+  const set = kdb.kernelKVStore.set.bind(kdb.kernelKVStore);
+  vi.spyOn(kdb.kernelKVStore, 'set').mockImplementation((key, value) => {
+    if (key.startsWith('remotePending.')) {
+      persistedForPeer.push([
+        JSON.parse(value).method,
+        kernelStore.isInCrank(),
+      ]);
+    }
+    set(key, value);
+  });
+
   const remoteComms = {
     getPeerId: vi.fn().mockReturnValue('local-peer'),
+    addKnownRelays: vi.fn(),
     sendRemoteMessage: vi.fn().mockResolvedValue(undefined),
     registerLocationHints: vi.fn().mockResolvedValue(undefined),
   } as unknown as RemoteComms;
@@ -142,6 +158,7 @@ async function setUp() {
     vatSyscall,
     remoteManager,
     remote,
+    persistedForPeer,
     onGiveUp,
     onIncarnationChange,
     failStream,
@@ -158,13 +175,17 @@ async function setUp() {
  *
  * @param harness - What {@link setUp} returned.
  * @param act - The writer acting from outside the crank.
+ * @param options - Options bag.
+ * @param options.answer - What `target` answers a message with, if anything.
  * @returns The items delivered after the aborted crank.
  */
 async function abortACrankWhile(
   harness: Harness,
   act: () => Promise<void>,
+  { answer }: { answer?: CapData<KRef> } = {},
 ): Promise<RunLoopItem[]> {
-  const { kernelQueue, vatManager, remoteManager, doomed, sentinel } = harness;
+  const { kernelQueue, vatManager, remoteManager, doomed, target, sentinel } =
+    harness;
   kernelQueue.enqueueSend(doomed, {
     methargs: kser(['work', []]),
     result: null,
@@ -182,6 +203,9 @@ async function abortACrankWhile(
     if (item.type === 'send' && item.target === doomed) {
       // The rollback put the send back; the router splats it at the dead vat.
       if (abortedOnce) {
+        // Kept open, so that what a writer does a few microtasks later lands
+        // in this crank.
+        await delay(20);
         return undefined;
       }
       abortedOnce = true;
@@ -200,6 +224,18 @@ async function abortACrankWhile(
     }
     if (item.type === 'send' && item.target === sentinel) {
       throw new Error(STOP_RUN_LOOP);
+    }
+    if (
+      item.type === 'send' &&
+      item.target === target &&
+      answer &&
+      item.message.result
+    ) {
+      kernelQueue.resolvePromises(
+        undefined,
+        [[item.message.result, false, answer]],
+        false,
+      );
     }
     if (item.type === 'terminateVat') {
       return await vatManager.performVatTermination(item.vatId, item.reason);
@@ -226,6 +262,8 @@ async function abortACrankWhile(
   await Promise.race([abortDelivered, running]);
   await kernelQueue.waitForCrank();
   // Behind anything the writer queued, so the loop delivers that first.
+  // Arrivals take turns with the run queue, so only the writer's first arrival
+  // is sure to come before it.
   kernelQueue.enqueueSend(sentinel, {
     methargs: kser(['stop', []]),
     result: null,
@@ -310,16 +348,100 @@ function letPeerDecide(harness: Harness): void {
 }
 
 describe('a writer acting while a crank aborts', () => {
-  it('queueMessage: the message is lost with the aborted crank (gap)', async () => {
+  it('queueMessage: the message lands in a crank of its own and its caller is answered', async () => {
     const harness = await setUp();
     const { kernelStore, kernelQueue, target } = harness;
-    const delivered = await abortACrankWhile(harness, async () => {
-      kernelQueue
-        .enqueueMessage(target, 'fromKernel', [])
-        .catch(() => undefined);
-      expect(kernelStore.runQueueLength()).toBe(1);
+    let answered: Promise<CapData<KRef>> | undefined;
+    const delivered = await abortACrankWhile(
+      harness,
+      async () => {
+        answered = kernelQueue.enqueueMessage(target, 'fromKernel', []);
+        expect(kernelStore.runQueueLength()).toBe(0);
+      },
+      { answer: kser('answer') },
+    );
+    const results = delivered.flatMap((item) =>
+      item.type === 'send' && item.target === target
+        ? [item.message.result]
+        : [],
+    );
+    expect({
+      sent: methodsSentTo(delivered, target),
+      answer: await answered,
+      resultReused: results.includes(kernelStore.initKernelPromise()[0]),
+    }).toStrictEqual({
+      sent: ['fromKernel'],
+      answer: kser('answer'),
+      resultReused: false,
     });
-    expect(methodsSentTo(delivered, target)).toStrictEqual([]);
+  });
+
+  it('new remote setup: the remote is set up once the aborted crank ends', async () => {
+    const harness = await setUp();
+    const { kernelStore, remote, remoteManager } = harness;
+    let handled: Promise<string | null> | undefined;
+    await abortACrankWhile(harness, async () => {
+      handled = remoteManager.handleRemoteMessage(
+        NEW_PEER_ID,
+        JSON.stringify({ seq: 1, method: 'deliver', params: ['notify', []] }),
+      );
+      expect(kernelStore.getRemoteIDs()).toStrictEqual([remote.remoteId]);
+    });
+    expect(await handled).toBeNull();
+    const [, newRemoteId] = kernelStore.getRemoteIDs();
+    expect({
+      peers: kernelStore
+        .getRemoteIDs()
+        .map((remoteId) => kernelStore.getRemoteInfo(remoteId)?.peerId),
+      highestReceivedSeq:
+        newRemoteId &&
+        kernelStore.getRemoteSeqState(newRemoteId)?.highestReceivedSeq,
+      nextRemoteIdReused: kernelStore.getNextRemoteId() === newRemoteId,
+    }).toStrictEqual({
+      peers: [PEER_ID, NEW_PEER_ID],
+      highestReceivedSeq: 1,
+      nextRemoteIdReused: false,
+    });
+  });
+
+  it('ocap URL redemption, new peer: the remote and its request are written once the aborted crank ends', async () => {
+    const harness = await setUp();
+    const { kernelStore, remote, remoteManager } = harness;
+    const ocapURLManager = new OcapURLManager({ remoteManager, kernelStore });
+    await abortACrankWhile(harness, async () => {
+      ocapURLManager
+        .redeemOcapURL(`ocap:token@${NEW_PEER_ID}`)
+        .catch(() => undefined);
+      expect(kernelStore.getRemoteIDs()).toStrictEqual([remote.remoteId]);
+    });
+    const [, newRemoteId] = kernelStore.getRemoteIDs();
+    expect({
+      peers: kernelStore
+        .getRemoteIDs()
+        .map((remoteId) => kernelStore.getRemoteInfo(remoteId)?.peerId),
+      request: newRemoteId && kernelStore.getPendingMessage(newRemoteId, 1),
+    }).toStrictEqual({
+      peers: [PEER_ID, NEW_PEER_ID],
+      request: expect.stringContaining('redeemURL'),
+    });
+  });
+
+  it('ocap URL redemption, known peer: its request is lost with the aborted crank (gap, #1171)', async () => {
+    const harness = await setUp();
+    const { kernelStore, remote, remoteManager, persistedForPeer } = harness;
+    const ocapURLManager = new OcapURLManager({ remoteManager, kernelStore });
+    await abortACrankWhile(harness, async () => {
+      ocapURLManager
+        .redeemOcapURL(`ocap:token@${PEER_ID}`)
+        .catch(() => undefined);
+    });
+    expect({
+      request: kernelStore.getPendingMessage(remote.remoteId, 1),
+      persistedForPeer,
+    }).toStrictEqual({
+      request: undefined,
+      persistedForPeer: [['redeemURL', true]],
+    });
   });
 
   it('inbound remote message: the message lands in a crank of its own', async () => {

@@ -458,18 +458,33 @@ export class RemoteManager {
   }
 
   /**
-   * Set up bookkeeping for a newly established remote connection.
+   * Set up bookkeeping for a newly established remote connection, at once.
+   * Call it only through {@link withRemote}, which waits for the open crank to
+   * end.
    *
    * @param peerId - Peer ID of the kernel at the other end of the connection.
    * @param hints - Optional list of possible relays via which the requested peer might be contacted.
    * @returns the RemoteHandle that was set up.
    */
   establishRemote(peerId: string, hints: string[] = []): RemoteHandle {
+    // Before any write, so that remote comms being down costs no remote ID.
+    this.getRemoteComms();
     const remoteId = this.#kernelStore.getNextRemoteId();
     const remoteInfo: RemoteInfo = { peerId, hints };
+    // Before the records, since making the handle reads the store and can
+    // throw: a record left with no handle would give the peer a second remote.
     const remote = this.#initializeRemote(remoteId, remoteInfo);
-    this.#kernelStore.setRemoteInfo(remoteId, remoteInfo);
-    this.#kernelStore.initEndpoint(remoteId);
+    try {
+      this.#kernelStore.initEndpoint(remoteId);
+      // After the endpoint: a restart loads remotes from this record, so one
+      // written before `initEndpoint` threw would come back with no endpoint.
+      this.#kernelStore.setRemoteInfo(remoteId, remoteInfo);
+    } catch (error) {
+      // A write that threw must leave no handle for a later caller.
+      this.#remotes.delete(remoteId);
+      this.#remotesByPeer.delete(peerId);
+      throw error;
+    }
     return remote;
   }
 
@@ -506,14 +521,57 @@ export class RemoteManager {
   }
 
   /**
-   * Get or create a RemoteHandle for a given peer ID.
+   * Act on the RemoteHandle for a peer, setting one up if it has none. A new
+   * one is set up once the open crank, if any, has ended: set up inside it,
+   * an abort would give its ID to the next new remote while its handle lives
+   * on. `use` runs as soon as the handle exists, never after an `await`, so a
+   * peer's messages are taken in the order they came.
    *
    * @param peerId - The libp2p peer for which a handle is sought.
-   * @param hints - Optional list of possible relays via which the requested peer might be contacted.
-   *
-   * @returns an existing or new RemoteHandle to communicate with `peerId`.
+   * @param options - Options bag.
+   * @param options.hints - Possible relays via which the peer might be
+   * contacted.
+   * @param options.use - What to do with the handle. For a new peer, only
+   * what it writes before its first `await` is held with the setup.
+   * @returns A promise for what `use` returns.
    */
-  remoteFor(peerId: string, hints: string[] = []): RemoteHandle {
+  async withRemote<Result>(
+    peerId: string,
+    {
+      hints = [],
+      use,
+    }: {
+      hints?: string[];
+      use: (remote: RemoteHandle) => Result | Promise<Result>;
+    },
+  ): Promise<Result> {
+    if (this.#remotesByPeer.has(peerId)) {
+      return use(this.#provideRemote(peerId, hints));
+    }
+    this.#kernelQueue.assertRunLoopAlive('set up a remote');
+    // Boxed, since `writeOutsideCrank` refuses a promise; one `use` returns is
+    // the caller's to await.
+    const { used } = await this.#kernelQueue.writeOutsideCrank(
+      () => ({
+        // `#provideRemote`, not `establishRemote`: a setup held for an
+        // earlier caller may run first.
+        used: use(this.#provideRemote(peerId, hints)),
+      }),
+      // The run loop goes on while the kernel stops, and dropping the setup
+      // would lose the peer's message waiting on it once a later one commits.
+      { outlivesStop: true },
+    );
+    return used;
+  }
+
+  /**
+   * Get or create a RemoteHandle for a given peer ID, now.
+   *
+   * @param peerId - The peer.
+   * @param hints - Its location hints.
+   * @returns Its RemoteHandle.
+   */
+  #provideRemote(peerId: string, hints: string[]): RemoteHandle {
     const existing = this.#remotesByPeer.get(peerId);
     if (existing) {
       if (hints.length > 0) {
@@ -567,7 +625,9 @@ export class RemoteManager {
     from: string,
     message: string,
   ): Promise<string | null> {
-    this.remoteFor(from).receiveFromPeer(message);
+    await this.withRemote(from, {
+      use: (remote) => remote.receiveFromPeer(message),
+    });
     return null;
   }
 

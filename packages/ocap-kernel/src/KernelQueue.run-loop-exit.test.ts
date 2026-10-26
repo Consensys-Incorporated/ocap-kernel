@@ -1,3 +1,4 @@
+import { makePromiseKit } from '@endo/promise-kit';
 import { makeSQLKernelDatabase } from '@metamask/kernel-store/sqlite/nodejs';
 import { delay } from '@metamask/kernel-utils';
 import type { JsonRpcMessage } from '@metamask/kernel-utils';
@@ -30,11 +31,14 @@ import { asVatId } from '../test/branded.ts';
  * A kernel over a real store, running two mocked vats that answer `bootstrap`
  * and nothing else. A vat sent `explode` asks for the termination of a vat
  * that does not exist, which throws out of the crank and kills the run loop.
+ * One sent `explodeOnRelease` does the same once `release` is called.
  *
- * @returns The kernel, the root of each vat, and the methods vats were sent.
+ * @returns The kernel, the root of each vat, the methods vats were sent, and
+ * what lets `explodeOnRelease` go on.
  */
 async function setUp() {
   const received: string[] = [];
+  const released = makePromiseKit<void>();
   const logger = new Logger('test');
   for (const level of ['log', 'info', 'warn', 'error', 'debug'] as const) {
     vi.spyOn(logger, level).mockImplementation(() => undefined);
@@ -69,7 +73,10 @@ async function setUp() {
               [[message.result, false, kser('ready')]],
             ]);
           }
-          if (method === 'explode') {
+          if (method === 'explodeOnRelease') {
+            await released.promise;
+          }
+          if (method === 'explode' || method === 'explodeOnRelease') {
             return {
               didDelivery: vatId,
               terminate: {
@@ -104,6 +111,7 @@ async function setUp() {
     waiterRoot: vatRootKrefs.waiter as KRef,
     doomedRoot: vatRootKrefs.doomed as KRef,
     received,
+    release: () => released.resolve(),
   };
 }
 
@@ -182,4 +190,22 @@ describe('a queueMessage caller the vat has not answered', () => {
   it.todo(
     'after reset, a vat that reuses a vat id is never handed to a caller from before the reset',
   );
+});
+
+describe('a queueMessage caller whose message waits for the open crank', () => {
+  it('is rejected when that crank kills the run loop', async () => {
+    const { kernel, waiterRoot, doomedRoot, received, release } = await setUp();
+    kernel
+      .queueMessage(doomedRoot, 'explodeOnRelease', [])
+      .catch(() => undefined);
+    await vi.waitFor(() => expect(received).toContain('explodeOnRelease'));
+
+    const answered = kernel.queueMessage(waiterRoot, 'work', []);
+    release();
+
+    await expect(answered).rejects.toThrow(
+      'Kernel run loop died; this message result will never be delivered',
+    );
+    expect(received).not.toContain('work');
+  });
 });

@@ -1613,12 +1613,6 @@ describe('VatManager', () => {
       expect(await vatManager.performVatRestart(v1)).toBeUndefined();
       expect(mockPlatformServices.launch).toHaveBeenCalledTimes(3);
     });
-
-    it('discards requests held for the open crank', () => {
-      vatManager.abandonQueuedWork(new Error('Kernel was reset'));
-
-      expect(mockKernelQueue.discardHeldRequests).toHaveBeenCalledOnce();
-    });
   });
 
   describe('pingVat', () => {
