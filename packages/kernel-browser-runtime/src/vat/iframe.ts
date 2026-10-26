@@ -3,6 +3,7 @@ import type { JsonRpcMessage } from '@metamask/kernel-utils';
 import { isJsonRpcMessage } from '@metamask/kernel-utils';
 import { Logger } from '@metamask/logger';
 import { VatSupervisor } from '@metamask/ocap-kernel';
+import type { VatId } from '@metamask/ocap-kernel';
 import {
   MessagePortDuplexStream,
   receiveMessagePort,
@@ -29,7 +30,7 @@ async function main(): Promise<void> {
   );
 
   const urlParams = new URLSearchParams(window.location.search);
-  const vatId = urlParams.get('vatId') ?? 'unknown';
+  const vatId = (urlParams.get('vatId') ?? 'unknown') as VatId;
 
   setupConsoleForwarding({
     source: `vat-${vatId}`,
@@ -38,7 +39,7 @@ async function main(): Promise<void> {
     },
   });
 
-  // eslint-disable-next-line no-new
+  // oxlint-disable-next-line no-new
   new VatSupervisor({
     id: vatId,
     kernelStream,

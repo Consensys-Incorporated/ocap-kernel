@@ -54,7 +54,7 @@ describe('makeRemoteSection', () => {
 
     const { exo } = await makeRemoteSection('Wrapper', remoteExo);
     const wrapper = exo as Record<
-      string,
+      'greet' | 'add',
       (...a: unknown[]) => Promise<unknown>
     >;
     const result = await wrapper.greet('Alice');
@@ -81,7 +81,7 @@ describe('makeRemoteSection', () => {
 
     const { exo } = await makeRemoteSection('Wrapper', remoteExo);
     const wrapper = exo as Record<
-      string,
+      'greet' | 'add',
       (...a: unknown[]) => Promise<unknown>
     >;
     await wrapper.greet('x');

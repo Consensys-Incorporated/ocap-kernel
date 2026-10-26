@@ -34,10 +34,10 @@ const { toStringTag } = Symbol;
  *
  * @returns A nominal Promise object tagged with `kref`.
  */
-// eslint-disable-next-line @typescript-eslint/promise-function-async
+// oxlint-disable-next-line typescript/promise-function-async
 function makeStandinPromise(kref: KRef): Promise<unknown> {
   const standinP = Promise.resolve(`${kref} stand in`);
-  // eslint-disable-next-line @typescript-eslint/no-floating-promises
+  // oxlint-disable-next-line typescript/no-floating-promises
   Object.defineProperty(standinP, toStringTag, {
     value: kref,
     enumerable: false,
@@ -73,7 +73,7 @@ export function kslot(kref: KRef, iface: string = 'undefined'): SlotValue {
   if (iface?.startsWith('Alleged: ')) {
     // Encoder prepends "Alleged: " to iface string, but the decoder doesn't strip it
     // Unclear whether it's the decoder or me who is wrong
-    // eslint-disable-next-line no-param-reassign
+    // oxlint-disable-next-line no-param-reassign
     iface = iface.slice(9);
   }
   if (kref.startsWith('kp')) {

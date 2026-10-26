@@ -1,4 +1,3 @@
-/* eslint-disable require-atomic-updates */
 import { chromium } from '@playwright/test';
 import type { BrowserContext, Page } from '@playwright/test';
 import type { Plugin as VitePlugin } from 'vite';
@@ -32,7 +31,7 @@ export function extensionDev({
         closeBrowserContext().catch((error) => {
           // This is a build plugin, so it's okay to use console.
           // TODO(#562): Use logger instead or change lint rule.
-          // eslint-disable-next-line no-console
+          // oxlint-disable-next-line no-console
           console.error('Error closing browser context:', error);
         });
       });
@@ -82,7 +81,7 @@ export function extensionDev({
     if (!extensionId) {
       // This is a build plugin, so it's okay to use console.
       // TODO(#562): Use logger instead or change lint rule.
-      // eslint-disable-next-line no-console
+      // oxlint-disable-next-line no-console
       console.error('Extension ID not found');
       await browserContext.close();
       return;

@@ -28,7 +28,11 @@ describe.sequential('makeChatAgent tool calling (e2e)', () => {
       });
 
       const chat: BoundChat = async ({ messages, tools }) =>
-        service.chat({ model: LMS_CHAT_MODEL, messages, tools });
+        service.chat({
+          model: LMS_CHAT_MODEL,
+          messages,
+          ...(tools && { tools }),
+        });
 
       const addSpy = vi.spyOn(add, 'func');
       const agent = makeChatAgent({ chat, capabilities: { add } });

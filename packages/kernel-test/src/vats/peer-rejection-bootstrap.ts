@@ -1,6 +1,8 @@
 import { E } from '@endo/eventual-send';
 import { makeDefaultExo } from '@metamask/kernel-utils/exo';
 
+type Peer = { ping: () => unknown };
+
 /**
  * Bootstrap vat for testing peer-rejection propagation.
  * Receives a `peer` root reference that may be a rejected kernel promise
@@ -9,18 +11,18 @@ import { makeDefaultExo } from '@metamask/kernel-utils/exo';
  *
  * @returns The root object for this vat.
  */
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+// oxlint-disable-next-line typescript/explicit-function-return-type
 export function buildRootObject() {
   return makeDefaultExo('root', {
-    async bootstrap({ peer }: { peer: unknown }) {
-      await E(peer as object)
+    async bootstrap({ peer }: { peer: Peer }) {
+      await E(peer)
         .ping()
-        // eslint-disable-next-line no-console
+        // oxlint-disable-next-line no-console
         .then(() => console.log('peer resolved'))
         .catch((error: unknown) => {
           const message =
             error instanceof Error ? error.message : String(error);
-          // eslint-disable-next-line no-console
+          // oxlint-disable-next-line no-console
           console.log(`peer rejected: ${message}`);
         });
     },

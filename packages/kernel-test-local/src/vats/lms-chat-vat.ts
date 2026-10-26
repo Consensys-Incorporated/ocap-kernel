@@ -14,7 +14,7 @@ import type { ChatService } from '@ocap/kernel-language-model-service';
  * @param parameters.model - The model to use for chat completion.
  * @returns A default Exo instance.
  */
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+// oxlint-disable-next-line typescript/explicit-function-return-type
 export function buildRootObject(
   vatPowers: Record<string, unknown>,
   { model }: { model: string },

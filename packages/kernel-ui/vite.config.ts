@@ -1,9 +1,7 @@
-// eslint-disable-next-line spaced-comment
 /// <reference types="vitest" />
 
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
-import dts from 'vite-plugin-dts';
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => {
@@ -24,19 +22,17 @@ export default defineConfig(({ mode }) => {
       },
     },
     build: {
-      emptyOutDir: true,
+      // `build:lib` clears `dist` and writes the declarations first.
+      emptyOutDir: false,
       outDir: 'dist',
       sourcemap: true,
       cssCodeSplit: false,
       cssMinify: !isDev,
       lib: {
-        entry: './src/index.ts',
+        entry: { index: './src/bundle.ts' },
         name: 'KernelUI',
-        formats: ['es', 'cjs'],
-        fileName: (format, entryName) => {
-          const ext = format === 'es' ? 'mjs' : 'cjs';
-          return `${entryName}.${ext}`;
-        },
+        formats: ['es'],
+        fileName: (_format, entryName) => `${entryName}.js`,
       },
       rolldownOptions: {
         external: (id) =>
@@ -53,12 +49,6 @@ export default defineConfig(({ mode }) => {
         },
       },
     },
-    plugins: [
-      react(),
-      dts({
-        tsconfigPath: 'tsconfig.build.json',
-        outDir: 'dist',
-      }),
-    ],
+    plugins: [react()],
   };
 });

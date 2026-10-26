@@ -9,7 +9,7 @@ import { makeDefaultExo } from '@metamask/kernel-utils/exo';
  * @param _baggage - Root of vat's persistent state (not used here).
  * @returns The root object for the new vat.
  */
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+// oxlint-disable-next-line typescript/explicit-function-return-type
 export function buildRootObject(
   _vatPowers: unknown,
   _parameters: unknown = {},

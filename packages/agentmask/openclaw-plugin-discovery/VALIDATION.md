@@ -305,7 +305,7 @@ juggling required):
 
 ```bash
 openclaw config set 'plugins.entries.discovery.config.ocapHome' "$HOME/.ocap-consumer"
-openclaw config set 'plugins.entries.discovery.config.ocapCliPath' '/abs/path/to/ocap-kernel/packages/kernel-cli/dist/app.mjs'
+openclaw config set 'plugins.entries.discovery.config.ocapCliPath' '/abs/path/to/ocap-kernel/packages/kernel-cli/dist/app.js'
 openclaw config set 'plugins.entries.discovery.config.matcherUrl' 'ocap:…'
 ```
 
@@ -354,7 +354,7 @@ pre-configured.
    _You:_ "Find me a service that can sign a message with my wallet."
 
    Expected tool: `discovery_find_services(description: "sign a
-message with my wallet")`. Expected response: PersonalMessageSigner
+   message with my wallet")`. Expected response: PersonalMessageSigner
    as the top candidate. The LLM bridge ranks candidates against the
    query, so the exact response shape depends on the model's output,
    but a competently-configured model should pick PMS clearly and
@@ -394,7 +394,7 @@ message with my wallet")`. Expected response: PersonalMessageSigner
    _You:_ "Sign 'hello world' with the first one."
 
    Expected tool: `service_call(service: "PersonalMessageSigner",
-method: "signMessage", args: '["0x…", "hello world", "0x1"]')`.
+   method: "signMessage", args: '["0x…", "hello world", "0x1"]')`.
    Expected provider-side: **approval popup in the browser**. Approve
    it. Expected response: hex signature.
 

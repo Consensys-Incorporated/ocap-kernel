@@ -11,6 +11,9 @@ export type {
   BuildMethodGuardOptions,
   MethodGuardPayload,
 } from './guard-algebra.ts';
+export type { NarrowingDelta } from './narrow-interface-guard.ts';
+export { join, narrow, pathUnder } from './narrowing.ts';
+export type { JoinOptions, NarrowOptions } from './narrowing.ts';
 export { GET_DESCRIPTION, makeDiscoverableExo } from './discoverable.ts';
 export type { DiscoverableExo } from './discoverable.ts';
 export { S } from './described.ts';

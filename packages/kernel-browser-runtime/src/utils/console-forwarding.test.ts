@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import type { Mock } from 'vitest';
 
 import {
   isConsoleForwardMessage,
@@ -127,11 +128,11 @@ describe('console-forwarding', () => {
 
   describe('setupConsoleForwarding', () => {
     let originalConsole: typeof console;
-    let mockOnMessage: ReturnType<typeof vi.fn>;
+    let mockOnMessage: Mock<(message: ConsoleForwardMessage) => void>;
 
     beforeEach(() => {
       originalConsole = { ...console };
-      mockOnMessage = vi.fn();
+      mockOnMessage = vi.fn<(message: ConsoleForwardMessage) => void>();
     });
 
     afterEach(() => {
@@ -195,7 +196,7 @@ describe('console-forwarding', () => {
 
       console.log('test');
 
-      const sentMessage = mockOnMessage.mock.calls[0][0];
+      const sentMessage = mockOnMessage.mock.calls[0]?.[0];
       expect(isConsoleForwardMessage(sentMessage)).toBe(true);
     });
 

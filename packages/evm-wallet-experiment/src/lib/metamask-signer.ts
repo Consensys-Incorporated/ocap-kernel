@@ -84,7 +84,7 @@ export function makeProviderSigner(
         method: 'eth_requestAccounts',
       })) as string[];
       const result = accounts.map((a) => a.toLowerCase() as Address);
-      cachedAccounts = result; // eslint-disable-line require-atomic-updates
+      cachedAccounts = result;
       return result;
     },
 

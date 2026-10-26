@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { DaemonCaller } from '../openclaw-plugin-metamask/daemon.ts';
 import pluginEntry from '../openclaw-plugin-metamask/index.ts';
+import type { OpenClawPluginApi } from '../openclaw-plugin-metamask/types.ts';
 
 const mockDaemonCaller: DaemonCaller = {
   redeemUrl: vi.fn(),
@@ -12,22 +13,7 @@ vi.mock('../openclaw-plugin-metamask/daemon.ts', () => ({
   makeDaemonCaller: () => mockDaemonCaller,
 }));
 
-type ToolResponse = {
-  content: { type: 'text'; text: string }[];
-};
-
-type ToolDefinition = {
-  name: string;
-  execute: (
-    id: string,
-    params?: Record<string, string>,
-  ) => Promise<ToolResponse>;
-};
-
-type PluginApi = {
-  pluginConfig?: Record<string, unknown>;
-  registerTool: (tool: ToolDefinition) => void;
-};
+type ToolDefinition = Parameters<OpenClawPluginApi['registerTool']>[0];
 
 const MOCK_SCHEMA = {
   getAccounts: {
@@ -56,7 +42,7 @@ function setupPlugin(
   configOverrides?: Record<string, unknown>,
 ): Map<string, ToolDefinition> {
   const tools = new Map<string, ToolDefinition>();
-  const api: PluginApi = {
+  const api: OpenClawPluginApi = {
     pluginConfig: {
       ocapCliPath: 'ocap',
       ocapUrl: 'ocap:test123@12D3KooWtest,/ip4/127.0.0.1/tcp/9090',
@@ -153,7 +139,7 @@ describe('openclaw metamask plugin', () => {
         request: 'sign personal messages',
       });
 
-      const { text } = result.content[0];
+      const text = result.content[0]?.text;
       expect(text).toContain('PersonalMessageSigner');
       expect(text).toContain('ko5');
       expect(text).toContain('getAccounts');
@@ -190,10 +176,10 @@ describe('openclaw metamask plugin', () => {
         request: 'sign messages',
       });
 
-      expect(result.content[0].text).toContain('PersonalMessageSigner');
-      expect(result.content[0].text).toContain('ko5');
+      expect(result.content[0]?.text).toContain('PersonalMessageSigner');
+      expect(result.content[0]?.text).toContain('ko5');
       // No method listing, but no error either
-      expect(result.content[0].text).not.toContain('Error');
+      expect(result.content[0]?.text).not.toContain('Error');
     });
 
     it('reuses cached vendor kref on second request', async () => {
@@ -229,8 +215,8 @@ describe('openclaw metamask plugin', () => {
         request: 'sign messages',
       });
 
-      expect(result.content[0].text).toContain('Error:');
-      expect(result.content[0].text).toContain('connection refused');
+      expect(result.content[0]?.text).toContain('Error:');
+      expect(result.content[0]?.text).toContain('connection refused');
     });
 
     it('returns error prompting for obtain_vendor when no URL configured', async () => {
@@ -240,8 +226,8 @@ describe('openclaw metamask plugin', () => {
         request: 'sign messages',
       });
 
-      expect(result.content[0].text).toContain('Not connected');
-      expect(result.content[0].text).toContain('metamask_obtain_vendor');
+      expect(result.content[0]?.text).toContain('Not connected');
+      expect(result.content[0]?.text).toContain('metamask_obtain_vendor');
       expect(mockRedeemUrl).not.toHaveBeenCalled();
     });
   });
@@ -256,8 +242,8 @@ describe('openclaw metamask plugin', () => {
         url: 'ocap:fresh@12D3KooWnew,/ip4/1.2.3.4/tcp/9090',
       });
 
-      expect(result.content[0].text).toContain('Obtained MetaMask');
-      expect(result.content[0].text).toContain('ko10');
+      expect(result.content[0]?.text).toContain('Obtained MetaMask');
+      expect(result.content[0]?.text).toContain('ko10');
       expect(mockRedeemUrl).toHaveBeenCalledWith(
         'ocap:fresh@12D3KooWnew,/ip4/1.2.3.4/tcp/9090',
       );
@@ -282,7 +268,7 @@ describe('openclaw metamask plugin', () => {
         .get('metamask_request_capability')!
         .execute('id2', { request: 'sign messages' });
 
-      expect(result.content[0].text).toContain('PersonalMessageSigner');
+      expect(result.content[0]?.text).toContain('PersonalMessageSigner');
       expect(mockRedeemUrl).toHaveBeenCalledTimes(1);
     });
 
@@ -293,8 +279,8 @@ describe('openclaw metamask plugin', () => {
       const tool = tools.get('metamask_obtain_vendor')!;
       const result = await tool.execute('id1', { url: 'bad-url' });
 
-      expect(result.content[0].text).toContain('Error:');
-      expect(result.content[0].text).toContain('invalid URL');
+      expect(result.content[0]?.text).toContain('Error:');
+      expect(result.content[0]?.text).toContain('invalid URL');
     });
 
     it('returns error for empty URL', async () => {
@@ -302,8 +288,8 @@ describe('openclaw metamask plugin', () => {
       const tool = tools.get('metamask_obtain_vendor')!;
       const result = await tool.execute('id1', { url: '  ' });
 
-      expect(result.content[0].text).toContain('Error:');
-      expect(result.content[0].text).toContain('empty');
+      expect(result.content[0]?.text).toContain('Error:');
+      expect(result.content[0]?.text).toContain('empty');
       expect(mockRedeemUrl).not.toHaveBeenCalled();
     });
   });
@@ -344,7 +330,7 @@ describe('openclaw metamask plugin', () => {
         method: 'getAccounts',
       });
 
-      expect(result.content[0].text).toContain('0xabc123');
+      expect(result.content[0]?.text).toContain('0xabc123');
       expect(mockQueueMessage).toHaveBeenCalledWith({
         target: 'ko5',
         method: 'getAccounts',
@@ -364,7 +350,7 @@ describe('openclaw metamask plugin', () => {
         args: '["0xabc", "hello", "0x1"]',
       });
 
-      expect(result.content[0].text).toContain('0xsig...');
+      expect(result.content[0]?.text).toContain('0xsig...');
       expect(mockQueueMessage).toHaveBeenCalledWith({
         target: 'ko5',
         method: 'signMessage',
@@ -381,9 +367,9 @@ describe('openclaw metamask plugin', () => {
         method: 'doSomething',
       });
 
-      expect(result.content[0].text).toContain('Error:');
-      expect(result.content[0].text).toContain('Unknown capability');
-      expect(result.content[0].text).toContain('PersonalMessageSigner');
+      expect(result.content[0]?.text).toContain('Error:');
+      expect(result.content[0]?.text).toContain('Unknown capability');
+      expect(result.content[0]?.text).toContain('PersonalMessageSigner');
     });
 
     it('returns error for invalid args JSON', async () => {
@@ -396,7 +382,7 @@ describe('openclaw metamask plugin', () => {
         args: 'not-json',
       });
 
-      expect(result.content[0].text).toContain('Error:');
+      expect(result.content[0]?.text).toContain('Error:');
     });
 
     it('returns error when args is not an array', async () => {
@@ -409,8 +395,8 @@ describe('openclaw metamask plugin', () => {
         args: '{"not": "array"}',
       });
 
-      expect(result.content[0].text).toContain('Error:');
-      expect(result.content[0].text).toContain('args must be a JSON array');
+      expect(result.content[0]?.text).toContain('Error:');
+      expect(result.content[0]?.text).toContain('args must be a JSON array');
     });
   });
 
@@ -418,10 +404,10 @@ describe('openclaw metamask plugin', () => {
     it('returns empty message when no capabilities', async () => {
       const tools = setupPlugin();
       const tool = tools.get('metamask_list_capabilities')!;
-      const result = await tool.execute('id1');
+      const result = await tool.execute('id1', {});
 
-      expect(result.content[0].text).toContain('No capabilities obtained');
-      expect(result.content[0].text).toContain('metamask_request_capability');
+      expect(result.content[0]?.text).toContain('No capabilities obtained');
+      expect(result.content[0]?.text).toContain('metamask_request_capability');
     });
 
     it('lists obtained capabilities with methods', async () => {
@@ -438,12 +424,12 @@ describe('openclaw metamask plugin', () => {
       });
 
       const tool = tools.get('metamask_list_capabilities')!;
-      const result = await tool.execute('id2');
+      const result = await tool.execute('id2', {});
 
-      expect(result.content[0].text).toContain('Capabilities (1)');
-      expect(result.content[0].text).toContain('PersonalMessageSigner');
-      expect(result.content[0].text).toContain('ko5');
-      expect(result.content[0].text).toContain('getAccounts, signMessage');
+      expect(result.content[0]?.text).toContain('Capabilities (1)');
+      expect(result.content[0]?.text).toContain('PersonalMessageSigner');
+      expect(result.content[0]?.text).toContain('ko5');
+      expect(result.content[0]?.text).toContain('getAccounts, signMessage');
     });
   });
 });

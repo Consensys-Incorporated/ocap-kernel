@@ -52,6 +52,7 @@ import type {
   Channel,
   OnRemoteGiveUp,
   OnIncarnationChange,
+  OutboundHandshakeResult,
   RemoteCommsOptions,
 } from '../types.ts';
 
@@ -175,6 +176,8 @@ export async function initTransport(
     logger,
     signal,
     maxRetryAttempts,
+    reconnectionBaseDelayMs,
+    reconnectionMaxDelayMs,
     maxMessageSizeBytes,
     directTransports,
     allowedWsHosts,
@@ -194,24 +197,51 @@ export async function initTransport(
       }
     : undefined;
 
+  // `dialIdempotent` gives every concurrent dialer of a peer the same channel.
+  // The peer acks one handshake, so a second one reads the peer's next message
+  // instead, or times out, and its caller closes the shared channel.
+  const outboundHandshakes = new WeakMap<
+    Channel,
+    ReturnType<typeof runOutboundHandshake>
+  >();
+
   /**
-   * Perform outbound handshake and handle incarnation changes.
+   * Perform the outbound handshake on a channel once, however many callers
+   * ask for it.
    *
    * @param channel - The channel to perform handshake on.
    * @returns Object with success status and whether incarnation changed.
    */
   async function doOutboundHandshake(
     channel: Channel,
-  ): Promise<{ success: boolean; incarnationChanged: boolean }> {
+  ): ReturnType<typeof runOutboundHandshake> {
+    let handshake = outboundHandshakes.get(channel);
+    if (!handshake) {
+      handshake = runOutboundHandshake(channel);
+      outboundHandshakes.set(channel, handshake);
+    }
+    return handshake;
+  }
+
+  /**
+   * Perform outbound handshake and handle incarnation changes.
+   *
+   * @param channel - The channel to perform handshake on.
+   * @returns Object with success status, whether incarnation changed, and the
+   * incarnation the peer reported.
+   */
+  async function runOutboundHandshake(
+    channel: Channel,
+  ): Promise<OutboundHandshakeResult> {
     if (!handshakeDeps) {
-      return { success: true, incarnationChanged: false }; // No handshake configured, skip
+      return harden({ success: true, incarnationChanged: false }); // No handshake configured, skip
     }
     let result;
     try {
       result = await performOutboundHandshake(channel, handshakeDeps);
     } catch (problem) {
       outputError(channel.peerId, 'outbound handshake', problem);
-      return { success: false, incarnationChanged: false };
+      return harden({ success: false, incarnationChanged: false });
     }
     // The PSM-detected change is unreliable across receiver-side state loss;
     // the kernel-side callback (backed by persistent storage) is the
@@ -231,27 +261,31 @@ export async function initTransport(
         )) ?? false;
     } catch (problem) {
       outputError(channel.peerId, 'outbound incarnation callback', problem);
-      return { success: false, incarnationChanged: false };
+      return harden({ success: false, incarnationChanged: false });
     }
     const incarnationChanged =
       result.incarnationChanged || kernelDetectedRestart;
     if (incarnationChanged) {
       logger.log(
-        `${channel.peerId.slice(0, 8)}:: incarnation changed during outbound handshake, resetting remote state`,
+        `${channel.peerId.slice(0, 8)}:: incarnation changed during outbound handshake`,
       );
     }
-    return { success: true, incarnationChanged };
+    return harden({
+      success: true,
+      incarnationChanged,
+      remoteIncarnationId: result.remoteIncarnationId,
+    });
   }
 
   /**
    * Perform inbound handshake and handle incarnation changes.
    *
-   * On detected restart we reject the inbound channel: the kernel just tore
-   * down its c-list and seq state for this peer, so accepting the channel
-   * here would let any concurrent in-flight outbound send write a
-   * pre-restart payload over a fresh-incarnation channel. The caller closes
-   * the channel; the peer will re-dial and the next handshake sees the
-   * now-persisted incarnation and proceeds normally — symmetric with the
+   * On detected restart we reject the inbound channel: the kernel has yet to
+   * tear down its c-list and seq state for this peer, so accepting the channel
+   * here would let any concurrent in-flight outbound send write a pre-restart
+   * payload over a fresh-incarnation channel, and what the peer sent on it
+   * would be taken ahead of the waiting change, as the old incarnation's. The
+   * caller closes the channel and the peer re-dials — symmetric with the
    * outbound `PeerRestartedError` path.
    *
    * @param channel - The channel to perform handshake on.
@@ -328,6 +362,10 @@ export async function initTransport(
   ): void {
     const state = peerStateManager.getState(peerId);
     const previousChannel = state.channel;
+    if (previousChannel === channel) {
+      // Every caller that shared the channel's dial registers it.
+      return;
+    }
     state.channel = channel;
     peerStateManager.updateConnectionTime(peerId);
 
@@ -361,7 +399,7 @@ export async function initTransport(
     });
 
     // If we replaced an existing channel, close it to avoid leaks and stale readers.
-    if (previousChannel && previousChannel !== channel) {
+    if (previousChannel) {
       const closePromise = connectionFactory.closeChannel(
         previousChannel,
         peerId,
@@ -654,11 +692,10 @@ export async function initTransport(
           }
           if (handshakeResult.incarnationChanged) {
             // Peer restarted: close this freshly-dialed channel without
-            // registering it. Subsequent sends re-dial; that next handshake
-            // sees the now-persisted incarnation and proceeds normally.
-            // Registering here would let concurrent in-flight sends bypass
-            // the handshake check and write pre-restart payloads on the
-            // same channel.
+            // registering it. Registering here would let concurrent in-flight
+            // sends bypass the handshake check and write pre-restart payloads
+            // on the same channel, and anything read from it would be taken as
+            // the old incarnation's.
             try {
               await connectionFactory.closeChannel(channel, targetPeerId);
             } catch (closeError) {

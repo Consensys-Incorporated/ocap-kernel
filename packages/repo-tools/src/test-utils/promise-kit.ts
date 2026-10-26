@@ -3,7 +3,7 @@
  *
  * @returns The mock.
  */
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+// oxlint-disable-next-line typescript/explicit-function-return-type
 export const makePromiseKitMock = () => ({
   makePromiseKit: () => {
     let resolve: (value: unknown) => void, reject: (reason?: unknown) => void;

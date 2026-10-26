@@ -1,6 +1,6 @@
 import { delay } from '@metamask/kernel-utils';
 import type { JsonRpcMessage } from '@metamask/kernel-utils';
-import type { VatConfig } from '@metamask/ocap-kernel';
+import type { VatConfig, VatId } from '@metamask/ocap-kernel';
 import { VatSupervisor, kser } from '@metamask/ocap-kernel';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -23,7 +23,7 @@ const makeVatSupervisor = async ({
 
   return {
     supervisor: new VatSupervisor({
-      id: 'test-id',
+      id: 'test-id' as VatId,
       kernelStream,
       logger: makeMockLogger(),
       vatPowers,

@@ -4,6 +4,7 @@ import { makeDiscoverableExo } from '@metamask/kernel-utils/discoverable';
 import { makeDefaultExo } from '@metamask/kernel-utils/exo';
 import { Logger } from '@metamask/logger';
 import type { Baggage } from '@metamask/ocap-kernel';
+import type { SignedAuthorization } from 'viem';
 
 import {
   ENFORCER_CONTRACT_KEY_MAP,
@@ -117,9 +118,9 @@ type KeyringFacet = {
   signAuthorization: (options: {
     contractAddress: Address;
     chainId: number;
-    nonce?: number;
+    nonce: number;
     from?: Address;
-  }) => Promise<unknown>;
+  }) => Promise<SignedAuthorization>;
 };
 
 type ProviderFacet = {
@@ -195,7 +196,8 @@ type DelegatorFacet = {
     delegator: Address;
     delegate: Address;
     to?: Address;
-    maxAmount?: bigint;
+    maxAmount?: bigint | undefined;
+    totalLimit?: bigint | undefined;
     chainId: number;
   }) => Promise<TransferNativeGrant>;
   buildTransferFungibleGrant: (options: {
@@ -203,7 +205,7 @@ type DelegatorFacet = {
     delegate: Address;
     token: Address;
     to?: Address;
-    totalLimit?: bigint;
+    totalLimit?: bigint | undefined;
     chainId: number;
   }) => Promise<TransferFungibleGrant>;
   storeGrant: (grant: DelegationGrant) => Promise<void>;
@@ -269,15 +271,17 @@ export function buildRootObject(
         bundlerUrl: string;
         entryPoint: Hex;
         chainId: number;
-        usePaymaster?: boolean;
-        sponsorshipPolicyId?: string;
-        environment?: {
-          EntryPoint: Hex;
-          DelegationManager: Hex;
-          SimpleFactory: Hex;
-          implementations: Record<string, Hex>;
-          caveatEnforcers: Record<string, Hex>;
-        };
+        usePaymaster?: boolean | undefined;
+        sponsorshipPolicyId?: string | undefined;
+        environment?:
+          | {
+              EntryPoint: Hex;
+              DelegationManager: Hex;
+              SimpleFactory: Hex;
+              implementations: Record<string, Hex>;
+              caveatEnforcers: Record<string, Hex>;
+            }
+          | undefined;
       }
     | undefined;
 
@@ -566,7 +570,10 @@ export function buildRootObject(
     if (externalSigner) {
       const accounts = await E(externalSigner).getAccounts();
       if (accounts.length > 0) {
-        return E(externalSigner).signTypedData(data, from ?? accounts[0]);
+        return E(externalSigner).signTypedData(
+          data,
+          from ?? (accounts[0] as Address),
+        );
       }
     }
 
@@ -595,7 +602,10 @@ export function buildRootObject(
     if (externalSigner) {
       const accounts = await E(externalSigner).getAccounts();
       if (accounts.length > 0) {
-        return E(externalSigner).signMessage(message, from ?? accounts[0]);
+        return E(externalSigner).signMessage(
+          message,
+          from ?? (accounts[0] as Address),
+        );
       }
     }
 
@@ -901,7 +911,6 @@ export function buildRootObject(
     ])) as string;
 
     if (isEip7702Delegated(code, chainId)) {
-      // eslint-disable-next-line require-atomic-updates
       smartAccountConfig = harden({
         implementation: 'stateless7702' as const,
         address: eoaAddress,
@@ -1040,7 +1049,6 @@ export function buildRootObject(
       await new Promise((resolve) => setTimeout(resolve, 2000));
     }
 
-    // eslint-disable-next-line require-atomic-updates
     smartAccountConfig = harden({
       implementation: 'stateless7702' as const,
       address: eoaAddress,
@@ -1534,7 +1542,7 @@ export function buildRootObject(
       }
 
       if (txs.length === 1) {
-        return homeCoordinator.sendTransaction(txs[0]);
+        return homeCoordinator.sendTransaction(txs[0] as TransactionRequest);
       }
 
       if (!providerVat) {

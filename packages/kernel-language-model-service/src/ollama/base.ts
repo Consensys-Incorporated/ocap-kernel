@@ -39,14 +39,13 @@ export type SampleStreamResult = {
  *
  * @template Ollama - The type of Ollama client to use
  */
-export class OllamaBaseService<Ollama extends OllamaClient>
-  implements
-    LanguageModelService<
-      OllamaModelOptions,
-      OllamaModelOptions,
-      GenerateResponse
-    >
-{
+export class OllamaBaseService<
+  Ollama extends OllamaClient,
+> implements LanguageModelService<
+  OllamaModelOptions,
+  OllamaModelOptions,
+  GenerateResponse
+> {
   readonly #makeClient: () => Promise<Ollama>;
 
   /**

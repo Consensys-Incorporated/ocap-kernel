@@ -1,5 +1,4 @@
 // Unknown why this fails, but not worth it to chase down.
-// eslint-disable-next-line import-x/no-unresolved
 import { mergeConfig as mergeVitestConfig } from 'vitest/config';
 
 // This file is in JS because otherwise Vitest can't import it.

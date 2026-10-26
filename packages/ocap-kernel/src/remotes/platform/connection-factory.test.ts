@@ -39,9 +39,7 @@ vi.mock('@libp2p/websockets', () => ({ webSockets: () => ({}) }));
 vi.mock('@libp2p/webtransport', () => ({ webTransport: () => ({}) }));
 vi.mock('@libp2p/ping', () => ({ ping: () => ({}) }));
 
-const generateKeyPairFromSeed = vi.fn(async () => ({
-  /* private key */
-}));
+const generateKeyPairFromSeed = vi.fn(async () => ({/* private key */}));
 vi.mock('@libp2p/crypto/keys', () => ({
   generateKeyPairFromSeed,
 }));
@@ -175,14 +173,14 @@ vi.mock('@multiformats/multiaddr', () => ({
     ]);
     let idx = 0;
     while (idx < segments.length) {
-      const name = segments[idx];
+      const name = segments[idx]!;
       const code = PROTO_CODES[name];
       if (code === undefined) {
         idx += 1;
         continue;
       }
       if (valuedProtos.has(name) && idx + 1 < segments.length) {
-        components.push({ code, name, value: segments[idx + 1] });
+        components.push({ code, name, value: segments[idx + 1]! });
         idx += 2;
       } else {
         components.push({ code, name });
@@ -1005,7 +1003,7 @@ describe('ConnectionFactory', () => {
         addEventListener: vi.fn(),
         dialProtocol: vi.fn(async () => {
           // Throw a non-Error value that gets caught but doesn't set lastError properly
-          // eslint-disable-next-line @typescript-eslint/only-throw-error
+          // oxlint-disable-next-line typescript/only-throw-error
           throw null;
         }),
         getConnections: vi.fn(() => [
@@ -1187,7 +1185,23 @@ describe('ConnectionFactory', () => {
       expect(onRetryCallbackCalled).toBe(true);
     });
 
-    it('defaults maxRetryAttempts to 0 when not provided', async () => {
+    it.each([
+      {
+        option: 'defaults',
+        options: {},
+        expected: { maxAttempts: 0 },
+      },
+      {
+        option: 'maxRetryAttempts',
+        options: { maxRetryAttempts: 2 },
+        expected: { maxAttempts: 2 },
+      },
+      {
+        option: 'the reconnection delays',
+        options: { reconnectionBaseDelayMs: 10, reconnectionMaxDelayMs: 50 },
+        expected: { maxAttempts: 0, baseDelayMs: 10, maxDelayMs: 50 },
+      },
+    ])('retries with $option', async ({ options, expected }) => {
       let capturedRetryOptions:
         | Parameters<
             typeof import('@metamask/kernel-utils').retryWithBackoff
@@ -1200,11 +1214,11 @@ describe('ConnectionFactory', () => {
         calculateReconnectionBackoff,
         retryWithBackoff: async <OperationResult>(
           operation: () => Promise<OperationResult>,
-          options?: Parameters<
+          retryOptions?: Parameters<
             typeof import('@metamask/kernel-utils').retryWithBackoff
           >[1],
         ) => {
-          capturedRetryOptions = options;
+          capturedRetryOptions = retryOptions;
           return await operation();
         },
       }));
@@ -1228,78 +1242,24 @@ describe('ConnectionFactory', () => {
       vi.resetModules();
       const { ConnectionFactory } = await import('./connection-factory.ts');
       const { Logger } = await import('@metamask/logger');
+      const { signal } = new AbortController();
       factory = await ConnectionFactory.make({
         keySeed,
         knownRelays,
         logger: new Logger(),
-        signal: new AbortController().signal,
+        signal,
+        ...options,
       });
 
       await factory.openChannelWithRetry('peer123');
 
-      // Verify retry was called with maxAttempts defaulting to 0 (infinite)
-      expect(capturedRetryOptions).toBeDefined();
-      expect(capturedRetryOptions).toHaveProperty('maxAttempts', 0);
-    });
-
-    it('uses maxRetryAttempts when provided', async () => {
-      const maxRetryAttempts = 2;
-      let capturedRetryOptions:
-        | Parameters<
-            typeof import('@metamask/kernel-utils').retryWithBackoff
-          >[1]
-        | undefined;
-
-      // Override the mock retryWithBackoff to capture options
-      vi.doMock('@metamask/kernel-utils', () => ({
-        fromHex: (_hex: string) => new Uint8Array(_hex.length / 2),
-        calculateReconnectionBackoff,
-        retryWithBackoff: async <OperationResult>(
-          operation: () => Promise<OperationResult>,
-          options?: Parameters<
-            typeof import('@metamask/kernel-utils').retryWithBackoff
-          >[1],
-        ) => {
-          capturedRetryOptions = options;
-          return await operation();
-        },
-      }));
-
-      createLibp2p.mockImplementation(async () => ({
-        start: vi.fn(),
-        stop: vi.fn(),
-        peerId: { toString: () => 'test-peer' },
-        addEventListener: vi.fn(),
-        dialProtocol: vi.fn(async () => {
-          return {};
-        }),
-        getConnections: vi.fn(() => [
-          { remotePeer: { toString: () => 'relay1' } },
-          { remotePeer: { toString: () => 'relay2' } },
-        ]),
-        handle: vi.fn(),
-      }));
-
-      // Re-import ConnectionFactory to use the new mock
-      vi.resetModules();
-      const { ConnectionFactory } = await import('./connection-factory.ts');
-      const { Logger } = await import('@metamask/logger');
-      factory = await ConnectionFactory.make({
-        keySeed,
-        knownRelays,
-        logger: new Logger(),
-        signal: new AbortController().signal,
-        maxRetryAttempts,
+      expect(capturedRetryOptions).toStrictEqual({
+        ...expected,
+        jitter: true,
+        shouldRetry: expect.any(Function),
+        onRetry: expect.any(Function),
+        signal,
       });
-
-      await factory.openChannelWithRetry('peer123');
-
-      // Verify retry was called with maxAttempts
-      expect(capturedRetryOptions).toBeDefined();
-      expect(capturedRetryOptions).toHaveProperty(
-        'maxAttempts',
-        maxRetryAttempts,
-      );
     });
   });
 
@@ -1489,7 +1449,7 @@ describe('ConnectionFactory', () => {
         dialProtocol: vi.fn(async () => {
           dialCount += 1;
           // Throw a falsy value to trigger the else branch in outputError
-          // eslint-disable-next-line @typescript-eslint/only-throw-error
+          // oxlint-disable-next-line typescript/only-throw-error
           throw null;
         }),
         getConnections: vi.fn(() => [

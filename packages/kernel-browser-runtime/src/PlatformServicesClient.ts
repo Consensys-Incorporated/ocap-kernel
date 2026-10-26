@@ -29,7 +29,7 @@ import type { JsonRpcRequest } from '@metamask/utils';
 import type { JsonRpcId } from '@metamask/utils';
 
 // Appears in the docs.
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
+// oxlint-disable-next-line typescript/no-unused-vars
 import type { PlatformServicesServer } from './PlatformServicesServer.ts';
 
 export type PlatformServicesClientStream = PostMessageDuplexStream<

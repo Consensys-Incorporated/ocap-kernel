@@ -24,7 +24,7 @@ import { parseKernelSlot } from '../utils/kernel-slots.ts';
  * @param ctx - The store context.
  * @returns The GC store.
  */
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+// oxlint-disable-next-line typescript/explicit-function-return-type
 export function getGCMethods(ctx: StoreContext) {
   const { getSlotKey, getOwnerKey } = getBaseMethods(ctx.kv);
   const { getRefCount, decrementRefCount } = getRefCountMethods(ctx);
@@ -133,8 +133,8 @@ export function getGCMethods(ctx: StoreContext) {
     const newActions: GCAction[] = [];
     for (const koid of koids) {
       const importers = getImporters(koid);
-      for (const vatID of importers) {
-        newActions.push(makeGCAction(vatID, 'retireImport', koid));
+      for (const endpointId of importers) {
+        newActions.push(makeGCAction(endpointId, 'retireImport', koid));
       }
       deleteKernelObject(koid);
     }

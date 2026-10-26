@@ -130,10 +130,10 @@ describe('Logger', () => {
           const consoleSpy = vi.spyOn(console, method);
           testLogger[method](`foo ${method}`);
           if (logLevels[level] <= logLevels[method]) {
-            // eslint-disable-next-line vitest/no-conditional-expect
+            // oxlint-disable-next-line vitest/no-conditional-expect
             expect(consoleSpy).toHaveBeenCalledWith(`foo ${method}`);
           } else {
-            // eslint-disable-next-line vitest/no-conditional-expect
+            // oxlint-disable-next-line vitest/no-conditional-expect
             expect(consoleSpy).not.toHaveBeenCalled();
           }
         });

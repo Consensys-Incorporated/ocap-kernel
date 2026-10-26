@@ -14,7 +14,7 @@ import {
 
 const makeStreamBuffer = <
   Value extends IteratorResult<unknown, undefined>,
-  // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+  // oxlint-disable-next-line typescript/explicit-function-return-type
 >() => {
   const inputBuffer: (Value | Error)[] = [];
   const outputBuffer: PromiseCallbacks[] = [];
@@ -149,7 +149,7 @@ export class BaseReader<Read> implements Reader<Read> {
   constructor({ listen, name, onEnd, validateInput }: BaseReaderArgs<Read>) {
     this.#name = name ?? this.constructor.name;
     this.#validateInput = validateInput;
-    // eslint-disable-next-line @typescript-eslint/no-misused-promises -- Never rejects.
+    // oxlint-disable-next-line typescript/no-misused-promises -- Never rejects.
     const unlisten = listen(this.#receiveInput);
     this.#onEnd = async (error) => {
       unlisten?.();
@@ -159,7 +159,7 @@ export class BaseReader<Read> implements Reader<Read> {
   }
 
   readonly #receiveInput: ReceiveInput = async (input) => {
-    // eslint-disable-next-line @typescript-eslint/await-thenable
+    // oxlint-disable-next-line typescript/await-thenable
     await null;
     try {
       if (isSignalLike(input)) {

@@ -124,7 +124,7 @@ type CachedValueField = {
  * @returns A KernelStore object that maps various persistent kernel data
  * structures onto `kdb`.
  */
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+// oxlint-disable-next-line typescript/explicit-function-return-type
 export function makeKernelStore(kdb: KernelDatabase, logger?: Logger) {
   // Initialize core state
 
@@ -284,7 +284,6 @@ export function makeKernelStore(kdb: KernelDatabase, logger?: Logger) {
     }));
     kdb.clear();
     discardCachedState();
-    crank.releaseAllSavepoints();
     preservedState?.forEach(({ key, value }) => {
       if (value) {
         context.kv.set(key, value);
@@ -312,7 +311,6 @@ export function makeKernelStore(kdb: KernelDatabase, logger?: Logger) {
     if (existing) {
       return existing;
     }
-    // eslint-disable-next-line n/no-unsupported-features/node-builtins
     const newId = globalThis.crypto.randomUUID();
     context.kv.set('incarnationId', newId);
     return newId;
@@ -334,12 +332,11 @@ export function makeKernelStore(kdb: KernelDatabase, logger?: Logger) {
    * @param name - The savepoint name.
    */
   function createSavepoint(name: string): void {
-    // The run loop's own savepoints do not come through here; these are the
-    // outermost one on the connection, and so the transaction's commit point.
-    // Taken while the loop runs, they nest inside whatever crank is open — or
-    // open a transaction the next crank then nests inside — and either way
-    // somebody else decides whether this caller's writes survive. Callers work
-    // between cranks instead; `Kernel` holds the loop still for them.
+    // The run loop's own savepoints do not come through here; this one is the
+    // outermost on the connection, and so the transaction's commit point.
+    // Taken while the loop runs, it nests inside whatever crank is open, or
+    // opens a transaction the next crank nests inside, and either way the run
+    // loop decides whether the caller's writes survive.
     !context.runLoopRunning ||
       Fail`createSavepoint ${q(name)} while the run loop is running`;
     kdb.createSavepoint(name);

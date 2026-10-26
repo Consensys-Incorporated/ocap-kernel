@@ -8,13 +8,13 @@ import type { Handler } from './types.ts';
 type ExtractHooks<Handlers> =
   // We only use this type to extract the hooks from the handlers,
   // so we can safely use `any` for the generic constraints.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // oxlint-disable-next-line typescript/no-explicit-any
   Handlers extends Handler<string, any, any, infer Hooks> ? Hooks : never;
 
 type ExtractMethods<Handlers> =
   // We only use this type to extract the hooks from the handlers,
   // so we can safely use `any` for the generic constraints.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // oxlint-disable-next-line typescript/no-explicit-any
   Handlers extends Handler<infer Methods, any, any, any> ? Methods : never;
 
 type HandlerRecord<
@@ -32,7 +32,7 @@ type HandlerRecord<
 export class RpcService<
   // The class picks up its type from the `handlers` argument,
   // so using `any` in this constraint is safe.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // oxlint-disable-next-line typescript/no-explicit-any
   Handlers extends HandlerRecord<Handler<string, any, any, any>>,
 > {
   readonly #handlers: Handlers;

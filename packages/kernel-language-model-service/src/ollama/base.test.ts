@@ -1,10 +1,21 @@
-import type { ChatResponse, GenerateResponse, ListResponse } from 'ollama';
+import type {
+  AbortableAsyncIterator,
+  ChatResponse,
+  GenerateRequest,
+  GenerateResponse,
+  ListResponse,
+} from 'ollama';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import type { OllamaClient, OllamaModelOptions } from './types.ts';
 import type { InstanceConfig, LanguageModel } from '../types.ts';
 import { OllamaBaseService } from './base.ts';
 import { makeMockAbortableAsyncIterator } from '../../test/utils.ts';
+
+// `vi.mocked` types an overloaded function by its last overload.
+type StreamingGenerate = (
+  request: GenerateRequest & { stream: true },
+) => Promise<AbortableAsyncIterator<GenerateResponse>>;
 
 describe('OllamaBaseService', () => {
   let mockClient: OllamaClient;
@@ -112,7 +123,7 @@ describe('OllamaBaseService', () => {
     });
 
     it('returns streaming result when stream is true', async () => {
-      vi.mocked(mockClient.generate).mockResolvedValue(
+      vi.mocked(mockClient.generate as StreamingGenerate).mockResolvedValue(
         makeMockAbortableAsyncIterator([mockChunk]),
       );
 
@@ -366,7 +377,7 @@ describe('OllamaBaseService', () => {
         const prompt = 'Hello, how are you?';
         const options = { temperature: 0.5 };
 
-        vi.mocked(mockClient.generate).mockResolvedValue(
+        vi.mocked(mockClient.generate as StreamingGenerate).mockResolvedValue(
           makeMockAbortableAsyncIterator([mockResponse]),
         );
 

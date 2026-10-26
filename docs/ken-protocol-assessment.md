@@ -88,47 +88,31 @@ The receive side of remote messaging implements Ken's exactly-once delivery guar
 
 #### Duplicate Detection
 
-Ken maintains a `Done` table ensuring each message is delivered to the application **at most once**. Our implementation achieves this by checking `seq <= highestReceivedSeq` before processing:
+Ken maintains a `Done` table ensuring each message is delivered to the application **at most once**. Ours is `highestReceivedSeq`, checked on arrival, where a copy of a message a committed crank has taken is not held, and again in the crank that takes the message:
 
 ```typescript
-// Duplicate detection: skip if we've already processed this sequence number
-if (seq <= this.#highestReceivedSeq) {
-  this.#logger.log(`ignoring duplicate message seq=${seq}`);
-  return null;
+if (command.seq <= this.#highestReceivedSeq) {
+  // A duplicate: nothing to process.
+  return { didDelivery: this.remoteId };
 }
 ```
 
-After a crash and retransmit, duplicate messages are detected and ignored.
+The in-memory value moves only once the crank that recorded it has committed, so after a crash and retransmit, duplicates are detected and ignored.
 
 #### Transactional Message Processing
 
-Message processing is wrapped in a database savepoint to ensure atomicity:
+Each inbound message is taken in a crank of its own. `receiveFromPeer` handles its ACK and holds it in memory; the run loop hands it to `deliverInbound`, which processes it and records its sequence number in that crank's one transaction:
 
 ```typescript
-const savepointName = `receive_${this.remoteId}_${seq}`;
-this.#kernelStore.createSavepoint(savepointName);
-try {
-  // Process message (translate refs, add to run queue, etc.)
-  switch (method) {
-    case 'deliver': ...
-    case 'redeemURL': ...
-    case 'redeemURLReply': ...
-  }
-
-  // Persist sequence tracking at the end, within the transaction
-  this.#kernelStore.setRemoteHighestReceivedSeq(this.remoteId, seq);
-
-  // Commit the transaction
-  this.#kernelStore.releaseSavepoint(savepointName);
-} catch (error) {
-  // Rollback on any error - also revert in-memory state
-  this.#highestReceivedSeq = previousHighestReceivedSeq;
-  this.#kernelStore.rollbackSavepoint(savepointName);
-  throw error;
+switch (method) {
+  case 'deliver': ...
+  case 'redeemURL': ...
+  case 'redeemURLReply': ...
 }
+this.#kernelStore.setRemoteHighestReceivedSeq(this.remoteId, seq);
 ```
 
-This achieves atomicity: if a crash occurs before commit, both the run queue entry and the sequence update roll back together. The remote retransmits, and we process it correctly.
+A `redeemURL` reply is written in the same crank and sent once it commits. If a crash occurs before commit, the message's effects and the sequence update roll back together, and the peer, never acknowledged, retransmits.
 
 #### FIFO Ordering
 
@@ -173,11 +157,13 @@ The key insight: by the time RemoteHandle sees a message, the originating crank 
 
 ```
 receive from network
+  → handle ACKs, validate seq
+  → hold in memory (skip a copy already held or committed)
+crank of its own
   → check seq <= highestReceivedSeq (skip if duplicate)
-  → begin transaction (savepoint)
   → process message, add to run queue
   → persist highestReceivedSeq
-  → commit transaction (release savepoint)
+  → commit, then acknowledge
 ```
 
 If a crash occurs before commit, both the run queue entry and the sequence update roll back together. The remote retransmits, and we process it correctly.

@@ -1,4 +1,4 @@
-/* eslint-disable n/no-sync */
+/* oxlint-disable node/no-sync */
 /**
  * Loads `docker-e2e-stack-constants.json` and exports `dockerConfig`.
  * Edit the JSON file to change stack defaults; keep this module as the single import path.

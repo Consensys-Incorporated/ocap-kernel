@@ -9,6 +9,7 @@ import { describe, it, expect, vi } from 'vitest';
 import type { VatEndowments } from './endowments.ts';
 import { VatSupervisor } from './VatSupervisor.ts';
 import type { FetchBlob } from './VatSupervisor.ts';
+import type { VatId } from '../types.ts';
 
 vi.mock('./syscall.ts', () => ({
   makeSupervisorSyscall: vi.fn(() => ({
@@ -67,14 +68,14 @@ const makeVatSupervisor = async ({
 
   return {
     supervisor: new VatSupervisor({
-      id: 'test-id',
+      id: 'test-id' as VatId,
       kernelStream,
       logger: logger ?? new Logger(),
       vatPowers: vatPowers ?? {},
       makePlatform: makePlatform ?? defaultMakePlatform,
       platformOptions: platformOptions ?? {},
-      makeAllowedGlobals,
-      fetchBlob,
+      ...(makeAllowedGlobals && { makeAllowedGlobals }),
+      ...(fetchBlob && { fetchBlob }),
     }),
     stream: kernelStream,
   };
@@ -255,7 +256,7 @@ describe('VatSupervisor', () => {
   describe('platform configuration', () => {
     it('accepts makePlatform and platformOptions parameters', async () => {
       const makePlatform = vi.fn().mockResolvedValue({});
-      const platformOptions = { fs: { rootDir: '/tmp' } };
+      const platformOptions = { fs: { root: ['tmp'] } };
 
       const { supervisor } = await makeVatSupervisor({
         makePlatform,

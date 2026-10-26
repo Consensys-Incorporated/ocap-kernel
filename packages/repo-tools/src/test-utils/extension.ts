@@ -109,7 +109,7 @@ export const makeLoadExtension = async ({
    */
   const writeRawLog = (source: string, type: string, text: string): void => {
     const logTimestamp = new Date().toISOString().slice(0, -5);
-    // eslint-disable-next-line n/no-sync
+    // oxlint-disable-next-line node/no-sync
     appendFileSync(
       logFilePath,
       `[${logTimestamp}] [${source}] [${type}] ${text}\n`,
@@ -164,7 +164,7 @@ export const makeLoadExtension = async ({
     // Set up CDP to capture iframe console logs (vat iframes)
     // We need to do this because Playwright doesn't have frame.on('console')
     setupCdpForIframeConsoleLogs(page, writeRawLog).catch(
-      // eslint-disable-next-line no-console
+      // oxlint-disable-next-line no-console
       (error) => console.warn('Failed to set up CDP for iframe logs:', error),
     );
   });

@@ -1,4 +1,4 @@
-/* eslint-disable n/no-sync, n/no-process-env */
+/* oxlint-disable node/no-sync, node/no-process-env */
 /**
  * Configure OpenClaw for the away node container.
  *

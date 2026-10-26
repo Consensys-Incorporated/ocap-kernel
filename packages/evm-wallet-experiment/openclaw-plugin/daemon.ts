@@ -71,9 +71,9 @@ async function runDaemonQueueMessage(options: {
   const { cliPath, walletKref, method, argsJson, timeoutMs } = options;
   const daemonArgs = ['daemon', 'queueMessage', walletKref, method, argsJson];
 
-  // If cliPath points to a .mjs file, invoke it via node.
-  const command = cliPath.endsWith('.mjs') ? 'node' : cliPath;
-  const args = cliPath.endsWith('.mjs') ? [cliPath, ...daemonArgs] : daemonArgs;
+  // If cliPath points to a .js file, invoke it via node.
+  const command = cliPath.endsWith('.js') ? 'node' : cliPath;
+  const args = cliPath.endsWith('.js') ? [cliPath, ...daemonArgs] : daemonArgs;
 
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {

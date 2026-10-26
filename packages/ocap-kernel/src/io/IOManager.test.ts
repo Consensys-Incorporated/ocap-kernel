@@ -1,5 +1,6 @@
 import { Logger } from '@metamask/logger';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { Mock } from 'vitest';
 
 import { IOManager } from './IOManager.ts';
 import type { IOChannel, IOListener, IOListenerFactory } from './types.ts';
@@ -20,12 +21,14 @@ const makeListener = (): IOListener => ({
 /** The vat-facing shape of a listener service, for driving it in tests. */
 type ListenerFacet = { accept: () => Promise<unknown> };
 
+type IOManagerOptions = ConstructorParameters<typeof IOManager>[0];
+
 describe('IOManager', () => {
   let factory: IOListenerFactory;
-  let registerService: ReturnType<typeof vi.fn>;
-  let unregisterService: ReturnType<typeof vi.fn>;
-  let registerAnonymous: ReturnType<typeof vi.fn>;
-  let releaseAnonymous: ReturnType<typeof vi.fn>;
+  let registerService: Mock<IOManagerOptions['registerService']>;
+  let unregisterService: Mock<IOManagerOptions['unregisterService']>;
+  let registerAnonymous: Mock<IOManagerOptions['registerAnonymous']>;
+  let releaseAnonymous: Mock<IOManagerOptions['releaseAnonymous']>;
   let logger: Logger;
   let manager: IOManager;
   let listeners: IOListener[];
@@ -45,7 +48,7 @@ describe('IOManager', () => {
 
     registerService = vi.fn((name: string, service: object): KernelService => {
       registeredServices.set(name, service as unknown as ListenerFacet);
-      return { name, kref: `ko${name}`, service, systemOnly: false };
+      return { name, kref: `ko${name}` as KRef, service, systemOnly: false };
     });
     unregisterService = vi.fn();
     registerAnonymous = vi.fn((): KRef => {

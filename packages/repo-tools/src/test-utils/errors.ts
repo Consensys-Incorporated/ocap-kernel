@@ -12,7 +12,7 @@ import type { expect as Expect } from 'vitest';
  * @param expect - The expect function to use.
  * @returns A function that can be used to match errors in tests.
  */
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+// oxlint-disable-next-line typescript/explicit-function-return-type
 export const makeErrorMatcherFactory = (expect: typeof Expect) => {
   const makeErrorMatcher = (
     error: Error | string,

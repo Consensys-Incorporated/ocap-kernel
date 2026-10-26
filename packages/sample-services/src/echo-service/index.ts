@@ -31,7 +31,7 @@ type Services = {
  * @param _baggage - Vat baggage (unused).
  * @returns The vat root exo.
  */
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+// oxlint-disable-next-line typescript/explicit-function-return-type
 export function buildRootObject(
   _vatPowers: unknown,
   parameters: Record<string, unknown>,

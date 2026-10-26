@@ -115,9 +115,9 @@ info "Relay: $RELAY_ADDR"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PKG_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPO_ROOT="$(cd "$PKG_DIR/../.." && pwd)"
-OCAP_BIN="$REPO_ROOT/packages/kernel-cli/dist/app.mjs"
+OCAP_BIN="$REPO_ROOT/packages/kernel-cli/dist/app.js"
 BUNDLE_FILE="$PKG_DIR/src/matcher-vat/index.bundle"
-LLM_BRIDGE_BIN="$REPO_ROOT/packages/llm-bridge/dist/index.mjs"
+LLM_BRIDGE_BIN="$REPO_ROOT/packages/llm-bridge/dist/index.js"
 
 # Where the matcher vat's `llm` IOService lives, plus bookkeeping files
 # for the bridge process this script will spawn.

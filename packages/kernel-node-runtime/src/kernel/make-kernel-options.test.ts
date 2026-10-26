@@ -4,9 +4,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { makeKernel } from './make-kernel.ts';
 
 vi.mock('@metamask/kernel-store/sqlite/nodejs', async () => {
-  const { makeMapKernelDatabase } = await import(
-    '../../../ocap-kernel/test/storage.ts'
-  );
+  const { makeMapKernelDatabase } =
+    await import('../../../ocap-kernel/test/storage.ts');
   return {
     makeSQLKernelDatabase: makeMapKernelDatabase,
   };

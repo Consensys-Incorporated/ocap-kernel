@@ -22,7 +22,7 @@ export type MethodSpec<
     };
 
 // `any` can safely be used in constraints.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+// oxlint-disable-next-line typescript/no-explicit-any
 type SpecConstraint = MethodSpec<string, any, any>;
 
 export type MethodSpecRecord<Methods extends SpecConstraint> = {
@@ -49,7 +49,7 @@ export type ExtractMethod<Specs extends SpecRecordConstraint> =
 
 export type ExtractRequest<Specs extends SpecRecordConstraint> =
   // Safe to use `any` in constraints.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // oxlint-disable-next-line typescript/no-explicit-any
   Extract<ExtractMethodSpec<Specs>, { result: Struct<any> }>['method'];
 
 export type ExtractNotification<Specs extends SpecRecordConstraint> = Extract<
@@ -67,7 +67,7 @@ export type ExtractResult<
   Specs extends SpecRecordConstraint,
 > =
   // Safe to use `any` in constraints.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // oxlint-disable-next-line typescript/no-explicit-any
   ExtractMethodSpec<Specs, Method> extends MethodSpec<any, any, infer Result>
     ? UnwrapPromise<Result>
     : never;
@@ -91,7 +91,7 @@ export type Handler<
 };
 
 // `any` can safely be used in constraints.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+// oxlint-disable-next-line typescript/no-explicit-any
 type HandlerConstraint = Handler<string, any, any, any>;
 
 export type HandlerRecord<Handlers extends HandlerConstraint> = {

@@ -320,7 +320,7 @@ export class VatSupervisor {
       this.#logger.error(`Delivery error in vat ${this.id}:`, deliveryError);
     }
 
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    // oxlint-disable-next-line typescript/no-non-null-assertion
     return [this.#vatKVStore!.checkpoint(), deliveryError];
   }
 

@@ -61,7 +61,7 @@ describe('makeKernelLanguageModelService', () => {
       messages: [{ role: 'user', content: 'hi' }],
     };
     const result = await (
-      service as { chat: (p: ChatParams) => Promise<ChatResult> }
+      service as { chat: (params: ChatParams) => Promise<ChatResult> }
     ).chat(params);
 
     expect(chat).toHaveBeenCalledWith(params);
@@ -77,7 +77,7 @@ describe('makeKernelLanguageModelService', () => {
     const params: SampleParams = { model: 'test', prompt: 'hello' };
     const result = await (
       service as {
-        sample: (p: SampleParams) => Promise<SampleResult>;
+        sample: (params: SampleParams) => Promise<SampleResult>;
       }
     ).sample(params);
 
@@ -92,7 +92,7 @@ describe('makeKernelLanguageModelService', () => {
     await expect(
       (
         service as {
-          sample: (p: SampleParams) => Promise<SampleResult>;
+          sample: (params: SampleParams) => Promise<SampleResult>;
         }
       ).sample({ model: 'test', prompt: 'hello' }),
     ).rejects.toThrow('raw sampling not supported by this backend');

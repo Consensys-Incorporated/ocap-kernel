@@ -1,5 +1,6 @@
 import { E } from '@endo/eventual-send';
 import { makeDefaultExo } from '@metamask/kernel-utils/exo';
+import type { OcapURLIssuerService } from '@metamask/ocap-kernel';
 
 import type { TestPowers } from '../test-powers.ts';
 
@@ -14,7 +15,7 @@ import type { TestPowers } from '../test-powers.ts';
  * @param _baggage - Root of vat's persistent state (not used here).
  * @returns The root object for the new vat.
  */
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+// oxlint-disable-next-line typescript/explicit-function-return-type
 export function buildRootObject(
   { logger }: TestPowers,
   parameters: { name?: string } = {},
@@ -38,7 +39,7 @@ export function buildRootObject(
   return makeDefaultExo('root', {
     async bootstrap(
       _vats: unknown,
-      services: { ocapURLIssuerService?: unknown },
+      services: { ocapURLIssuerService: OcapURLIssuerService },
     ) {
       logger.log(`vat ${name} is bootstrap`);
       const issuerService = services.ocapURLIssuerService;

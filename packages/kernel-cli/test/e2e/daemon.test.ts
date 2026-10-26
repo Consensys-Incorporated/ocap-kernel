@@ -1,4 +1,8 @@
-/* eslint-disable n/no-sync -- existsSync is fine in tests */
+/* oxlint-disable node/no-sync -- existsSync is fine in tests */
+import {
+  assertIsJsonRpcFailure,
+  assertIsJsonRpcSuccess,
+} from '@metamask/utils';
 import { existsSync } from 'node:fs';
 import { rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -19,7 +23,7 @@ import { sendCommand, pingDaemon } from '../../src/commands/daemon-client.ts';
  */
 async function permissionsOf(path: string): Promise<number> {
   const { mode } = await stat(path);
-  // eslint-disable-next-line no-bitwise -- the only way to read mode bits
+  // oxlint-disable-next-line no-bitwise -- the only way to read mode bits
   return mode & 0o777;
 }
 
@@ -41,9 +45,8 @@ describe('Daemon CLI e2e', { timeout: 60_000 }, () => {
         method: 'getStatus',
       });
 
-      expect(response.error).toBeUndefined();
-      expect(response.result).toBeDefined();
-      const result = response.result as Record<string, unknown>;
+      assertIsJsonRpcSuccess(response);
+      const { result } = response;
       expect(result).toHaveProperty('vats');
       expect(result).toHaveProperty('subclusters');
       // `runLoop` is required by `KernelStatusStruct`, and `sendCommand` doesn't
@@ -59,8 +62,8 @@ describe('Daemon CLI e2e', { timeout: 60_000 }, () => {
         method: 'nonexistentMethod',
       });
 
-      expect(response.error).toBeDefined();
-      expect((response.error as { code: number }).code).toBe(-32601);
+      assertIsJsonRpcFailure(response);
+      expect(response.error).toHaveProperty('code', -32601);
     });
 
     it('refuses executeDBQuery without OCAP_DEV_MODE', async () => {
@@ -70,7 +73,7 @@ describe('Daemon CLI e2e', { timeout: 60_000 }, () => {
         params: { sql: 'SELECT key, value FROM kv LIMIT 5' },
       });
 
-      expect(response.result).toBeUndefined();
+      assertIsJsonRpcFailure(response);
       expect(response.error).toStrictEqual({
         code: -32601,
         message:
@@ -84,7 +87,7 @@ describe('Daemon CLI e2e', { timeout: 60_000 }, () => {
         method: 'queueMessage',
         params: ['ko99999', 'someMethod', []],
       });
-      expect(response.error).toBeDefined();
+      expect(() => assertIsJsonRpcFailure(response)).not.toThrow();
     });
 
     it('writes state files to OCAP_HOME', () => {
@@ -126,7 +129,7 @@ describe('Daemon CLI e2e', { timeout: 60_000 }, () => {
         params: { sql: 'SELECT key, value FROM kv LIMIT 5' },
       });
 
-      expect(response.error).toBeUndefined();
+      assertIsJsonRpcSuccess(response);
       expect(Array.isArray(response.result)).toBe(true);
     });
   });
@@ -163,9 +166,8 @@ describe('Daemon CLI e2e', { timeout: 60_000 }, () => {
     });
 
     it('purges state after stop', async () => {
-      const { deleteDaemonState } = await import(
-        '@metamask/kernel-node-runtime/daemon'
-      );
+      const { deleteDaemonState } =
+        await import('@metamask/kernel-node-runtime/daemon');
       await deleteDaemonState({
         ocapHome: daemon.ocapHome,
         socketPath: daemon.socketPath,

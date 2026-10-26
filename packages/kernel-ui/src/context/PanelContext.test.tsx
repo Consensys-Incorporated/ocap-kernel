@@ -24,9 +24,8 @@ describe('PanelContext', () => {
 
   describe('sendMessageWrapper', () => {
     it('should return response on success', async () => {
-      const { PanelProvider, usePanelContext } = await import(
-        './PanelContext.tsx'
-      );
+      const { PanelProvider, usePanelContext } =
+        await import('./PanelContext.tsx');
       const response = { success: true };
       mockSendMessage.mockResolvedValueOnce(response);
       vi.mocked(
@@ -47,9 +46,8 @@ describe('PanelContext', () => {
     });
 
     it('should queue requests when one is already in progress', async () => {
-      const { PanelProvider, usePanelContext } = await import(
-        './PanelContext.tsx'
-      );
+      const { PanelProvider, usePanelContext } =
+        await import('./PanelContext.tsx');
       let firstRequestResolve: (() => void) | undefined;
       const firstRequestPromise = new Promise<void>((resolve) => {
         firstRequestResolve = resolve;
@@ -84,9 +82,8 @@ describe('PanelContext', () => {
     });
 
     it('should handle multiple concurrent requests without race conditions', async () => {
-      const { PanelProvider, usePanelContext } = await import(
-        './PanelContext.tsx'
-      );
+      const { PanelProvider, usePanelContext } =
+        await import('./PanelContext.tsx');
       const responses = [
         { success: true, id: 1 },
         { success: true, id: 2 },
@@ -125,9 +122,8 @@ describe('PanelContext', () => {
     });
 
     it('should process queued requests added while processing', async () => {
-      const { PanelProvider, usePanelContext } = await import(
-        './PanelContext.tsx'
-      );
+      const { PanelProvider, usePanelContext } =
+        await import('./PanelContext.tsx');
       let firstRequestResolve: (() => void) | undefined;
       const firstRequestPromise = new Promise<void>((resolve) => {
         firstRequestResolve = resolve;
@@ -180,9 +176,8 @@ describe('PanelContext', () => {
     });
 
     it('should throw error when response is an error', async () => {
-      const { PanelProvider, usePanelContext } = await import(
-        './PanelContext.tsx'
-      );
+      const { PanelProvider, usePanelContext } =
+        await import('./PanelContext.tsx');
       const errorResponse = { error: 'Test error' };
       mockSendMessage.mockResolvedValueOnce(errorResponse);
       vi.mocked(
@@ -210,9 +205,8 @@ describe('PanelContext', () => {
     });
 
     it('should handle and log general errors', async () => {
-      const { PanelProvider, usePanelContext } = await import(
-        './PanelContext.tsx'
-      );
+      const { PanelProvider, usePanelContext } =
+        await import('./PanelContext.tsx');
       const error = new Error('Network error');
       mockSendMessage.mockRejectedValueOnce(error);
       const { result } = renderHook(() => usePanelContext(), {
@@ -236,9 +230,8 @@ describe('PanelContext', () => {
 
   describe('clearLogs', () => {
     it('should clear all panel logs', async () => {
-      const { PanelProvider, usePanelContext } = await import(
-        './PanelContext.tsx'
-      );
+      const { PanelProvider, usePanelContext } =
+        await import('./PanelContext.tsx');
       const { result } = renderHook(() => usePanelContext(), {
         wrapper: ({ children }) => (
           <PanelProvider callKernelMethod={mockSendMessage}>

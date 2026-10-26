@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add `pathUnder(segments)`, which builds an `@endo/patterns` pattern matching segment arrays under a prefix, with `..` excluded past the prefix so that traversal out of it is unrepresentable. Empty `segments` matches every `..`-free segment array ([#1134](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1134))
+- Add `narrow({ name, base, delta })`, which reads the base's interface guard over `E()` and returns an exo under the derived guard whose methods forward to the base. Narrowing a narrowing flattens: the result forwards straight to the original base under both deltas conjoined, so a chain of any depth stays one hop deep and costs one guard read. Every method of the result returns a promise, and the delta is hardened. A base built with `makeDefaultExo` names no method guards, so each method the delta names gets its patterns as its whole guard, and a method the base does not implement rejects when called rather than when narrowing ([#1134](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1134))
+- Add `join({ name, refs })`, which returns a narrowing of its refs' common base admitting exactly what any of them admits: the result's methods are the union of the operands', and a call is admitted when some operand admits all of its arguments, never by combining arguments that different operands admit. A method that more than one operand constrains gets a guard with no fixed arguments and a rest guard matching the whole argument list against each operand's positions, so a receiver in another vat sees that form rather than per-position guards. Every ref must be one `narrow` minted from that base, or the base itself, which admits everything and so absorbs. A ref minted from some other base, or by nothing at all, throws, as does a base built with `makeDefaultExo`, whose methods cannot be enumerated for it to absorb ([#1134](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1134))
+- Add the `NarrowingDelta`, `NarrowOptions`, and `JoinOptions` types ([#1134](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1134))
 - Add `getInterfaceMethodGuards`, `getMethodPayload`, `getGuardAt`, `buildMethodGuard`, and `asyncifyMethodGuards`, plus the `MethodGuardPayload` and `BuildMethodGuardOptions` types, for reading an `@endo/patterns` interface guard by argument position — required arguments, then optionals, then the rest guard — and reassembling it ([#1048](https://github.com/MetaMask/ocap-kernel/pull/1048))
 - Add `makeGuardedFetch` and the `FetchGuard` type, which wrap a `fetch` so that a guard runs before every request it makes, redirect hops included ([#1026](https://github.com/MetaMask/ocap-kernel/pull/1026))
   - `redirect: 'follow'`, in the caller's `init` or on a `Request`, is overridden so that each hop can be checked; `manual` and `error` are honoured. `baseFetch` is therefore always called with `redirect: 'manual'` and must honour it
@@ -22,6 +26,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add `getLibp2pRelayHome()` to the `./nodejs` exports, returning the libp2p relay's bookkeeping directory (default `~/.libp2p-relay`, overridable via `$LIBP2P_RELAY_HOME`) — kept separate from `$OCAP_HOME` so one relay can serve daemons with different OCAP_HOMEs ([#952](https://github.com/MetaMask/ocap-kernel/pull/952))
 - `startRelay()` accepts an optional `publicIp` that is fed to libp2p's `appendAnnounce`, so a relay running on a NAT-backed host can announce its publicly-reachable IPv4 alongside its bound NIC addresses ([#952](https://github.com/MetaMask/ocap-kernel/pull/952))
 - Add `replaceNodeEnvPlugin` to the `./vite-plugins` exports, a Rolldown transform plugin that inlines `process.env.NODE_ENV` as a string literal (configurable via `{ value }`, defaulting to `'production'`) in any module referencing it — used by `bundleVat` in place of a build-config `define`, so vats that pull in libraries like immer resolve the reference at bundle time ([#967](https://github.com/MetaMask/ocap-kernel/pull/967))
+
+### Changed
+
+- `stringify` includes an `AggregateError`'s `errors`, each with its own `cause` chain ([#1094](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1094))
+
+### Removed
+
+- **BREAKING:** Remove the CommonJS build; the package is ESM-only. Its entry points are `.js` and `.d.ts` files, formerly `.mjs`/`.cjs` and `.d.mts`/`.d.cts` ([#1186](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1186))
+
+### Fixed
+
+- Bump `@libp2p/crypto` from `5.1.14` to `5.1.23`, so `startRelay` no longer throws `Invalid JWK OKP key` on Node 24.22 ([#1185](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1185))
 
 ## [0.5.0]
 

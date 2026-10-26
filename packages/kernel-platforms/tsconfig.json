@@ -1,11 +1,9 @@
 {
   "extends": "../../tsconfig.packages.json",
   "compilerOptions": {
-    "baseUrl": "./",
     "lib": ["ES2022", "DOM"],
     "types": ["vitest", "ses", "node"]
   },
-  "references": [{ "path": "../repo-tools" }],
   "include": [
     "../../vitest.config.ts",
     "./src",

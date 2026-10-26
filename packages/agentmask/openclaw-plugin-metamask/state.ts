@@ -92,7 +92,7 @@ export function parseCapabilityResponse(capData: unknown): {
   //   #"$0.Alleged: PersonalMessageSigner"
   // We extract the part after "Alleged: "
   const nameMatch = /Alleged:\s*([^"]+)/u.exec(body);
-  const name = nameMatch ? nameMatch[1].trim() : kref;
+  const name = nameMatch?.[1]?.trim() ?? kref;
 
   return { kref, name };
 }

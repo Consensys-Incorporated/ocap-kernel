@@ -1,5 +1,11 @@
 import { E } from '@endo/eventual-send';
-import type { ClusterConfig, Kernel } from '@metamask/ocap-kernel';
+import type {
+  ClusterConfig,
+  Kernel,
+  KRef,
+  SubclusterId,
+  VatId,
+} from '@metamask/ocap-kernel';
 import { makeKernelFacet, kslot } from '@metamask/ocap-kernel';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -23,7 +29,7 @@ describe('CapTP Integration', () => {
     mockKernel = {
       getPresence: vi
         .fn()
-        .mockImplementation(async (kref: string, iface: string) =>
+        .mockImplementation(async (kref: KRef, iface: string) =>
           kslot(kref, iface),
         ),
       getStatus: vi.fn().mockResolvedValue({
@@ -164,14 +170,14 @@ describe('CapTP Integration', () => {
       const kernel = await backgroundCapTP.getKernel();
 
       // Call terminateSubcluster via E()
-      await E(kernel).terminateSubcluster('sc1');
+      await E(kernel).terminateSubcluster('sc1' as SubclusterId);
       expect(mockKernel.terminateSubcluster).toHaveBeenCalledWith('sc1');
     });
   });
 
   describe('queueMessage', () => {
     it('e(kernel).queueMessage() passes arguments correctly', async () => {
-      const target = 'ko1';
+      const target = 'ko1' as KRef;
       const method = 'doSomething';
       const args = ['arg1', { nested: 'value' }];
 
@@ -199,7 +205,7 @@ describe('CapTP Integration', () => {
       const kernel = await backgroundCapTP.getKernel();
 
       // Call pingVat via E()
-      const result = await E(kernel).pingVat('v1');
+      const result = await E(kernel).pingVat('v1' as VatId);
       expect(result).toBe('pong');
 
       expect(mockKernel.pingVat).toHaveBeenCalledWith('v1');

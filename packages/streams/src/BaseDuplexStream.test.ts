@@ -386,7 +386,11 @@ describe('BaseDuplexStream', () => {
       (value) => {
         calls.push(stringify(value));
       },
-      { onEnd: () => calls.push('onEnd') },
+      {
+        onEnd: () => {
+          calls.push('onEnd');
+        },
+      },
     );
     calls.length = 0;
 

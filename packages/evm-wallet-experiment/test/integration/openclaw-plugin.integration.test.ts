@@ -7,21 +7,12 @@ import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { register } from '../../openclaw-plugin/index.ts';
+import type { OpenClawPluginApi } from '../../openclaw-plugin/types.ts';
 import { makeWalletClusterConfig } from '../../src/cluster-config.ts';
 
 const CapDataStruct = object({ body: string(), slots: array(string()) });
 
-type ToolResponse = {
-  content: { type: 'text'; text: string }[];
-};
-
-type ToolDefinition = {
-  name: string;
-  execute: (
-    id: string,
-    params?: Record<string, string>,
-  ) => Promise<ToolResponse>;
-};
+type ToolDefinition = Parameters<OpenClawPluginApi['registerTool']>[0];
 
 const moduleDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(moduleDir, '../../../..');
@@ -285,7 +276,7 @@ exec "${process.execPath}" "${ocapCliEntrypoint}" "$@"
     it('decodes CapData response for wallet_accounts', async () => {
       const tool = tools.get('wallet_accounts');
       expect(tool).toBeDefined();
-      const result = await tool!.execute('req-accounts');
+      const result = await tool!.execute('req-accounts', {});
       const accounts = JSON.parse(result.content[0]?.text ?? '[]') as string[];
       expect(accounts.length).toBeGreaterThan(0);
       expect(accounts[0]).toMatch(/^0x[\da-f]{40}$/iu);

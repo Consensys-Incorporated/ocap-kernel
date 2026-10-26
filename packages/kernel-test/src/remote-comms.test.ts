@@ -3,15 +3,16 @@ import { peerIdFromPrivateKey } from '@libp2p/peer-id';
 import { NodejsPlatformServices } from '@metamask/kernel-node-runtime';
 import type { KernelDatabase } from '@metamask/kernel-store';
 import { makeSQLKernelDatabase } from '@metamask/kernel-store/sqlite/nodejs';
-import { fromHex } from '@metamask/kernel-utils';
+import { fromHex, waitUntilQuiescent } from '@metamask/kernel-utils';
 import { makeKernelStore, kunser, Kernel } from '@metamask/ocap-kernel';
 import type {
-  KernelStore,
   ClusterConfig,
+  KernelStore,
   KRef,
   PlatformServices,
-  RemoteMessageHandler,
   RemoteCommsOptions,
+  RemoteMessageHandler,
+  VatId,
 } from '@metamask/ocap-kernel';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -57,7 +58,7 @@ class DirectNetworkService {
    * @returns The platform services.
    */
   createPlatformServices(tempPeerId: string): PlatformServices {
-    // eslint-disable-next-line @typescript-eslint/no-this-alias
+    // oxlint-disable-next-line typescript/no-this-alias
     const self = this;
     // Store the actual peer ID once we know it
     let actualPeerId: string | undefined;
@@ -138,6 +139,11 @@ class DirectNetworkService {
 
       async reconnectPeer(_peerId: string, _hints: string[] = []) {
         // Mock implementation - in direct network, connections are always available
+        return Promise.resolve();
+      },
+
+      async resetAllBackoffs() {
+        // The direct network has no backoff to reset
         return Promise.resolve();
       },
 
@@ -340,7 +346,7 @@ describe('Remote Communications (Integration Tests)', () => {
     // Launch sender vat on kernel1
     const senderConfig = makeSenderSubclusterConfig('Sender1');
     await runTestVats(kernel1, senderConfig);
-    const senderRootRef = kernelStore1.getRootObject('v1') as KRef;
+    const senderRootRef = kernelStore1.getRootObject('v1' as VatId) as KRef;
 
     // Launch receiver vat on kernel2
     const receiverConfig = makeReceiverSubclusterConfig('Receiver2');
@@ -380,7 +386,7 @@ describe('Remote Communications (Integration Tests)', () => {
     })) as { targetURL: string; bystanderURL: string };
 
     // Obtain the kernel-level KRef so we can later revoke it via the public API
-    const targetRootRef = kernelStore1.getRootObject('v1') as KRef;
+    const targetRootRef = kernelStore1.getRootObject('v1' as VatId) as KRef;
     const targetCapdata = await kernel1.queueMessage(
       targetRootRef,
       'getTarget',
@@ -401,7 +407,7 @@ describe('Remote Communications (Integration Tests)', () => {
         },
       },
     });
-    const senderRootRef = kernelStore2.getRootObject('v1') as KRef;
+    const senderRootRef = kernelStore2.getRootObject('v1' as VatId) as KRef;
 
     // step 2: B can invoke the target before revocation
     const beforeResult = await kernel2.queueMessage(
@@ -465,7 +471,9 @@ describe('Remote Communications (Integration Tests)', () => {
       // Launch client vat on kernel1
       const clientConfig = makeMaasClientConfig('client1', true);
       await runTestVats(clientKernel, clientConfig);
-      const clientRootRef = localKernelStore1.getRootObject('v1') as KRef;
+      const clientRootRef = localKernelStore1.getRootObject(
+        'v1' as VatId,
+      ) as KRef;
 
       // Launch server vat on kernel2
       const serverConfig = makeMaasServerConfig('server2', true);
@@ -548,7 +556,329 @@ describe('Remote Communications (Integration Tests)', () => {
       await rm(tempDir, { recursive: true, force: true });
     }
   });
+
+  it('still boots with a reap left queued for a remote', async () => {
+    // A reap against a remote waits in the persisted reap queue for the run
+    // loop's next crank. `scheduleReap` does not wake a parked run loop, so an
+    // idle kernel holds that reap indefinitely — and carries it into its next
+    // incarnation, which starts its run loop inside `Kernel.make`, before
+    // `initRemoteComms` can restore any remote to deliver it to.
+    //
+    // A peer's `bringOutYourDead` schedules one from inside a crank, so the
+    // loop spends it before parking.
+    const tempDir = await mkdtemp(join(tmpdir(), 'kernel-test-rc-reap-'));
+    const dbFile = join(tempDir, 'victim.db');
+    try {
+      // Only the victim needs to survive a restart, so only it needs a file.
+      await kernel1.stop();
+      const victimDatabase = await makeSQLKernelDatabase({
+        dbFilename: dbFile,
+      });
+      const victimStore = makeKernelStore(victimDatabase);
+      const readReapQueue = (database: KernelDatabase): unknown =>
+        JSON.parse(database.kernelKVStore.get('reapQueue') ?? '[]');
+      const victim = await makeTestKernel(
+        'victim',
+        victimDatabase,
+        directNetwork,
+        true,
+        'kernel1-peer',
+        '01',
+      );
+
+      // One exchange, so the victim holds a remote for the peer.
+      await runTestVats(victim, makeSenderSubclusterConfig('Sender'));
+      const receiver = (await runTestVats(
+        kernel2,
+        makeReceiverSubclusterConfig('Receiver'),
+      )) as BootstrapResult;
+      await victim.queueMessage(
+        victimStore.getRootObject('v1' as VatId) as KRef,
+        'sendMessage',
+        [receiver.ocapURL, 'hello', ['once']],
+      );
+
+      // Nothing touches the victim afterwards, so its loop stays parked and
+      // never delivers the reap.
+      victim.reapRemotes();
+      expect(readReapQueue(victimDatabase)).not.toStrictEqual([]);
+      await victim.stop();
+
+      // Asserted on disk, not assumed: if the victim had cranked it would have
+      // eaten its own reap while the remote still existed, and the rest would
+      // prove nothing.
+      const armed = await makeSQLKernelDatabase({ dbFilename: dbFile });
+      expect(readReapQueue(armed)).not.toStrictEqual([]);
+      armed.close();
+
+      // Twice, because without the fix the failure is unrecoverable rather
+      // than merely fatal: the crank that dies is rolled back, which puts the
+      // reap back on the queue for the boot after. With it, the first boot
+      // spends the reap and the second only shows nothing else was left.
+      const bootStates = [];
+      for (const boot of [1, 2]) {
+        const rebooted = await makeTestKernel(
+          `victim-boot${boot}`,
+          await makeSQLKernelDatabase({ dbFilename: dbFile }),
+          directNetwork,
+          false,
+          'kernel1-peer',
+          '01',
+        );
+        bootStates.push((await rebooted.getStatus()).runLoop);
+        await rebooted.stop();
+      }
+      // Asserted together rather than per boot, so a failure reports both.
+      expect(bootStates).toStrictEqual([
+        { state: 'running' },
+        { state: 'running' },
+      ]);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it('collects an object on both kernels once the importing kernel lets go', async () => {
+    const kernelStore2 = makeKernelStore(kernelDatabase2);
+    const { ocapURL } = (await runTestVats(
+      kernel1,
+      makeGiftImporterConfig(),
+    )) as BootstrapResult;
+    await runTestVats(kernel2, makeGiftGiverConfig());
+    const importerVatId = findVatId(kernel1, 'Importer');
+    const importerRoot = kernelStore1.getRootObject(importerVatId) as KRef;
+    const giverVatId = findVatId(kernel2, 'Giver');
+    const giverRoot = kernelStore2.getRootObject(giverVatId) as KRef;
+
+    const given = await kernel2.queueMessage(giverRoot, 'giveGift', [
+      ocapURL,
+      'gift',
+    ]);
+    expect(kunser(given)).toBe('stored');
+
+    const giverOnImporter = getOnlyRemoteId(kernelStore1);
+    const importerOnGiver = getOnlyRemoteId(kernelStore2);
+    const importerSide = (): Record<string, string> =>
+      listObjectCList(kernelDatabase1, giverOnImporter);
+    const giverSide = (): Record<string, string> =>
+      listObjectCList(kernelDatabase2, importerOnGiver);
+    const krefsIn = (entries: Record<string, string>): KRef[] =>
+      Object.keys(entries).filter((key) => key.startsWith('ko')) as KRef[];
+    const giftOnImporter = krefsIn(importerSide()).find(
+      (kref) => kref !== importerRoot,
+    ) as KRef;
+    const giftOnGiver = krefsIn(giverSide()).find(
+      (kref) => kernelStore2.getOwner(kref) === giverVatId,
+    ) as KRef;
+    const importerRootOnGiver = krefsIn(giverSide()).find(
+      (kref) => kref !== giftOnGiver,
+    ) as KRef;
+
+    // Each side numbers both objects 1, with opposite signs, so a ref sent
+    // unflipped names the other object.
+    expect({ importer: importerSide(), giver: giverSide() }).toStrictEqual({
+      importer: {
+        [importerRoot]: 'R ro-1',
+        'ro-1': importerRoot,
+        [giftOnImporter]: 'R ro+1',
+        'ro+1': giftOnImporter,
+      },
+      giver: {
+        [importerRootOnGiver]: 'R ro+1',
+        'ro+1': importerRootOnGiver,
+        [giftOnGiver]: 'R ro-1',
+        'ro-1': giftOnGiver,
+      },
+    });
+
+    // Held weakly, the gift is dropped but still recognized, so its retirement
+    // has to start at the giver and reach kernel1 as a remote importer.
+    await kernel1.queueMessage(importerRoot, 'makeWeak', ['gift']);
+    await pokeUntil({
+      isDone: () =>
+        !kernelStore2.getReachableFlag(importerOnGiver, giftOnGiver),
+      poke: async () => {
+        kernel1.reapVats((vatId) => vatId === importerVatId);
+        await kernel1.queueMessage(importerRoot, 'noop', []);
+      },
+    });
+
+    expect({ importer: importerSide(), giver: giverSide() }).toStrictEqual({
+      importer: {
+        [importerRoot]: 'R ro-1',
+        'ro-1': importerRoot,
+        [giftOnImporter]: '_ ro+1',
+        'ro+1': giftOnImporter,
+      },
+      giver: {
+        [importerRootOnGiver]: 'R ro+1',
+        'ro+1': importerRootOnGiver,
+        [giftOnGiver]: '_ ro-1',
+        'ro-1': giftOnGiver,
+      },
+    });
+
+    await pokeUntil({
+      isDone: () => !kernelStore1.kernelRefExists(giftOnImporter),
+      poke: async () => {
+        kernel2.reapVats((vatId) => vatId === giverVatId);
+        await kernel2.queueMessage(giverRoot, 'noop', []);
+        await kernel1.queueMessage(importerRoot, 'noop', []);
+      },
+    });
+
+    expect({
+      importer: importerSide(),
+      giver: giverSide(),
+      giftOnImporter: kernelStore1.kernelRefExists(giftOnImporter),
+      giftInImporterVat: kernelStore1.hasCListEntry(
+        importerVatId,
+        giftOnImporter,
+      ),
+      giftOnGiver: kernelStore2.kernelRefExists(giftOnGiver),
+    }).toStrictEqual({
+      importer: { [importerRoot]: 'R ro-1', 'ro-1': importerRoot },
+      giver: { [importerRootOnGiver]: 'R ro+1', 'ro+1': importerRootOnGiver },
+      giftOnImporter: false,
+      giftInImporterVat: false,
+      giftOnGiver: false,
+    });
+  }, 60_000);
 });
+
+/**
+ * Poke until a condition holds, at most 20 times. How many rounds GC takes is
+ * not fixed: a vat reports a drop only once its engine has collected the
+ * object, and a GC message leaves a kernel only once the crank deciding it
+ * commits.
+ *
+ * @param options - Options bag.
+ * @param options.isDone - The condition.
+ * @param options.poke - Starts one more round of work.
+ */
+async function pokeUntil({
+  isDone,
+  poke,
+}: {
+  isDone: () => boolean;
+  poke: () => Promise<void>;
+}): Promise<void> {
+  for (let attempt = 0; attempt < 20; attempt++) {
+    if (isDone()) {
+      return;
+    }
+    await poke();
+    await waitUntilQuiescent(100);
+  }
+  if (!isDone()) {
+    throw new Error('Condition still false after 20 pokes');
+  }
+}
+
+/**
+ * List a remote's c-list entries for objects, both ways, as stored: each kref
+ * maps to its reachable flag (`R` or `_`) and the remote's ref for it, and each
+ * ref maps back to its kref. Promises are left out, since a settled one stays
+ * in the c-list.
+ *
+ * @param kernelDatabase - The kernel's database.
+ * @param remoteId - The remote.
+ * @returns The entries, by key.
+ */
+function listObjectCList(
+  kernelDatabase: KernelDatabase,
+  remoteId: string,
+): Record<string, string> {
+  const { kernelKVStore } = kernelDatabase;
+  const cListPrefix = `${remoteId}.c.`;
+  const entries: Record<string, string> = {};
+  for (const refPrefix of ['ko', 'ro']) {
+    const prefix = `${cListPrefix}${refPrefix}`;
+    let key = kernelKVStore.getNextKey(prefix);
+    // oxlint-disable-next-line no-unmodified-loop-condition -- the condition reads key, which the loop advances
+    while (key?.startsWith(prefix)) {
+      entries[key.slice(cListPrefix.length)] = kernelKVStore.getRequired(key);
+      key = kernelKVStore.getNextKey(key);
+    }
+  }
+  return entries;
+}
+
+/**
+ * Get the ID of the one remote a kernel knows about.
+ *
+ * @param kernelStore - The kernel's store.
+ * @returns The remote's ID.
+ */
+function getOnlyRemoteId(kernelStore: KernelStore) {
+  const remoteIds = kernelStore.getRemoteIDs();
+  const [remoteId] = remoteIds;
+  if (remoteIds.length !== 1 || remoteId === undefined) {
+    throw Error(`expected one remote, found ${remoteIds.length}`);
+  }
+  return remoteId;
+}
+
+/**
+ * Find a vat by the name in its config.
+ *
+ * @param kernel - The kernel running it.
+ * @param name - The vat's name.
+ * @returns The vat's ID.
+ */
+function findVatId(kernel: Kernel, name: string): VatId {
+  const vatId = kernel
+    .getVats()
+    .find((row) => row.config.parameters?.name === name)?.id;
+  if (vatId === undefined) {
+    throw Error(`no vat named ${name}`);
+  }
+  return vatId;
+}
+
+/**
+ * Create a subcluster configuration whose bootstrap vat issues an ocap URL for
+ * an importer vat.
+ *
+ * @returns Cluster configuration for the importing kernel.
+ */
+function makeGiftImporterConfig(): ClusterConfig {
+  return {
+    bootstrap: 'issuer',
+    forceReset: true,
+    services: ['ocapURLIssuerService'],
+    vats: {
+      issuer: {
+        bundleSpec: getBundleSpec('remote-sender-vat'),
+        parameters: { name: 'Issuer' },
+      },
+      receiver: {
+        bundleSpec: getBundleSpec('importer-vat'),
+        parameters: { name: 'Importer' },
+      },
+    },
+  };
+}
+
+/**
+ * Create a subcluster configuration for a vat that gives objects to vats on
+ * other kernels.
+ *
+ * @returns Cluster configuration for the giving kernel.
+ */
+function makeGiftGiverConfig(): ClusterConfig {
+  return {
+    bootstrap: 'giver',
+    forceReset: true,
+    services: ['ocapURLRedemptionService'],
+    vats: {
+      giver: {
+        bundleSpec: getBundleSpec('remote-gift-vat'),
+        parameters: { name: 'Giver' },
+      },
+    },
+  };
+}
 
 /**
  * Create a test subcluster configuration for a MaaS server vat.

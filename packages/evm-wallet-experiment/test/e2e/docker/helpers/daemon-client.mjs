@@ -1,4 +1,4 @@
-/* eslint-disable */
+/* oxlint-disable */
 import { readLine, writeLine } from '@metamask/kernel-node-runtime/daemon';
 import { waitUntilQuiescent } from '@metamask/kernel-utils';
 import { kunser } from '@metamask/ocap-kernel';

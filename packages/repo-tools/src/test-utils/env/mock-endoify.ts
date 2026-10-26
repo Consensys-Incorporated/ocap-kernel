@@ -1,4 +1,3 @@
-// eslint-disable-next-line spaced-comment
 /// <reference types="ses"/>
 
 import { vi } from 'vitest';
@@ -6,7 +5,9 @@ import { vi } from 'vitest';
 import { makePromiseKitMock } from '../promise-kit.ts';
 
 globalThis.lockdown = vi.fn((): void => undefined);
-globalThis.harden = vi.fn(<Value>(value: Value): Readonly<Value> => value);
+globalThis.harden = vi.fn(
+  <Value>(value: Value): Value => value,
+) as typeof harden;
 
 const assertFn = vi.fn((): void => undefined);
 Object.assign(assertFn, {

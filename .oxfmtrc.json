@@ -1,0 +1,16 @@
+{
+  "$schema": "./node_modules/oxfmt/configuration_schema.json",
+  "printWidth": 80,
+  "tabWidth": 2,
+  "singleQuote": true,
+  "quoteProps": "as-needed",
+  "trailingComma": "all",
+  "sortPackageJson": false,
+  "ignorePatterns": [
+    ".yarnrc.yml",
+    "/CLAUDE.md",
+    "CHANGELOG.old.md",
+    "merged-packages/",
+    "packages/evm-wallet-experiment/test/e2e/docker/helpers/daemon-client.mjs"
+  ]
+}

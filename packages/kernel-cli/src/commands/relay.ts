@@ -147,7 +147,6 @@ export async function startRelayWithBookkeeping(
       .finally(() => {
         removeRelayFiles()
           .catch(() => undefined)
-          // eslint-disable-next-line n/no-process-exit -- signal handler must force exit after cleanup
           .finally(() => process.exit(0));
       });
   };

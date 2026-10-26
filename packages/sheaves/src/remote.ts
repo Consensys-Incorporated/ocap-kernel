@@ -46,7 +46,7 @@ export const makeRemoteSection = async <M extends Record<string, unknown>>(
   for (const method of Object.keys(methodGuards)) {
     handlers[method] = async (...args: unknown[]) =>
       // method is always present: it comes from Object.keys(methodGuards)
-      // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+      // oxlint-disable-next-line typescript/no-non-null-assertion
       (E(remote) as Record<string, (...a: unknown[]) => Promise<unknown>>)[
         method
       ]!(...args);

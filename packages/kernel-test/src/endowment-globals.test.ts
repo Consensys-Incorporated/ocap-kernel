@@ -19,8 +19,8 @@ import {
 } from './utils.ts';
 
 describe('global endowments', () => {
-  const vatId: VatId = 'v1';
-  const v1Root: KRef = 'ko4';
+  const vatId = 'v1' as VatId;
+  const v1Root = 'ko4' as KRef;
 
   const setup = async ({
     globals,
@@ -41,7 +41,7 @@ describe('global endowments', () => {
     const kernel = await makeTrackedKernel(platformServices, database, {
       resetStorage: true,
       logger,
-      allowedGlobalNames,
+      ...(allowedGlobalNames && { allowedGlobalNames }),
       ...makeAuditedKernelOptions(),
     });
 

@@ -376,9 +376,34 @@ export type RunQueueItemBringOutYourDead = Infer<
   typeof RunQueueItemBringOutYourDeadStruct
 >;
 
+/**
+ * A request to replace a vat's worker, queued so the run loop performs it.
+ */
+const RunQueueItemRestartVatStruct = object({
+  type: literal('restartVat'),
+  vatId: VatIdStruct,
+});
+
+export type RunQueueItemRestartVat = Infer<typeof RunQueueItemRestartVatStruct>;
+
+/**
+ * A request to terminate a vat, queued so the run loop performs it.
+ */
+const RunQueueItemTerminateVatStruct = object({
+  type: literal('terminateVat'),
+  vatId: VatIdStruct,
+  reason: exactOptional(KernelCapDataStruct),
+});
+
+export type RunQueueItemTerminateVat = Infer<
+  typeof RunQueueItemTerminateVatStruct
+>;
+
 export type RunQueueItemRemoteInbound = {
   type: 'remoteInbound';
   remoteId: RemoteId;
+  peerId: string;
+  seq: number;
   message: string;
 };
 
@@ -386,6 +411,14 @@ export type RunQueueItemPeerIncarnation = {
   type: 'peerIncarnation';
   peerId: string;
   incarnation: string;
+  /**
+   * Whether it replaced an incarnation the kernel knew the peer by when the
+   * handshake reported it. A restart has the peer's later arrivals taken ahead
+   * of it, as read late off the old incarnation's channel, and a later restart
+   * takes its place; a first incarnation has them taken behind it. The crank
+   * judges the restart again, against the store.
+   */
+  restart: boolean;
 };
 
 export const RunQueueItemStruct = union([
@@ -393,20 +426,35 @@ export const RunQueueItemStruct = union([
   RunQueueItemNotifyStruct,
   RunQueueItemGCActionStruct,
   RunQueueItemBringOutYourDeadStruct,
+  RunQueueItemRestartVatStruct,
+  RunQueueItemTerminateVatStruct,
 ]);
 
 export type RunQueueItem = Infer<typeof RunQueueItemStruct>;
 
 /**
- * Everything the run loop takes a crank for. What a peer sends, a message or an
- * incarnation change, is held in memory and never written to the run queue, so
- * it is not a {@link RunQueueItem} and the store's queue methods do not accept
- * one.
+ * What arrives from a peer: a message, or a change of incarnation a handshake
+ * reported. Held in memory and never written to the run queue, so it is not a
+ * {@link RunQueueItem} and the store's queue methods do not accept one.
  */
-export type RunLoopItem =
-  | RunQueueItem
+export type PeerArrival =
   | RunQueueItemRemoteInbound
   | RunQueueItemPeerIncarnation;
+
+/** A host call that wipes or tears down kernel state. */
+export type ControlOperation =
+  | 'clearStorage'
+  | 'reset'
+  | 'terminateAllVats'
+  | 'stop';
+
+export type RunLoopItemControl = {
+  type: 'control';
+  operation: ControlOperation;
+};
+
+/** Everything the run loop takes a crank for. */
+export type RunLoopItem = RunQueueItem | PeerArrival | RunLoopItemControl;
 
 /**
  * Assert that a value is a valid kernel message.
@@ -529,8 +577,8 @@ export type PlatformServices = {
    *
    * @param vatId - The vat id of the worker to terminate.
    * @param error - An optional error to terminate the worker with.
-   * @returns A promise that resolves when the worker has terminated
-   * or rejects if that worker does not exist.
+   * @returns A promise that resolves when the worker has terminated. For a vat
+   * with no worker, a runtime may resolve or reject.
    */
   terminate: (vatId: VatId, error?: Error) => Promise<void>;
   /**
@@ -791,8 +839,9 @@ const RemoteCommsConnectedStruct = object({
 /**
  * Whether the kernel is capable of processing its run queue. `idle` means the
  * run loop was never started, not that it has nothing to do — a loop parked on
- * an empty queue reports `running`. `failed` means nothing will ever be
- * processed again and the kernel must be restarted.
+ * an empty queue reports `running`. `stopped` means `Kernel.stop` ended the
+ * loop. `failed` means nothing will ever be processed again and the kernel
+ * must be restarted.
  */
 // The arms are `type()`, not `object()`, so a client shipped against them
 // tolerates a newer kernel adding a field to an arm. Note the limit of that:
@@ -801,9 +850,6 @@ const RemoteCommsConnectedStruct = object({
 export const RunLoopStatusStruct = union([
   type({ state: literal('idle') }),
   type({ state: literal('running') }),
-  // Deliberately stopped between cranks, so that the control plane can write
-  // the store directly. A kernel is only briefly in this state, and only
-  // because something asked.
   type({ state: literal('stopped') }),
   // Two strings because one cannot be both: `error` is the message, `detail` the
   // cause chain. When a crank dies and its rollback then fails, the message names
@@ -944,6 +990,12 @@ export type CrankResult = {
   abort?: boolean; // changes should be discarded, not committed
   terminate?: { vatId: VatId; reject: boolean; info: CapData<KRef> };
   /**
+   * The delivery has done work a caller will be told of, so a later failure in
+   * this crank, from collection or the audit, must not roll it back. Ignored
+   * alongside `abort`, which rolls back first.
+   */
+  irrevocable?: boolean;
+  /**
    * Work the run loop runs once the crank has committed, skipped if it aborts.
    * For what a rollback could not undo anyway, and what must not be observable
    * before the writes it reports on are durable: in-memory state, and sending
@@ -974,8 +1026,9 @@ export type EndpointHandle = {
   deliverBringOutYourDead: () => Promise<CrankResult>;
 };
 
-/** An endpoint that peers send messages to, as opposed to a vat. */
+/** A remote's endpoint, which also takes delivery of what its peer sends. */
 export type RemoteEndpointHandle = EndpointHandle & {
+  peerId: string;
   deliverInbound: (message: string) => Promise<CrankResult>;
 };
 

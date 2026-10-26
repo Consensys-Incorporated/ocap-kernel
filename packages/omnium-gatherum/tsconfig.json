@@ -4,24 +4,17 @@
     "jsx": "react-jsx",
     "jsxImportSource": "react",
     "allowJs": true,
-    "baseUrl": "./",
     "isolatedModules": true,
     "lib": ["DOM", "ES2022"],
-    "noEmit": true,
-    "types": ["chrome", "ses", "vitest", "@playwright/test", "react-dom"]
+    "types": [
+      "chrome",
+      "ses",
+      "vitest",
+      "@playwright/test",
+      "react-dom",
+      "vite/client"
+    ]
   },
-  "references": [
-    { "path": "../kernel-browser-runtime" },
-    { "path": "../kernel-rpc-methods" },
-    { "path": "../kernel-shims" },
-    { "path": "../kernel-ui" },
-    { "path": "../kernel-store" },
-    { "path": "../kernel-utils" },
-    { "path": "../logger" },
-    { "path": "../ocap-kernel" },
-    { "path": "../streams" },
-    { "path": "../repo-tools" }
-  ],
   "include": [
     "../../vitest.config.ts",
     "./playwright.config.ts",

@@ -18,5 +18,10 @@ import type { Section } from './types.ts';
 export const makeSection = (
   name: string,
   guard: InterfaceGuard,
-  handlers: Record<string, (...args: unknown[]) => unknown>,
-): Section => makeExo(name, guard, handlers) as unknown as Section;
+  handlers: Record<string, CallableFunction>,
+): Section =>
+  makeExo(
+    name,
+    guard,
+    handlers as Record<string, (...args: unknown[]) => unknown>,
+  ) as unknown as Section;

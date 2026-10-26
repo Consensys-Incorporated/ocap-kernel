@@ -26,7 +26,7 @@ const findRequestUrlAccessor = (): ((this: Request) => string) | undefined => {
     typeof Request === 'undefined' ? null : Request.prototype;
   while (proto) {
     // Deliberately unbound: applied to whichever `Request` a caller passes.
-    // eslint-disable-next-line @typescript-eslint/unbound-method
+    // oxlint-disable-next-line typescript/unbound-method
     const { get } = Object.getOwnPropertyDescriptor(proto, 'url') ?? {};
     if (get) {
       return get as (this: Request) => string;

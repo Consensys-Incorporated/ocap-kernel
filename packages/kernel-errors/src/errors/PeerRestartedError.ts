@@ -14,8 +14,9 @@ import type { ErrorOptionsWithStack, MarshaledOcapError } from '../types.ts';
  * Sentinel error thrown by `sendRemoteMessage` when the outbound handshake
  * detects the peer has restarted. The peer is reachable but its incarnation
  * changed; the freshly dialed channel is closed without registration to
- * keep stale payloads off the wire. Recipients use this to abort retransmit
- * and reject pending traffic generated against the now-dead session.
+ * keep stale payloads off the wire. Recipients use this to abort retransmit;
+ * the kernel rejects the traffic generated against the now-dead session once
+ * it has recorded the restart.
  */
 export class PeerRestartedError extends BaseError {
   /**

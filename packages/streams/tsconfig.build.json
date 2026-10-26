@@ -1,7 +1,6 @@
 {
   "extends": "../../tsconfig.packages.build.json",
   "compilerOptions": {
-    "baseUrl": "./",
     "lib": ["DOM", "ES2022"],
     "outDir": "./dist",
     "rootDir": "./src",

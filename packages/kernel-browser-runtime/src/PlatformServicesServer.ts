@@ -28,7 +28,7 @@ import { isJsonRpcRequest, isJsonRpcResponse } from '@metamask/utils';
 import type { JsonRpcRequest } from '@metamask/utils';
 
 // Appears in the docs.
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
+// oxlint-disable-next-line typescript/no-unused-vars
 import type { PlatformServicesClient } from './PlatformServicesClient.ts';
 
 export type VatWorker = {
@@ -264,8 +264,11 @@ export class PlatformServicesServer {
     if (!vatWorker) {
       throw new VatNotFoundError(vatId);
     }
-    await vatWorker.terminate();
-    this.#vatWorkers.delete(vatId);
+    try {
+      await vatWorker.terminate();
+    } finally {
+      this.#vatWorkers.delete(vatId);
+    }
     return null;
   }
 

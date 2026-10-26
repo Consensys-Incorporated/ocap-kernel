@@ -7,7 +7,7 @@ import { commands } from './commands.ts';
 
 cli(process.argv, commands).catch((error) => {
   // TODO(#562): Use logger instead.
-  // eslint-disable-next-line no-console
+  // oxlint-disable-next-line no-console
   console.error(error);
   process.exitCode = 1;
 });

@@ -145,7 +145,7 @@ export class BaseDuplexStream<Read, Write = Read> implements Reader<Read> {
       name,
       onDispatch,
       onEnd: async (error) => {
-        // eslint-disable-next-line @typescript-eslint/no-use-before-define
+        // oxlint-disable-next-line typescript/no-use-before-define
         await reader.return();
         await onEnd?.(error);
       },
@@ -355,7 +355,7 @@ export class BaseDuplexStream<Read, Write = Read> implements Reader<Read> {
    */
   async throw(error: Error): Promise<IteratorResult<Read, undefined>> {
     this.#failSynchronization(error);
-    // eslint-disable-next-line promise/no-promise-in-callback
+    // oxlint-disable-next-line promise/no-promise-in-callback
     await Promise.all([this.#writer.throw(error), this.#reader.throw(error)]);
     return makeDoneResult();
   }

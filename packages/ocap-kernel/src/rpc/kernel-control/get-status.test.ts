@@ -6,6 +6,7 @@ import type { Kernel } from '../../Kernel.ts';
 import { KernelQueue } from '../../KernelQueue.ts';
 import type { KernelStore } from '../../store/index.ts';
 import { KernelStatusStruct } from '../../types.ts';
+import type { SubclusterId, VatId } from '../../types.ts';
 
 describe('getStatusHandler', () => {
   let mockKernel: Kernel;
@@ -18,15 +19,24 @@ describe('getStatusHandler', () => {
 
   it('should return vats and subclusters status', async () => {
     const mockVats = [
-      { id: 'v1', config: { sourceSpec: 'test' }, subclusterId: 'sc1' },
+      {
+        id: 'v1' as VatId,
+        config: { sourceSpec: 'test' },
+        subclusterId: 'sc1' as SubclusterId,
+      },
     ];
     const mockSubclusters = [
-      { id: 'sc1', config: { bootstrap: 'test', vats: {} }, vats: [] },
+      {
+        id: 'sc1' as SubclusterId,
+        config: { bootstrap: 'test', vats: {} },
+        vats: {},
+      },
     ];
 
     vi.mocked(mockKernel.getStatus).mockResolvedValueOnce({
       vats: mockVats,
       subclusters: mockSubclusters,
+      runLoop: { state: 'running' },
     });
 
     const result = await getStatusHandler.implementation(
@@ -38,6 +48,7 @@ describe('getStatusHandler', () => {
     expect(result).toStrictEqual({
       vats: mockVats,
       subclusters: mockSubclusters,
+      runLoop: { state: 'running' },
     });
   });
 

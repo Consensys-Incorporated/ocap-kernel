@@ -21,9 +21,6 @@ describe('create-package/commands', () => {
   describe('createPackageHandler', () => {
     it('should create the expected package', async () => {
       (utils.readMonorepoFiles as Mock).mockResolvedValue({
-        tsConfig: {
-          references: [{ path: '../packages/foo' }],
-        },
         tsConfigBuild: {
           references: [{ path: '../packages/foo' }],
         },
@@ -47,9 +44,6 @@ describe('create-package/commands', () => {
           currentYear: '2023',
         },
         {
-          tsConfig: {
-            references: [{ path: '../packages/foo' }],
-          },
           tsConfigBuild: {
             references: [{ path: '../packages/foo' }],
           },

@@ -34,7 +34,7 @@ describe('orphaned ephemeral exo', () => {
     // ephemeral ref, but the exo behind it no longer exists.
     const subcluster = kernel.getSubcluster(subclusterId);
     expect(subcluster).toBeDefined();
-    await kernel.restartVat(subcluster!.vats.provider);
+    await kernel.restartVat(subcluster!.vats.provider!);
     await waitUntilQuiescent();
 
     // The consumer's E(ephemeral).increment() targets an orphaned vref.

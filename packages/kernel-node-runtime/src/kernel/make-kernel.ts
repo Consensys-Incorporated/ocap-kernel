@@ -10,6 +10,7 @@ import type {
 
 import { NodejsPlatformServices } from './PlatformServices.ts';
 import { makeIOListenerFactory } from '../io/index.ts';
+import { assertSupportedPlatform } from '../platform.ts';
 
 /**
  * Result of {@link makeKernel}.
@@ -33,6 +34,7 @@ export type MakeKernelResult = {
  * @param options.onRunLoopFailure - Optional handler called if the kernel's run
  * loop dies, after which the kernel must be restarted.
  * @returns The kernel and its database.
+ * @throws If the kernel does not support the current platform.
  */
 export async function makeKernel({
   workerFilePath,
@@ -53,6 +55,8 @@ export async function makeKernel({
   systemSubclusters?: SystemSubclusterConfig[];
   onRunLoopFailure?: OnRunLoopFailure;
 }): Promise<MakeKernelResult> {
+  assertSupportedPlatform();
+
   const rootLogger = logger ?? new Logger('kernel-worker');
   const platformServicesClient = new NodejsPlatformServices({
     workerFilePath,

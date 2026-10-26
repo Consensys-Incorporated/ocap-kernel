@@ -44,7 +44,7 @@ describe('lms-chat vat', () => {
 
     expect(
       entries.some((entry) =>
-        entry.message.includes('response: My name is Alice.'),
+        entry.message?.includes('response: My name is Alice.'),
       ),
     ).toBe(true);
   });

@@ -18,10 +18,9 @@ vi.mock('nanoid', () => ({
 }));
 
 vi.mock('@metamask/streams/browser', async () => {
-  // eslint-disable-next-line @typescript-eslint/no-shadow
-  const { TestDuplexStream } = await import(
-    '@ocap/repo-tools/test-utils/streams'
-  );
+  // oxlint-disable-next-line typescript/no-shadow
+  const { TestDuplexStream } =
+    await import('@ocap/repo-tools/test-utils/streams');
 
   type MockPostMessageTarget = PostMessageTarget & {
     onmessage: (event: MessageEvent) => void;
@@ -43,7 +42,7 @@ vi.mock('@metamask/streams/browser', async () => {
       MockStream.instances.push(this);
       this.messageTarget = messageTarget;
       this.messageTarget.onmessage = (event) => {
-        // eslint-disable-next-line @typescript-eslint/no-floating-promises
+        // oxlint-disable-next-line typescript/no-floating-promises
         this.receiveInput(event.data);
       };
     }

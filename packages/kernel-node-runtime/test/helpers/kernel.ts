@@ -33,12 +33,7 @@ export async function makeTestKernel(
   kernelDatabase: KernelDatabase,
   options: MakeTestKernelOptions = {},
 ): Promise<Kernel> {
-  const {
-    resetStorage = true,
-    mnemonic,
-    systemSubclusters,
-    ioListenerFactory,
-  } = options;
+  const { resetStorage = true, ...kernelOptions } = options;
 
   const logger = new Logger('test-kernel');
   const platformServices = new NodejsPlatformServices({
@@ -46,9 +41,7 @@ export async function makeTestKernel(
   });
   const kernel = await Kernel.make(platformServices, kernelDatabase, {
     resetStorage,
-    mnemonic,
-    systemSubclusters,
-    ioListenerFactory,
+    ...kernelOptions,
     logger: logger.subLogger({ tags: ['kernel'] }),
   });
 

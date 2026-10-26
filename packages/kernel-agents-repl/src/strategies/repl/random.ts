@@ -7,14 +7,14 @@ const MAX_LENGTH = 8;
  * @param a - The seed to use for the PRNG.
  * @returns A PsuedoRandomNumberGenerator.
  */
-/* eslint-disable */ // CTRL+V implementation from https://stackoverflow.com/a/47593316/1123955
+/* oxlint-disable */ // CTRL+V implementation from https://stackoverflow.com/a/47593316/1123955
 const mulberry32 = (a: number): number => {
   let t = (a += 0x6d2b79f5);
   t = Math.imul(t ^ (t >>> 15), t | 1);
   t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
   return (t ^ (t >>> 14)) >>> 0;
 };
-/* eslint-enable */
+/* oxlint-enable */
 
 /**
  * Make a PsuedoRandomNumberGenerator.

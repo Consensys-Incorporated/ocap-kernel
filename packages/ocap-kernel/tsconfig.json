@@ -1,18 +1,5 @@
 {
   "extends": "../../tsconfig.packages.json",
-  "compilerOptions": {
-    "baseUrl": "./"
-  },
-  "references": [
-    { "path": "../kernel-errors" },
-    { "path": "../logger" },
-    { "path": "../kernel-rpc-methods" },
-    { "path": "../kernel-store" },
-    { "path": "../streams" },
-    { "path": "../kernel-utils" },
-    { "path": "../repo-tools" },
-    { "path": "../kernel-platforms" }
-  ],
   "include": [
     "../../vitest.config.ts",
     "./src",

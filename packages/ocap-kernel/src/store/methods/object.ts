@@ -13,7 +13,7 @@ import { makeKernelSlot } from '../utils/kernel-slots.ts';
  * @returns An object store object that maps various persistent kernel data
  * structures onto `kv`.
  */
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+// oxlint-disable-next-line typescript/explicit-function-return-type
 export function getObjectMethods(ctx: StoreContext) {
   const { getSlotKey, incCounter, refCountKey, getOwnerKey, getRevokedKey } =
     getBaseMethods(ctx.kv);

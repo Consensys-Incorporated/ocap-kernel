@@ -17,7 +17,7 @@ import type { TestPowers } from '../test-powers.ts';
  * @param baggage - Root of vat's persistent state.
  * @returns The root object for the new vat.
  */
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+// oxlint-disable-next-line typescript/explicit-function-return-type
 export function buildRootObject(
   vatPowers: TestPowers,
   parameters: { name?: string },
@@ -32,7 +32,7 @@ export function buildRootObject(
    * @param message - The message to print.
    */
   function log(message: string): void {
-    // eslint-disable-next-line no-console
+    // oxlint-disable-next-line no-console
     console.log(`${vatName}: ${message}`);
   }
 
@@ -277,7 +277,7 @@ export function buildRootObject(
       tlog(`Counter: 8 - 2 = ${result}`);
 
       try {
-        // @ts-expect-error Intentionally passing a string to test validation
+        // Intentionally passing a string to test validation
         counter.increment('foo');
         tlog(`ERROR: Increment with string should have failed`);
       } catch (error) {

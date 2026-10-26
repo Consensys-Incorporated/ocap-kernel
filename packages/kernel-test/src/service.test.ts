@@ -50,7 +50,7 @@ describe('Kernel service object invocation', () => {
     // ko5 ::= test vat root object
     // ko6 ::= internal object generated inside test vat to have its kref extracted
 
-    const testVatRootObject: KRef = 'ko5';
+    const testVatRootObject = 'ko5' as KRef;
     await kernel.queueMessage(testVatRootObject, 'go', []);
     await waitUntilQuiescent(100);
     const testLogs = extractTestLogs(entries);
@@ -83,7 +83,7 @@ describe('Kernel service object invocation', () => {
     // ko4 ::= the (test) service object
     // ko5 ::= test vat root object
     // ko6 ::= internal object generated inside test vat to have its kref extracted
-    const testVatRootObject: KRef = 'ko5';
+    const testVatRootObject = 'ko5' as KRef;
 
     await kernel.queueMessage(testVatRootObject, 'goBadly', []);
     await waitUntilQuiescent(100);

@@ -14,7 +14,7 @@ import type { TestPowers } from '../test-powers.ts';
  * @param parameters.name - The name of the vat.
  * @returns A default Exo instance.
  */
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+// oxlint-disable-next-line typescript/explicit-function-return-type
 export function buildRootObject(
   vatPowers: TestPowers,
   { name = 'anonymous' }: { name?: string } = {},

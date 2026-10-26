@@ -126,7 +126,7 @@ export class CapletController extends Controller<
    * @param terminateSubcluster - Function to terminate a subcluster.
    * @param getVatRoot - Function to get a vat's root object as a presence.
    */
-  // eslint-disable-next-line no-restricted-syntax -- TypeScript doesn't support # for constructors
+  // oxlint-disable-next-line ocap/no-restricted-syntax -- TypeScript doesn't support # for constructors
   private constructor(
     storage: ControllerStorage<CapletControllerState>,
     logger: Logger,

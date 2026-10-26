@@ -24,8 +24,8 @@ export const remoteIncarnationChangeSpec: RemoteIncarnationChangeSpec = {
 } as RemoteIncarnationChangeSpec;
 
 /**
- * Returns true if the kernel detected a peer restart (and reset its
- * RemoteHandle state); the transport uses this to suppress stale outbound
+ * Returns true if the kernel knows the peer restarted, including a restart it
+ * has yet to record; the transport uses this to suppress stale outbound
  * messages on the same connection.
  */
 export type HandleRemoteIncarnationChange = (

@@ -26,7 +26,6 @@ const makeChatResult = (): ChatResult => ({
 
 const makeOkResponse = (init: {
   text?: () => Promise<string>;
-  // eslint-disable-next-line n/no-unsupported-features/node-builtins -- Response.body type in tests
   body?: ReadableStream<Uint8Array> | null;
 }): Response =>
   ({
@@ -45,14 +44,12 @@ const makeMockFetch = (payload: unknown): typeof globalThis.fetch =>
 
 const makeSSEStream = (
   chunks: ChatStreamChunkWire[],
-  // eslint-disable-next-line n/no-unsupported-features/node-builtins
 ): ReadableStream<Uint8Array> => {
   const encoder = new TextEncoder();
   const lines = chunks
     .map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`)
     .join('');
   const body = `${lines}data: [DONE]\n\n`;
-  // eslint-disable-next-line n/no-unsupported-features/node-builtins
   return new ReadableStream({
     start(controller) {
       controller.enqueue(encoder.encode(body));
@@ -164,7 +161,7 @@ describe('OpenV1BaseService', () => {
 
     it('throws on invalid params (empty model)', () => {
       expect(() => {
-        // eslint-disable-next-line no-void
+        // oxlint-disable-next-line no-void
         void service.chat({
           model: '',
           messages: [{ role: 'user', content: 'hi' }],
@@ -174,7 +171,7 @@ describe('OpenV1BaseService', () => {
 
     it('throws on invalid params (invalid role)', () => {
       expect(() => {
-        // eslint-disable-next-line no-void
+        // oxlint-disable-next-line no-void
         void service.chat({
           model: MODEL,
           messages: [{ role: 'unknown' as never, content: 'hi' }],
@@ -303,7 +300,7 @@ describe('OpenV1BaseService', () => {
         streamFetch,
         'http://localhost:11434',
       );
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      // oxlint-disable-next-line typescript/no-unused-vars
       for await (const _ of streamService.chat({
         model: MODEL,
         messages: [{ role: 'user', content: 'hi' }],
@@ -397,7 +394,7 @@ describe('OpenV1BaseService', () => {
       );
 
       await expect(async () => {
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        // oxlint-disable-next-line typescript/no-unused-vars
         for await (const _ of streamService.chat({
           model: MODEL,
           messages: [{ role: 'user', content: 'hi' }],
@@ -426,7 +423,7 @@ describe('OpenV1BaseService', () => {
       );
 
       await expect(async () => {
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        // oxlint-disable-next-line typescript/no-unused-vars
         for await (const _ of streamService.chat({
           model: MODEL,
           messages: [{ role: 'user', content: 'hi' }],
@@ -451,7 +448,7 @@ describe('OpenV1BaseService', () => {
       );
 
       await expect(async () => {
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        // oxlint-disable-next-line typescript/no-unused-vars
         for await (const _ of errService.chat({
           model: MODEL,
           messages: [{ role: 'user', content: 'hi' }],
@@ -464,7 +461,6 @@ describe('OpenV1BaseService', () => {
 
     it('throws a descriptive error when an SSE data line is not valid JSON', async () => {
       const encoder = new TextEncoder();
-      // eslint-disable-next-line n/no-unsupported-features/node-builtins
       const badBody = new ReadableStream({
         start(controller) {
           controller.enqueue(encoder.encode('data: not-json\n\n'));
@@ -480,7 +476,7 @@ describe('OpenV1BaseService', () => {
       );
 
       await expect(async () => {
-        // eslint-disable-next-line @typescript-eslint/no-unused-vars
+        // oxlint-disable-next-line typescript/no-unused-vars
         for await (const _ of badService.chat({
           model: MODEL,
           messages: [{ role: 'user', content: 'hi' }],

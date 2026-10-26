@@ -30,7 +30,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 START_SERVICES_SCRIPT="$SCRIPT_DIR/start-services.sh"
-OCAP_BIN="$REPO_ROOT/packages/kernel-cli/dist/app.mjs"
+OCAP_BIN="$REPO_ROOT/packages/kernel-cli/dist/app.js"
 SERVICES_HOME="${OCAP_SERVICES_HOME:-${HOME}/.ocap-services}"
 
 PASSTHROUGH_ARGS=()

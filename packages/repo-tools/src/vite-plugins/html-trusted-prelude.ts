@@ -1,6 +1,8 @@
 import { load as loadHtml } from 'cheerio';
-import { format as prettierFormat } from 'prettier';
+import { format as oxfmtFormat } from 'oxfmt';
 import type { Plugin as VitePlugin } from 'vite';
+
+import { loadOxfmtConfig } from '../build-utils/oxfmt-config.ts';
 
 /**
  * Vite plugin to insert the endoify script before the first script in the head element.
@@ -41,10 +43,17 @@ export function htmlTrustedPrelude(): VitePlugin {
         htmlDoc(endoifyElement).appendTo('head:first');
       }
 
-      return await prettierFormat(htmlDoc.html(), {
-        parser: 'html',
-        tabWidth: 2,
-      });
+      const { code, errors } = await oxfmtFormat(
+        'index.html',
+        htmlDoc.html(),
+        await loadOxfmtConfig(),
+      );
+      if (errors.length > 0) {
+        throw new Error(
+          `Failed to format HTML document:\n${errors.map((error) => error.codeframe ?? error.message).join('\n')}`,
+        );
+      }
+      return code;
     },
   };
 }

@@ -56,7 +56,7 @@ export async function registerServicesWithMatcher(options: {
   const summary: RegistrationSummary = { registered: [], failed: [] };
 
   if (!matcherUrl) {
-    // eslint-disable-next-line no-console
+    // oxlint-disable-next-line no-console
     console.log(
       '[vat] matcherUrl parameter not set; skipping matcher registration.',
     );
@@ -79,11 +79,11 @@ export async function registerServicesWithMatcher(options: {
         entry.registrationToken,
       );
       summary.registered.push({ name: entry.name });
-      // eslint-disable-next-line no-console
+      // oxlint-disable-next-line no-console
       console.log(`[vat] Registered service "${entry.name}" with matcher.`);
     } catch (cause) {
       summary.failed.push({ name: entry.name, cause });
-      // eslint-disable-next-line no-console
+      // oxlint-disable-next-line no-console
       console.error(`[vat] Failed to register "${entry.name}":`, cause);
     }
   }

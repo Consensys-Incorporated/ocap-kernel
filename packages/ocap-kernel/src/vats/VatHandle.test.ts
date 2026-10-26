@@ -8,6 +8,7 @@ import { TestDuplexStream } from '@ocap/repo-tools/test-utils/streams';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { MockInstance } from 'vitest';
 
+import { asSubclusterId, asVatId } from '../../test/branded.ts';
 import type { KernelQueue } from '../KernelQueue.ts';
 import { makeKernelStore } from '../store/index.ts';
 import type { KernelStore } from '../store/index.ts';
@@ -52,7 +53,7 @@ const makeVat = async ({
     vat: await VatHandle.make({
       kernelQueue: null as unknown as KernelQueue,
       kernelStore: mockKernelStore,
-      vatId: 'v0',
+      vatId: asVatId('v0'),
       vatConfig: { sourceSpec: 'not-really-there.js' },
       vatStream,
       logger,
@@ -88,55 +89,85 @@ describe('VatHandle', () => {
       });
     });
 
-    it('throws if the stream throws', async () => {
-      const logger = {
-        error: vi.fn(),
-        subLogger: vi.fn(() => logger),
-      } as unknown as Logger;
-      const { stream } = await makeVat({ logger });
-      await stream.receiveInput(NaN);
-      await delay(10);
-      expect(logger.error).toHaveBeenCalledWith(
-        'Unexpected read error',
-        expect.objectContaining({
-          message: expect.stringMatching(/Message failed type validation/u),
-        }),
-      );
-    });
-
-    it('throws if handleMessage throws', async () => {
-      const logger = {
-        error: vi.fn(),
-        subLogger: vi.fn(() => logger),
-      } as unknown as Logger;
-      const { stream } = await makeVat({ logger });
-      await stream.receiveInput({
-        id: 'v0:1',
-        method: 'ping',
-        params: [],
-        jsonrpc: '2.0',
-      });
-      await delay(10);
-      expect(logger.error).toHaveBeenCalledWith(
-        'Unexpected read error',
-        expect.objectContaining({
-          message: expect.stringMatching(/^Received unexpected message/u),
-        }),
-      );
-    });
-
-    it('reports a dead channel to its owner', async () => {
+    it.each([
+      ['the stream throws', NaN, /Message failed type validation/u],
+      [
+        'handleMessage throws',
+        { id: 'v0:1', method: 'ping', params: [], jsonrpc: '2.0' },
+        /^Received unexpected message/u,
+      ],
+    ])('reports the failure if %s', async (_case, input, cause) => {
       const onStreamFailure = vi.fn();
       const { stream } = await makeVat({ onStreamFailure });
 
-      await stream.receiveInput(NaN);
+      await stream.receiveInput(input);
       await delay(10);
 
       expect(onStreamFailure).toHaveBeenCalledWith(
         expect.objectContaining({
           message: 'Unexpected stream read error.',
+          cause: expect.objectContaining({
+            message: expect.stringMatching(cause),
+          }),
         }),
       );
+    });
+
+    it('reports a channel that closes with no error', async () => {
+      const onStreamFailure = vi.fn();
+      const { stream } = await makeVat({ onStreamFailure });
+
+      await stream.return();
+      await delay(10);
+
+      expect(onStreamFailure).toHaveBeenCalledOnce();
+      expect(onStreamFailure).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message: 'Unexpected stream read error.',
+          cause: expect.objectContaining({ message: 'vat channel closed' }),
+        }),
+      );
+    });
+
+    it('fails a pending command when the channel closes', async () => {
+      const { vat, stream } = await makeVat({ onStreamFailure: vi.fn() });
+      sendVatCommandMock.mockRestore();
+      const pinging = vat.sendVatCommand({
+        method: 'ping' as const,
+        params: [],
+      });
+
+      await stream.return();
+
+      await expect(pinging).rejects.toThrow('Unexpected stream read error.');
+    });
+
+    it('says nothing when it closes its own channel', async () => {
+      const onStreamFailure = vi.fn();
+      const { vat } = await makeVat({ onStreamFailure });
+
+      await vat.terminate(true);
+      await delay(10);
+
+      expect(onStreamFailure).not.toHaveBeenCalled();
+    });
+
+    it('leaves a pending command waiting once the kernel will close the channel', async () => {
+      const onStreamFailure = vi.fn();
+      const { vat, stream } = await makeVat({ onStreamFailure });
+      sendVatCommandMock.mockRestore();
+      const settled = vi.fn();
+      vat
+        .sendVatCommand({ method: 'ping' as const, params: [] })
+        .then(settled)
+        .catch(settled);
+
+      vat.expectClose();
+      await stream.return();
+      await delay(10);
+
+      expect(settled).not.toHaveBeenCalled();
+      expect(onStreamFailure).not.toHaveBeenCalled();
     });
 
     it('rejects pending commands when the channel dies', async () => {
@@ -222,7 +253,7 @@ describe('VatHandle', () => {
       sendVatCommandMock.mockReset();
       const mockResult: VatDeliveryResult = [[[], []], null];
       sendVatCommandMock.mockResolvedValueOnce(mockResult);
-      const vrefs: VRef[] = ['kp123', 'kp456'];
+      const vrefs: VRef[] = ['kp123' as VRef, 'kp456' as VRef];
       await vat.deliverDropExports(vrefs);
       expect(sendVatCommandMock).toHaveBeenCalledTimes(1);
       expect(sendVatCommandMock).toHaveBeenCalledWith({
@@ -238,7 +269,7 @@ describe('VatHandle', () => {
       sendVatCommandMock.mockReset();
       const mockResult: VatDeliveryResult = [[[], []], null];
       sendVatCommandMock.mockResolvedValueOnce(mockResult);
-      const vrefs: VRef[] = ['kp123', 'kp456'];
+      const vrefs: VRef[] = ['kp123' as VRef, 'kp456' as VRef];
       await vat.deliverRetireExports(vrefs);
       expect(sendVatCommandMock).toHaveBeenCalledTimes(1);
       expect(sendVatCommandMock).toHaveBeenCalledWith({
@@ -254,7 +285,7 @@ describe('VatHandle', () => {
       sendVatCommandMock.mockReset();
       const mockResult: VatDeliveryResult = [[[], []], null];
       sendVatCommandMock.mockResolvedValueOnce(mockResult);
-      const vrefs: VRef[] = ['kp123', 'kp456'];
+      const vrefs: VRef[] = ['kp123' as VRef, 'kp456' as VRef];
       await vat.deliverRetireImports(vrefs);
       expect(sendVatCommandMock).toHaveBeenCalledTimes(1);
       expect(sendVatCommandMock).toHaveBeenCalledWith({
@@ -310,7 +341,11 @@ describe('VatHandle', () => {
       // terminate will remove the vat from the subcluster
       // so we need to add the vat to a subcluster
       mockKernelStore.addSubcluster({ bootstrap: 'test', vats: {} });
-      mockKernelStore.addSubclusterVat('s1', 'test', 'v0');
+      mockKernelStore.addSubclusterVat(
+        asSubclusterId('s1'),
+        'test',
+        asVatId('v0'),
+      );
 
       // Create a pending message that should be rejected on terminate
       const messagePromise = vat.sendVatCommand({
@@ -340,7 +375,7 @@ describe('VatHandle', () => {
       const vat = await VatHandle.make({
         kernelQueue: null as unknown as KernelQueue,
         kernelStore: mockKernelStore,
-        vatId: 'v0',
+        vatId: asVatId('v0'),
         vatConfig: { sourceSpec: 'not-really-there.js' },
         // `end` never settles until released, so a rejection that arrives
         // before then is one that did not wait for the channel to close.
@@ -367,7 +402,7 @@ describe('VatHandle', () => {
     it('leaves pending commands alone across a restart', async () => {
       const { vat } = await makeVat();
       const settled = vi.fn();
-      // eslint-disable-next-line promise/catch-or-return
+      // oxlint-disable-next-line promise/catch-or-return
       vat
         .sendVatCommand({ method: 'ping' as const, params: [] })
         .then(settled, settled);

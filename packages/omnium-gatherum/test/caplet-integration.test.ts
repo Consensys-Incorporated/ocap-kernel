@@ -1,4 +1,9 @@
 import type { Logger } from '@metamask/logger';
+import type {
+  KRef,
+  SubclusterId,
+  SubclusterLaunchResult,
+} from '@metamask/ocap-kernel';
 import type { Json } from '@metamask/utils';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
@@ -34,13 +39,18 @@ describe('Caplet Integration - Echo Caplet', () => {
     const mockLogger = makeMockLogger();
     const mockAdapter = makeMockStorageAdapter(mockStorage);
 
-    const mockLaunchSubcluster = vi.fn(async () => {
-      mockSubclusterCounter += 1;
-      return {
-        subclusterId: `test-subcluster-${mockSubclusterCounter}`,
-        rootKref: `ko${mockSubclusterCounter}`,
-      };
-    });
+    const mockLaunchSubcluster = vi.fn(
+      async (): Promise<SubclusterLaunchResult> => {
+        mockSubclusterCounter += 1;
+        return {
+          subclusterId:
+            `test-subcluster-${mockSubclusterCounter}` as SubclusterId,
+          rootKref: `ko${mockSubclusterCounter}` as KRef,
+          bootstrapResult: undefined,
+          vatRootKrefs: {},
+        };
+      },
+    );
 
     const mockTerminateSubcluster = vi.fn(async () => {
       // No-op for tests
@@ -152,9 +162,11 @@ describe('Caplet Integration - Echo Caplet', () => {
 
     const newDeps: CapletControllerDeps = {
       adapter: makeMockStorageAdapter(mockStorage),
-      launchSubcluster: vi.fn(async () => ({
-        subclusterId: 'test-subcluster',
-        rootKref: 'ko1',
+      launchSubcluster: vi.fn(async (): Promise<SubclusterLaunchResult> => ({
+        subclusterId: 'test-subcluster' as SubclusterId,
+        rootKref: 'ko1' as KRef,
+        bootstrapResult: undefined,
+        vatRootKrefs: {},
       })),
       terminateSubcluster: vi.fn(),
       getVatRoot: vi.fn(async (krefString: string) => ({ kref: krefString })),

@@ -1,10 +1,8 @@
 {
   "extends": "../../tsconfig.packages.build.json",
   "compilerOptions": {
-    "baseUrl": "./",
     "lib": ["ES2022"],
     "outDir": "./dist",
-    "emitDeclarationOnly": false,
     "rootDir": "./src",
     "types": ["ses", "node"],
     "paths": {}

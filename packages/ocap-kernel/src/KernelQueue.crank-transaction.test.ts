@@ -4,7 +4,14 @@ import { describe, it, expect, vi } from 'vitest';
 import { KernelQueue } from './KernelQueue.ts';
 import { kser } from './liveslots/kernel-marshal.ts';
 import { makeKernelStore } from './store/index.ts';
-import type { CrankResult, KernelMessage, RunQueueItem } from './types.ts';
+import type {
+  CrankResult,
+  KernelMessage,
+  RunLoopItem,
+  RunQueueItem,
+  KRef,
+} from './types.ts';
+import { asKRef, asVatId, asVRef } from '../test/branded.ts';
 
 const STOP_RUN_LOOP = 'test: stop run loop';
 
@@ -68,6 +75,114 @@ describe('a crank that dies after recording a vat death', () => {
   });
 });
 
+describe('a crank whose transaction SQLite rolls back mid-delivery', () => {
+  const causes = (error: unknown): string[] =>
+    error instanceof Error ? [error.message, ...causes(error.cause)] : [];
+
+  it.each([
+    { outcome: 'reports success', crankResult: undefined },
+    {
+      outcome: 'aborts',
+      crankResult: {
+        abort: true,
+        terminate: { vatId: 'v1', info: {} as KernelMessage['methargs'] },
+      } as unknown as CrankResult,
+    },
+  ])(
+    'keeps none of the writes it makes afterwards when it $outcome',
+    async ({ crankResult }) => {
+      const kdb = await makeSQLKernelDatabase({ dbFilename: ':memory:' });
+      const kernelStore = makeKernelStore(kdb);
+      const kernelQueue = new KernelQueue(kernelStore, async () => undefined);
+      kernelStore.enqueueRun({
+        type: 'send',
+        target: 'ko1',
+        message: { methargs: { body: '', slots: [] }, result: null },
+      } as unknown as RunQueueItem);
+
+      // As `VatSyscall` does: a failed syscall is logged and the delivery carries on.
+      const syscall = (write: () => void): void => {
+        try {
+          write();
+        } catch {
+          // Swallowed.
+        }
+      };
+      const deliver = async (): Promise<CrankResult | undefined> => {
+        kdb.executeQuery('PRAGMA max_page_count = 1');
+        syscall(() =>
+          kernelStore.setKernelServiceKref('big', 'x'.repeat(100_000) as KRef),
+        );
+        kdb.executeQuery('PRAGMA max_page_count = 1073741823');
+        syscall(() => kernelStore.setKernelServiceKref('after', asKRef('ko2')));
+        syscall(() =>
+          kernelStore.makeVatStore('v1').updateKVData([['after', 'value']], []),
+        );
+        return crankResult;
+      };
+
+      const failure = await kernelQueue.run(deliver).catch((error) => error);
+
+      const { get } = kdb.kernelKVStore;
+      expect({
+        runQueue: Number(get('queue.run.head')) - Number(get('queue.run.tail')),
+        after: get('kernelService.after'),
+        vatstore: kdb.makeVatStore('v1').getKVData(),
+      }).toStrictEqual({ runQueue: 1, after: undefined, vatstore: [] });
+      expect(causes(failure)).toContainEqual(
+        expect.stringContaining(
+          'SQLite already ended the transaction holding savepoint',
+        ),
+      );
+      expect(causes(failure)).toContainEqual(
+        expect.stringContaining('database or disk is full'),
+      );
+      expect(() =>
+        kernelStore.setKernelServiceKref('later', asKRef('ko3')),
+      ).not.toThrow();
+    },
+  );
+
+  it('keeps the write SQLite rolled back on when the crank then fails for another reason', async () => {
+    const kdb = await makeSQLKernelDatabase({ dbFilename: ':memory:' });
+    const kernelStore = makeKernelStore(kdb);
+    const kernelQueue = new KernelQueue(kernelStore, async () => undefined);
+    kernelStore.enqueueRun({
+      type: 'send',
+      target: 'ko1',
+      message: { methargs: { body: '', slots: [] }, result: null },
+    } as unknown as RunQueueItem);
+    const deliver = async (): Promise<CrankResult | undefined> => {
+      kdb.executeQuery('PRAGMA max_page_count = 1');
+      try {
+        kernelStore.setKernelServiceKref('big', 'x'.repeat(100_000) as KRef);
+      } catch {
+        // Swallowed, as `VatSyscall` does.
+      }
+      kdb.executeQuery('PRAGMA max_page_count = 1073741823');
+      // A read that finds the write SQLite undid.
+      throw new Error('no record matching key');
+    };
+
+    const failure = await kernelQueue.run(deliver).catch((error) => error);
+
+    expect(failure).toMatchObject({
+      cause: { message: 'no record matching key' },
+      errors: [
+        { message: 'no record matching key' },
+        {
+          message: 'SQLite already ended the transaction holding savepoint t1',
+          cause: { message: 'database or disk is full' },
+        },
+      ],
+    });
+    expect(kernelQueue.getRunLoopStatus()).toHaveProperty(
+      'detail',
+      expect.stringContaining('database or disk is full'),
+    );
+  });
+});
+
 /**
  * The audit runs while the crank can still be rolled back, which means it runs
  * before the flush moves buffered items onto the run queue.
@@ -78,19 +193,19 @@ describe('the reference count audit inside a crank', () => {
     const kernelStore = makeKernelStore(kdb);
     kernelStore.setRefCountAuditing(true);
     const kernelQueue = new KernelQueue(kernelStore, async () => undefined);
-    kernelStore.setVatConfig('v1', { bundleName: 'vat1' });
-    kernelStore.initEndpoint('v1');
-    const target = kernelStore.exportFromEndpoint('v1', 'o+1');
+    kernelStore.setVatConfig(asVatId('v1'), { bundleName: 'vat1' });
+    kernelStore.initEndpoint(asVatId('v1'));
+    const target = kernelStore.exportFromEndpoint(asVatId('v1'), asVRef('o+1'));
     kernelQueue.enqueueSend(target, {
       methargs: kser(['ping', []]),
       result: null,
     });
 
     let delivered = 0;
-    const deliver = async (item: RunQueueItem): Promise<undefined> => {
+    const deliver = async (item: RunLoopItem): Promise<undefined> => {
       // What `KernelRouter.#deliverSend` does with the queue entry's charge.
       kernelStore.decrementRefCount(
-        (item as { target: string }).target,
+        (item as { target: KRef }).target,
         'deliver|send|target',
       );
       delivered += 1;

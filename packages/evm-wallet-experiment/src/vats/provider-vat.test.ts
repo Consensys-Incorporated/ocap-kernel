@@ -39,20 +39,20 @@ describe('provider-vat', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     baggage = makeMockBaggage();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    // oxlint-disable-next-line typescript/no-explicit-any
     root = buildRootObject({}, undefined, baggage as any);
   });
 
   describe('bootstrap', () => {
     it('completes without error', async () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       expect(await (root as any).bootstrap()).toBeUndefined();
     });
   });
 
   describe('configure', () => {
     it('configures the provider with chain config', async () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       await (root as any).configure({
         chainId: 1,
         rpcUrl: 'https://eth.example.com',
@@ -64,7 +64,7 @@ describe('provider-vat', () => {
 
   describe('configureBundler', () => {
     it('stores bundler config in baggage', async () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       await (root as any).configureBundler({
         bundlerUrl: 'https://bundler.example.com',
         chainId: 1,
@@ -77,20 +77,20 @@ describe('provider-vat', () => {
   describe('request', () => {
     it('throws when provider is not configured', async () => {
       await expect(
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        // oxlint-disable-next-line typescript/no-explicit-any
         (root as any).request('eth_chainId'),
       ).rejects.toThrow('Provider not configured');
     });
 
     it('forwards JSON-RPC calls after configuration', async () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       await (root as any).configure({
         chainId: 1,
         rpcUrl: 'https://eth.example.com',
       });
 
       mockProvider.request.mockResolvedValue('0x1');
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       const result = await (root as any).request('eth_chainId');
       expect(result).toBe('0x1');
     });
@@ -98,7 +98,7 @@ describe('provider-vat', () => {
 
   describe('broadcastTransaction', () => {
     it('sends a raw transaction', async () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       await (root as any).configure({
         chainId: 1,
         rpcUrl: 'https://eth.example.com',
@@ -107,7 +107,7 @@ describe('provider-vat', () => {
       const txHash = '0xabc123' as Hex;
       mockProvider.broadcastTransaction.mockResolvedValue(txHash);
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       const result = await (root as any).broadcastTransaction('0xf86c...');
       expect(result).toBe(txHash);
     });
@@ -115,7 +115,7 @@ describe('provider-vat', () => {
 
   describe('getBalance', () => {
     it('returns balance', async () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       await (root as any).configure({
         chainId: 1,
         rpcUrl: 'https://eth.example.com',
@@ -131,14 +131,14 @@ describe('provider-vat', () => {
 
   describe('getChainId', () => {
     it('returns chain ID', async () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       await (root as any).configure({
         chainId: 1,
         rpcUrl: 'https://eth.example.com',
       });
 
       mockProvider.getChainId.mockResolvedValue(1);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       const chainId = await (root as any).getChainId();
       expect(chainId).toBe(1);
     });
@@ -146,14 +146,14 @@ describe('provider-vat', () => {
 
   describe('getNonce', () => {
     it('returns nonce', async () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       await (root as any).configure({
         chainId: 1,
         rpcUrl: 'https://eth.example.com',
       });
 
       mockProvider.getNonce.mockResolvedValue(42);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       const nonce = await (root as any).getNonce(
         '0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266',
       );
@@ -175,14 +175,14 @@ describe('provider-vat', () => {
     };
 
     it('submits a UserOp via bundler client', async () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       await (root as any).configureBundler({
         bundlerUrl: 'https://bundler.example.com',
         chainId: 1,
       });
       mockBundlerClient.sendUserOperation.mockResolvedValue('0xuserophash');
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       const result = await (root as any).submitUserOp({
         bundlerUrl: 'https://bundler.example.com',
         entryPoint: ENTRY_POINT_V07,
@@ -197,7 +197,7 @@ describe('provider-vat', () => {
     });
 
     it('propagates bundler client errors', async () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       await (root as any).configureBundler({
         bundlerUrl: 'https://bundler.example.com',
         chainId: 1,
@@ -207,7 +207,7 @@ describe('provider-vat', () => {
       );
 
       await expect(
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        // oxlint-disable-next-line typescript/no-explicit-any
         (root as any).submitUserOp({
           bundlerUrl: 'https://bundler.example.com',
           entryPoint: ENTRY_POINT_V07,
@@ -220,7 +220,7 @@ describe('provider-vat', () => {
   describe('getEntryPointNonce', () => {
     it('throws when provider is not configured', async () => {
       await expect(
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        // oxlint-disable-next-line typescript/no-explicit-any
         (root as any).getEntryPointNonce({
           entryPoint: ENTRY_POINT_V07,
           sender: '0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266' as Address,
@@ -229,7 +229,7 @@ describe('provider-vat', () => {
     });
 
     it('calls eth_call with encoded getNonce calldata', async () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       await (root as any).configure({
         chainId: 1,
         rpcUrl: 'https://eth.example.com',
@@ -238,7 +238,7 @@ describe('provider-vat', () => {
       mockProvider.request.mockResolvedValue(
         '0x0000000000000000000000000000000000000000000000000000000000000005',
       );
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       const result = await (root as any).getEntryPointNonce({
         entryPoint: ENTRY_POINT_V07,
         sender: '0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266' as Address,
@@ -257,14 +257,14 @@ describe('provider-vat', () => {
     });
 
     it('encodes custom key parameter', async () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       await (root as any).configure({
         chainId: 1,
         rpcUrl: 'https://eth.example.com',
       });
 
       mockProvider.request.mockResolvedValue('0x0' as Hex);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       await (root as any).getEntryPointNonce({
         entryPoint: ENTRY_POINT_V07,
         sender: '0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266' as Address,
@@ -282,7 +282,7 @@ describe('provider-vat', () => {
 
   describe('getUserOpReceipt', () => {
     it('queries bundler client for UserOp receipt', async () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       await (root as any).configureBundler({
         bundlerUrl: 'https://bundler.example.com',
         chainId: 1,
@@ -290,7 +290,7 @@ describe('provider-vat', () => {
       const receipt = { success: true, receipt: { transactionHash: '0xabc' } };
       mockBundlerClient.getUserOperationReceipt.mockResolvedValue(receipt);
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       const result = await (root as any).getUserOpReceipt({
         bundlerUrl: 'https://bundler.example.com',
         userOpHash: '0xdeadbeef' as Hex,
@@ -303,14 +303,14 @@ describe('provider-vat', () => {
     });
 
     it('returns null when receipt is not found', async () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       await (root as any).configureBundler({
         bundlerUrl: 'https://bundler.example.com',
         chainId: 1,
       });
       mockBundlerClient.getUserOperationReceipt.mockResolvedValue(null);
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       const result = await (root as any).getUserOpReceipt({
         bundlerUrl: 'https://bundler.example.com',
         userOpHash: '0xdeadbeef' as Hex,
@@ -334,7 +334,7 @@ describe('provider-vat', () => {
     };
 
     it('estimates gas via bundler client', async () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       await (root as any).configureBundler({
         bundlerUrl: 'https://bundler.example.com',
         chainId: 1,
@@ -345,7 +345,7 @@ describe('provider-vat', () => {
         preVerificationGas: 0x10000n,
       });
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       const result = await (root as any).estimateUserOpGas({
         bundlerUrl: 'https://bundler.example.com',
         entryPoint: ENTRY_POINT_V07,
@@ -364,7 +364,7 @@ describe('provider-vat', () => {
     });
 
     it('propagates bundler client errors', async () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       await (root as any).configureBundler({
         bundlerUrl: 'https://bundler.example.com',
         chainId: 1,
@@ -374,7 +374,7 @@ describe('provider-vat', () => {
       );
 
       await expect(
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        // oxlint-disable-next-line typescript/no-explicit-any
         (root as any).estimateUserOpGas({
           bundlerUrl: 'https://bundler.example.com',
           entryPoint: ENTRY_POINT_V07,
@@ -398,7 +398,7 @@ describe('provider-vat', () => {
     };
 
     it('sponsors a UserOp via bundler client', async () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       await (root as any).configureBundler({
         bundlerUrl: 'https://bundler.example.com',
         chainId: 1,
@@ -414,7 +414,7 @@ describe('provider-vat', () => {
       };
       mockBundlerClient.sponsorUserOperation.mockResolvedValue(sponsorResult);
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       const result = await (root as any).sponsorUserOp({
         bundlerUrl: 'https://bundler.example.com',
         entryPoint: ENTRY_POINT_V07,
@@ -433,13 +433,13 @@ describe('provider-vat', () => {
   describe('getGasFees', () => {
     it('throws when provider is not configured', async () => {
       await expect(
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        // oxlint-disable-next-line typescript/no-explicit-any
         (root as any).getGasFees(),
       ).rejects.toThrow('Provider not configured');
     });
 
     it('returns computed gas fees from block and priority fee', async () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       await (root as any).configure({
         chainId: 1,
         rpcUrl: 'https://eth.example.com',
@@ -450,7 +450,7 @@ describe('provider-vat', () => {
         .mockResolvedValueOnce({ baseFeePerGas: '0x3b9aca00' }) // eth_getBlockByNumber
         .mockResolvedValueOnce('0x3b9aca00'); // eth_maxPriorityFeePerGas
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       const fees = await (root as any).getGasFees();
 
       // maxFeePerGas = 2 * 1gwei + 1gwei = 3gwei = 0xb2d05e00
@@ -461,7 +461,7 @@ describe('provider-vat', () => {
     });
 
     it('falls back to 1 gwei priority fee when eth_maxPriorityFeePerGas fails', async () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       await (root as any).configure({
         chainId: 1,
         rpcUrl: 'https://eth.example.com',
@@ -471,7 +471,7 @@ describe('provider-vat', () => {
         .mockResolvedValueOnce({ baseFeePerGas: '0x3b9aca00' }) // eth_getBlockByNumber
         .mockRejectedValueOnce(new Error('Method not found (-32601)')); // eth_maxPriorityFeePerGas
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       const fees = await (root as any).getGasFees();
 
       // Should fall back to 1 gwei for priority fee
@@ -479,7 +479,7 @@ describe('provider-vat', () => {
     });
 
     it('throws when block response is missing baseFeePerGas', async () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       await (root as any).configure({
         chainId: 1,
         rpcUrl: 'https://eth.example.com',
@@ -490,7 +490,7 @@ describe('provider-vat', () => {
         .mockResolvedValueOnce('0x3b9aca00');
 
       await expect(
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        // oxlint-disable-next-line typescript/no-explicit-any
         (root as any).getGasFees(),
       ).rejects.toThrow(
         'Invalid block response: missing or malformed baseFeePerGas',
@@ -498,7 +498,7 @@ describe('provider-vat', () => {
     });
 
     it('throws when block response is null', async () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       await (root as any).configure({
         chainId: 1,
         rpcUrl: 'https://eth.example.com',
@@ -509,7 +509,7 @@ describe('provider-vat', () => {
         .mockResolvedValueOnce('0x3b9aca00');
 
       await expect(
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        // oxlint-disable-next-line typescript/no-explicit-any
         (root as any).getGasFees(),
       ).rejects.toThrow(
         'Invalid block response: missing or malformed baseFeePerGas',
@@ -522,7 +522,7 @@ describe('provider-vat', () => {
       const mockResponse = { foo: 'bar' };
       mockHttpGetJson.mockResolvedValueOnce(mockResponse);
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       const result = await (root as any).httpGetJson(
         'https://api.example.com/data',
       );
@@ -537,7 +537,7 @@ describe('provider-vat', () => {
       mockHttpGetJson.mockRejectedValueOnce(new Error('Network error'));
 
       await expect(
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        // oxlint-disable-next-line typescript/no-explicit-any
         (root as any).httpGetJson('https://api.example.com/data'),
       ).rejects.toThrow('Network error');
     });

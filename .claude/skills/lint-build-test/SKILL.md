@@ -19,7 +19,7 @@ Categorize the changes:
 Based on the changed files:
 
 - **No files changed**: Nothing to do.
-- **Only meta files changed**: Run only `yarn lint:misc --write` (or `yarn workspace <package-name> lint:misc --write` for a specific package).
+- **Only meta files changed**: Run only `yarn oxfmt` (or `yarn workspace <package-name> oxfmt .` for a specific package).
 - **Source files changed**: Run the full check (see below).
 
 ## 3. Run the full check (if needed)

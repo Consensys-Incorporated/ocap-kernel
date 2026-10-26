@@ -80,7 +80,7 @@ export async function createPackageHandler(
   args: Arguments<CreatePackageOptions>,
 ): Promise<void> {
   // TODO(#562): Use logger instead or change lint rule.
-  // eslint-disable-next-line no-console
+  // oxlint-disable-next-line no-console
   console.log(`Attempting to create package "${args.name}"...`);
 
   const monorepoFileData = await readMonorepoFiles();
@@ -93,11 +93,11 @@ export async function createPackageHandler(
 
   await finalizeAndWriteData(packageData, monorepoFileData);
   // TODO(#562): Use logger instead or change lint rule.
-  /* eslint-disable no-console */
+  /* oxlint-disable no-console */
   console.log(`Created package "${packageData.name}"!`);
   console.log();
   console.log(
     '\x1b[33mNote:\x1b[0m \x1b[1mRemember to add coverage thresholds to the root vitest.config.ts file!\x1b[0m',
   );
-  /* eslint-enable no-console */
+  /* oxlint-enable no-console */
 }

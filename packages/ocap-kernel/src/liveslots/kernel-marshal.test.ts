@@ -15,17 +15,18 @@ import {
   makeFatalKernelError,
 } from './kernel-marshal.ts';
 import type { SlotValue } from './kernel-marshal.ts';
+import { asKRef } from '../../test/branded.ts';
 
 describe('kernel-marshal', () => {
   describe('kslot', () => {
     it('creates promise standin for promise refs', () => {
-      const standin = kslot('kp1');
+      const standin = kslot(asKRef('kp1'));
       expect(passStyleOf(standin)).toBe('promise');
       expect(krefOf(standin)).toBe('kp1');
     });
 
     it('creates remotable standin for object refs', () => {
-      const ref = 'ko1';
+      const ref = asKRef('ko1');
       const iface = 'TestInterface';
       const standin = kslot(ref, iface);
 
@@ -35,7 +36,7 @@ describe('kernel-marshal', () => {
     });
 
     it('strips Alleged: prefix from interface', () => {
-      const ref = 'ko1';
+      const ref = asKRef('ko1');
       const iface = 'Alleged: TestInterface';
       const standin = kslot(ref, iface);
 
@@ -47,13 +48,13 @@ describe('kernel-marshal', () => {
 
   describe('krefOf', () => {
     it('extracts kref from promise standin', () => {
-      const ref = 'kp1';
+      const ref = asKRef('kp1');
       const standin = kslot(ref);
       expect(krefOf(standin)).toBe(ref);
     });
 
     it('extracts kref from remotable standin', () => {
-      const ref = 'ko1';
+      const ref = asKRef('ko1');
       const standin = kslot(ref);
       expect(krefOf(standin)).toBe(ref);
     });
@@ -88,8 +89,8 @@ describe('kernel-marshal', () => {
     });
 
     it('serializes and deserializes objects with krefs', () => {
-      const ko1 = kslot('ko1', 'TestInterface');
-      const kp1 = kslot('kp1');
+      const ko1 = kslot(asKRef('ko1'), 'TestInterface');
+      const kp1 = kslot(asKRef('kp1'));
 
       const value = {
         obj: ko1,
@@ -115,8 +116,8 @@ describe('kernel-marshal', () => {
     });
 
     it('preserves pass-style of serialized values', () => {
-      const ko1 = kslot('ko1', 'TestInterface');
-      const kp1 = kslot('kp1');
+      const ko1 = kslot(asKRef('ko1'), 'TestInterface');
+      const kp1 = kslot(asKRef('kp1'));
 
       const serialized = kser({ obj: ko1, promise: kp1 });
       const deserialized = kunser(serialized) as {

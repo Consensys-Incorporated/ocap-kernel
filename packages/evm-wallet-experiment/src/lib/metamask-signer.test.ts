@@ -1,4 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
+import type { Mock } from 'vitest';
 
 import {
   makeProviderSigner,
@@ -27,9 +28,9 @@ const ALICE = '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266';
 const ALICE_LOWER = '0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266' as Address;
 
 const makeTestProvider = (): EthereumProvider & {
-  request: ReturnType<typeof vi.fn>;
+  request: Mock<EthereumProvider['request']>;
 } => ({
-  request: vi.fn(),
+  request: vi.fn<EthereumProvider['request']>(),
 });
 
 describe('lib/metamask-signer', () => {
@@ -79,7 +80,7 @@ describe('lib/metamask-signer', () => {
         const signature = await signer.signTypedData(typedData, ALICE_LOWER);
 
         expect(signature).toBe(expectedSig);
-        const callArgs = provider.request.mock.calls[0][0] as {
+        const callArgs = provider.request.mock.calls[0]?.[0] as unknown as {
           params: [string, string];
         };
         const sentJson = JSON.parse(callArgs.params[1]);

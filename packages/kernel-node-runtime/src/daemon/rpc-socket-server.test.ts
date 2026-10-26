@@ -128,7 +128,7 @@ describe('startRpcSocketServer', () => {
   it('creates the socket readable and writable only by its owner', async () => {
     const socketPath = await startServer();
 
-    // eslint-disable-next-line no-bitwise
+    // oxlint-disable-next-line no-bitwise
     expect((await stat(socketPath)).mode & 0o777).toBe(0o600);
   });
 

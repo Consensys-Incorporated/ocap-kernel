@@ -7,7 +7,7 @@ import { AbortError } from '@metamask/kernel-errors';
  * @param record - The record to filter.
  * @returns The new object with the undefined values removed.
  */
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+// oxlint-disable-next-line typescript/explicit-function-return-type
 export const ifDefined = (record: Record<string, unknown>) =>
   Object.fromEntries(
     Object.entries(record).filter(([_, value]) => value !== undefined),

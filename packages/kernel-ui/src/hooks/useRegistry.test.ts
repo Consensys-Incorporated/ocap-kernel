@@ -1,3 +1,4 @@
+import type { KRef } from '@metamask/ocap-kernel';
 import { waitFor, renderHook } from '@testing-library/react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -57,6 +58,7 @@ describe('useRegistry', () => {
         reapQueue: '',
         terminatedVats: '',
         vats: {},
+        ocapUrls: [],
       };
 
       mockCallKernelMethod.mockResolvedValueOnce(mockKvData);
@@ -109,7 +111,7 @@ describe('useRegistry', () => {
     it('sends revoke command with correct parameters', async () => {
       const { result } = renderHook(() => useRegistry());
       mockCallKernelMethod.mockResolvedValueOnce({ success: true });
-      result.current.revoke('test');
+      result.current.revoke('test' as KRef);
       await waitFor(() => {
         expect(mockCallKernelMethod).toHaveBeenCalledWith({
           method: 'revoke',
@@ -123,7 +125,7 @@ describe('useRegistry', () => {
       const error = new Error('Revoke failed');
       mockCallKernelMethod.mockRejectedValueOnce(error);
 
-      result.current.revoke('test-kref');
+      result.current.revoke('test-kref' as KRef);
 
       await waitFor(() => {
         expect(mockLogMessage).toHaveBeenCalledWith(

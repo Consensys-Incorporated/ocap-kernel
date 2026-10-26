@@ -17,7 +17,7 @@ import { getBaseMethods } from './base.ts';
  * @returns A subcluster store object that maps various persistent kernel data
  * structures.
  */
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+// oxlint-disable-next-line typescript/explicit-function-return-type
 export function getSubclusterMethods(ctx: StoreContext) {
   const { kv } = ctx;
   const { incCounter } = getBaseMethods(kv);

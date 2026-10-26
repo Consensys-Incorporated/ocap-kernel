@@ -13,6 +13,6 @@ import { join } from 'node:path';
  * @returns The absolute path to the libp2p relay state directory.
  */
 export function getLibp2pRelayHome(): string {
-  // eslint-disable-next-line n/no-process-env
+  // oxlint-disable-next-line node/no-process-env
   return process.env.LIBP2P_RELAY_HOME ?? join(homedir(), '.libp2p-relay');
 }

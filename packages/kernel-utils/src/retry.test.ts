@@ -508,7 +508,7 @@ describe('retry', () => {
 
   it('passes non-Error throw values through', async () => {
     const op = vi.fn(async () => {
-      // eslint-disable-next-line @typescript-eslint/only-throw-error
+      // oxlint-disable-next-line typescript/only-throw-error
       throw 'string error';
     });
 
