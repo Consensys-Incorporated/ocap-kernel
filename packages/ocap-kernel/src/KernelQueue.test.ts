@@ -1117,42 +1117,18 @@ describe('KernelQueue', () => {
       await expect(result).rejects.toBe(fault);
     });
 
-    it.each([false, true])(
-      'rejects a held write when held requests are discarded, outlivesStop: %s',
-      async (outlivesStop) => {
-        const write = vi.fn();
-        const discarded = new Error('discarded');
-        let result: Promise<unknown> | undefined;
-        await runACrankWhile(() => {
-          result = kernelQueue.writeOutsideCrank(write, { outlivesStop });
-          kernelQueue.discardHeldRequests(discarded);
-        });
+    it('rejects a held write when held requests are discarded', async () => {
+      const write = vi.fn();
+      const discarded = new Error('discarded');
+      let result: Promise<unknown> | undefined;
+      await runACrankWhile(() => {
+        result = kernelQueue.writeOutsideCrank(write);
+        kernelQueue.discardHeldRequests(discarded);
+      });
 
-        await expect(result).rejects.toBe(discarded);
-        expect(write).not.toHaveBeenCalled();
-      },
-    );
-
-    it.each([
-      { options: { outlivesStop: true }, settled: 'written' },
-      { options: { outlivesStop: false }, settled: 'stopped' },
-      { options: undefined, settled: 'stopped' },
-    ])(
-      'makes a write held through a stop only if it outlives one, given $options',
-      async ({ options, settled }) => {
-        let result: Promise<unknown> | undefined;
-        await runACrankWhile(() => {
-          result = kernelQueue.writeOutsideCrank(() => 'written', options);
-          kernelQueue.discardHeldRequests(new Error('stopped'), {
-            stopping: true,
-          });
-        });
-
-        expect(await result?.catch((error: Error) => error.message)).toBe(
-          settled,
-        );
-      },
-    );
+      await expect(result).rejects.toBe(discarded);
+      expect(write).not.toHaveBeenCalled();
+    });
   });
 
   describe('enqueueSend', () => {

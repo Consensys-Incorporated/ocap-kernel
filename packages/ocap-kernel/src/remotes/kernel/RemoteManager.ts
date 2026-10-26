@@ -551,16 +551,11 @@ export class RemoteManager {
     this.#kernelQueue.assertRunLoopAlive('set up a remote');
     // Boxed, since `writeOutsideCrank` refuses a promise; one `use` returns is
     // the caller's to await.
-    const { used } = await this.#kernelQueue.writeOutsideCrank(
-      () => ({
-        // `#provideRemote`, not `establishRemote`: a setup held for an
-        // earlier caller may run first.
-        used: use(this.#provideRemote(peerId, hints)),
-      }),
-      // The run loop goes on while the kernel stops, and dropping the setup
-      // would lose the peer's message waiting on it once a later one commits.
-      { outlivesStop: true },
-    );
+    const { used } = await this.#kernelQueue.writeOutsideCrank(() => ({
+      // `#provideRemote`, not `establishRemote`: a setup held for an
+      // earlier caller may run first.
+      used: use(this.#provideRemote(peerId, hints)),
+    }));
     return used;
   }
 

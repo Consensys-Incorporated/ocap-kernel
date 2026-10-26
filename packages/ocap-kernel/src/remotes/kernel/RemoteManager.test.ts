@@ -518,7 +518,6 @@ describe('RemoteManager', () => {
       expect(await second).toBe(remote);
       expect(mockKernelQueue.writeOutsideCrank).toHaveBeenCalledWith(
         expect.any(Function),
-        { outlivesStop: true },
       );
       expect(mockRemoteComms.registerLocationHints).toHaveBeenCalledWith(
         'new-peer',

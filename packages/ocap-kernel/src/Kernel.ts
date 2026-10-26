@@ -993,7 +993,6 @@ export class Kernel {
         this.#kernelQueue.discardQueuedWork(
           'the kernel was stopped before this message result was delivered',
         );
-        // All of them, since this loop never runs again to write them.
         this.#kernelQueue.discardHeldRequests(
           new Error('Kernel was stopped before taking this request'),
         );

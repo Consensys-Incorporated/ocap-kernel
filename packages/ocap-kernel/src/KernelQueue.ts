@@ -52,7 +52,6 @@ type HeldWrite = {
   type: 'write';
   write: () => void;
   reject: (error: Error) => void;
-  outlivesStop: boolean;
 };
 
 type HeldRequest =
@@ -826,16 +825,12 @@ export class KernelQueue {
    * the run loop does not wait for a promise, so what it writes after an
    * `await` lands in whichever crank is open by then. The type refuses a
    * promise returned bare, not one inside an object.
-   * @param options - Options bag.
-   * @param options.outlivesStop - Whether a write held when the kernel stops
-   * is still made.
    * @returns A promise for what `write` returns or throws. It rejects if the
    * run loop dies first, or if a stop, reset or `clearStorage` discards the
    * write.
    */
   async writeOutsideCrank<Result>(
     write: () => NotThenable<Result>,
-    { outlivesStop = false }: { outlivesStop?: boolean } = {},
   ): Promise<Result> {
     this.assertRunLoopAlive('write outside a crank');
     const { promise, resolve, reject } = makePromiseKit<Result>();
@@ -849,7 +844,6 @@ export class KernelQueue {
         }
       },
       reject,
-      outlivesStop,
     });
     return promise;
   }
@@ -1087,22 +1081,11 @@ export class KernelQueue {
    * wipe of it. A restart or termination's caller is told by `VatManager`.
    *
    * @param error - What to tell the caller of a forgotten message or write.
-   * @param options - Options bag.
-   * @param options.stopping - Whether the kernel is only stopping, which
-   * keeps the writes made to outlive a stop.
    */
-  discardHeldRequests(
-    error: Error,
-    { stopping = false }: { stopping?: boolean } = {},
-  ): void {
-    const isKept = (item: HeldRequest): boolean =>
-      stopping && item.type === 'write' && item.outlivesStop;
+  discardHeldRequests(error: Error): void {
     const held = this.#heldRequests;
-    this.#heldRequests = held.filter(isKept);
+    this.#heldRequests = [];
     for (const item of held) {
-      if (isKept(item)) {
-        continue;
-      }
       if (item.type === 'queueMessage') {
         item.subscription.reject(error);
       } else if (item.type === 'write') {
