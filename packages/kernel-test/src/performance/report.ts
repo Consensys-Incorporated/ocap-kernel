@@ -155,8 +155,6 @@ function renderLineChart(options: ChartOptions): string {
     return element;
   };
 
-  // The title and a legend row, in text colors, with each swatch beside its
-  // name.
   const legend = add(svg, 'g', { 'font-size': 12, 'text-anchor': 'start' });
   add(
     legend,

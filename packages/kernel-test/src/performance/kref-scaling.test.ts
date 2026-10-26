@@ -128,7 +128,6 @@ describe('message delivery against kref count', () => {
         const growMsPerKref =
           (performance.now() - growStart) / (sum(held) - before);
 
-        // Sample `n` goes to pair `n % pairs`, so that every pair is measured.
         const kernelToVat = await timeSends(
           async (sample) => send(sample, 'ping'),
           SAMPLES,

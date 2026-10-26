@@ -14,13 +14,10 @@ import {
 } from './utils.ts';
 import type { Stats } from './utils.ts';
 
-// Live krefs in the kernel while it is under load.
 const KREFS = envNumber('LOAD_PERF_KREFS', 100_000);
 // How many holder/minter pairs to spread the krefs and the load over, one
 // kernel each.
 const PAIR_COUNTS = envNumbers('LOAD_PERF_PAIRS', [1, 8, 64]);
-// How many clients send at once. Each sends its next message as soon as its
-// last is answered.
 const CONCURRENCIES = envNumbers('LOAD_PERF_CONCURRENCY', [1, 4, 16, 64, 256]);
 const MESSAGES = envNumber('LOAD_PERF_MESSAGES', 1000);
 const WARMUP_MESSAGES = 20;
@@ -87,9 +84,8 @@ describe('message delivery under concurrent load', () => {
       const perPair = Math.ceil(KREFS / pairs);
       await grow(perPair);
 
-      // Message `n` goes to pair `n % pairs`, so that the load is spread
-      // evenly. A vat→vat message pings a token scattered across the pair's
-      // holdings, by the golden ratio, so that consecutive messages do not hit
+      // A vat→vat message pings a token scattered across the pair's holdings,
+      // by the golden ratio, so that consecutive messages do not hit
       // neighbouring c-list entries.
       const routes: Record<Route, (message: number) => Promise<void>> = {
         'kernel→vat': async (message) => {
@@ -136,12 +132,8 @@ describe('message delivery under concurrent load', () => {
             messages: MESSAGES,
             messagesPerSecond: (MESSAGES / elapsedMs) * 1000,
             latencyMs: summarize(latencies),
-            // Vat workers are threads of this process, so this covers them
-            // too.
             rssBytes: process.memoryUsage.rss(),
           });
-          // Rewritten after every cell, so that a failure in the next does
-          // not lose the cells already measured.
           await writeReport(stem, report);
         }
       }

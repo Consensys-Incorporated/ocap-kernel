@@ -20,8 +20,7 @@ const PAIRS = envNumber('GC_PERF_PAIRS', 4);
 const ROUNDS = envNumber('GC_PERF_ROUNDS', 10);
 const MESSAGES = envNumber('GC_PERF_MESSAGES', 1000);
 const CONCURRENCY = envNumber('GC_PERF_CONCURRENCY', 16);
-// Tokens each `churn` message mints and drops.
-const CHURN = 10;
+const CHURN_TOKENS = 10;
 // A reap cascades: a holder's drop lets its minter collect, which only the
 // minter's next reap reports, and so on.
 const REAPS_PER_COLLECTION = 4;
@@ -189,7 +188,6 @@ describe('garbage collection under load', () => {
       const perPair = Math.ceil(KREFS / PAIRS);
       await grow(perPair);
 
-      // Message `n` goes to pair `n % PAIRS`.
       const workloads: Record<Workload, (message: number) => Promise<void>> = {
         ping: async (message) => {
           expect(await send(message, 'ping')).toBe('pong');
@@ -202,9 +200,8 @@ describe('garbage collection under load', () => {
           ).toBe('pong');
         },
         churn: async (message) => {
-          expect(await send(message, 'churn', [CHURN])).toBe('pong');
+          expect(await send(message, 'churn', [CHURN_TOKENS])).toBe('pong');
         },
-        // The token comes back to the kernel and is dropped here.
         fetch: async (message) => {
           expect(await send(message, 'fetch')).toBeDefined();
         },
@@ -255,11 +252,8 @@ describe('garbage collection under load', () => {
           messages: round * MESSAGES,
           natural,
           collected,
-          // Vat workers are threads of this process, so this covers them too.
           rssBytes: process.memoryUsage.rss(),
         });
-        // Rewritten after every round, so that a failure in the next does not
-        // lose the rounds already measured.
         await writeReport(stem, report);
       }
 
