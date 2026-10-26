@@ -11,8 +11,15 @@ Run tests on the kernel that involve interaction with vats
 yarn workspace @ocap/kernel-test test:performance
 ```
 
-Each profile prints a table and writes it, with the platform it ran on, to
-`logs/performance/`. `kref-scaling.test.ts` times message delivery at 1e1 to
+The full suite takes about 15 minutes and 10 GB of memory. Each profile
+prints a table and writes its results, with the platform it ran on, as JSON to
+a directory for the run under `logs/performance/runs/`. When the run ends,
+those are charted as SVG and collected with tables into the run's `REPORT.md`,
+even if a profile failed. `yarn workspace @ocap/kernel-test perf:report [run
+directory]` renders a run again, by default the latest. The report for the
+results described here is in [`docs/performance/`](./docs/performance/REPORT.md).
+
+`kref-scaling.test.ts` times message delivery at 1e1 to
 1e6 live krefs, spread over 1, 4, 16 and 64 holder/minter vat pairs.
 `KREF_PERF_MAX_EXPONENT` sets the ceiling, `KREF_PERF_PAIRS` the pair counts
 (comma-separated), and `KREF_PERF_SAMPLES` the number of sends timed at each

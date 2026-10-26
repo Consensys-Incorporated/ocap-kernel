@@ -17,6 +17,8 @@ export default defineConfig((args) => {
           ),
         ],
         include: ['./src/performance/**/*.test.ts'],
+        // Charts the run's reports when it is over.
+        globalSetup: ['./src/performance/global-setup.ts'],
         // One profile at a time, so they do not compete for the CPU.
         fileParallelism: false,
       },

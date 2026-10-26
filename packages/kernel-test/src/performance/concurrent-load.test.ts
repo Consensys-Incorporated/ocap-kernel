@@ -112,7 +112,7 @@ describe('message delivery under concurrent load', () => {
         messages: MESSAGES,
         results,
       };
-      const stem = `concurrent-load-${pairs * 2}-vats-${report.date.replaceAll(':', '-')}`;
+      const stem = `concurrent-load-${pairs * 2}-vats`;
 
       for (const [route, routeSend] of Object.entries(routes) as [
         Route,
@@ -142,7 +142,7 @@ describe('message delivery under concurrent load', () => {
           });
           // Rewritten after every cell, so that a failure in the next does
           // not lose the cells already measured.
-          await writeReport(stem, report, renderResults(results));
+          await writeReport(stem, report);
         }
       }
 

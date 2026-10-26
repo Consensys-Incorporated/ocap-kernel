@@ -4,17 +4,16 @@ import { makeSQLKernelDatabase } from '@metamask/kernel-store/sqlite/nodejs';
 import { Logger } from '@metamask/logger';
 import { kunser } from '@metamask/ocap-kernel';
 import type { ClusterConfig, Kernel, KRef } from '@metamask/ocap-kernel';
-import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { inject } from 'vitest';
 
 import { makeTrackedKernel } from '../utils.ts';
 
 // Large enough to reach 1e6 in 100 messages, small enough that no one message
 // carries an unrealistic number of slots.
 const MINT_BATCH = 10_000;
-
-const OUTPUT_DIR = new URL('../../logs/performance/', import.meta.url);
 
 export type Stats = {
   min: number;
@@ -250,23 +249,20 @@ export function toMarkdown(headers: string[], rows: string[][]): string {
 }
 
 /**
- * Write a profile's report to `logs/performance/`, as JSON and as Markdown.
+ * Write a profile's report as JSON to the run's directory, where
+ * `global-setup.ts` charts it once the run is over.
  *
  * @param stem - The file name, less its extension.
  * @param report - The report.
- * @param markdown - The report's table.
  */
 export async function writeReport(
   stem: string,
   report: unknown,
-  markdown: string,
 ): Promise<void> {
-  await mkdir(OUTPUT_DIR, { recursive: true });
   await writeFile(
-    new URL(`${stem}.json`, OUTPUT_DIR),
+    path.join(inject('performanceRunDir'), `${stem}.json`),
     `${JSON.stringify(report, null, 2)}\n`,
   );
-  await writeFile(new URL(`${stem}.md`, OUTPUT_DIR), `${markdown}\n`);
 }
 
 /**

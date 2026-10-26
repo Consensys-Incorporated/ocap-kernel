@@ -229,7 +229,7 @@ describe('garbage collection under load', () => {
         collectionCost,
         results,
       };
-      const stem = `gc-under-load-${workload}-${report.date.replaceAll(':', '-')}`;
+      const stem = `gc-under-load-${workload}`;
 
       for (let round = 1; round <= ROUNDS; round += 1) {
         await runClosedLoop({
@@ -260,7 +260,7 @@ describe('garbage collection under load', () => {
         });
         // Rewritten after every round, so that a failure in the next does not
         // lose the rounds already measured.
-        await writeReport(stem, report, renderResults(results));
+        await writeReport(stem, report);
       }
 
       console.log(`[performance] ${stem}\n\n${renderResults(results)}\n`);

@@ -116,7 +116,7 @@ describe('message delivery against kref count', () => {
         samples: SAMPLES,
         results,
       };
-      const stem = `kref-scaling-${pairs * 2}-vats-${report.date.replaceAll(':', '-')}`;
+      const stem = `kref-scaling-${pairs * 2}-vats`;
 
       for (let exponent = 1; exponent <= MAX_EXPONENT; exponent += 1) {
         const target = 10 ** exponent;
@@ -160,7 +160,7 @@ describe('message delivery against kref count', () => {
         });
         // Rewritten after every count, so that a vat running out of memory
         // at the next one does not lose the counts already measured.
-        await writeReport(stem, report, renderResults(results));
+        await writeReport(stem, report);
       }
 
       console.log(`[performance] ${stem}\n\n${renderResults(results)}\n`);
