@@ -41,6 +41,16 @@ describe('makeKernel', () => {
     });
   });
 
+  it('registers the kernel services it is given', async () => {
+    const { kernelDatabase } = await makeKernel({
+      kernelServices: [{ name: 'languageModelService', service: {} }],
+    });
+
+    expect(
+      kernelDatabase.kernelKVStore.get('kernelService.languageModelService'),
+    ).toBeDefined();
+  });
+
   it('checks the platform before opening the database', async () => {
     vi.mocked(assertSupportedPlatform).mockImplementationOnce(() => {
       throw new Error('unsupported');

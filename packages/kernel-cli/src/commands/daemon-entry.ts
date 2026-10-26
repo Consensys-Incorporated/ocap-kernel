@@ -134,12 +134,23 @@ async function main(): Promise<void> {
     exit: (code) => process.exit(code),
   });
 
+  // Built before the kernel so it is registered before the run loop starts:
+  // registered later, its store writes would land in whatever crank is open.
+  const llmConfig = await readLlmConfig(ocapDir);
+  const llmService = llmConfig && (await makeLlmKernelService(llmConfig));
+
   const { kernel, kernelDatabase } = await makeKernel({
     resetStorage: false,
     dbFilename,
     logger,
     onRunLoopFailure: runLoop.onRunLoopFailure,
+    ...(llmService && { kernelServices: [llmService] }),
   });
+  if (llmConfig && llmService) {
+    logger.info(
+      `Registered kernel service "${llmService.name}" (${llmConfig.provider} at ${llmConfig.baseUrl})`,
+    );
+  }
 
   // Interlock: refuse to start a second daemon under the same OCAP_HOME.
   // The socket-binding interlock in startDaemon handles the live-socket
@@ -161,14 +172,6 @@ async function main(): Promise<void> {
   try {
     await kernel.initIdentity();
     runLoop.assertSurvivedStartup();
-    const llmConfig = await readLlmConfig(ocapDir);
-    if (llmConfig) {
-      const { name, service } = await makeLlmKernelService(llmConfig);
-      kernel.registerKernelServiceObject(name, service);
-      logger.info(
-        `Registered kernel service "${name}" (${llmConfig.provider} at ${llmConfig.baseUrl})`,
-      );
-    }
     await writeFile(pidPath, String(process.pid));
 
     handle = await startDaemon({
