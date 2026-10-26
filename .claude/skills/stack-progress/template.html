@@ -1,0 +1,562 @@
+<title>{{Two-to-four word title}}</title>
+<meta name="claude:viewport-fit-sides" content="cover" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link
+  rel="stylesheet"
+  href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap"
+/>
+<style>
+  /* Four colour roles, named for what they mean on every stack-progress page:
+   hazard = has the property the stack removes; goal = has the property the
+   stack wants; alt = a second acceptable kind; none = neutral or out of scope.
+   Rename the legend text per page, never the roles. */
+  :root {
+    --bg: #f6f8f7;
+    --surface: #ffffff;
+    --sunk: #edf1ef;
+    --fg: #16201c;
+    --fg-2: #46524d;
+    --muted: #6b7772;
+    --line: #d7dfdb;
+    --accent: #1c6b52;
+    --goal: #1c6b52;
+    --goal-fill: #dcefe7;
+    --alt: #2a5fa8;
+    --alt-fill: #e1eaf7;
+    --none-fill: #edf1ef;
+    --hazard: #a3610a;
+    --hazard-fill: #f6e9d5;
+    --font-display:
+      'IBM Plex Sans Condensed', 'Arial Narrow', 'Helvetica Neue', Arial,
+      sans-serif;
+    --font-body:
+      'IBM Plex Sans', -apple-system, 'Segoe UI', Roboto, Helvetica, Arial,
+      sans-serif;
+    --font-mono:
+      'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme='light']) {
+      --bg: #0f1412;
+      --surface: #161d1a;
+      --sunk: #1c2421;
+      --fg: #e2e9e5;
+      --fg-2: #b4c0ba;
+      --muted: #8b9893;
+      --line: #2b3632;
+      --accent: #63c49f;
+      --goal: #63c49f;
+      --goal-fill: #18352a;
+      --alt: #7aa7e6;
+      --alt-fill: #1a2a40;
+      --none-fill: #1c2421;
+      --hazard: #e0a24a;
+      --hazard-fill: #3a2a14;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme='dark'] {
+    --bg: #0f1412;
+    --surface: #161d1a;
+    --sunk: #1c2421;
+    --fg: #e2e9e5;
+    --fg-2: #b4c0ba;
+    --muted: #8b9893;
+    --line: #2b3632;
+    --accent: #63c49f;
+    --goal: #63c49f;
+    --goal-fill: #18352a;
+    --alt: #7aa7e6;
+    --alt-fill: #1a2a40;
+    --none-fill: #1c2421;
+    --hazard: #e0a24a;
+    --hazard-fill: #3a2a14;
+    color-scheme: dark;
+  }
+  * {
+    box-sizing: border-box;
+  }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: var(--font-body);
+    font-size: 16px;
+    line-height: 1.6;
+    margin: 0;
+  }
+  .wrap {
+    max-width: 1040px;
+    margin: 0 auto;
+    padding-left: max(16px, env(safe-area-inset-left, 0px));
+    padding-right: max(16px, env(safe-area-inset-right, 0px));
+    padding-block: 32px 80px;
+  }
+  .col {
+    max-width: 760px;
+  }
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  h1,
+  h2,
+  h3 {
+    font-family: var(--font-display);
+    text-wrap: balance;
+    line-height: 1.2;
+    margin: 0;
+  }
+  h1 {
+    font-size: clamp(30px, 5vw, 42px);
+    font-weight: 600;
+    margin-top: 8px;
+  }
+  h2 {
+    font-size: 26px;
+    font-weight: 600;
+    margin-top: 64px;
+    margin-bottom: 6px;
+    scroll-margin-top: 16px;
+  }
+  h3 {
+    font-size: 18px;
+    font-weight: 600;
+    margin-top: 28px;
+    margin-bottom: 6px;
+  }
+  p,
+  li {
+    max-width: 74ch;
+  }
+  p {
+    margin: 10px 0;
+  }
+  .lede {
+    font-size: 18px;
+    color: var(--fg-2);
+  }
+  .meta {
+    font-size: 13.5px;
+    color: var(--muted);
+  }
+  code {
+    font-family: var(--font-mono);
+    font-size: 0.87em;
+    background: var(--sunk);
+    padding: 1px 5px;
+    border-radius: 3px;
+    overflow-wrap: anywhere;
+  }
+  a {
+    color: var(--accent);
+  }
+  .strip {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 10px;
+    margin: 24px 0 0;
+  }
+  @media (max-width: 720px) {
+    .strip {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+  .strip a {
+    display: block;
+    text-decoration: none;
+    color: var(--fg);
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 10px 12px;
+  }
+  .strip a:hover {
+    border-color: var(--accent);
+  }
+  .strip .k {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 22px;
+  }
+  .strip .t {
+    font-size: 13.5px;
+    font-weight: 500;
+  }
+  .strip .s {
+    font-size: 12.5px;
+    color: var(--muted);
+    font-family: var(--font-mono);
+  }
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 18px;
+    font-size: 13px;
+    color: var(--fg-2);
+    margin: 14px 0 0;
+  }
+  .legend span {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+  }
+  .legend i {
+    width: 14px;
+    height: 14px;
+    border-radius: 3px;
+    border: 1.5px solid;
+    display: inline-block;
+  }
+  .legend i.lg-goal {
+    background: var(--goal-fill);
+    border-color: var(--goal);
+  }
+  .legend i.lg-alt {
+    background: var(--alt-fill);
+    border-color: var(--alt);
+  }
+  .legend i.lg-none {
+    background: var(--none-fill);
+    border-color: var(--muted);
+  }
+  .legend i.lg-hazard {
+    background: var(--hazard-fill);
+    border-color: var(--hazard);
+  }
+  .legend i.lg-new {
+    background: transparent;
+    border-color: var(--fg-2);
+    border-style: dashed;
+  }
+  .legend b {
+    font-family: var(--font-mono);
+    font-weight: 500;
+  }
+  figure {
+    margin: 18px 0 8px;
+  }
+  .diagram {
+    overflow-x: auto;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 14px 10px 6px;
+  }
+  .diagram svg {
+    display: block;
+    width: 100%;
+    min-width: 760px;
+    height: auto;
+    color: var(--fg);
+  }
+  figcaption {
+    font-size: 14px;
+    color: var(--fg-2);
+    margin-top: 8px;
+    max-width: 82ch;
+  }
+  .tbl {
+    overflow-x: auto;
+    margin: 12px 0;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: var(--surface);
+  }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 14px;
+  }
+  th,
+  td {
+    padding: 7px 11px;
+    text-align: left;
+    vertical-align: top;
+    border-bottom: 1px solid var(--line);
+  }
+  tr:last-child td {
+    border-bottom: 0;
+  }
+  th {
+    font-family: var(--font-mono);
+    font-weight: 500;
+    font-size: 11.5px;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--muted);
+    background: var(--sunk);
+    white-space: nowrap;
+  }
+  td.st {
+    font-family: var(--font-mono);
+    font-size: 13px;
+    white-space: nowrap;
+    font-weight: 500;
+  }
+  td.n {
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+  .chip {
+    display: inline-block;
+    font-size: 12px;
+    font-weight: 500;
+    padding: 1px 8px;
+    border-radius: 999px;
+    border: 1px solid currentColor;
+    white-space: nowrap;
+  }
+  .c-goal {
+    color: var(--goal);
+  }
+  .c-alt {
+    color: var(--alt);
+  }
+  .c-none {
+    color: var(--muted);
+  }
+  .c-hazard {
+    color: var(--hazard);
+  }
+  .changes {
+    margin: 8px 0 0;
+    padding-left: 20px;
+  }
+  .changes li {
+    margin: 4px 0;
+  }
+  .findings {
+    display: grid;
+    gap: 10px;
+    padding: 0;
+    list-style: none;
+    margin: 14px 0;
+  }
+  .findings li {
+    max-width: none;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    padding: 12px 14px;
+  }
+  .findings li b {
+    display: block;
+    font-family: var(--font-display);
+    font-size: 16.5px;
+    margin-bottom: 2px;
+  }
+  .note {
+    border-left: 3px solid var(--hazard);
+    background: var(--hazard-fill);
+    padding: 10px 14px;
+    border-radius: 0 6px 6px 0;
+    margin: 14px 0;
+    max-width: 78ch;
+    font-size: 14.5px;
+  }
+  footer {
+    margin-top: 56px;
+    padding-top: 14px;
+    border-top: 1px solid var(--line);
+    font-size: 13px;
+    color: var(--muted);
+  }
+</style>
+
+<div class="wrap">
+  <div class="col">
+    <div class="eyebrow">{{repo}} · {{subject}} · {{N}} snapshots</div>
+    <h1>{{Title}}</h1>
+    <p class="lede">
+      {{One or two sentences: what the subject is, the snapshots, and the one
+      invariant that holds in every diagram.}}
+    </p>
+  </div>
+
+  <nav class="strip" aria-label="Snapshots">
+    <!-- One tile per snapshot. .s is "ref · short sha · date", or "proposal". -->
+    <a href="#A"
+      ><div class="k">A</div>
+      <div class="t">{{Where we started}}</div>
+      <div class="s">{{main · abc1234 · 9 Jul}}</div></a
+    >
+  </nav>
+
+  <div class="legend" aria-hidden="true">
+    <span><i class="lg-hazard"></i>{{has what the stack removes}}</span>
+    <span><i class="lg-goal"></i>{{has what the stack wants}}</span>
+    <span><i class="lg-alt"></i>{{second acceptable kind}}</span>
+    <span><i class="lg-none"></i>{{neutral}}</span>
+    <span><i class="lg-new"></i>new since the previous snapshot</span>
+  </div>
+
+  <div class="col"><h2>Summary</h2></div>
+  <ul class="findings">
+    <!-- 3–5 findings. Bold first sentence states the claim; the rest backs it with a number from the table. -->
+    <li><b>{{Claim.}}</b>{{Evidence.}}</li>
+  </ul>
+
+  <div class="tbl">
+    <table>
+      <thead>
+        <tr>
+          <th>Property</th>
+          <th>A</th>
+          <th>B</th>
+          <th>C</th>
+          <th>D</th>
+        </tr>
+      </thead>
+      <tbody>
+        <!-- Rows come from probe.mjs output; proposals get the plan's stated value. -->
+        <tr>
+          <td>{{property}}</td>
+          <td class="n">…</td>
+          <td class="n">…</td>
+          <td class="n">…</td>
+          <td class="n">…</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h2 id="A">A · {{Where we started}}</h2>
+  <p class="meta">{{Exact ref and what it contains.}}</p>
+  <figure>
+    <div class="diagram">
+      <svg
+        viewBox="0 0 930 600"
+        role="img"
+        aria-label="{{Diagram A, …: one paragraph a screen reader user can follow.}}"
+      >
+        <defs>
+          <marker
+            id="arw"
+            viewBox="0 0 10 10"
+            refX="9"
+            refY="5"
+            markerWidth="7"
+            markerHeight="7"
+            orient="auto-start-reverse"
+          >
+            <path d="M0,0 L10,5 L0,10 z" fill="currentColor" />
+          </marker>
+        </defs>
+        <!-- Grouping frame (package, process, transaction): dashed, label bottom-left. -->
+        <rect
+          style="stroke: var(--goal)"
+          x="380"
+          y="90"
+          width="480"
+          height="384"
+          rx="10"
+          fill="none"
+          stroke-width="1.5"
+          stroke-dasharray="6 5"
+        />
+        <text
+          style="font-family: var(--font-mono); fill: var(--goal)"
+          x="396"
+          y="463"
+          font-size="11.5"
+        >
+          {{group}}
+        </text>
+        <!-- Node: role fill + stroke, mono name, body line, optional italic note. Same x/y in every snapshot. -->
+        <rect
+          style="fill: var(--hazard-fill); stroke: var(--hazard)"
+          x="400"
+          y="246"
+          width="130"
+          height="64"
+          rx="6"
+          stroke-width="1.5"
+        />
+        <text
+          style="font-family: var(--font-mono)"
+          x="465"
+          y="268"
+          text-anchor="middle"
+          font-size="13"
+          fill="currentColor"
+        >
+          {{name}}
+        </text>
+        <text
+          style="font-family: var(--font-body); fill: var(--fg-2)"
+          x="465"
+          y="285"
+          text-anchor="middle"
+          font-size="11.5"
+        >
+          {{what it does}}
+        </text>
+        <text
+          style="font-family: var(--font-body); fill: var(--muted)"
+          x="465"
+          y="300"
+          text-anchor="middle"
+          font-size="11"
+          font-style="italic"
+        >
+          {{note}}
+        </text>
+        <!-- New since the previous snapshot: add stroke-dasharray="5 3" to the node rect. -->
+        <!-- Gone since the previous snapshot: omit it; say so in the "X → Y" list. -->
+        <g
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.4"
+          marker-end="url(#arw)"
+        >
+          <!-- Edges: orthogonal polylines that end 2px short of the target's edge. -->
+          <polyline points="530,278 658,278" />
+        </g>
+        <g
+          style="font-family: var(--font-body); fill: var(--fg-2)"
+          font-size="12"
+        >
+          <!-- Edge labels: near the edge's start, never on top of a line. -->
+          <text x="612" y="270" text-anchor="middle">{{edge label}}</text>
+        </g>
+      </svg>
+    </div>
+    <figcaption>
+      {{What to notice in this diagram, in one or two sentences.}}
+    </figcaption>
+  </figure>
+  <div class="tbl">
+    <table>
+      <thead>
+        <tr>
+          <th>{{Node}}</th>
+          <th>What it does</th>
+          <th>{{Second column the subject needs}}</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="st">{{name}}</td>
+          <td>…</td>
+          <td>…</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- From the second snapshot on, close each section with what changed and which PRs did it. -->
+  <h3>A → B</h3>
+  <ul class="changes">
+    <li>{{change}} ({{#PR}}).</li>
+  </ul>
+
+  <footer>
+    {{Which files at which revisions the diagrams were read from; which
+    snapshots are proposals and from which docs.}}
+  </footer>
+</div>
