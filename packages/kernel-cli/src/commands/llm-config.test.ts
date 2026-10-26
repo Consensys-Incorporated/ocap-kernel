@@ -58,17 +58,59 @@ describe('llm-config', () => {
     });
 
     it.each([
-      ['an unknown provider', { provider: 'closed-v9', baseUrl: 'x' }],
-      ['a missing baseUrl', { provider: 'open-v1' }],
       [
-        'an unknown key',
-        { provider: 'open-v1', baseUrl: 'x', apiKey: 'inline-secret' },
+        'an unknown provider',
+        { provider: 'closed-v9', baseUrl: 'http://127.0.0.1:18789' },
+      ],
+      ['a missing baseUrl', { provider: 'open-v1' }],
+      ['a baseUrl that is not a URL', { provider: 'open-v1', baseUrl: 'x' }],
+      [
+        'a baseUrl that is not http',
+        { provider: 'open-v1', baseUrl: 'ftp://127.0.0.1' },
+      ],
+      [
+        'both a key env var and a key file',
+        {
+          provider: 'open-v1',
+          baseUrl: 'http://127.0.0.1:18789',
+          apiKeyEnv: 'TEST_LLM_TOKEN',
+          apiKeyFile: '/tmp/key',
+        },
       ],
     ])('throws on %s', async (_case, config) => {
       await writeConfig(JSON.stringify(config));
       await expect(readLlmConfig(ocapDir)).rejects.toThrow(
         /Invalid LLM config/u,
       );
+    });
+
+    // The daemon logs these errors, so a key in the file must not reach them.
+    it.each([
+      [
+        'an inline key',
+        JSON.stringify({
+          provider: 'open-v1',
+          baseUrl: 'http://127.0.0.1:18789',
+          apiKey: 'sk-secret-123',
+        }),
+      ],
+      ['a file that is only a key', 'sk-secret-123'],
+    ])('leaves the value out of the error for %s', async (_case, contents) => {
+      await writeConfig(contents);
+      const error = await readLlmConfig(ocapDir).catch((thrown) => thrown);
+      expect(error).toBeInstanceOf(Error);
+      expect(String((error as Error).message)).not.toContain('sk-secret');
+    });
+
+    it.each([
+      ['http://127.0.0.1:18789/', 'http://127.0.0.1:18789'],
+      ['https://gateway.example/api//', 'https://gateway.example/api'],
+    ])('drops the trailing slash from %s', async (baseUrl, expected) => {
+      await writeConfig(JSON.stringify({ provider: 'open-v1', baseUrl }));
+      expect(await readLlmConfig(ocapDir)).toStrictEqual({
+        provider: 'open-v1',
+        baseUrl: expected,
+      });
     });
   });
 

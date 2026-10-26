@@ -4,11 +4,11 @@ import {
 } from '@metamask/kernel-language-model-service';
 import type { Infer } from '@metamask/superstruct';
 import {
-  assert,
   exactOptional,
   literal,
   object,
   string,
+  validate,
 } from '@metamask/superstruct';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -32,11 +32,14 @@ export const LLM_CONFIG_FILENAME = 'llm.json';
 export const LlmConfigStruct = object({
   /** The provider protocol. Only Open /v1-compatible endpoints for now. */
   provider: literal('open-v1'),
-  /** Base URL of the API (e.g. an openclaw gateway or api.openai.com). */
+  /**
+   * Base URL of the API (e.g. an openclaw gateway or api.openai.com), http or
+   * https. A trailing slash is dropped.
+   */
   baseUrl: string(),
   /** Name of an environment variable holding the API key. */
   apiKeyEnv: exactOptional(string()),
-  /** Path of a file whose (trimmed) contents are the API key. */
+  /** Path of a file whose (trimmed) contents are the API key. Not with `apiKeyEnv`. */
   apiKeyFile: exactOptional(string()),
 });
 
@@ -65,18 +68,43 @@ export async function readLlmConfig(
     }
     throw error;
   }
+  // The daemon logs these errors, so none of them repeats a value from the
+  // file: the parser's and superstruct's own messages quote what they reject,
+  // which may be an API key.
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
-  } catch (error) {
-    throw new Error(`Invalid JSON in ${configPath}: ${String(error)}`);
+  } catch {
+    throw new Error(`Invalid JSON in ${configPath}`);
   }
+  const invalid = (problem: string): Error =>
+    new Error(`Invalid LLM config in ${configPath}: ${problem}`);
+  const [error, config] = validate(parsed, LlmConfigStruct);
+  if (error) {
+    throw invalid(
+      error
+        .failures()
+        .map(
+          ({ path, type }) =>
+            `${path.join('.') || '(root)'} ${type === 'never' ? 'is not allowed' : `must be ${type}`}`,
+        )
+        .join('; '),
+    );
+  }
+  if (config.apiKeyEnv !== undefined && config.apiKeyFile !== undefined) {
+    throw invalid('name only one of apiKeyEnv and apiKeyFile');
+  }
+  let protocol: string | undefined;
   try {
-    assert(parsed, LlmConfigStruct);
-  } catch (error) {
-    throw new Error(`Invalid LLM config in ${configPath}: ${String(error)}`);
+    ({ protocol } = new URL(config.baseUrl));
+  } catch {
+    // Not a URL; refused below.
   }
-  return parsed;
+  if (protocol !== 'http:' && protocol !== 'https:') {
+    throw invalid('baseUrl must be an http or https URL');
+  }
+  // The provider appends `/v1/...`, so a trailing slash would double it.
+  return { ...config, baseUrl: config.baseUrl.replace(/\/+$/u, '') };
 }
 
 /**
