@@ -113,6 +113,21 @@ describe('cluster-config', () => {
       });
     });
 
+    it.each([
+      { name: 'no allowedHosts', allowedHosts: undefined },
+      { name: 'an empty allowedHosts', allowedHosts: [] },
+    ])('grants the provider vat no http with $name', ({ allowedHosts }) => {
+      const config = makeWalletClusterConfig({
+        bundleBaseUrl: BUNDLE_BASE_URL,
+        ...(allowedHosts && { allowedHosts }),
+      });
+
+      expect(config.vats.provider).toStrictEqual({
+        bundleSpec: `${BUNDLE_BASE_URL}/provider-vat.bundle`,
+        globals: [],
+      });
+    });
+
     it('requests required globals for all vats', () => {
       const config = makeWalletClusterConfig({
         bundleBaseUrl: BUNDLE_BASE_URL,

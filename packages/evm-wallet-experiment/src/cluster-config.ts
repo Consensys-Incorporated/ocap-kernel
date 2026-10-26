@@ -28,6 +28,9 @@ export function makeWalletClusterConfig(
     allowedHosts,
   } = options;
 
+  // An empty list grants nothing, as it always has: no rule would admit a host.
+  const grantsHttp = allowedHosts !== undefined && allowedHosts.length > 0;
+
   const coordinatorBundle =
     role === 'home'
       ? `${bundleBaseUrl}/home-coordinator.bundle`
@@ -63,8 +66,8 @@ export function makeWalletClusterConfig(
       },
       provider: {
         bundleSpec: `${bundleBaseUrl}/provider-vat.bundle`,
-        globals: allowedHosts ? ['URL', 'Request', 'Headers', 'Response'] : [],
-        ...(allowedHosts && {
+        globals: grantsHttp ? ['URL', 'Request', 'Headers', 'Response'] : [],
+        ...(grantsHttp && {
           platformConfig: {
             http: { allow: allowedHosts.map((host) => ({ host })) },
           },
