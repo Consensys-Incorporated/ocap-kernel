@@ -346,14 +346,17 @@ export class KernelQueue {
   async stopRunLoop({
     forGood = false,
   }: { forGood?: boolean } = {}): Promise<boolean> {
-    this.#stoppedForGood ||= forGood;
     if (this.#runLoopState.state !== 'running') {
+      this.#stoppedForGood ||= forGood;
       return false;
     }
     this.#stopRequest ??= makePromiseKit<void>();
     // A parked loop is not going to reach the check on its own.
     this.#wakeRunLoop();
     await this.#stopRequest.promise;
+    // Not before the wait: a termination a lost vat asks for during the crank
+    // in flight is still queued for the next start.
+    this.#stoppedForGood ||= forGood;
     // The loop may have died instead of stopping.
     return this.getRunLoopStatus().state === 'stopped';
   }

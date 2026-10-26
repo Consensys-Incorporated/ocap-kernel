@@ -231,6 +231,23 @@ describe('the window a stopped run loop opens', () => {
     );
   });
 
+  it('queues a termination asked for while a stop for good waits out the crank', async () => {
+    const { kernelStore, kernelQueue } = await makeFixture(1);
+    let stopped: Promise<boolean> | undefined;
+    const running = kernelQueue.run(async () => {
+      stopped ??= kernelQueue.stopRunLoop({ forGood: true });
+      kernelQueue.enqueueTerminateVat(asVatId('v1'));
+      return undefined;
+    });
+    await stopped;
+    await running;
+
+    expect(kernelStore.dequeueRun()).toStrictEqual({
+      type: 'terminateVat',
+      vatId: 'v1',
+    });
+  });
+
   it('refuses peers and writes once stopped for good', async () => {
     const { kernelQueue } = await makeFixture(0);
     const running = kernelQueue.run(vi.fn());
