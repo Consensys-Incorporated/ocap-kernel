@@ -154,7 +154,8 @@ If an `artifact-design` skill or Artifact quickstart is available, load it
 first. Copy `template.html` to the scratchpad and fill it in. Generate the SVGs
 with `scripts/svg-kit.mjs` from a small build script in the scratchpad: one
 function takes the snapshot letter and emits that snapshot's diagram from a
-single layout, which keeps positions identical across snapshots. Order:
+single layout, which keeps positions identical across snapshots. `examples/netlayer-build.mjs` and
+`examples/netlayer-probes.json` are a complete run to copy from. Order:
 
 1. Eyebrow, title (two to four words), lede: the subject, the snapshots, and
    the one thing that holds in every diagram.
