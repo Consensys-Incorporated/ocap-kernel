@@ -13,25 +13,46 @@ jobs:
     runs-on: ubuntu-latest
     if: ${{ github.actor == 'dependabot[bot]' }}
     permissions:
-      contents: write
+      contents: read
     steps:
-      # Skip the install so no dependency code runs while the token can push.
+      # Skip the install so no dependency code runs in a job that can push.
       - name: Checkout and setup environment
         uses: MetaMask/action-checkout-and-setup@0543b5929698c71e3ccc6ed24eac87825669b5de # v3
         with:
           is-high-risk-environment: true
           ref: ${{ github.head_ref }}
           skip-install: true
+          persist-credentials: false
 
-      - name: Dedupe and push
+      - name: Dedupe
+        id: dedupe
         run: |
           yarn dedupe --mode=update-lockfile
-          git add yarn.lock
-          if git diff --staged --quiet; then
+          if git diff --quiet -- yarn.lock; then
             echo "No deduplication needed"
           else
-            git config user.name "GitHub Actions"
-            git config user.email "actions@github.com"
-            git commit -m "chore: dedupe yarn.lock"
-            git push
+            echo "changed=true" >> "$GITHUB_OUTPUT"
           fi
+
+      # Pushes made with GITHUB_TOKEN don't trigger CI; pushes made by the app do.
+      - name: Create app token
+        if: steps.dedupe.outputs.changed == 'true'
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          # ci-protocols-renovate
+          client-id: Iv23lic5NL92n5sx5EU1
+          # A Dependabot secret, because Dependabot-triggered runs can't read Actions secrets.
+          private-key: ${{ secrets.GH_PRIVATE_KEY }}
+          permission-contents: write
+
+      - name: Commit and push
+        if: steps.dedupe.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          HEAD_REF: ${{ github.head_ref }}
+        run: |
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git commit -m "chore: dedupe yarn.lock" -- yarn.lock
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "HEAD:${HEAD_REF}"
