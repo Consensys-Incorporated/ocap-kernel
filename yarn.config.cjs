@@ -742,17 +742,22 @@ function versionRangeCompare(range1, range2) {
 /**
  * Ensures all dependency ranges for a package are synchronized across the monorepo.
  * The least version range wins, and inconsistencies throw an error.
+ * Peer dependency ranges are excluded: they state what consumers may install,
+ * so they can be wider than the range the monorepo installs.
  *
  * @param {Yarn} Yarn - The Yarn "global".
  * @param {Workspace} workspace - The current workspace.
  */
 function expectSynchronizedRanges(Yarn, workspace) {
-  const dependencies = Yarn.dependencies({ workspace });
+  const isInstalled = (dep) => dep.type !== 'peerDependencies';
+  const dependencies = Yarn.dependencies({ workspace }).filter(isInstalled);
 
   dependencies.forEach((dep) => {
     const matchingDeps = Yarn.workspaces()
       .flatMap((ws) => Yarn.dependencies({ workspace: ws }))
-      .filter((otherDep) => otherDep.ident === dep.ident);
+      .filter(
+        (otherDep) => isInstalled(otherDep) && otherDep.ident === dep.ident,
+      );
 
     matchingDeps.forEach((otherDep) => {
       if (
