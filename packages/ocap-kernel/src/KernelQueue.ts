@@ -178,8 +178,8 @@ export class KernelQueue {
   /**
    * The kernel's run loop: take an item off the run queue or from the peers'
    * arrivals, deliver it, repeat, until {@link stopRunLoop} stops it between
-   * cranks. If it rejects with anything but `run loop already started`, the
-   * kernel is dead — see {@link getRunLoopStatus}.
+   * cranks. If it rejects with anything but a refusal to start, the kernel is
+   * dead — see {@link getRunLoopStatus}.
    *
    * @param deliver - A function that delivers an item to the kernel.
    * @param options - Options bag.

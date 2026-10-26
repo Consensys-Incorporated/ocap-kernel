@@ -965,10 +965,10 @@ export class Kernel {
         // Not `this.terminateAllVats`, which would wait for this very turn.
         await this.#vatManager.terminateAllVats();
         this.#subclusterManager.clearSystemSubclusters();
+        this.#resetKernelState();
         this.#abandonQueuedWork(
           new Error('Kernel was reset; queued work was abandoned'),
         );
-        this.#resetKernelState();
       } catch (error) {
         this.#logger.error('Error resetting kernel:', error);
         throw error;
@@ -1023,8 +1023,8 @@ export class Kernel {
         } catch (error) {
           this.#logger.error('could not record last active time', error);
         }
-        // Each step even if the one before it fails: a remote's timers left
-        // armed would fire against the closed database.
+        // On even if stopping remote comms fails: a remote's timers left armed
+        // would fire against the closed database.
         try {
           await this.#platformServices.stopRemoteComms();
         } finally {
