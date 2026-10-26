@@ -898,16 +898,6 @@ export class RemoteHandle implements RemoteEndpointHandle {
    * @param persisted - What that call returned.
    */
   #transmitRemoteCommand(persisted: PersistedCommand): void {
-    // Until #1105, a reset or clearStorage can wipe the store while this
-    // message's crank is still open, taking the message and the session it was
-    // numbered in, so it is owed to no one.
-    if (
-      this.#kernelStore.getPendingMessage(this.remoteId, persisted.seq) ===
-      undefined
-    ) {
-      return;
-    }
-
     this.#awaitingTransmit.set(persisted.seq, persisted);
     this.#flushTransmitQueue();
   }
