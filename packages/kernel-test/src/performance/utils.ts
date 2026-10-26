@@ -109,7 +109,7 @@ export type ProfileKernel = {
   held: number[];
   /** Grow every pair's holdings to at least `perPair` tokens. */
   grow: (perPair: number) => Promise<void>;
-  /** Delete the database. The kernel is stopped by the `utils.ts` teardown. */
+  /** Stop the kernel and delete its database. */
   dispose: () => Promise<void>;
 };
 
@@ -126,15 +126,13 @@ export async function makeProfileKernel(pairs: number): Promise<ProfileKernel> {
   // deployed kernel sees it.
   const dbDir = await mkdtemp(path.join(os.tmpdir(), 'kernel-perf-'));
   const dbFilename = path.join(dbDir, 'kernel.db');
-  const kernelDatabase = await makeSQLKernelDatabase({ dbFilename });
-  const logger = new Logger({ transports: [] });
-  // Reference count auditing walks the whole store every crank, so it is left
-  // off here.
-  const kernel = await makeTrackedKernel(
-    new NodejsPlatformServices({ logger }),
-    kernelDatabase,
-    { resetStorage: true, logger },
-  );
+  let kernel: Kernel | undefined;
+  // The `utils.ts` teardown stops the kernel too, but only after this
+  // directory would be gone.
+  const dispose = async (): Promise<void> => {
+    await kernel?.stop();
+    await rm(dbDir, { recursive: true, force: true });
+  };
 
   const config: ClusterConfig = {
     bootstrap: 'holder',
@@ -144,9 +142,26 @@ export async function makeProfileKernel(pairs: number): Promise<ProfileKernel> {
     },
   };
   const holders: KRef[] = [];
-  for (let pair = 0; pair < pairs; pair += 1) {
-    holders.push((await kernel.launchSubcluster(config)).rootKref);
+  let kernelDatabase: KernelDatabase;
+  try {
+    kernelDatabase = await makeSQLKernelDatabase({ dbFilename });
+    const logger = new Logger({ transports: [] });
+    // Reference count auditing walks the whole store every crank, so it is
+    // left off here.
+    kernel = await makeTrackedKernel(
+      new NodejsPlatformServices({ logger }),
+      kernelDatabase,
+      { resetStorage: true, logger },
+    );
+    for (let pair = 0; pair < pairs; pair += 1) {
+      holders.push((await kernel.launchSubcluster(config)).rootKref);
+    }
+  } catch (error) {
+    // The caller never gets `dispose`, so clean up here.
+    await dispose().catch(() => undefined);
+    throw error;
   }
+  const running = kernel;
 
   const send = async (
     pair: number,
@@ -154,7 +169,7 @@ export async function makeProfileKernel(pairs: number): Promise<ProfileKernel> {
     args: unknown[] = [],
   ): Promise<unknown> =>
     kunser(
-      await kernel.queueMessage(holders[pair % pairs] as KRef, method, args),
+      await running.queueMessage(holders[pair % pairs] as KRef, method, args),
     );
 
   const held: number[] = Array.from({ length: pairs }, () => 0);
@@ -173,13 +188,13 @@ export async function makeProfileKernel(pairs: number): Promise<ProfileKernel> {
   };
 
   return {
-    kernel,
+    kernel: running,
     kernelDatabase,
     getDbBytes: async () => (await stat(dbFilename)).size,
     send,
     held,
     grow,
-    dispose: async () => rm(dbDir, { recursive: true, force: true }),
+    dispose,
   };
 }
 

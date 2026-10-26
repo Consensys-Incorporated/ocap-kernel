@@ -274,7 +274,9 @@ async function krefScalingSection(
   const points = (measure: (row: (typeof rows)[number]) => number): Point[] =>
     rows.map((row) => ({
       series: `${row.vats} vats`,
-      x: row.target,
+      // Measured, not the target: spread over many pairs, a small target
+      // rounds up per pair, and every vat's root is a kref too.
+      x: row.krefs,
       y: measure(row),
     }));
   const latency = (route: 'kernelToVatMs' | 'vatToVatMs'): Point[] => [
@@ -407,8 +409,12 @@ async function concurrentLoadSection(
     );
   }
   const peakRows = reports.flatMap((report) =>
-    routes.map((route) => {
+    routes.flatMap((route) => {
       const routeRows = report.results.filter((row) => row.route === route);
+      // A run that died partway leaves reports missing some routes.
+      if (routeRows.length === 0) {
+        return [];
+      }
       const peak = routeRows.reduce((best, row) =>
         row.messagesPerSecond > best.messagesPerSecond ? row : best,
       );
@@ -416,12 +422,14 @@ async function concurrentLoadSection(
         row.concurrency > most.concurrency ? row : most,
       );
       return [
-        String(peak.vats),
-        route,
-        `${fixed(peak.messagesPerSecond, 0)} at ${peak.concurrency}`,
-        `${fixed(busiest.messagesPerSecond, 0)} at ${busiest.concurrency}`,
-        fixed(busiest.latencyMs.p50, 1),
-        fixed(busiest.latencyMs.p95, 1),
+        [
+          String(peak.vats),
+          route,
+          `${fixed(peak.messagesPerSecond, 0)} at ${peak.concurrency}`,
+          `${fixed(busiest.messagesPerSecond, 0)} at ${busiest.concurrency}`,
+          fixed(busiest.latencyMs.p50, 1),
+          fixed(busiest.latencyMs.p95, 1),
+        ],
       ];
     }),
   );

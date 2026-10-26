@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
+  countKeys,
   describePlatform,
   envNumber,
   envNumbers,
@@ -80,9 +81,12 @@ describe('message delivery under concurrent load', () => {
     async (pairs) => {
       const profile = await makeProfileKernel(pairs);
       ({ dispose } = profile);
-      const { send, grow } = profile;
+      const { kernelDatabase, send, grow } = profile;
       const perPair = Math.ceil(KREFS / pairs);
       await grow(perPair);
+      expect(
+        countKeys(kernelDatabase, 'ko[0-9]*.owner'),
+      ).toBeGreaterThanOrEqual(KREFS);
 
       // A vat→vat message pings a token scattered across the pair's holdings,
       // by the golden ratio, so that consecutive messages do not hit

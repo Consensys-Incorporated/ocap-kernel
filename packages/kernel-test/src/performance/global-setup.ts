@@ -1,4 +1,4 @@
-import { mkdir } from 'node:fs/promises';
+import { mkdir, rm } from 'node:fs/promises';
 import path from 'node:path';
 import type { TestProject } from 'vitest/node';
 
@@ -24,6 +24,9 @@ export default async function setup(
     const reportPath = await renderReport(runDir);
     if (reportPath) {
       process.stdout.write(`[performance] ${reportPath}\n`);
+    } else {
+      // Otherwise `perf:report` would take it for the latest run.
+      await rm(runDir, { recursive: true, force: true });
     }
   };
 }

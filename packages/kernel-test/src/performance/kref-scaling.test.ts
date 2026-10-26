@@ -143,7 +143,7 @@ describe('message delivery against kref count', () => {
           SAMPLES,
         );
 
-        const krefs = countKeys(kernelDatabase, 'ko*.owner');
+        const krefs = countKeys(kernelDatabase, 'ko[0-9]*.owner');
         expect(krefs).toBeGreaterThanOrEqual(target);
         results.push({
           vats: pairs * 2,
