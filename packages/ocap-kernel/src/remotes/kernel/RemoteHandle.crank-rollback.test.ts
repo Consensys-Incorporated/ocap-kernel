@@ -597,27 +597,6 @@ describe('RemoteHandle across a crank boundary', () => {
     });
   });
 
-  describe('a peer restart whose crank rolls back', () => {
-    it('takes the new incarnation’s first message', async () => {
-      const { remote, kernelStore } = await makeRemoteOverRealStore();
-
-      await takeInbound({ remote, kernelStore, message: fromPeer(1) });
-      // The handshake runs on the transport's flow, so its reset can land in a
-      // crank that then aborts, and the store gets the old receipts back.
-      kernelStore.startCrank();
-      kernelStore.createCrankSavepoint('crank');
-      kernelStore.createCrankSavepoint('delivery');
-      remote.persistPeerRestart();
-      remote.finalizePeerRestart();
-      kernelStore.rollbackCrank('delivery');
-      kernelStore.endCrank();
-
-      expect(
-        await takeInbound({ remote, kernelStore, message: fromPeer(1) }),
-      ).toBe(true);
-    });
-  });
-
   describe('a delivery the peer restarts out from under', () => {
     it('does not send what the restart retired', async () => {
       const { remote, kernelStore, remoteComms } =
@@ -629,8 +608,7 @@ describe('RemoteHandle across a crank boundary', () => {
       const { afterCommit } = await remote.deliverBringOutYourDead();
       kernelStore.endCrank();
       // The handshake runs on the transport's flow, so it can land here.
-      remote.persistPeerRestart();
-      remote.finalizePeerRestart();
+      remote.holdForRestart();
       await afterCommit?.();
 
       expect(sentSeqs(remoteComms)).toStrictEqual([]);
@@ -645,9 +623,15 @@ describe('RemoteHandle across a crank boundary', () => {
       kernelStore.createCrankSavepoint('delivery');
       const { afterCommit } = await remote.deliverBringOutYourDead();
       kernelStore.endCrank();
-      remote.persistPeerRestart();
-      remote.finalizePeerRestart();
+      remote.holdForRestart();
       await afterCommit?.();
+      // The crank that records the restart.
+      kernelStore.startCrank();
+      kernelStore.createCrankSavepoint('crank');
+      kernelStore.createCrankSavepoint('delivery');
+      remote.persistPeerRestart();
+      kernelStore.endCrank();
+      remote.finalizePeerRestart();
 
       await deliverAndCommit(remote, kernelStore);
 

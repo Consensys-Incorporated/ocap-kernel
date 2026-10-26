@@ -11,10 +11,12 @@ import type {
   KRef,
   KernelMessage,
   KernelOneResolution,
+  PeerArrival,
   RemoteId,
   RunLoopStatus,
   RunLoopItem,
   RunQueueItem,
+  RunQueueItemPeerIncarnation,
   RunQueueItemRemoteInbound,
   RunQueueItemNotify,
   RunQueueItemRestartVat,
@@ -29,7 +31,8 @@ import { Fail } from './utils/assert.ts';
  * The most arrivals held for one remote at once, matching the window a peer
  * keeps unacknowledged (`MAX_PENDING_MESSAGES` in `RemoteHandle.ts`). A peer
  * goes past it only after giving up on a window this kernel still holds, or
- * with `redeemURL` replies, which are exempt from that window.
+ * with GC deliveries and `redeemURL` replies, which are exempt from that
+ * window.
  */
 const MAX_ARRIVALS_PER_REMOTE = 200;
 
@@ -140,8 +143,10 @@ export class KernelQueue {
    */
   #runLoopState: RunLoopState = { state: 'idle' };
 
-  /** Messages from peers, waiting for a crank to take delivery of them. */
-  #arrivedFromRemotes: RunQueueItemRemoteInbound[] = [];
+  readonly #arrivedFromRemotes: PeerArrival[] = [];
+
+  /** How many arrivals each waiting restart has had taken ahead of it. */
+  readonly #takenAhead = new WeakMap<RunQueueItemPeerIncarnation, number>();
 
   /** Whether the last pick between arrivals and the run queue was an arrival. */
   #tookArrivalLast = false;
@@ -461,7 +466,7 @@ export class KernelQueue {
    *
    * @returns The arrival, or undefined if none is waiting.
    */
-  #takeArrival(): RunQueueItemRemoteInbound | undefined {
+  #takeArrival(): PeerArrival | undefined {
     const arrival = this.#arrivedFromRemotes.shift();
     this.#tookArrivalLast = arrival !== undefined;
     return arrival;
@@ -797,9 +802,16 @@ export class KernelQueue {
    * would fill the remote's share and turn away messages it has yet to send.
    * So a copy of a message waiting, or of one a committed crank has taken, is
    * not held, and a copy held before its original committed stops taking a
-   * slot once it has. A
-   * refused message is lost if a later one is taken first, since that one's
-   * acknowledgement covers it.
+   * slot once it has. A refused message is lost if a later one is taken first,
+   * since that one's acknowledgement covers it.
+   *
+   * One that arrives while a restart of the peer waits to be recorded is taken
+   * ahead of it, against the incarnation that sent it: the transport reads
+   * nothing from the new incarnation until then, so what arrives was read late
+   * off the old one's channel. An incarnation that has ended left about a
+   * window's worth unacknowledged, and past `MAX_ARRIVALS_PER_REMOTE` one is
+   * refused, or a peer still sending on that channel would hold the restart,
+   * and every arrival behind it, back for as long as it sends.
    *
    * @param options - Options bag.
    * @param options.remoteId - The remote the message came from.
@@ -809,7 +821,8 @@ export class KernelQueue {
    * @param options.highestReceivedSeq - The highest sequence number from this
    * remote that a committed crank has taken.
    * @returns False if the remote already has `MAX_ARRIVALS_PER_REMOTE`
-   * uncommitted arrivals waiting and this one was refused.
+   * uncommitted arrivals waiting, or its waiting restart has had that many
+   * taken ahead of it, and this one was refused.
    */
   acceptRemoteInbound({
     remoteId,
@@ -829,7 +842,8 @@ export class KernelQueue {
       return true;
     }
     const held = this.#arrivedFromRemotes.filter(
-      (item) =>
+      (item): item is RunQueueItemRemoteInbound =>
+        item.type === 'remoteInbound' &&
         item.remoteId === remoteId &&
         item.peerId === peerId &&
         item.seq > highestReceivedSeq,
@@ -840,41 +854,107 @@ export class KernelQueue {
     if (held.length >= MAX_ARRIVALS_PER_REMOTE) {
       return false;
     }
-    this.#arrivedFromRemotes.push({
+    const arrival: RunQueueItemRemoteInbound = {
       type: 'remoteInbound',
       remoteId,
       peerId,
       seq,
       message,
-    });
+    };
+    const restart = this.#waitingRestart(peerId);
+    if (restart === undefined) {
+      this.#arrivedFromRemotes.push(arrival);
+    } else {
+      const ahead = (this.#takenAhead.get(restart) ?? 0) + 1;
+      if (ahead > MAX_ARRIVALS_PER_REMOTE) {
+        return false;
+      }
+      this.#takenAhead.set(restart, ahead);
+      this.#arrivedFromRemotes.splice(
+        this.#arrivedFromRemotes.indexOf(restart),
+        0,
+        arrival,
+      );
+    }
     this.#wakeRunLoop();
     return true;
   }
 
   /**
-   * Forget what a remote sent before an incarnation change, none of which the
-   * peer that sent it is still waiting on.
+   * Accept a peer's incarnation change, for the run loop to carry out in a
+   * crank of its own, behind everything the peer sent before it.
    *
-   * Left queued, a message from the old incarnation would record its sequence
-   * number against the new one, and the new incarnation's first message would
-   * then be discarded as a duplicate.
+   * A restart reported while another of the peer's waits takes that one's
+   * place rather than queueing a crank of its own, or a peer reporting a new
+   * incarnation on every handshake would queue one for each. Nothing waits
+   * behind the one replaced, since every handshake from it reported a restart
+   * and the transport kept its channel closed.
    *
-   * An arrival already handed to a crank is out of reach: a restart detected
-   * while that crank is suspended still records the old incarnation's
-   * sequence number (#1104).
-   *
-   * @param remoteId - The remote whose arrivals to discard.
+   * @param options - Options bag.
+   * @param options.peerId - The peer.
+   * @param options.incarnation - The incarnation it reports.
+   * @param options.restart - Whether it replaces an incarnation the kernel knew
+   * the peer by.
    */
-  discardRemoteInbound(remoteId: RemoteId): void {
-    this.#arrivedFromRemotes = this.#arrivedFromRemotes.filter(
-      (item) => item.remoteId !== remoteId,
+  acceptPeerIncarnation({
+    peerId,
+    incarnation,
+    restart,
+  }: {
+    peerId: string;
+    incarnation: string;
+    restart: boolean;
+  }): void {
+    this.assertRunLoopAlive('accept a peer incarnation change');
+    const waiting = restart ? this.#waitingRestart(peerId) : undefined;
+    if (waiting === undefined) {
+      this.#arrivedFromRemotes.push({
+        type: 'peerIncarnation',
+        peerId,
+        incarnation,
+        restart,
+      });
+    } else {
+      waiting.incarnation = incarnation;
+    }
+    this.#wakeRunLoop();
+  }
+
+  /**
+   * Find the restart of a peer that waits for its crank.
+   *
+   * @param peerId - The peer.
+   * @returns The waiting change, or undefined if none is a restart.
+   */
+  #waitingRestart(peerId: string): RunQueueItemPeerIncarnation | undefined {
+    return this.#arrivedFromRemotes.find(
+      (item): item is RunQueueItemPeerIncarnation =>
+        item.type === 'peerIncarnation' &&
+        item.peerId === peerId &&
+        item.restart,
     );
   }
 
   /**
-   * Forget every message peers sent that waits for a crank, for a kernel
-   * wiping its store: taken after the wipe, one would record its sequence
-   * number in the wiped store.
+   * List the incarnations a peer reported in changes still waiting for their
+   * cranks.
+   *
+   * @param peerId - The peer.
+   * @returns The incarnations, oldest first.
+   */
+  waitingIncarnations(peerId: string): string[] {
+    return this.#arrivedFromRemotes.flatMap((item) =>
+      item.type === 'peerIncarnation' && item.peerId === peerId
+        ? [item.incarnation]
+        : [],
+    );
+  }
+
+  /**
+   * Forget everything that arrived from peers and waits for a crank, for a
+   * kernel wiping its store: taken after the wipe, it would write that peer's
+   * bookkeeping into the wiped store. A remote held for a restart discarded
+   * here stays held until `RemoteManager.releaseRestartHolds`.
    *
    * Not for a kernel that is only stopping: its run loop goes on meanwhile,
    * and a later message that commits would acknowledge a forgotten one, which

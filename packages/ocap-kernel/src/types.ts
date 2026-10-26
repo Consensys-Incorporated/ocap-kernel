@@ -407,6 +407,20 @@ export type RunQueueItemRemoteInbound = {
   message: string;
 };
 
+export type RunQueueItemPeerIncarnation = {
+  type: 'peerIncarnation';
+  peerId: string;
+  incarnation: string;
+  /**
+   * Whether it replaced an incarnation the kernel knew the peer by when the
+   * handshake reported it. A restart has the peer's later arrivals taken ahead
+   * of it, as read late off the old incarnation's channel, and a later restart
+   * takes its place; a first incarnation has them taken behind it. The crank
+   * judges the restart again, against the store.
+   */
+  restart: boolean;
+};
+
 export const RunQueueItemStruct = union([
   RunQueueItemSendStruct,
   RunQueueItemNotifyStruct,
@@ -419,11 +433,16 @@ export const RunQueueItemStruct = union([
 export type RunQueueItem = Infer<typeof RunQueueItemStruct>;
 
 /**
- * Everything the run loop takes a crank for. An arrival from a peer is held in
- * memory and never written to the run queue, so it is not a {@link RunQueueItem}
- * and the store's queue methods do not accept one.
+ * What arrives from a peer: a message, or a change of incarnation a handshake
+ * reported. Held in memory and never written to the run queue, so it is not a
+ * {@link RunQueueItem} and the store's queue methods do not accept one.
  */
-export type RunLoopItem = RunQueueItem | RunQueueItemRemoteInbound;
+export type PeerArrival =
+  | RunQueueItemRemoteInbound
+  | RunQueueItemPeerIncarnation;
+
+/** Everything the run loop takes a crank for. */
+export type RunLoopItem = RunQueueItem | PeerArrival;
 
 /**
  * Assert that a value is a valid kernel message.

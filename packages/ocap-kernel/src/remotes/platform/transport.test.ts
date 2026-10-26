@@ -3120,6 +3120,79 @@ describe('transport.initTransport', () => {
       expect(mockConnectionFactory.dialIdempotent).toHaveBeenCalledTimes(1);
     });
 
+    it('spends no reconnection attempt on a restart the kernel reports again', async () => {
+      let reconnecting = false;
+      mockReconnectionManager.isReconnecting.mockImplementation(
+        () => reconnecting,
+      );
+      mockReconnectionManager.startReconnection.mockImplementation(() => {
+        reconnecting = true;
+        return true;
+      });
+      mockReconnectionManager.stopReconnection.mockImplementation(() => {
+        reconnecting = false;
+      });
+      mockReconnectionManager.calculateBackoff.mockReturnValue(0);
+      const { abortableDelay } = await import('@metamask/kernel-utils');
+      (abortableDelay as ReturnType<typeof vi.fn>).mockResolvedValue(undefined);
+
+      const handshakeAck = new TextEncoder().encode(
+        JSON.stringify({
+          method: 'handshakeAck',
+          params: { incarnationId: 'remote-incarnation' },
+        }),
+      );
+      const makeAckingChannel = (): MockChannel => {
+        const channel = createMockChannel('remote-peer');
+        channel.msgStream.read.mockResolvedValueOnce(handshakeAck);
+        return channel;
+      };
+      const firstChannel = makeAckingChannel();
+      firstChannel.msgStream.write
+        .mockResolvedValueOnce(undefined)
+        .mockRejectedValueOnce(
+          Object.assign(new Error('Connection lost'), { code: 'ECONNRESET' }),
+        );
+      mockConnectionFactory.dialIdempotent
+        .mockResolvedValueOnce(firstChannel)
+        .mockResolvedValueOnce(makeAckingChannel())
+        .mockResolvedValueOnce(makeAckingChannel())
+        .mockResolvedValueOnce(makeAckingChannel());
+      // The kernel reports a restart on every handshake until its crank
+      // records it.
+      const onIncarnationChange = vi
+        .fn()
+        .mockResolvedValueOnce(false)
+        .mockResolvedValueOnce(true)
+        .mockResolvedValueOnce(true)
+        .mockResolvedValue(false);
+
+      const { sendRemoteMessage } = await initTransport(
+        '0x1234',
+        { maxRetryAttempts: 3 },
+        vi.fn().mockResolvedValue(''),
+        undefined,
+        'local-incarnation',
+        onIncarnationChange,
+      );
+
+      await expect(
+        sendRemoteMessage('remote-peer', makeTestMessage('lost')),
+      ).rejects.toThrow('Connection lost');
+
+      await vi.waitFor(() => {
+        expect(mockReconnectionManager.stopReconnection).toHaveBeenCalledWith(
+          'remote-peer',
+        );
+      });
+      expect(onIncarnationChange).toHaveBeenCalledTimes(4);
+      expect(
+        mockReconnectionManager.shouldRetry.mock.calls.map(
+          ([, budget]) => budget,
+        ),
+      ).toStrictEqual([3, 3, 4]);
+    });
+
     it('rejects the inbound channel when kernel detects a restart on inbound handshake', async () => {
       // Symmetric with the outbound PeerRestartedError path: when the
       // receiver's persisted incarnation differs from the observed one,

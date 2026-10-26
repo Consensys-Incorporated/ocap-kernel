@@ -45,7 +45,6 @@ vi.mock('./remotes/kernel/remote-comms.ts', async () => {
 });
 
 const STOP_RUN_LOOP = 'test: stop run loop';
-// Base58, like a real one: it ends up in a savepoint name.
 const PEER_ID = '12D3KooWPeer1';
 const NEW_PEER_ID = '12D3KooWPeer2';
 
@@ -245,6 +244,9 @@ async function abortACrankWhile(
       return await remoteManager
         .getRemote(item.remoteId)
         .deliverInbound(item.message);
+    }
+    if (item.type === 'peerIncarnation') {
+      return remoteManager.applyIncarnationChange(item);
     }
     // Recorded only for the types the rows observe; anything new must be wired
     // to its real handler before a row can say what it did.
@@ -497,23 +499,26 @@ describe('a writer acting while a crank aborts', () => {
     }).toStrictEqual({ state: 'unresolved', notified: [] });
   });
 
-  it('peer incarnation change: the new incarnation and its rejections are lost with the aborted crank (gap, #1104)', async () => {
+  it('peer incarnation change: the new incarnation and its rejections land in a crank of their own', async () => {
     const harness = await setUp();
     const { kernelStore, kpid, onIncarnationChange } = harness;
     letPeerDecide(harness);
     kernelStore.setPeerIncarnation(PEER_ID, 'incarnation-A');
     const delivered = await abortACrankWhile(harness, async () => {
       expect(await onIncarnationChange(PEER_ID, 'incarnation-B')).toBe(true);
-      expect(kernelStore.getPeerIncarnation(PEER_ID)).toBe('incarnation-B');
+      expect(kernelStore.getPeerIncarnation(PEER_ID)).toBe('incarnation-A');
     });
+    const { state, value } = kernelStore.getKernelPromise(kpid);
     expect({
       incarnation: kernelStore.getPeerIncarnation(PEER_ID),
-      state: kernelStore.getKernelPromise(kpid).state,
+      state,
+      reason: value?.body,
       notified: notified(delivered, kpid),
     }).toStrictEqual({
-      incarnation: 'incarnation-A',
-      state: 'unresolved',
-      notified: [],
+      incarnation: 'incarnation-B',
+      state: 'rejected',
+      reason: expect.stringContaining('[KERNEL:PEER_RESTARTED]'),
+      notified: ['v3'],
     });
   });
 

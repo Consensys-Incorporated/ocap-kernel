@@ -17,6 +17,7 @@ import type {
   ClusterConfig,
   CrankResult,
   EndpointId,
+  RunLoopItem,
   RunQueueItem,
   SubclusterId,
 } from './types.ts';
@@ -40,12 +41,12 @@ const mocks = vi.hoisted(() => {
      * The router's dispatch, so queued work can be carried out as a crank
      * would carry it out.
      */
-    #deliver: ((item: RunQueueItem) => Promise<unknown>) | undefined;
+    #deliver: ((item: RunLoopItem) => Promise<unknown>) | undefined;
 
     // Like the real run loop, this settles only if the kernel dies.
     run = vi.fn(
       async (
-        deliver: (item: RunQueueItem) => Promise<unknown>,
+        deliver: (item: RunLoopItem) => Promise<unknown>,
         _options?: { isOffline?: (endpointId: EndpointId) => boolean },
       ) => {
         this.#deliver = deliver;
@@ -165,6 +166,10 @@ const mocks = vi.hoisted(() => {
     isIdentityInitialized = vi.fn().mockReturnValue(false);
 
     setMessageHandler = vi.fn();
+
+    applyIncarnationChange = vi.fn().mockReturnValue({});
+
+    releaseRestartHolds = vi.fn();
 
     initIdentity = vi.fn().mockResolvedValue(undefined);
 
@@ -554,6 +559,9 @@ describe('Kernel', () => {
       await kernel.clearStorage();
       expect(
         mocks.KernelQueue.lastInstance.discardArrivals,
+      ).toHaveBeenCalledOnce();
+      expect(
+        mocks.RemoteManager.lastInstance.releaseRestartHolds,
       ).toHaveBeenCalledOnce();
     });
   });
@@ -1167,6 +1175,9 @@ describe('Kernel', () => {
       expect(
         mocks.KernelQueue.lastInstance.discardArrivals,
       ).toHaveBeenCalledOnce();
+      expect(
+        mocks.RemoteManager.lastInstance.releaseRestartHolds,
+      ).toHaveBeenCalledOnce();
     });
 
     it('clears system subcluster roots', async () => {
@@ -1491,6 +1502,22 @@ describe('Kernel', () => {
   });
 
   describe('remote communications', () => {
+    it('hands a peer incarnation change to the remote manager', async () => {
+      await Kernel.make(mockPlatformServices, mockKernelDatabase);
+      const deliver = mocks.KernelQueue.lastInstance.run.mock.calls[0]?.[0];
+      const change = {
+        type: 'peerIncarnation',
+        peerId: 'peer-1',
+        incarnation: 'incarnation-B',
+        restart: true,
+      } as const;
+
+      expect(await deliver?.(change)).toStrictEqual({});
+      expect(
+        mocks.RemoteManager.lastInstance.applyIncarnationChange,
+      ).toHaveBeenCalledWith(change);
+    });
+
     it('holds GC actions back for a remote with no handle', async () => {
       await Kernel.make(mockPlatformServices, mockKernelDatabase);
       mocks.RemoteManager.lastInstance.hasRemote.mockImplementation(

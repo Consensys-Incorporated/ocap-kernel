@@ -1273,6 +1273,21 @@ describe('KernelQueue', () => {
     });
 
     /**
+     * Hand the queue a peer's incarnation change.
+     *
+     * @param incarnation - The incarnation the peer reported.
+     * @param options - Options bag.
+     * @param options.peerId - The peer.
+     * @param options.restart - Whether it replaced one the kernel knew.
+     */
+    const reportIncarnation = (
+      incarnation: string,
+      { peerId = 'peer-r1', restart = true } = {},
+    ): void => {
+      kernelQueue.acceptPeerIncarnation({ peerId, incarnation, restart });
+    };
+
+    /**
      * Run the loop until it has delivered `count` items.
      *
      * @param count - How many to deliver before stopping the loop.
@@ -1304,18 +1319,129 @@ describe('KernelQueue', () => {
       expect(() => arrive({ seq: 1 })).toThrow('Kernel run loop died');
     });
 
-    it('discards what a remote sent before its incarnation changed', async () => {
+    it('refuses an incarnation change once the run loop has died', async () => {
+      await killRunLoop(new Error('dead'));
+
+      expect(() => reportIncarnation('incarnation-B')).toThrow(
+        'Kernel run loop died',
+      );
+    });
+
+    /**
+     * The run loop item a {@link reportIncarnation} call becomes.
+     *
+     * @param incarnation - The incarnation the peer reported.
+     * @param options - Options bag.
+     * @param options.restart - Whether it replaced one the kernel knew.
+     * @returns The item.
+     */
+    const change = (
+      incarnation: string,
+      { restart = true } = {},
+    ): RunLoopItem => ({
+      type: 'peerIncarnation',
+      peerId: 'peer-r1',
+      incarnation,
+      restart,
+    });
+
+    it('takes what a peer sends while its incarnation change waits ahead of the change', async () => {
       arrive({ seq: 47 });
+      reportIncarnation('incarnation-B');
       arrive({ seq: 3, remoteId: 'r2' });
+      arrive({ seq: 48 });
 
-      kernelQueue.discardRemoteInbound('r1' as RemoteId);
+      expect(await deliverItems(4)).toStrictEqual([
+        arrival(47),
+        arrival(48),
+        change('incarnation-B'),
+        arrival(3, 'r2'),
+      ]);
+    });
 
-      expect(await deliverItems(1)).toStrictEqual([arrival(3, 'r2')]);
+    it('takes what a peer sends behind its first incarnation change', async () => {
+      reportIncarnation('incarnation-A', { restart: false });
+      arrive({ seq: 1 });
+
+      expect(await deliverItems(2)).toStrictEqual([
+        change('incarnation-A', { restart: false }),
+        arrival(1),
+      ]);
+    });
+
+    it('drops a copy of a message sent again while its incarnation change waits', async () => {
+      arrive({ seq: 1 });
+      reportIncarnation('incarnation-B');
+
+      expect(arrive({ seq: 1 })).toBe(true);
+      expect(await deliverItems(2)).toStrictEqual([
+        arrival(1),
+        change('incarnation-B'),
+      ]);
+    });
+
+    it("compares a message with what committed when only another peer's incarnation changed", async () => {
+      reportIncarnation('incarnation-B');
+      arrive({ seq: 3, remoteId: 'r2', highestReceivedSeq: 5 });
+      arrive({ seq: 6, remoteId: 'r2', highestReceivedSeq: 5 });
+
+      expect(await deliverItems(2)).toStrictEqual([
+        change('incarnation-B'),
+        arrival(6, 'r2'),
+      ]);
+    });
+
+    it('lists the incarnations a peer reported in changes still waiting', async () => {
+      reportIncarnation('incarnation-A', { restart: false });
+      reportIncarnation('incarnation-X', { peerId: 'peer-r2' });
+      reportIncarnation('incarnation-B');
+
+      expect({
+        r1: kernelQueue.waitingIncarnations('peer-r1'),
+        r2: kernelQueue.waitingIncarnations('peer-r2'),
+        r3: kernelQueue.waitingIncarnations('peer-r3'),
+      }).toStrictEqual({
+        r1: ['incarnation-A', 'incarnation-B'],
+        r2: ['incarnation-X'],
+        r3: [],
+      });
+      await deliverItems(3);
+      expect(kernelQueue.waitingIncarnations('peer-r1')).toStrictEqual([]);
+    });
+
+    it('carries out only the latest of the restarts reported while one waits', async () => {
+      reportIncarnation('incarnation-B');
+      reportIncarnation('incarnation-X', { peerId: 'peer-r2' });
+      for (const incarnation of ['incarnation-C', 'incarnation-D']) {
+        reportIncarnation(incarnation);
+      }
+      arrive({ seq: 1, remoteId: 'r3' });
+
+      expect(await deliverItems(3)).toStrictEqual([
+        change('incarnation-D'),
+        { ...change('incarnation-X'), peerId: 'peer-r2' },
+        arrival(1, 'r3'),
+      ]);
+    });
+
+    it('keeps the count of what was taken ahead of a restart that a later one replaces', () => {
+      reportIncarnation('incarnation-B');
+      for (let seq = 1; seq <= 100; seq += 1) {
+        arrive({ seq });
+      }
+      reportIncarnation('incarnation-C');
+      const held = Array.from({ length: 100 }, (_, index) =>
+        arrive({ seq: index + 101, highestReceivedSeq: index + 1 }),
+      );
+
+      expect(held.every(Boolean)).toBe(true);
+      expect(arrive({ seq: 201, highestReceivedSeq: 101 })).toBe(false);
     });
 
     it('discards every arrival', async () => {
       arrive({ seq: 1 });
       arrive({ seq: 1, remoteId: 'r2' });
+      reportIncarnation('incarnation-B');
 
       kernelQueue.discardArrivals();
       arrive({ seq: 2 });
@@ -1323,7 +1449,13 @@ describe('KernelQueue', () => {
       expect(await deliverItems(1)).toStrictEqual([arrival(2)]);
     });
 
-    it('wakes a parked run loop when a message arrives', async () => {
+    it.each([
+      { what: 'a message arrives', accept: () => arrive({ seq: 1 }) },
+      {
+        what: 'a peer restarts',
+        accept: () => reportIncarnation('incarnation-B'),
+      },
+    ])('wakes a parked run loop when $what', async ({ accept }) => {
       (kernelStore.runQueueLength as unknown as MockInstance).mockReturnValue(
         0,
       );
@@ -1333,7 +1465,7 @@ describe('KernelQueue', () => {
           turns += 1;
           if (turns === 1) {
             // The loop found nothing and has armed its wake.
-            arrive({ seq: 1 });
+            accept();
           } else if (turns > 2) {
             throw new Error(STOP_RUN_LOOP);
           }
@@ -1354,6 +1486,50 @@ describe('KernelQueue', () => {
 
       expect(held.every(Boolean)).toBe(true);
       expect(arrive({ seq: 201 })).toBe(false);
+    });
+
+    it('refuses the 201st arrival from a remote whose incarnation change waits', () => {
+      for (let seq = 1; seq <= 100; seq += 1) {
+        arrive({ seq });
+      }
+      reportIncarnation('incarnation-B');
+      const held = Array.from({ length: 100 }, (_, index) =>
+        arrive({ seq: index + 101 }),
+      );
+
+      expect(held.every(Boolean)).toBe(true);
+      expect(arrive({ seq: 201 })).toBe(false);
+    });
+
+    it('takes no more than 200 arrivals ahead of one waiting restart', async () => {
+      reportIncarnation('incarnation-B');
+      arrive({ seq: 1 });
+      let refused: number | undefined;
+      const delivered: RunLoopItem[] = [];
+      // A peer still sending on the old channel, one message per crank.
+      const deliver = vi.fn(async (item: RunLoopItem) => {
+        delivered.push(item);
+        if (item.type !== 'remoteInbound' || delivered.length > 300) {
+          throw new Error(STOP_RUN_LOOP);
+        }
+        const next = item.seq + 1;
+        if (!arrive({ seq: next, highestReceivedSeq: item.seq })) {
+          refused = next;
+        }
+        return {};
+      });
+
+      await expect(kernelQueue.run(deliver)).rejects.toThrow(STOP_RUN_LOOP);
+
+      expect({
+        refused,
+        delivered: delivered.length,
+        last: delivered.at(-1),
+      }).toStrictEqual({
+        refused: 201,
+        delivered: 201,
+        last: change('incarnation-B'),
+      });
     });
 
     it('counts each remote against its own share', async () => {

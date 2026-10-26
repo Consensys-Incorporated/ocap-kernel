@@ -364,10 +364,10 @@ export function getVatMethods(ctx: StoreContext) {
    * exports to that endpoint (alice's root, etc.) stay reachable when a
    * fresh incarnation reconnects with the same peer ID.
    *
-   * The caller (RemoteManager.#handleIncarnationChange) rejects promises the
+   * The caller (RemoteManager.applyIncarnationChange) lists the promises the
    * endpoint was deciding *before* invoking this, so its
    * `getPromisesByDecider` query can still find them through the c-list this
-   * function is about to tear down.
+   * function is about to tear down, and rejects them after.
    *
    * @param endpointId - The endpoint whose contributions are to be dropped.
    */
@@ -400,8 +400,8 @@ export function getVatMethods(ctx: StoreContext) {
       }
       const { isPromise } = parseRef(eref);
       if (isPromise) {
-        // The caller already rejected the promises this endpoint was deciding,
-        // so only the c-list entry's own reference is left.
+        // The caller rejects the promises this endpoint was deciding, so only
+        // the c-list entry's own reference is left.
         deleteCListEntry(endpointId, kref, eref);
       } else {
         // Object exports: drop the owner mapping if it still names the

@@ -16,6 +16,12 @@ export type Channel = {
   peerId: string;
 };
 
+/** What an outbound handshake found. */
+export type OutboundHandshakeResult =
+  | { success: false; incarnationChanged: false }
+  | { success: true; incarnationChanged: false; remoteIncarnationId?: string }
+  | { success: true; incarnationChanged: true; remoteIncarnationId: string };
+
 export type RemoteMessageHandler = (
   from: string,
   message: string,
@@ -48,14 +54,18 @@ export type OnRemoteGiveUp = (peerId: string) => void;
  * restart even when the in-memory PeerStateManager has been rebuilt empty
  * (e.g. after a receiver restart or stale-peer cleanup).
  *
- * Resolves `true` if the kernel detected an actual restart (and reset its
- * RemoteHandle state). The transport awaits this and uses the verdict to
- * suppress stale outbound messages on the same connection — the in-memory
- * PSM check is unreliable across receiver-side state loss.
+ * Resolves `true` if the kernel knows the peer restarted. The transport
+ * awaits this and uses the verdict to suppress stale outbound messages on the
+ * same connection — the in-memory PSM check is unreliable across
+ * receiver-side state loss.
+ *
+ * The kernel resets its RemoteHandle state and records the new incarnation in
+ * a crank of its own, so a handshake that completes before that crank records
+ * it reports the restart again.
  *
  * @param peerId - The peer ID that completed the handshake.
  * @param observedIncarnation - The incarnationId the peer reported.
- * @returns Whether the peer was determined to have restarted.
+ * @returns Whether the kernel knows the peer restarted.
  */
 export type OnIncarnationChange = (
   peerId: string,

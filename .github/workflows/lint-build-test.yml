@@ -107,8 +107,28 @@ jobs:
           name: coverage
           path: coverage/
           retention-days: 7
+      - name: Require clean working directory
+        shell: bash
+        run: |
+          if ! git diff --exit-code; then
+            echo "Working tree dirty at end of job"
+            exit 1
+          fi
+
+  test-types:
+    name: Type-check
+    runs-on: ubuntu-latest
+    needs: prepare
+    strategy:
+      matrix:
+        node-version: [24.x]
+    steps:
+      - name: Checkout and setup environment
+        uses: MetaMask/action-checkout-and-setup@0543b5929698c71e3ccc6ed24eac87825669b5de # v3
+        with:
+          is-high-risk-environment: false
+          node-version: ${{ matrix.node-version }}
       - run: yarn test:types
-        if: ${{ matrix.node-version == '24.x' }}
       - name: Require clean working directory
         shell: bash
         run: |

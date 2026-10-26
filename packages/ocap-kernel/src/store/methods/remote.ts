@@ -265,10 +265,10 @@ export function getRemoteMethods(ctx: StoreContext) {
   }
 
   /**
-   * Get the last observed incarnationId for a peer. This is the value most
-   * recently negotiated via handshake; it survives kernel restart so that the
-   * receiver can detect a peer restart even when its in-memory PeerStateManager
-   * has been rebuilt empty.
+   * Get the incarnationId the kernel last recorded for a peer, which lags a
+   * handshake that reported a new one until that change's crank. It survives
+   * kernel restart so that the receiver can detect a peer restart even when
+   * its in-memory PeerStateManager has been rebuilt empty.
    *
    * @param peerId - The peer whose incarnation is sought.
    * @returns The persisted incarnationId, or undefined if none recorded yet.

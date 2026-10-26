@@ -212,10 +212,10 @@ any garbage collection action or reap, it takes from the [run queue](#run-queue)
 the messages remote peers have sent, in turns, so a peer that sends faster than cranks
 finish cannot crowd out the run queue. It is the one writer meant to change the kernel
 store: work asked for from outside it, such as a vat restart or termination, or a peer's
-message (though not yet the acknowledgement it carries), is queued for it to carry out
-rather than written into whichever crank happens to be open. A crank that throws kills the
-run loop for the life of the kernel instance; callers still waiting on queued work are
-then rejected.
+message or change of incarnation (though not yet the acknowledgement a message carries),
+is queued for it to carry out rather than written into whichever crank happens to be
+open. A crank that throws kills the run loop for the life of the kernel instance; callers
+still waiting on queued work are then rejected.
 
 ### kernel router
 

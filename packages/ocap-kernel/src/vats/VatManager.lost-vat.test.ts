@@ -197,6 +197,7 @@ function boot(
     invokeKernelService: () => undefined,
     restartVat: vatManager.performVatRestart.bind(vatManager),
     terminateVat: vatManager.performVatTermination.bind(vatManager),
+    applyIncarnationChange: () => ({}),
     logger,
   });
   return {

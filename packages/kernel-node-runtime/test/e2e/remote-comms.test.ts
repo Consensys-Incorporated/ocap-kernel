@@ -993,14 +993,6 @@ describe.sequential('Remote Communications E2E', () => {
         // Launch Bob again (fresh vat, no previous state)
         await launchVatAndGetURL(kernel2, bobConfig);
 
-        // Send a message - when the new kernel connects, it will have a different
-        // incarnation ID than before. The handshake will detect this change
-        // and trigger promise rejection for pending work.
-        // The await will naturally wait for the promise to settle - either
-        // succeeding (unexpected) or failing due to incarnation change detection.
-        // The message should fail because incarnation changed.
-        // The handshake detects the new incarnation and triggers onIncarnationChange,
-        // which resets RemoteHandle state and rejects pending work.
         await expect(
           kernel1.queueMessage(aliceRef, 'sendRemoteMessage', [
             bobURL,
