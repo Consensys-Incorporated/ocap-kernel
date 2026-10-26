@@ -1,0 +1,38 @@
+name: Dependabot Dedupe
+
+on:
+  pull_request:
+
+concurrency:
+  group: dependabot-dedupe-${{ github.head_ref }}
+  cancel-in-progress: true
+
+jobs:
+  dependabot-dedupe:
+    name: Dedupe yarn.lock
+    runs-on: ubuntu-latest
+    if: ${{ github.actor == 'dependabot[bot]' }}
+    permissions:
+      contents: write
+    steps:
+      # Skip the install so no dependency code runs while the token can push.
+      - name: Checkout and setup environment
+        uses: MetaMask/action-checkout-and-setup@0543b5929698c71e3ccc6ed24eac87825669b5de # v3
+        with:
+          is-high-risk-environment: true
+          ref: ${{ github.head_ref }}
+          skip-install: true
+          persist-credentials: true
+
+      - name: Dedupe and push
+        run: |
+          yarn dedupe --mode=update-lockfile
+          git add yarn.lock
+          if git diff --staged --quiet; then
+            echo "No deduplication needed"
+          else
+            git config user.name "GitHub Actions"
+            git config user.email "actions@github.com"
+            git commit -m "chore: dedupe yarn.lock"
+            git push
+          fi
