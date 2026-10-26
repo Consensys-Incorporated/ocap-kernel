@@ -106,12 +106,14 @@ export function getBaseMethods(kv: KVStore) {
         return value;
       },
       set(newValue: string): void {
+        // Cached only once stored, so that a write that fails leaves the two
+        // agreeing.
+        kv.set(key, newValue);
         value = newValue;
-        kv.set(key, value);
       },
       delete(): void {
-        value = undefined;
         kv.delete(key);
+        value = undefined;
       },
     });
   }
@@ -162,8 +164,11 @@ export function getBaseMethods(kv: KVStore) {
         if (head.get() === undefined) {
           throw Error(`enqueue into deleted queue ${queueName}`);
         }
-        const entryPos = incCounter(head);
-        kv.set(`${qk}.${entryPos}`, JSON.stringify(item));
+        // Before the head moves: outside a crank nothing rolls back, and a
+        // head past an entry that failed to be written leaves a gap every
+        // later dequeue dies on.
+        kv.set(`${qk}.${head.get()}`, JSON.stringify(item));
+        incCounter(head);
       },
       dequeue(): object | undefined {
         const headPos = head.get();
@@ -173,8 +178,10 @@ export function getBaseMethods(kv: KVStore) {
         const tailPos = tail.get();
         if (tailPos !== headPos) {
           const entry = kv.getRequired(`${qk}.${tailPos}`);
-          kv.delete(`${qk}.${tailPos}`);
+          // The tail moves first: an entry deleted under a tail that failed
+          // to move is one every later dequeue dies on.
           incCounter(tail);
+          kv.delete(`${qk}.${tailPos}`);
           return JSON.parse(entry) as object;
         }
         return undefined;

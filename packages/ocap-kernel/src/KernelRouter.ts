@@ -647,8 +647,9 @@ export class KernelRouter {
     if (!remote) {
       return { didDelivery: remoteId };
     }
-    // The remote ID has gone to another peer since (#1183). Delivered, the
-    // message would be read against that peer's c-list and answered to it.
+    // The remote ID has gone to another peer since, as after a reset (#1208).
+    // Delivered, the message would be read against that peer's c-list and
+    // answered to it.
     if (remote.peerId !== peerId) {
       this.#logger?.warn(
         `Dropped inbound message seq=${seq} from peer ${peerId}: ${remoteId} is now another peer's`,
