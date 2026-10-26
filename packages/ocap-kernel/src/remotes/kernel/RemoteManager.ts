@@ -299,8 +299,8 @@ export class RemoteManager {
       );
     }
     const isRestart = stored !== undefined;
-    // Remote comms stopped while the restart waited, or had yet to start when
-    // the handshake queued it, so no handle is there to clean up after.
+    // Remote comms had yet to start when the handshake queued it, so no handle
+    // is there to clean up after.
     // Recorded without that cleanup, the restart would be hidden from the next
     // handshake, which reports it again instead.
     if (isRestart && !this.isRemoteCommsInitialized()) {
@@ -548,7 +548,7 @@ export class RemoteManager {
     if (this.#remotesByPeer.has(peerId)) {
       return use(this.#provideRemote(peerId, hints));
     }
-    this.#kernelQueue.assertRunLoopAlive('set up a remote');
+    this.#kernelQueue.assertRunLoopWillRun('set up a remote');
     // Boxed, since `writeOutsideCrank` refuses a promise; one `use` returns is
     // the caller's to await.
     const { used } = await this.#kernelQueue.writeOutsideCrank(() => ({

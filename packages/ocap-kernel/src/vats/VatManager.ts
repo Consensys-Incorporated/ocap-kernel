@@ -903,7 +903,8 @@ export class VatManager {
     }
     if (!this.#kernelStore.isVatActive(vatId)) {
       // Retired while this crank waited on a worker, by a writer outside the
-      // run loop, as host calls still are (#1171). The new worker is stopped,
+      // run loop. None does since `terminateAllVats` stops the loop; kept until
+      // host calls cannot write outside it (#1171). The new worker is stopped,
       // and the state its `initVat` wrote deleted with it.
       const error = new VatDeletedError(vatId);
       if (this.#vats.has(vatId)) {
@@ -1134,9 +1135,9 @@ export class VatManager {
       ...this.#kernelStore.getVatIDs(),
     ]);
     for (const id of [...ids].reverse()) {
-      // A queued termination can retire a vat while an earlier one stops.
-      // Checked with no await before `stopVat`'s own check, so nothing can
-      // retire it in between.
+      // A queued termination can retire a vat while an earlier one stops, if the
+      // run loop runs; `Kernel` stops it first. Checked with no await before
+      // `stopVat`'s own check, so nothing can retire it in between.
       if (!this.#isVatKnown(id)) {
         continue;
       }

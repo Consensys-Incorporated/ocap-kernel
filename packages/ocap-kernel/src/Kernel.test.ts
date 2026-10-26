@@ -110,6 +110,12 @@ const mocks = vi.hoisted(() => {
 
     discardQueuedWork = vi.fn();
 
+    failStoppedRunLoop = vi.fn((error: Error) => {
+      this.#runLoopFailure = error;
+      this.#running = false;
+      return error;
+    });
+
     // A stand-in for the run loop: the item is delivered through the router,
     // on a later turn, exactly as a crank would deliver it.
     enqueueRestartVat = vi.fn((vatId: string) => {
@@ -574,21 +580,6 @@ describe('Kernel', () => {
       await kernel.clearStorage();
       expect(clearSpy).toHaveBeenCalledOnce();
     });
-
-    it('discards the queued work, then releases the restart holds', async () => {
-      const kernel = await Kernel.make(
-        mockPlatformServices,
-        mockKernelDatabase,
-      );
-      await kernel.clearStorage();
-      const { discardQueuedWork } = mocks.KernelQueue.lastInstance;
-      const { releaseRestartHolds } = mocks.RemoteManager.lastInstance;
-      expect(discardQueuedWork).toHaveBeenCalledOnce();
-      expect(releaseRestartHolds).toHaveBeenCalledOnce();
-      expect(discardQueuedWork.mock.invocationCallOrder[0]).toBeLessThan(
-        releaseRestartHolds.mock.invocationCallOrder[0] as number,
-      );
-    });
   });
 
   describe('getVats()', () => {
@@ -904,35 +895,6 @@ describe('Kernel', () => {
   });
 
   describe('stop()', () => {
-    it.each([
-      {
-        method: 'clearStorage',
-        args: [
-          new Error('Kernel storage was cleared; queued work was abandoned'),
-        ],
-      },
-      {
-        method: 'reset',
-        args: [new Error('Kernel was reset; queued work was abandoned')],
-      },
-      {
-        method: 'stop',
-        args: [new Error('Kernel was stopped before taking this request')],
-      },
-    ] as const)(
-      'discards the requests held for the open crank on $method',
-      async ({ method, args }) => {
-        const kernel = await Kernel.make(
-          mockPlatformServices,
-          mockKernelDatabase,
-        );
-        await kernel[method]();
-        expect(
-          mocks.KernelQueue.lastInstance.discardHeldRequests,
-        ).toHaveBeenCalledExactlyOnceWith(...args);
-      },
-    );
-
     it('gracefully stops the kernel without terminating vats', async () => {
       const workerTerminateAllMock = vi
         .spyOn(mockPlatformServices, 'terminateAll')
@@ -949,9 +911,6 @@ describe('Kernel', () => {
       const remoteManagerInstance = mocks.RemoteManager.lastInstance;
       await kernel.launchSubcluster(makeSingleVatClusterConfig());
       expect(kernel.getVatIds()).toStrictEqual(['v1']);
-
-      // Clear any previous calls to waitForCrank from launchSubcluster
-      queueInstance.waitForCrank.mockClear();
 
       await kernel.stop();
 
@@ -1018,70 +977,28 @@ describe('Kernel', () => {
 
       await kernel.stop();
 
-      // Waiting out the crank in flight is not enough: the loop wins the race
-      // to the next one by construction, so these writes would land in it.
       expect(
-        (queueInstance.stopRunLoop as unknown as MockInstance).mock
-          .invocationCallOrder[0] as number,
+        queueInstance.stopRunLoop.mock.invocationCallOrder[0] as number,
       ).toBeLessThan(closeSpy.mock.invocationCallOrder[0] as number);
     });
 
-    it('leaves the run loop running after a reset that threw', async () => {
+    it('tears down the rest even when stopping remote comms fails', async () => {
       const kernel = await Kernel.make(
         mockPlatformServices,
         mockKernelDatabase,
       );
-      const queueInstance = mocks.KernelQueue.lastInstance;
-      vi.spyOn(mockKernelDatabase, 'clear').mockImplementationOnce(() => {
-        throw new Error('test error');
-      });
-
-      await expect(kernel.reset()).rejects.toThrow('test error');
-
-      // A kernel left with its loop stopped would look alive and process
-      // nothing, which is worse than the half-reset state it is in.
-      expect(queueInstance.getRunLoopStatus()).toStrictEqual({
-        state: 'running',
-      });
-    });
-
-    it('does not restart a loop that had already died', async () => {
-      const kernel = await Kernel.make(
-        mockPlatformServices,
-        mockKernelDatabase,
+      vi.spyOn(mockPlatformServices, 'stopRemoteComms').mockRejectedValueOnce(
+        new Error('transport stuck'),
       );
-      const queueInstance = mocks.KernelQueue.lastInstance;
-      queueInstance.killRunLoop(new Error('died earlier'));
-      queueInstance.run.mockClear();
+      const terminateAllSpy = vi.spyOn(mockPlatformServices, 'terminateAll');
+      const closeSpy = vi.spyOn(mockKernelDatabase, 'close');
 
-      // `reset` has to work on a kernel whose loop is dead — that is much of
-      // what it is for — and starting a dead loop is not possible.
-      await kernel.reset();
-
-      expect(queueInstance.run).not.toHaveBeenCalled();
-    });
-
-    it('holds a second direct write off until the first is done', async () => {
-      const kernel = await Kernel.make(
-        mockPlatformServices,
-        mockKernelDatabase,
-      );
-      const queueInstance = mocks.KernelQueue.lastInstance;
-      const order: string[] = [];
-      vi.spyOn(mockKernelDatabase, 'clear').mockImplementation(() => {
-        order.push('wrote');
-      });
-      queueInstance.stopRunLoop.mockImplementation(async () => {
-        order.push('stopped');
-        return false;
-      });
-
-      await Promise.all([kernel.clearStorage(), kernel.clearStorage()]);
-
-      // Interleaved, the second would find the loop already stopped and write
-      // while the first restarts it underneath — the defect this all exists to
-      // remove, wearing a different hat.
-      expect(order).toStrictEqual(['stopped', 'wrote', 'stopped', 'wrote']);
+      await expect(kernel.stop()).rejects.toThrow('transport stuck');
+      expect({
+        cleanup: mocks.RemoteManager.lastInstance.cleanup.mock.calls.length,
+        terminateAll: terminateAllSpy.mock.calls.length,
+        close: closeSpy.mock.calls.length,
+      }).toStrictEqual({ cleanup: 1, terminateAll: 1, close: 1 });
     });
 
     it('leaves the run loop stopped', async () => {
@@ -1094,8 +1011,6 @@ describe('Kernel', () => {
 
       await kernel.stop();
 
-      // The kernel is over; there is nothing left for a loop to do, and the
-      // database it would read is closed.
       expect(queueInstance.run).not.toHaveBeenCalled();
     });
 
@@ -1147,6 +1062,178 @@ describe('Kernel', () => {
         'could not record last active time',
         refusal,
       );
+    });
+  });
+
+  describe('writing with the run loop stopped', () => {
+    it.each([
+      {
+        method: 'clearStorage',
+        args: [
+          new Error('Kernel storage was cleared; queued work was abandoned'),
+        ],
+      },
+      {
+        method: 'reset',
+        args: [new Error('Kernel was reset; queued work was abandoned')],
+      },
+      {
+        method: 'stop',
+        args: [new Error('Kernel was stopped before taking this request')],
+      },
+    ] as const)(
+      'discards the held requests on $method',
+      async ({ method, args }) => {
+        const kernel = await Kernel.make(
+          mockPlatformServices,
+          mockKernelDatabase,
+        );
+        await kernel[method]();
+        expect(
+          mocks.KernelQueue.lastInstance.discardHeldRequests,
+        ).toHaveBeenCalledExactlyOnceWith(...args);
+      },
+    );
+
+    it.each(['clearStorage', 'reset'] as const)(
+      'discards the queued work, then releases the restart holds, before %s runs the loop again',
+      async (method) => {
+        const kernel = await Kernel.make(
+          mockPlatformServices,
+          makeMapKernelDatabase(),
+        );
+        const { discardQueuedWork, run } = mocks.KernelQueue.lastInstance;
+        const { releaseRestartHolds } = mocks.RemoteManager.lastInstance;
+        run.mockClear();
+
+        await kernel[method]();
+
+        const [discarded] = discardQueuedWork.mock.invocationCallOrder;
+        const [released] = releaseRestartHolds.mock.invocationCallOrder;
+        const [restarted] = run.mock.invocationCallOrder;
+        expect(discarded).toBeLessThan(released as number);
+        expect(released).toBeLessThan(restarted as number);
+      },
+    );
+
+    it.each([
+      { method: 'clearStorage', forGood: false },
+      { method: 'reset', forGood: false },
+      { method: 'terminateAllVats', forGood: false },
+      { method: 'stop', forGood: true },
+    ] as const)(
+      'stops the run loop with forGood $forGood on $method',
+      async ({ method, forGood }) => {
+        const kernel = await Kernel.make(
+          mockPlatformServices,
+          makeMapKernelDatabase(),
+        );
+
+        await kernel[method]();
+
+        expect(
+          mocks.KernelQueue.lastInstance.stopRunLoop,
+        ).toHaveBeenCalledExactlyOnceWith({ forGood });
+      },
+    );
+
+    it.each([
+      {
+        method: 'clearStorage',
+        fail: () =>
+          vi.spyOn(mockKernelDatabase, 'clear').mockImplementationOnce(() => {
+            throw new Error('test error');
+          }),
+      },
+      {
+        method: 'reset',
+        fail: () =>
+          vi.spyOn(mockKernelDatabase, 'clear').mockImplementationOnce(() => {
+            throw new Error('test error');
+          }),
+      },
+      {
+        method: 'terminateAllVats',
+        fail: () =>
+          vi
+            .spyOn(mockKernelDatabase.kernelKVStore, 'set')
+            .mockImplementation(() => {
+              throw new Error('test error');
+            }),
+      },
+    ] as const)(
+      'fails the run loop instead of restarting it when $method fails partway',
+      async ({ method, fail }) => {
+        const onRunLoopFailure = vi.fn();
+        const kernel = await Kernel.make(
+          mockPlatformServices,
+          mockKernelDatabase,
+          { onRunLoopFailure },
+        );
+        await kernel.launchSubcluster(makeSingleVatClusterConfig());
+        const queueInstance = mocks.KernelQueue.lastInstance;
+        queueInstance.run.mockClear();
+        fail();
+
+        await expect(kernel[method]()).rejects.toThrow('test error');
+
+        expect({
+          state: queueInstance.getRunLoopStatus().state,
+          restarted: queueInstance.run.mock.calls.length,
+          reported: onRunLoopFailure.mock.calls[0]?.[0]?.message,
+        }).toStrictEqual({
+          state: 'failed',
+          restarted: 0,
+          reported: 'test error',
+        });
+      },
+    );
+
+    it('does not restart a loop that had already died', async () => {
+      const kernel = await Kernel.make(
+        mockPlatformServices,
+        mockKernelDatabase,
+      );
+      const queueInstance = mocks.KernelQueue.lastInstance;
+      queueInstance.killRunLoop(new Error('died earlier'));
+      queueInstance.run.mockClear();
+
+      await kernel.reset();
+
+      expect(queueInstance.run).not.toHaveBeenCalled();
+    });
+
+    it('holds a second direct write off until the first is done', async () => {
+      const kernel = await Kernel.make(
+        mockPlatformServices,
+        mockKernelDatabase,
+      );
+      const queueInstance = mocks.KernelQueue.lastInstance;
+      const order: string[] = [];
+      vi.spyOn(mockKernelDatabase, 'clear').mockImplementation(() => {
+        order.push('wrote');
+      });
+      queueInstance.stopRunLoop.mockImplementation(async () => {
+        order.push('stopped');
+        return false;
+      });
+
+      await Promise.all([kernel.clearStorage(), kernel.clearStorage()]);
+
+      expect(order).toStrictEqual(['stopped', 'wrote', 'stopped', 'wrote']);
+    });
+
+    it('lets a later direct write through after one throws', async () => {
+      const kernel = await Kernel.make(
+        mockPlatformServices,
+        mockKernelDatabase,
+      );
+      vi.spyOn(mockKernelDatabase, 'clear').mockImplementationOnce(() => {
+        throw new Error('test error');
+      });
+
+      await expect(kernel.reset()).rejects.toThrow('test error');
+      expect(await kernel.clearStorage()).toBeUndefined();
     });
   });
 
@@ -1271,21 +1358,6 @@ describe('Kernel', () => {
       await kernel.reset();
       expect(clearSpy).toHaveBeenCalled();
       expect(kernel.getVatIds()).toHaveLength(0);
-    });
-
-    it('discards the queued work, then releases the restart holds', async () => {
-      const kernel = await Kernel.make(
-        mockPlatformServices,
-        makeMapKernelDatabase(),
-      );
-      await kernel.reset();
-      const { discardQueuedWork } = mocks.KernelQueue.lastInstance;
-      const { releaseRestartHolds } = mocks.RemoteManager.lastInstance;
-      expect(discardQueuedWork).toHaveBeenCalledOnce();
-      expect(releaseRestartHolds).toHaveBeenCalledOnce();
-      expect(discardQueuedWork.mock.invocationCallOrder[0]).toBeLessThan(
-        releaseRestartHolds.mock.invocationCallOrder[0] as number,
-      );
     });
 
     it('clears system subcluster roots', async () => {

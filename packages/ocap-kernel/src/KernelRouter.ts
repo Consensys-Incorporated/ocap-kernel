@@ -721,9 +721,9 @@ export class KernelRouter {
         throw error;
       }
       if (!this.#kernelStore.isVatActive(endpointId)) {
-        // Retired inside this crank by a writer outside the run loop, as host
-        // calls still are (#1171). A rollback would undo that retirement, and
-        // anything else that writer did in this crank.
+        // Retired inside this crank by a writer outside the run loop. None does
+        // since `terminateAllVats` stops the loop; kept until host calls cannot
+        // write outside it (#1171). A rollback would undo the retirement.
         return harden({ didDelivery: endpointId });
       }
       this.#logger?.warn(

@@ -145,7 +145,7 @@ describe('VatManager queued termination', () => {
   describe('while the kernel resets', () => {
     it('does not carry out a termination that reset abandoned', async () => {
       const harness = await setUp();
-      const { kernelStore, vatManager } = harness;
+      const { kernelStore, kernelQueue, vatManager } = harness;
       harness.run();
       await harness.openACrank();
 
@@ -154,15 +154,17 @@ describe('VatManager queued termination', () => {
       const termination = vatManager.terminateVat(asVatId('v1'));
       termination.catch(() => undefined);
 
-      // `Kernel.reset`, after its `waitForCrank`, which can resume inside this
-      // very crank: tear the vats down, wipe the store, abandon queued work.
+      // `Kernel.reset`: stop the run loop, which writes the held request as the
+      // open crank ends, then tear the vats down, wipe the store and abandon
+      // queued work.
+      const stopping = kernelQueue.stopRunLoop();
+      harness.openGate();
+      expect(await stopping).toBe(true);
       await vatManager.stopVat(asVatId('v1'), true);
       kernelStore.reset();
-      const abandoned = new Error(
-        'Kernel was reset; queued work was abandoned',
+      vatManager.abandonQueuedWork(
+        new Error('Kernel was reset; queued work was abandoned'),
       );
-      harness.kernelQueue.discardHeldRequests(abandoned);
-      vatManager.abandonQueuedWork(abandoned);
       await expect(termination).rejects.toThrow('Kernel was reset');
 
       // A vat launched into the fresh kernel gets the first id again.
@@ -170,7 +172,7 @@ describe('VatManager queued termination', () => {
       expect(vatId).toBe('v1');
       await harness.launch(vatId);
 
-      harness.openGate();
+      harness.run();
       await settle();
 
       expect({

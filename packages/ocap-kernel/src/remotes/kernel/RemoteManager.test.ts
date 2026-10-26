@@ -647,7 +647,7 @@ describe('RemoteManager', () => {
     });
 
     it('refuses to set up a remote once the run loop is dead', async () => {
-      vi.mocked(mockKernelQueue.assertRunLoopAlive).mockImplementationOnce(
+      vi.mocked(mockKernelQueue.assertRunLoopWillRun).mockImplementationOnce(
         (what) => {
           throw new Error(`Kernel run loop died; cannot ${what}`);
         },

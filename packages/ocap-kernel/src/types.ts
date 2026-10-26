@@ -827,8 +827,10 @@ const RemoteCommsConnectedStruct = object({
 /**
  * Whether the kernel is capable of processing its run queue. `idle` means the
  * run loop was never started, not that it has nothing to do — a loop parked on
- * an empty queue reports `running`. `failed` means nothing will ever be
- * processed again and the kernel must be restarted.
+ * an empty queue reports `running`. `stopped` means the loop is held between
+ * cranks while the control plane writes the store, or for good after
+ * `Kernel.stop`. `failed` means nothing will ever be processed again and the
+ * kernel must be restarted.
  */
 // The arms are `type()`, not `object()`, so a client shipped against them
 // tolerates a newer kernel adding a field to an arm. Note the limit of that:
@@ -837,9 +839,6 @@ const RemoteCommsConnectedStruct = object({
 export const RunLoopStatusStruct = union([
   type({ state: literal('idle') }),
   type({ state: literal('running') }),
-  // Deliberately stopped between cranks, so that the control plane can write
-  // the store directly. A kernel is only briefly in this state, and only
-  // because something asked.
   type({ state: literal('stopped') }),
   // Two strings because one cannot be both: `error` is the message, `detail` the
   // cause chain. When a crank dies and its rollback then fails, the message names

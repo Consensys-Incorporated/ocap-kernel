@@ -478,3 +478,46 @@ describe('a peer incarnation change on the run loop', () => {
     }).toStrictEqual({ incarnation: 'incarnation-A', highestReceivedSeq: 2 });
   });
 });
+
+describe('a peer message while the run loop is stopped for a direct write', () => {
+  it('is taken once the loop runs again, so a later one cannot cover it', async () => {
+    const { kernelQueue, remoteManager, taken, startRunLoop } = await setUp();
+    const first = startRunLoop();
+    await kernelQueue.stopRunLoop();
+    await first;
+
+    await remoteManager.handleRemoteMessage(PEER_ID, emptyNotify(1));
+    const second = startRunLoop();
+    await remoteManager.handleRemoteMessage(PEER_ID, emptyNotify(2));
+    await settle();
+    await kernelQueue.stopRunLoop();
+    await second;
+
+    expect(taken).toStrictEqual([1, 2]);
+  });
+
+  it("holds a new peer's first message until the loop runs again", async () => {
+    const { kernelStore, kernelQueue, remoteManager, taken, startRunLoop } =
+      await setUp();
+    const first = startRunLoop();
+    await kernelQueue.stopRunLoop();
+    await first;
+
+    const handled = remoteManager.handleRemoteMessage(
+      '12D3KooWPeer2',
+      emptyNotify(1),
+    );
+    const remotesWhileStopped = kernelStore.getRemoteIDs().length;
+    const second = startRunLoop();
+    await handled;
+    await settle();
+    await kernelQueue.stopRunLoop();
+    await second;
+
+    expect({
+      remotesWhileStopped,
+      remotes: kernelStore.getRemoteIDs().length,
+      taken,
+    }).toStrictEqual({ remotesWhileStopped: 1, remotes: 2, taken: [1] });
+  });
+});

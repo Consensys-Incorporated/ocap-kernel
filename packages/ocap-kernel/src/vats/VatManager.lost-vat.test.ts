@@ -1,7 +1,7 @@
 import { makePromiseKit } from '@endo/promise-kit';
 import { StreamReadError } from '@metamask/kernel-errors';
 import { makeSQLKernelDatabase } from '@metamask/kernel-store/sqlite/nodejs';
-import { delay, isJsonRpcMessage } from '@metamask/kernel-utils';
+import { isJsonRpcMessage } from '@metamask/kernel-utils';
 import type { JsonRpcMessage } from '@metamask/kernel-utils';
 import { Logger } from '@metamask/logger';
 import { TestDuplexStream } from '@ocap/repo-tools/test-utils/streams';
@@ -242,27 +242,22 @@ async function setUp({ onDisk = false }: { onDisk?: boolean } = {}) {
     survivorRoot,
     survivorERef,
     /**
-     * Close the database, as `Kernel.stop` does, which discards an open
-     * crank, and start a kernel over the same file with new workers.
+     * Close the database and start a kernel over the same file with new
+     * workers.
      *
      * @param options - What `boot` takes.
      * @param options.failToStart - Vats whose worker will not launch.
-     * @returns The new kernel's pieces, its run loop running, and whether a
-     *   crank was still open when the database closed.
+     * @returns The new kernel's pieces, its run loop running.
      */
     reboot: async (options: { failToStart?: Set<VatId> } = {}) => {
       if (!onDisk) {
         throw new Error('Only a store on disk can be booted again');
       }
-      // A turn of the event loop first, as `Kernel.stop`'s own awaits give,
-      // so every microtask chain a lost channel set off has run.
-      await delay(0);
-      const cutOff = kernel.kernelStore.isInCrank();
       kdb.close();
       const next = boot(await makeSQLKernelDatabase({ dbFilename }), options);
       await next.vatManager.initializeAllVats();
       next.run();
-      return { ...next, cutOff };
+      return next;
     },
   };
 }

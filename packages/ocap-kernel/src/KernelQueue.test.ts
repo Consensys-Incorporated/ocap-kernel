@@ -1419,9 +1419,10 @@ describe('KernelQueue', () => {
       arrive({ seq: 1, remoteId: 'r2' });
       reportIncarnation('incarnation-B');
 
-      kernelQueue.discardQueuedWork('this message result will never arrive');
+      kernelQueue.discardQueuedWork(new Error('discarded'));
       arrive({ seq: 2 });
 
+      expect(kernelQueue.waitingIncarnations('peer-r1')).toStrictEqual([]);
       expect(await deliverItems(1)).toStrictEqual([arrival(2)]);
     });
 
@@ -2523,8 +2524,6 @@ describe('KernelQueue', () => {
       await kernelQueue.stopRunLoop();
       await running;
 
-      // `reset` and `clearStorage` hand the kernel back working, so the loop
-      // has to be startable again; only a loop that died may not be.
       const secondRun = kernelQueue.run(vi.fn());
       expect(kernelQueue.getRunLoopStatus()).toStrictEqual({
         state: 'running',
@@ -2550,15 +2549,10 @@ describe('KernelQueue', () => {
         reject,
       });
 
-      kernelQueue.discardQueuedWork('this message result will never arrive');
+      const discarded = new Error('discarded');
+      kernelQueue.discardQueuedWork(discarded);
 
-      // `reset` destroys the run queue and the kernel promise behind it, so
-      // nothing else would ever settle this.
-      expect(reject).toHaveBeenCalledWith(
-        expect.objectContaining({
-          message: expect.stringContaining('never arrive'),
-        }),
-      );
+      expect(reject).toHaveBeenCalledWith(discarded);
       expect(kernelQueue.subscriptions.size).toBe(0);
     });
   });

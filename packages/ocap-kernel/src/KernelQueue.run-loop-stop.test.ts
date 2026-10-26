@@ -4,12 +4,19 @@ import { describe, it, expect, vi } from 'vitest';
 import { KernelQueue } from './KernelQueue.ts';
 import { makeKernelStore } from './store/index.ts';
 import type { RunQueueItem } from './types.ts';
-import { asVatId } from '../test/branded.ts';
+import { asRemoteId, asVatId } from '../test/branded.ts';
+
+const arrival = {
+  remoteId: asRemoteId('r1'),
+  peerId: 'peer-1',
+  seq: 1,
+  message: '{"seq":1}',
+  highestReceivedSeq: 0,
+};
 
 /**
- * What a caller actually gets when the run loop stops, against a real store —
- * `KernelQueue.test.ts` mocks `makePromiseKit`, so nothing there can tell a
- * loop that has come to rest from one that has merely been asked to.
+ * Against a real store and real promise kits, which `KernelQueue.test.ts`
+ * mocks.
  */
 describe('the window a stopped run loop opens', () => {
   /**
@@ -49,8 +56,6 @@ describe('the window a stopped run loop opens', () => {
     });
 
     expect(await stopped).toBe(true);
-
-    // The whole of what makes the caller's writes safe.
     expect(kernelStore.isInCrank()).toBe(false);
     await running;
   });
@@ -69,9 +74,6 @@ describe('the window a stopped run loop opens', () => {
       bundleName: 'written-between-cranks',
     });
 
-    // A crank that aborts everything it did must not take this with it, which
-    // is what happened when the control plane merely waited out the crank in
-    // flight and wrote into the next one.
     const abortingRun = kernelQueue.run(async () => ({ abort: true }));
     await kernelQueue.stopRunLoop();
     await abortingRun;
@@ -92,8 +94,6 @@ describe('the window a stopped run loop opens', () => {
 
     await expect(running).rejects.toBe(boom);
 
-    // `Kernel.stop` awaits this before closing the database; waiting for a
-    // loop that is never going to read the request hangs the whole shutdown.
     expect(await stopped).toBe(false);
     expect(kernelStore.isInCrank()).toBe(false);
   });
@@ -108,21 +108,139 @@ describe('the window a stopped run loop opens', () => {
       return undefined;
     });
 
-    // A second ask used to take the first one's place, leaving that caller
-    // waiting for a loop that had already stopped.
     expect(await Promise.all(asks)).toStrictEqual([true, true]);
     await running;
   });
 
-  it('refuses work while it is stopped', async () => {
+  it('refuses a host call while it is stopped', async () => {
     const { kernelQueue } = await makeFixture(0);
     const running = kernelQueue.run(vi.fn());
     await kernelQueue.stopRunLoop();
     await running;
 
-    // Nothing is draining the queue, so a result promise handed out now could
-    // only hang.
     expect(() => kernelQueue.assertRunLoopAlive('queue a message')).toThrow(
+      'Kernel run loop is stopped',
+    );
+  });
+
+  it('takes a peer arrival made while it is stopped once it runs again', async () => {
+    const { kernelQueue } = await makeFixture(0);
+    const running = kernelQueue.run(vi.fn());
+    await kernelQueue.stopRunLoop();
+    await running;
+
+    expect(kernelQueue.acceptRemoteInbound(arrival)).toBe(true);
+    const deliver = vi.fn(async () => undefined);
+    const rerun = kernelQueue.run(deliver);
+    await vi.waitFor(() => expect(deliver).toHaveBeenCalledOnce());
+    await kernelQueue.stopRunLoop();
+    await rerun;
+
+    expect(deliver).toHaveBeenCalledWith({
+      type: 'remoteInbound',
+      remoteId: arrival.remoteId,
+      peerId: arrival.peerId,
+      seq: arrival.seq,
+      message: arrival.message,
+    });
+  });
+
+  it('makes a write asked for while it is stopped once it runs again', async () => {
+    const { kernelQueue } = await makeFixture(0);
+    const running = kernelQueue.run(vi.fn());
+    await kernelQueue.stopRunLoop();
+    await running;
+
+    const write = vi.fn(() => 'written');
+    const written = kernelQueue.writeOutsideCrank(write);
+    const calledWhileStopped = write.mock.calls.length;
+    const rerun = kernelQueue.run(vi.fn());
+
+    expect({ calledWhileStopped, result: await written }).toStrictEqual({
+      calledWhileStopped: 0,
+      result: 'written',
+    });
+    await kernelQueue.stopRunLoop();
+    await rerun;
+  });
+
+  it('makes those writes before the first crank once it runs again', async () => {
+    const { kernelStore, kernelQueue } = await makeFixture(0);
+    const running = kernelQueue.run(vi.fn());
+    await kernelQueue.stopRunLoop();
+    await running;
+
+    const write = vi.fn();
+    kernelQueue.writeOutsideCrank(write).catch(() => undefined);
+    kernelStore.enqueueRun({
+      type: 'send',
+      target: kernelStore.initKernelObject(asVatId('v1')),
+      message: { methargs: { body: '', slots: [] }, result: null },
+    } as unknown as RunQueueItem);
+    let writesBeforeCrank: number | undefined;
+    const rerun = kernelQueue.run(async () => {
+      writesBeforeCrank ??= write.mock.calls.length;
+      return undefined;
+    });
+    await vi.waitFor(() => expect(writesBeforeCrank).toBeDefined());
+    await kernelQueue.stopRunLoop();
+    await rerun;
+
+    expect(writesBeforeCrank).toBe(1);
+  });
+
+  it('rejects a write held while it is stopped when held requests are discarded', async () => {
+    const { kernelQueue } = await makeFixture(0);
+    const running = kernelQueue.run(vi.fn());
+    await kernelQueue.stopRunLoop();
+    await running;
+
+    const write = vi.fn();
+    const written = kernelQueue.writeOutsideCrank(write);
+    const discarded = new Error('discarded');
+    kernelQueue.discardHeldRequests(discarded);
+
+    await expect(written).rejects.toBe(discarded);
+    expect(write).not.toHaveBeenCalled();
+  });
+
+  it('fails while stopped, rejecting a write held for it', async () => {
+    const { kernelQueue } = await makeFixture(0);
+    const running = kernelQueue.run(vi.fn());
+    await kernelQueue.stopRunLoop();
+    await running;
+
+    const written = kernelQueue.writeOutsideCrank(vi.fn());
+    const failure = kernelQueue.failStoppedRunLoop(new Error('wipe failed'));
+
+    await expect(written).rejects.toThrow('Kernel run loop died');
+    expect({
+      failure: failure.message,
+      state: kernelQueue.getRunLoopStatus().state,
+    }).toStrictEqual({ failure: 'wipe failed', state: 'failed' });
+    await expect(kernelQueue.run(vi.fn())).rejects.toThrow(
+      'run loop died and cannot be run again',
+    );
+  });
+
+  it('refuses to fail a loop that is not stopped', async () => {
+    const { kernelQueue } = await makeFixture(0);
+
+    expect(() => kernelQueue.failStoppedRunLoop(new Error('x'))).toThrow(
+      'run loop is not stopped',
+    );
+  });
+
+  it('refuses peers and writes once stopped for good', async () => {
+    const { kernelQueue } = await makeFixture(0);
+    const running = kernelQueue.run(vi.fn());
+    await kernelQueue.stopRunLoop({ forGood: true });
+    await running;
+
+    expect(() => kernelQueue.acceptRemoteInbound(arrival)).toThrow(
+      'Kernel run loop is stopped',
+    );
+    await expect(kernelQueue.writeOutsideCrank(vi.fn())).rejects.toThrow(
       'Kernel run loop is stopped',
     );
   });

@@ -21,10 +21,6 @@ import { asVatId } from '../test/branded.ts';
 /*
  * Invariant M2: each kind of caller waiting on queued work is rejected, not
  * left hanging, whichever way the run loop exits.
- *
- * Rows titled "(gap, ...)" assert what main does today, which breaks the
- * invariant. A PR that closes a gap turns its row red and must rewrite it to
- * assert the invariant.
  */
 
 /**
@@ -137,7 +133,25 @@ async function setUp() {
 }
 
 type Harness = Awaited<ReturnType<typeof setUp>>;
-type Settlement = 'pending' | 'fulfilled' | 'rejected';
+/**
+ * Follow how a promise settles.
+ *
+ * @param promise - The promise.
+ * @returns A function reporting `pending`, `fulfilled`, or the message it was
+ * rejected with.
+ */
+function watch(promise: Promise<unknown>): () => string {
+  let settlement = 'pending';
+  promise
+    .then(() => {
+      settlement = 'fulfilled';
+      return undefined;
+    })
+    .catch((error: Error) => {
+      settlement = error.message;
+    });
+  return () => settlement;
+}
 
 /**
  * Leave a caller waiting on a message its vat has taken but not answered, end
@@ -148,27 +162,20 @@ type Settlement = 'pending' | 'fulfilled' | 'rejected';
  */
 async function waitThrough(
   exit: (harness: Harness) => Promise<void>,
-): Promise<Settlement> {
+): Promise<string> {
   const harness = await setUp();
-  let settlement: Settlement = 'pending';
-  harness.kernel
-    .queueMessage(harness.waiterRoot, 'work', [])
-    .then(() => {
-      settlement = 'fulfilled';
-      return undefined;
-    })
-    .catch(() => {
-      settlement = 'rejected';
-    });
+  const settlement = watch(
+    harness.kernel.queueMessage(harness.waiterRoot, 'work', []),
+  );
   await vi.waitFor(() => expect(harness.received).toContain('work'));
   await harness.kernel.getStatus();
   await delay(0);
-  expect(settlement).toBe('pending');
+  expect(settlement()).toBe('pending');
 
   await exit(harness);
   // Flushes the caller's settlement; not a timeout.
   await delay(0);
-  return settlement;
+  return settlement();
 }
 
 async function explodeInCrank({ kernel, doomedRoot }: Harness): Promise<void> {
@@ -190,59 +197,74 @@ async function explodeStalledCrank(harness: Harness): Promise<void> {
   );
 }
 
+/**
+ * Begin `exit` while a crank a vat sent `stall` holds open, then end that
+ * crank, so the loop stops before it takes anything queued behind it.
+ *
+ * @param exit - The control-plane call.
+ * @returns The exit, for a harness.
+ */
+function afterStalledCrank(
+  exit: (kernel: Kernel) => Promise<void>,
+): (harness: Harness) => Promise<void> {
+  return async ({ kernel, release, waiterId }) => {
+    const exiting = exit(kernel);
+    await delay(0);
+    release({ didDelivery: waiterId });
+    await exiting;
+  };
+}
+
+const RESET = 'Kernel was reset; queued work was abandoned';
+const CLEARED = 'Kernel storage was cleared; queued work was abandoned';
+const DEAD_RESULT =
+  'Kernel run loop died; this message result will never be delivered';
+
 describe('a queueMessage caller the vat has not answered', () => {
   it.each([
+    ['the run loop dies in a crank', explodeInCrank, DEAD_RESULT],
     [
-      'is rejected when the run loop dies in a crank',
-      explodeInCrank,
-      'rejected',
-    ],
-    [
-      'is rejected when the kernel is reset',
+      'the kernel is reset',
       async ({ kernel }: Harness): Promise<void> => kernel.reset(),
-      'rejected',
+      '[KERNEL:VAT_TERMINATED] Vat was deleted.',
     ],
     [
-      'is rejected when the kernel stops',
+      'the kernel stops',
       async ({ kernel }: Harness): Promise<void> => kernel.stop(),
-      'rejected',
+      'Kernel was stopped before this message was answered; one still queued is delivered on its next start',
     ],
     [
-      'is rejected when the storage is cleared',
+      'the storage is cleared',
       async ({ kernel }: Harness): Promise<void> => kernel.clearStorage(),
-      'rejected',
+      CLEARED,
     ],
-  ] as const)('%s', async (_title, exit, settlement) => {
-    expect(await waitThrough(exit)).toBe(settlement);
+  ] as const)('is rejected when %s', async (_title, exit, reason) => {
+    expect(await waitThrough(exit)).toBe(reason);
   });
 });
 
 describe('a restartVat or terminateVat caller the run loop has not reached', () => {
   const exits = [
-    ['the run loop dies in a crank', explodeStalledCrank],
-    ...(
-      [
-        ['the kernel is reset', async (kernel: Kernel) => kernel.reset()],
-        ['the kernel stops', async (kernel: Kernel) => kernel.stop()],
-        [
-          'the storage is cleared',
-          async (kernel: Kernel) => kernel.clearStorage(),
-        ],
-      ] as const
-    ).map(
-      ([title, exit]) =>
-        [
-          title,
-          async ({ kernel, release, waiterId }: Harness): Promise<void> => {
-            const exiting = exit(kernel);
-            // The exit is waiting for the stalled crank to end, so the loop
-            // stops before it can carry out the request.
-            await delay(0);
-            release({ didDelivery: waiterId });
-            await exiting;
-          },
-        ] as const,
-    ),
+    [
+      'the run loop dies in a crank',
+      explodeStalledCrank,
+      'Kernel run loop died; this work will never be carried out',
+    ],
+    [
+      'the kernel is reset',
+      afterStalledCrank(async (kernel) => kernel.reset()),
+      RESET,
+    ],
+    [
+      'the kernel stops',
+      afterStalledCrank(async (kernel) => kernel.stop()),
+      'Kernel was stopped before answering; terminations already queued still take effect on its next start, restarts do not',
+    ],
+    [
+      'the storage is cleared',
+      afterStalledCrank(async (kernel) => kernel.clearStorage()),
+      CLEARED,
+    ],
   ] as const;
   const requests = [
     [
@@ -260,50 +282,64 @@ describe('a restartVat or terminateVat caller the run loop has not reached', () 
   it.each(
     requests.flatMap(([request, makeRequest]) =>
       exits.map(
-        ([exitTitle, exit]) => [request, exitTitle, makeRequest, exit] as const,
+        ([exitTitle, exit, reason]) =>
+          [request, exitTitle, makeRequest, exit, reason] as const,
       ),
     ),
   )(
     'a %s caller is rejected when %s',
-    async (_request, _exit, makeRequest, exit) => {
+    async (_request, _exit, makeRequest, exit, reason) => {
       const harness = await setUp();
       harness.kernel
         .queueMessage(harness.waiterRoot, 'stall', [])
         .catch(() => undefined);
       await vi.waitFor(() => expect(harness.received).toContain('stall'));
-      let settlement: Settlement = 'pending';
-      makeRequest(harness)
-        .then(() => {
-          settlement = 'fulfilled';
-          return undefined;
-        })
-        .catch(() => {
-          settlement = 'rejected';
-        });
+      const settlement = watch(makeRequest(harness));
       await delay(0);
-      expect(settlement).toBe('pending');
+      expect(settlement()).toBe('pending');
 
       await exit(harness);
       // Flushes the caller's settlement; not a timeout.
       await delay(0);
-      expect(settlement).toBe('rejected');
+      expect(settlement()).toBe(reason);
     },
   );
 });
 
 describe('a queueMessage caller whose message waits for the open crank', () => {
-  it('is rejected when that crank kills the run loop', async () => {
-    const { kernel, waiterRoot, doomedRoot, doomedId, received, release } =
-      await setUp();
-    kernel.queueMessage(doomedRoot, 'stall', []).catch(() => undefined);
-    await vi.waitFor(() => expect(received).toContain('stall'));
-
-    const answered = kernel.queueMessage(waiterRoot, 'work', []);
-    release(explosion(doomedId));
-
-    await expect(answered).rejects.toThrow(
-      'Kernel run loop died; this message result will never be delivered',
+  it.each([
+    ['that crank kills the run loop', explodeStalledCrank, DEAD_RESULT],
+    [
+      'the kernel is reset',
+      afterStalledCrank(async (kernel) => kernel.reset()),
+      RESET,
+    ],
+    [
+      'the kernel stops',
+      afterStalledCrank(async (kernel) => kernel.stop()),
+      'Kernel was stopped before this message was answered; one still queued is delivered on its next start',
+    ],
+    [
+      'the storage is cleared',
+      afterStalledCrank(async (kernel) => kernel.clearStorage()),
+      CLEARED,
+    ],
+  ] as const)('is rejected when %s', async (_title, exit, reason) => {
+    const harness = await setUp();
+    harness.kernel
+      .queueMessage(harness.waiterRoot, 'stall', [])
+      .catch(() => undefined);
+    await vi.waitFor(() => expect(harness.received).toContain('stall'));
+    const settlement = watch(
+      harness.kernel.queueMessage(harness.doomedRoot, 'work', []),
     );
-    expect(received).not.toContain('work');
+
+    await exit(harness);
+    await delay(0);
+
+    expect({
+      settlement: settlement(),
+      received: harness.received,
+    }).toStrictEqual({ settlement: reason, received: ['bootstrap', 'stall'] });
   });
 });
