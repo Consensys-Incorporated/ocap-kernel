@@ -441,8 +441,20 @@ export type PeerArrival =
   | RunQueueItemRemoteInbound
   | RunQueueItemPeerIncarnation;
 
+/** A host call that wipes or tears down kernel state. */
+export type ControlOperation =
+  | 'clearStorage'
+  | 'reset'
+  | 'terminateAllVats'
+  | 'stop';
+
+export type RunLoopItemControl = {
+  type: 'control';
+  operation: ControlOperation;
+};
+
 /** Everything the run loop takes a crank for. */
-export type RunLoopItem = RunQueueItem | PeerArrival;
+export type RunLoopItem = RunQueueItem | PeerArrival | RunLoopItemControl;
 
 /**
  * Assert that a value is a valid kernel message.
@@ -827,10 +839,9 @@ const RemoteCommsConnectedStruct = object({
 /**
  * Whether the kernel is capable of processing its run queue. `idle` means the
  * run loop was never started, not that it has nothing to do — a loop parked on
- * an empty queue reports `running`. `stopped` means the loop is held between
- * cranks while the control plane writes the store, or for good after
- * `Kernel.stop`. `failed` means nothing will ever be processed again and the
- * kernel must be restarted.
+ * an empty queue reports `running`. `stopped` means `Kernel.stop` ended the
+ * loop. `failed` means nothing will ever be processed again and the kernel
+ * must be restarted.
  */
 // The arms are `type()`, not `object()`, so a client shipped against them
 // tolerates a newer kernel adding a field to an arm. Note the limit of that:

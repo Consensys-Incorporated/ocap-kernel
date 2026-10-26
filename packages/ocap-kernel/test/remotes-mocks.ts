@@ -82,7 +82,6 @@ export class MockRemotesFactory {
       waitingIncarnations: vi.fn().mockReturnValue([]),
       resolvePromises: vi.fn(),
       assertRunLoopAlive: vi.fn(),
-      assertRunLoopWillRun: vi.fn(),
       waitForCrank: vi.fn(),
       writeOutsideCrank: vi.fn<KernelQueue['writeOutsideCrank']>(
         async (write) => write(),

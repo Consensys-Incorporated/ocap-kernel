@@ -34,6 +34,7 @@ import type {
   SubclusterLaunchResult,
   EndpointHandle,
   SystemSubclusterConfig,
+  ControlOperation,
 } from './types.ts';
 import { isVatId, isRemoteId } from './types.ts';
 import type { AllowedGlobalName } from './vats/endowments.ts';
@@ -82,13 +83,6 @@ export class Kernel {
   /** Logger for outputting messages (such as errors) to the console */
   readonly #logger: Logger;
 
-  /**
-   * A queue of one, so that two control-plane writes cannot hold the run loop
-   * still at the same time. Replaced with each turn's settlement rather than
-   * the turn itself, so a failed write does not wedge the ones after it.
-   */
-  #directWriteTurn: Promise<void> = Promise.resolve();
-
   /** The kernel's run queue */
   readonly #kernelQueue: KernelQueue;
 
@@ -102,6 +96,9 @@ export class Kernel {
   readonly #ioManager: IOManager | undefined;
 
   readonly #onRunLoopFailure: OnRunLoopFailure | undefined;
+
+  /** The first `stop` under way or done, which later calls settle with. */
+  #stopping: Promise<void> | undefined;
 
   /**
    * Construct a new kernel instance.
@@ -241,6 +238,7 @@ export class Kernel {
       applyIncarnationChange: this.#remoteManager.applyIncarnationChange.bind(
         this.#remoteManager,
       ),
+      performControl: async (operation) => this.#performControl(operation),
       logger: this.#logger,
     });
 
@@ -357,86 +355,65 @@ export class Kernel {
     // This ensures that any messages in the queue have their target vats ready
     await this.#vatManager.initializeAllVats();
 
-    this.#startRunLoop();
+    // Start the kernel queue processing (non-blocking)
+    // This runs for the entire lifetime of the kernel
+    this.#kernelQueue
+      .run(this.#kernelRouter.deliver.bind(this.#kernelRouter), {
+        // Every remote, until `initRemoteComms` runs after this.
+        isOffline: (endpointId) =>
+          isRemoteId(endpointId) && !this.#remoteManager.hasRemote(endpointId),
+      })
+      .catch((error) => this.#handleRunLoopFailure(error));
 
     // Launch new system subclusters (requires queue to be running)
     await this.#subclusterManager.launchNewSystemSubclusters(configs);
   }
 
   /**
-   * Start the run loop, or start it again after it was stopped for a direct
-   * write. Not awaited: `run` settles only when the loop stops or dies.
+   * The work of a control operation, in its crank or, on a run loop that has
+   * died, with no crank.
    *
-   * A loop that cannot be started is this method's caller's bug, not a kernel
-   * failure, so it is thrown here rather than handed to the embedder's
-   * terminal hook — which would report a death that has not happened.
+   * @param operation - The operation.
    */
-  #startRunLoop(): void {
-    const { state } = this.#kernelQueue.getRunLoopStatus();
-    if (state !== 'idle' && state !== 'stopped') {
-      throw Error(`cannot start the run loop while it is ${state}`);
-    }
-    this.#kernelQueue
-      .run(this.#kernelRouter.deliver.bind(this.#kernelRouter), {
-        // A remote `initRemoteComms` has not restored.
-        isOffline: (endpointId) =>
-          isRemoteId(endpointId) && !this.#remoteManager.hasRemote(endpointId),
-      })
-      .catch((error) => this.#handleRunLoopFailure(error));
-  }
-
-  /**
-   * Bring the run loop to rest, do something to the store directly, and start
-   * it again.
-   *
-   * Waiting out the crank in flight is not enough: with more work queued, the
-   * loop starts the next crank before the waiter resumes, so the write lands in
-   * its `delivery` savepoint, for an abort to undo after the caller was told it
-   * succeeded.
-   *
-   * @param work - What to do while the loop is stopped.
-   * @param options - Options bag.
-   * @param options.thenRestart - Whether to run the loop again afterwards.
-   * False for teardown, which is the end of the kernel.
-   * @returns What `work` returned.
-   * @throws What `work` threw, with the run loop then failed rather than
-   * restarted.
-   */
-  async #withRunLoopStopped<Result>(
-    work: () => Promise<Result> | Result,
-    { thenRestart = true }: { thenRestart?: boolean } = {},
-  ): Promise<Result> {
-    // One at a time: a second caller would find the loop already stopped and
-    // write while the first restarts it.
-    const ourTurn = this.#directWriteTurn.then(async () => {
-      const wasRunning = await this.#kernelQueue.stopRunLoop({
-        forGood: !thenRestart,
-      });
-      // Only if it was ours to stop: one that died cannot be started.
-      const restart = wasRunning && thenRestart;
-      let result: Result;
-      try {
-        result = await work();
-      } catch (error) {
-        // Nothing rolls back what `work` wrote before it threw, so the kernel
-        // stops rather than run on whatever part of it landed.
-        if (restart) {
-          this.#handleRunLoopFailure(
-            this.#kernelQueue.failStoppedRunLoop(error),
+  async #performControl(operation: ControlOperation): Promise<void> {
+    switch (operation) {
+      case 'clearStorage':
+        this.#kernelStore.clear();
+        this.#abandonQueuedWork(
+          new Error('Kernel storage was cleared; queued work was abandoned'),
+        );
+        return;
+      case 'reset':
+        try {
+          if (this.#ioManager) {
+            await this.#ioManager.destroyAllChannels();
+          }
+          await this.#vatManager.terminateAllVats();
+          this.#subclusterManager.clearSystemSubclusters();
+          this.#resetKernelState();
+          // Last, after every await, so a request made during the reset is
+          // abandoned with the rest.
+          this.#abandonQueuedWork(
+            new Error('Kernel was reset; queued work was abandoned'),
           );
+        } catch (error) {
+          this.#logger.error('Error resetting kernel:', error);
+          throw error;
         }
-        throw error;
-      }
-      if (restart) {
-        this.#startRunLoop();
-      }
-      return result;
-    });
-    this.#directWriteTurn = ourTurn.then(
-      () => undefined,
-      () => undefined,
-    );
-    return ourTurn;
+        return;
+      case 'terminateAllVats':
+        await this.#vatManager.terminateAllVats();
+        return;
+      case 'stop':
+        // In the stop's crank, not before: a vat lost in an earlier crank must
+        // still fail the delivery waiting on it.
+        this.#vatManager.expectWorkersToStop();
+        return;
+      default:
+        throw new Error(
+          `unknown control operation ${String(operation satisfies never)}`,
+        );
+    }
   }
 
   /**
@@ -739,21 +716,15 @@ export class Kernel {
   }
 
   /**
-   * Clear the database. A failure partway leaves the run loop failed, as for
-   * {@link reset}.
+   * Clear the database. A failure partway kills the run loop.
    */
   async clearStorage(): Promise<void> {
-    await this.#withRunLoopStopped(() => {
-      this.#kernelStore.clear();
-      this.#abandonQueuedWork(
-        new Error('Kernel storage was cleared; queued work was abandoned'),
-      );
-    });
+    await this.#kernelQueue.enqueueControl('clearStorage');
   }
 
   /**
    * Reject everyone waiting on queued work and drop it, for a kernel wiping its
-   * store with the run loop stopped.
+   * store.
    *
    * @param abandoned - What to tell them.
    */
@@ -952,92 +923,83 @@ export class Kernel {
    *
    * Does not revive a kernel whose run loop has died: this clears state, it does
    * not restart the loop, so `getStatus` still reports `failed` afterwards and
-   * the queue still refuses new work. A failure partway kills the run loop the
-   * same way, since what was wiped stays wiped; start a new kernel with
-   * `resetStorage` instead.
+   * the queue still refuses new work. On a running kernel, a failure partway
+   * rolls back what it wrote to the store and kills the run loop.
    */
   async reset(): Promise<void> {
-    await this.#withRunLoopStopped(async () => {
-      try {
-        if (this.#ioManager) {
-          await this.#ioManager.destroyAllChannels();
-        }
-        // Not `this.terminateAllVats`, which would wait for this very turn.
-        await this.#vatManager.terminateAllVats();
-        this.#subclusterManager.clearSystemSubclusters();
-        this.#resetKernelState();
-        this.#abandonQueuedWork(
-          new Error('Kernel was reset; queued work was abandoned'),
-        );
-      } catch (error) {
-        this.#logger.error('Error resetting kernel:', error);
-        throw error;
-      }
-    });
+    await this.#kernelQueue.enqueueControl('reset');
   }
 
   /**
    * Terminate all vats and collect garbage.
    * This is for debugging purposes only.
    *
-   * A failure partway leaves the run loop failed, as for {@link reset}.
+   * A failure partway kills the run loop.
    */
   async terminateAllVats(): Promise<void> {
-    await this.#withRunLoopStopped(async () =>
-      this.#vatManager.terminateAllVats(),
-    );
+    await this.#kernelQueue.enqueueControl('terminateAllVats');
   }
 
   /**
-   * Gracefully stop the kernel without deleting vats.
-   *
-   * Waits for a `clearStorage`, `reset` or `terminateAllVats` already under
-   * way, so one stuck stopping a worker holds this off too, and the embedder
-   * has to end the process.
+   * Gracefully stop the kernel without deleting vats. Waits for the open crank
+   * and any control operation queued before this; if one never ends, neither
+   * does this, and the embedder has to end the process.
    */
   async stop(): Promise<void> {
-    await this.#withRunLoopStopped(
-      async () => {
-        // Before anything else that yields, so a channel that ends from here on
-        // reads as the stop, not as its vat's loss. Never before the loop has
-        // stopped: a vat lost in the crank in flight must still fail the
-        // delivery waiting on it, or that crank never ends and the loop never
-        // stops.
-        this.#vatManager.expectWorkersToStop();
-        // Before the teardown, which can throw.
-        this.#kernelQueue.discardQueuedWork(
-          new Error(
-            'Kernel was stopped before this message was answered; one still queued is delivered on its next start',
-          ),
-        );
-        this.#kernelQueue.discardHeldRequests(
-          new Error('Kernel was stopped before taking this request'),
-        );
-        this.#vatManager.abandonQueuedWork(
-          new Error(
-            'Kernel was stopped before answering; terminations already queued still take effect on its next start, restarts do not',
-          ),
-        );
-        try {
-          this.#kernelStore.recordLastActiveTime();
-        } catch (error) {
-          this.#logger.error('could not record last active time', error);
+    // Cleared on failure, so a later call tries the teardown again.
+    this.#stopping ??= this.#stop().catch((error: unknown) => {
+      this.#stopping = undefined;
+      throw error;
+    });
+    await this.#stopping;
+  }
+
+  /**
+   * End the run loop, unless an earlier `stop` did, then let go of everything
+   * the kernel holds.
+   */
+  async #stop(): Promise<void> {
+    if (this.#kernelQueue.getRunLoopStatus().state !== 'stopped') {
+      try {
+        await this.#kernelQueue.enqueueControl('stop');
+      } catch (error) {
+        if (this.#kernelQueue.getRunLoopStatus().state !== 'failed') {
+          throw error;
         }
-        // On even if stopping remote comms fails: a remote's timers left armed
-        // would fire against the closed database.
-        try {
-          await this.#platformServices.stopRemoteComms();
-        } finally {
-          try {
-            this.#remoteManager.cleanup();
-            await this.#platformServices.terminateAll();
-          } finally {
-            this.#kernelDatabase.close();
-          }
-        }
-      },
-      { thenRestart: false },
+        // The stop's own crank killed the run loop; carried out again with no
+        // crank, since the rest of the kernel still has to be let go.
+        await this.#kernelQueue.enqueueControl('stop');
+      }
+    }
+    try {
+      this.#kernelStore.recordLastActiveTime();
+    } catch (error) {
+      this.#logger.error('could not record last active time', error);
+    }
+    // Once the loop has ended, so it also reaches a message queued during the
+    // stop's crank.
+    this.#kernelQueue.discardQueuedWork(
+      new Error(
+        'Kernel was stopped before this message was answered; one still queued is delivered on its next start',
+      ),
     );
+    this.#vatManager.abandonQueuedWork(
+      new Error(
+        'Kernel was stopped before answering; terminations already queued still take effect on its next start, restarts do not',
+      ),
+    );
+    // The rest runs even if stopping remote comms fails: a remote's timers
+    // left armed would fire against the closed database.
+    try {
+      await this.#platformServices.stopRemoteComms();
+    } finally {
+      try {
+        this.#remoteManager.cleanup();
+        await this.#platformServices.terminateAll();
+      } finally {
+        this.#kernelDatabase.close();
+      }
+    }
   }
 
   /**

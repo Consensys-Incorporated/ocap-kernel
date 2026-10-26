@@ -207,15 +207,17 @@ details.
 ### run loop
 
 The loop in [KernelQueue](../packages/ocap-kernel/src/KernelQueue.ts) that takes items one
-at a time, each in a [crank](#crank) of its own, and sleeps when none are waiting. After
-any garbage collection action or reap, it takes from the [run queue](#run-queue) and from
-the messages remote peers have sent, in turns, so a peer that sends faster than cranks
-finish cannot crowd out the run queue. It is the one writer meant to change the kernel
-store: work asked for from outside it, such as a vat restart or termination, or a peer's
-message or change of incarnation (though not yet the acknowledgement a message carries),
-is queued for it to carry out rather than written into whichever crank happens to be
-open. A crank that throws kills the run loop for the life of the kernel instance; callers
-still waiting on queued work are then rejected.
+at a time, each in a [crank](#crank) of its own, and sleeps when none are waiting. It takes
+a control operation (`clearStorage`, `reset`, `terminateAllVats` or `stop`) ahead of
+everything else, then any garbage collection action or reap, then the
+[run queue](#run-queue) and the messages remote peers have sent, in turns, so a peer that
+sends faster than cranks finish cannot crowd out the run queue. It is the one writer meant
+to change the kernel store: work asked for from outside it, such as a vat restart or
+termination, or a peer's message or change of incarnation (though not yet the
+acknowledgement a message carries), is queued for it to carry out rather than written into
+whichever crank happens to be open. `stop` ends the run loop. A crank that throws kills it
+for the life of the kernel instance; callers still waiting on queued work are then
+rejected.
 
 ### kernel router
 

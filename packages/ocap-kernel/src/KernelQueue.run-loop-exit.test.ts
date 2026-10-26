@@ -199,9 +199,10 @@ async function explodeStalledCrank(harness: Harness): Promise<void> {
 
 /**
  * Begin `exit` while a crank a vat sent `stall` holds open, then end that
- * crank, so the loop stops before it takes anything queued behind it.
+ * crank, so the run loop takes the control operation before anything queued
+ * behind it.
  *
- * @param exit - The control-plane call.
+ * @param exit - The host call that queues the control operation.
  * @returns The exit, for a harness.
  */
 function afterStalledCrank(
@@ -226,6 +227,8 @@ describe('a queueMessage caller the vat has not answered', () => {
     [
       'the kernel is reset',
       async ({ kernel }: Harness): Promise<void> => kernel.reset(),
+      // The vat's termination rejects the promise it decides before the reset
+      // abandons the rest.
       '[KERNEL:VAT_TERMINATED] Vat was deleted.',
     ],
     [
@@ -299,7 +302,6 @@ describe('a restartVat or terminateVat caller the run loop has not reached', () 
       expect(settlement()).toBe('pending');
 
       await exit(harness);
-      // Flushes the caller's settlement; not a timeout.
       await delay(0);
       expect(settlement()).toBe(reason);
     },

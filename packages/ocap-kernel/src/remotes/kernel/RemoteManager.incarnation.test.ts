@@ -479,45 +479,21 @@ describe('a peer incarnation change on the run loop', () => {
   });
 });
 
-describe('a peer message while the run loop is stopped for a direct write', () => {
-  it('is taken once the loop runs again, so a later one cannot cover it', async () => {
-    const { kernelQueue, remoteManager, taken, startRunLoop } = await setUp();
-    const first = startRunLoop();
-    await kernelQueue.stopRunLoop();
-    await first;
+describe('a peer message during a control operation', () => {
+  it('is taken after it, so a later one cannot cover it', async () => {
+    const { kernelQueue, remoteManager, hooks, taken, startRunLoop } =
+      await setUp();
+    startRunLoop().catch(() => undefined);
+    const release = holdNextCrank(hooks);
+    const control = kernelQueue.enqueueControl('terminateAllVats');
+    await settle();
 
     await remoteManager.handleRemoteMessage(PEER_ID, emptyNotify(1));
-    const second = startRunLoop();
+    release();
+    await control;
     await remoteManager.handleRemoteMessage(PEER_ID, emptyNotify(2));
     await settle();
-    await kernelQueue.stopRunLoop();
-    await second;
 
     expect(taken).toStrictEqual([1, 2]);
-  });
-
-  it("holds a new peer's first message until the loop runs again", async () => {
-    const { kernelStore, kernelQueue, remoteManager, taken, startRunLoop } =
-      await setUp();
-    const first = startRunLoop();
-    await kernelQueue.stopRunLoop();
-    await first;
-
-    const handled = remoteManager.handleRemoteMessage(
-      '12D3KooWPeer2',
-      emptyNotify(1),
-    );
-    const remotesWhileStopped = kernelStore.getRemoteIDs().length;
-    const second = startRunLoop();
-    await handled;
-    await settle();
-    await kernelQueue.stopRunLoop();
-    await second;
-
-    expect({
-      remotesWhileStopped,
-      remotes: kernelStore.getRemoteIDs().length,
-      taken,
-    }).toStrictEqual({ remotesWhileStopped: 1, remotes: 2, taken: [1] });
   });
 });

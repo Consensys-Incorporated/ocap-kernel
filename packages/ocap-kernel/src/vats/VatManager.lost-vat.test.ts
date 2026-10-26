@@ -198,6 +198,7 @@ function boot(
     restartVat: vatManager.performVatRestart.bind(vatManager),
     terminateVat: vatManager.performVatTermination.bind(vatManager),
     applyIncarnationChange: () => ({}),
+    performControl: async () => undefined,
     logger,
   });
   return {
@@ -446,7 +447,7 @@ describe('a vat that failed to start at boot', () => {
   });
 });
 
-describe('terminateAllVats while the run loop runs', () => {
+describe('a vat retired from outside the run loop during its delivery', () => {
   const deliveries = [
     {
       what: 'send with a result',
@@ -500,9 +501,11 @@ describe('terminateAllVats while the run loop runs', () => {
       harness.run();
       await vi.waitFor(() => expect(v2Started).toBe(true));
 
-      // Resumes inside the crank that delivers to v1, whose stop then fails
-      // that delivery.
-      const terminating = vatManager.terminateAllVats();
+      // A writer outside the run loop that waits out v2's crank resumes inside
+      // the one that delivers to v1, whose stop then fails that delivery.
+      const terminating = kernelQueue
+        .waitForCrank()
+        .then(async () => vatManager.terminateAllVats());
       v2Busy.resolve();
       await terminating;
       // The delivery reached v1's worker, so `terminateAllVats` resumed inside
@@ -526,7 +529,7 @@ describe('terminateAllVats while the run loop runs', () => {
   );
 });
 
-describe('terminateAllVats resuming inside a restart crank', () => {
+describe('a vat retired from outside the run loop during its restart', () => {
   const relaunches = [
     {
       relaunch: 'succeeds',
@@ -574,8 +577,11 @@ describe('terminateAllVats resuming inside a restart crank', () => {
         .catch((error: Error) => {
           restart = error.message;
         });
-      // Resumes inside the restart's crank, which starts as this one ends.
-      const terminating = vatManager.terminateAllVats();
+      // A writer outside the run loop that waits out this crank resumes inside
+      // the restart's, which starts as this one ends.
+      const terminating = kernelQueue
+        .waitForCrank()
+        .then(async () => vatManager.terminateAllVats());
       v2Busy.resolve();
       await terminating;
       endRelaunch();

@@ -6,6 +6,7 @@ import { processGCActionSet } from './garbage-collection/garbage-collection.ts';
 import { kser, makeKernelError } from './liveslots/kernel-marshal.ts';
 import type { KernelStore } from './store/index.ts';
 import type {
+  ControlOperation,
   CrankResult,
   EndpointId,
   KRef,
@@ -60,6 +61,14 @@ type HeldRequest =
   | HeldMessage
   | HeldWrite;
 
+type ControlRequest = {
+  operation: ControlOperation;
+  resolve: () => void;
+  reject: (reason: unknown) => void;
+};
+
+type Deliver = (item: RunLoopItem) => Promise<CrankResult | undefined>;
+
 type NotThenable<Value> = Value extends { then: unknown } ? never : Value;
 
 /** What a caller awaiting queued work is told when the run loop dies. */
@@ -108,10 +117,21 @@ export class KernelQueue {
    * ends, unless it ends by killing the loop. Written into the crank, they
    * would be rolled back with it if it aborts, and their callers would wait on
    * work nothing is going to do, or be left holding IDs the store gives out
-   * again. Also those made while the loop is stopped for a direct write, which
-   * `run` writes when it starts the loop again.
+   * again.
    */
   #heldRequests: HeldRequest[] = [];
+
+  /** Control operations waiting for the run loop. */
+  readonly #controlRequests: ControlRequest[] = [];
+
+  /** The control operation whose crank is open, answered once it commits. */
+  #controlInFlight: ControlRequest | undefined;
+
+  /** Whether control operations are being carried out with no run loop. */
+  #carryingOutControl = false;
+
+  /** What `run` was given, which carries out control operations too. */
+  #deliver: Deliver | undefined;
 
   /** Thunk to signal run queue transition from empty to non-empty */
   #wakeUpTheRunQueue: (() => void) | null;
@@ -152,15 +172,6 @@ export class KernelQueue {
   #tookArrivalLast = false;
 
   /**
-   * The pending stop, shared by every `stopRunLoop` caller so that a second
-   * does not strand the first.
-   */
-  #stopRequest: ReturnType<typeof makePromiseKit<void>> | undefined;
-
-  /** Whether the loop was stopped by a caller that will not run it again. */
-  #stoppedForGood = false;
-
-  /**
    * Construct a new KernelQueue instance.
    *
    * @param kernelStore - The kernel's persistent state store.
@@ -176,60 +187,44 @@ export class KernelQueue {
   }
 
   /**
-   * The kernel's run loop: take an item off the run queue or from the peers'
-   * arrivals, deliver it, repeat, until {@link stopRunLoop} stops it between
-   * cranks. If it rejects with anything but a refusal to start, the kernel is
-   * dead — see {@link getRunLoopStatus}.
+   * The kernel's run loop: take a control operation, or else an item off the
+   * run queue or from the peers' arrivals, deliver it, repeat, until a `stop`
+   * operation ends it. If it rejects with anything but `run loop already
+   * started`, the kernel is dead — see {@link getRunLoopStatus}.
    *
    * @param deliver - A function that delivers an item to the kernel.
    * @param options - Options bag.
    * @param options.isOffline - Whether an endpoint cannot take a GC delivery
    * now.
-   * @returns A promise that resolves when the loop stops, or rejects with the
-   * `Error` that killed it.
+   * @returns A promise that resolves when `stop` ends the loop, or rejects
+   * with the `Error` that killed it.
    */
   async run(
-    deliver: (item: RunLoopItem) => Promise<CrankResult | undefined>,
+    deliver: Deliver,
     {
       isOffline = () => false,
     }: { isOffline?: (endpointId: EndpointId) => boolean } = {},
   ): Promise<void> {
-    this.#runLoopState.state === 'running' && Fail`run loop already started`;
-    this.#runLoopState.state === 'failed' &&
-      Fail`run loop died and cannot be run again`;
+    this.#runLoopState.state === 'idle' || Fail`run loop already started`;
     this.#runLoopState = { state: 'running' };
     this.#isOffline = isOffline;
+    this.#deliver = deliver;
     try {
-      this.#writeHeldRequests();
       return await this.#runLoop(deliver);
     } catch (error) {
       // The recorded failure rather than the raw throw, so that the embedder's
       // handler and `getRunLoopStatus` describe one object rather than two.
       throw this.#failRunLoop(error);
-    } finally {
-      // Stopped or dead: a caller waiting on a loop that died would otherwise
-      // wait for good.
-      const stopped = this.#stopRequest;
-      this.#stopRequest = undefined;
-      stopped?.resolve();
     }
   }
 
   /**
-   * Take an item off the run queue or from the peers' arrivals, deliver it,
-   * repeat.
+   * The loop {@link run} starts.
    *
    * @param deliver - A function that delivers an item to the kernel.
    */
-  async #runLoop(
-    deliver: (item: RunLoopItem) => Promise<CrankResult | undefined>,
-  ): Promise<void> {
+  async #runLoop(deliver: Deliver): Promise<void> {
     for (;;) {
-      // Between cranks, so the caller writes with no transaction open.
-      if (this.#stopRequest) {
-        this.#runLoopState = { state: 'stopped' };
-        return;
-      }
       let wakeUpPromise: Promise<void> | undefined;
       let afterCommit: (() => Promise<void>) | undefined;
       // Boxed, so a crank that threw `undefined` stays distinguishable from one
@@ -322,63 +317,86 @@ export class KernelQueue {
           );
         }
       }
+      const control = this.#controlInFlight;
+      this.#controlInFlight = undefined;
+      // Resolved before a held request's failure is rethrown: its crank has
+      // committed.
+      control?.resolve();
       if (heldFailure) {
         throw heldFailure.error;
+      }
+      if (control?.operation === 'stop') {
+        this.#runLoopState = { state: 'stopped' };
+        for (const { operation, reject } of this.#controlRequests.splice(0)) {
+          reject(Error(`Kernel run loop stopped before ${operation} ran`));
+        }
+        return;
       }
     }
   }
 
   /**
-   * Bring the run loop to rest between cranks, so a caller may write the store
-   * directly. Resolves once the loop has stopped; a loop that is idle, already
-   * stopped or dead is already at rest.
+   * Queue a control operation, for the run loop to carry out ahead of the run
+   * queue and the peers' arrivals, in a crank of its own. Once the loop has
+   * died, the operations queued are carried out one at a time with no crank,
+   * since none can open.
    *
-   * A crank in flight is waited out rather than interrupted. Once the loop has
-   * stopped, {@link assertRunLoopAlive} refuses host calls, while peers'
-   * arrivals and writes outside a crank wait for the loop to run again.
-   *
-   * @param options - Options bag.
-   * @param options.forGood - Whether the caller will never run the loop again,
-   * so that nothing is accepted or held for it from now on.
-   * @returns Whether the loop had to be stopped, so the caller knows whether
-   * to start it again.
+   * @param operation - The operation.
+   * @returns A promise that resolves once the operation is done, and rejects
+   * with what it threw, or if `stop` ends the loop first.
    */
-  async stopRunLoop({
-    forGood = false,
-  }: { forGood?: boolean } = {}): Promise<boolean> {
-    if (this.#runLoopState.state !== 'running') {
-      this.#stoppedForGood ||= forGood;
-      return false;
+  async enqueueControl(operation: ControlOperation): Promise<void> {
+    const { state } = this.#runLoopState;
+    if (state === 'stopped') {
+      throw Error(`Kernel run loop is stopped; cannot ${operation}`);
     }
-    this.#stopRequest ??= makePromiseKit<void>();
-    // A parked loop is not going to reach the check on its own.
-    this.#wakeRunLoop();
-    await this.#stopRequest.promise;
-    // Not before the wait: a termination a lost vat asks for during the crank
-    // in flight is still queued for the next start.
-    this.#stoppedForGood ||= forGood;
-    // The loop may have died instead of stopping.
-    return this.getRunLoopStatus().state === 'stopped';
+    state === 'idle' && Fail`run loop has not started`;
+    const { promise, resolve, reject } = makePromiseKit<void>();
+    this.#controlRequests.push({ operation, resolve, reject });
+    if (state === 'running') {
+      this.#wakeRunLoop();
+    } else {
+      this.#carryOutControlWithoutLoop();
+    }
+    return promise;
   }
 
   /**
-   * Fail the run loop while it is stopped, for a control-plane write that threw
-   * partway: nothing rolls back what it wrote, so the kernel must not run on.
-   * Everyone waiting on work is told, as for a loop that died in a crank.
-   *
-   * @param error - What the write threw.
-   * @returns The recorded failure, for the embedder's handler.
+   * Carry out the queued control operations in order, for a run loop that has
+   * died.
    */
-  failStoppedRunLoop(error: unknown): Error {
-    this.#runLoopState.state === 'stopped' || Fail`run loop is not stopped`;
-    return this.#failRunLoop(error);
+  #carryOutControlWithoutLoop(): void {
+    if (this.#carryingOutControl) {
+      return;
+    }
+    this.#carryingOutControl = true;
+    const carryOut = async (): Promise<void> => {
+      for (;;) {
+        const request = this.#controlRequests.shift();
+        if (request === undefined) {
+          this.#carryingOutControl = false;
+          return;
+        }
+        try {
+          await this.#deliver?.({
+            type: 'control',
+            operation: request.operation,
+          });
+          request.resolve();
+        } catch (error) {
+          request.reject(error);
+        }
+      }
+    };
+    // Every request is settled inside, so this cannot reject.
+    carryOut().catch(() => undefined);
   }
 
   /**
    * Reject every message-result subscription and drop the peers' arrivals, for
-   * a kernel wiping its store or stopping for good. Not for one whose run loop
-   * goes on with the peer state it had: a later commit would acknowledge a
-   * dropped arrival, which the peer then never resends.
+   * a kernel wiping its store or stopping. Not for one whose run loop goes on
+   * with the peer state it had: a later commit would acknowledge a dropped
+   * arrival, which the peer then never resends.
    *
    * @param error - What to tell the subscribers.
    */
@@ -460,6 +478,11 @@ export class KernelQueue {
     for (const reject of abandoned) {
       reject(this.#makeDeadRunLoopError(DEAD_RUN_LOOP_WORK));
     }
+
+    // The one whose crank killed the loop is told what killed it.
+    this.#controlInFlight?.reject(failure);
+    this.#controlInFlight = undefined;
+    this.#carryOutControlWithoutLoop();
     return failure;
   }
 
@@ -477,8 +500,8 @@ export class KernelQueue {
   }
 
   /**
-   * Refuse a host call while the run loop is not taking work: it died, or it
-   * is stopped, either for a direct write or for good.
+   * Refuse work that would otherwise sit in a queue nobody drains: the run loop
+   * died, or `stop` ended it.
    *
    * For callers at an ingress boundary only. Teardown must not be refused even
    * though it also enqueues: `VatHandle.terminate` and `RemoteManager` reject the
@@ -486,36 +509,19 @@ export class KernelQueue {
    * notifies for their subscribers. Those notifies are never delivered, but that
    * is acceptable — the endpoint is going away — whereas refusing them would
    * break `terminateAllVats` and `reset`. Note that those are cleanup, not
-   * recovery: nothing clears a `failed` state and `run` refuses a loop that
-   * died, so a kernel that has failed stays failed for the life of the
+   * recovery: nothing clears a `failed` state and `run` refuses to be called
+   * twice, so a kernel that has failed stays failed for the life of the
    * instance. Recovery means a new kernel, which in practice means a new
    * process.
    *
    * @param what - What is being refused, completing "cannot ...".
-   * @throws If the run loop has died or is stopped.
+   * @throws If the run loop has died or stopped.
    */
   assertRunLoopAlive(what: string): void {
-    this.assertRunLoopWillRun(what);
-    if (this.#runLoopState.state === 'stopped') {
-      // The control plane has the store until the loop runs again.
-      throw Error(`Kernel run loop is stopped; cannot ${what}`);
-    }
-  }
-
-  /**
-   * Refuse work only if the run loop will never take it: it died, or it was
-   * stopped for good. For a peer's arrival and a write outside a crank, which a
-   * loop stopped for a direct write takes once it runs again. Refused instead,
-   * a peer's message is lost as soon as a later one is acknowledged.
-   *
-   * @param what - What is being refused, completing "cannot ...".
-   * @throws If the run loop has died or was stopped for good.
-   */
-  assertRunLoopWillRun(what: string): void {
     if (this.#runLoopState.state === 'failed') {
       throw this.#makeDeadRunLoopError(`Kernel run loop died; cannot ${what}`);
     }
-    if (this.#stoppedForGood) {
+    if (this.#runLoopState.state === 'stopped') {
       throw Error(`Kernel run loop is stopped; cannot ${what}`);
     }
   }
@@ -541,11 +547,18 @@ export class KernelQueue {
 
   /**
    * Take the next item for the run loop.
-   * **ATTN:** Removes it from the kernel store or from the arrivals.
+   * **ATTN:** Removes it from the kernel store, the arrivals or the control
+   * requests.
    *
    * @returns The next item, or undefined if nothing is waiting.
    */
   #getNextRunQueueItem(): RunLoopItem | undefined {
+    const control = this.#controlRequests.shift();
+    if (control) {
+      this.#controlInFlight = control;
+      return { type: 'control', operation: control.operation };
+    }
+
     const gcAction = processGCActionSet(this.#kernelStore, {
       isOffline: this.#isOffline,
     });
@@ -849,21 +862,20 @@ export class KernelQueue {
   }
 
   /**
-   * Make a write now if no crank is open and the run loop is not stopped, or
-   * else once the open crank ends or the loop runs again.
+   * Make a write now if no crank is open, or else once the open crank ends.
    *
    * @param write - The write. It must make every write before it returns:
    * the run loop does not wait for a promise, so what it writes after an
    * `await` lands in whichever crank is open by then. The type refuses a
    * promise returned bare, not one inside an object.
    * @returns A promise for what `write` returns or throws. It rejects if the
-   * run loop dies first, or if a stop, reset or `clearStorage` discards the
-   * write.
+   * run loop has stopped or dies first, or if a reset or `clearStorage`
+   * discards the write.
    */
   async writeOutsideCrank<Result>(
     write: () => NotThenable<Result>,
   ): Promise<Result> {
-    this.assertRunLoopWillRun('write outside a crank');
+    this.assertRunLoopAlive('write outside a crank');
     const { promise, resolve, reject } = makePromiseKit<Result>();
     this.#enqueueRequest({
       type: 'write',
@@ -950,7 +962,7 @@ export class KernelQueue {
     message: string;
     highestReceivedSeq: number;
   }): boolean {
-    this.assertRunLoopWillRun('accept a remote message');
+    this.assertRunLoopAlive('accept a remote message');
     if (seq <= highestReceivedSeq) {
       return true;
     }
@@ -1018,7 +1030,7 @@ export class KernelQueue {
     incarnation: string;
     restart: boolean;
   }): void {
-    this.assertRunLoopWillRun('accept a peer incarnation change');
+    this.assertRunLoopAlive('accept a peer incarnation change');
     const waiting = restart ? this.#waitingRestart(peerId) : undefined;
     if (waiting === undefined) {
       this.#arrivedFromRemotes.push({
@@ -1075,15 +1087,12 @@ export class KernelQueue {
 
   /**
    * Enqueue a request from outside the run loop, holding it until the open
-   * crank, if any, has ended, or the stopped loop runs again.
+   * crank, if any, has ended.
    *
    * @param item - The item to add.
    */
   #enqueueRequest(item: HeldRequest): void {
-    if (
-      this.#kernelStore.isInCrank() ||
-      this.#runLoopState.state === 'stopped'
-    ) {
+    if (this.#kernelStore.isInCrank()) {
       this.#heldRequests.push(item);
     } else {
       this.#writeRequest(item);
@@ -1110,9 +1119,9 @@ export class KernelQueue {
 
   /**
    * Forget the held requests, and reject the caller of each held message or
-   * write, for a kernel that is stopping or wiping its store. Not in the store
-   * yet, they would outlive a wipe of it. A restart or termination's caller is
-   * told by `VatManager`.
+   * write, for a kernel wiping its store: not in the store yet, they would
+   * outlive the wipe. A restart or termination's caller is told by
+   * `VatManager`.
    *
    * @param error - What to tell the caller of a forgotten message or write.
    */
@@ -1129,8 +1138,7 @@ export class KernelQueue {
   }
 
   /**
-   * Write the requests held while the crank that just ended was open, or while
-   * the loop was stopped.
+   * Write the requests held while the crank that just ended was open.
    */
   #writeHeldRequests(): void {
     // Each taken off only once written: one that throws kills the run loop,

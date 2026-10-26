@@ -515,9 +515,9 @@ export class VatManager {
   }
 
   /**
-   * Stop treating the end of a vat's channel as a lost vat, for a kernel about
-   * to stop every worker itself. `#startVat` marks a handle registered after
-   * this call too.
+   * Tell every vat that the kernel is about to stop its worker, so the end of
+   * its channel is not treated as the vat being lost. A vat started after this
+   * call is told too.
    */
   expectWorkersToStop(): void {
     this.#workersStopping = true;
@@ -902,9 +902,7 @@ export class VatManager {
       }
     }
     if (!this.#kernelStore.isVatActive(vatId)) {
-      // Retired while this crank waited on a worker, by a writer outside the
-      // run loop. None does since `terminateAllVats` stops the loop; kept until
-      // host calls cannot write outside it (#1171). The new worker is stopped,
+      // Retired while this crank waited on a worker. The new worker is stopped,
       // and the state its `initVat` wrote deleted with it.
       const error = new VatDeletedError(vatId);
       if (this.#vats.has(vatId)) {
@@ -1121,12 +1119,10 @@ export class VatManager {
    * Terminate all vats and collect garbage.
    * This is for debugging purposes only.
    *
-   * `stopVat` rather than `terminateVat`: this is part of tearing the kernel
-   * down, and `reset` has to work on a kernel whose run loop has died, which a
-   * queued request could never be carried out on.
+   * `stopVat`, not `terminateVat`: this runs inside a crank or on a dead run
+   * loop, where the crank `terminateVat` waits for cannot start.
    */
   async terminateAllVats(): Promise<void> {
-    await this.#kernelQueue.waitForCrank();
     // With the persisted vats that have no handle: one that failed to start,
     // and one whose loss queued a termination not yet carried out, whose
     // worker may still be running.
@@ -1135,9 +1131,9 @@ export class VatManager {
       ...this.#kernelStore.getVatIDs(),
     ]);
     for (const id of [...ids].reverse()) {
-      // A queued termination can retire a vat while an earlier one stops, if the
-      // run loop runs; `Kernel` stops it first. Checked with no await before
-      // `stopVat`'s own check, so nothing can retire it in between.
+      // Skipped if retired while an earlier one stopped, by a `reset` or
+      // `terminateAllVats` running alongside on a dead run loop. Checked with no
+      // await before `stopVat`'s own check, so nothing can retire it in between.
       if (!this.#isVatKnown(id)) {
         continue;
       }

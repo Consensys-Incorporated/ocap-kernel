@@ -1778,7 +1778,6 @@ describe('VatManager', () => {
 
       await vatManager.terminateAllVats();
 
-      expect(mockKernelQueue.waitForCrank).toHaveBeenCalled();
       expect(vatHandles[1]?.terminate).toHaveBeenCalled();
       expect(vatHandles[0]?.terminate).toHaveBeenCalled();
       expect(mockKernelStore.markVatAsTerminated).toHaveBeenCalledWith('v2');
@@ -1791,7 +1790,8 @@ describe('VatManager', () => {
       await vatManager.runVat(v1, createMockVatConfig());
       await vatManager.runVat(asVatId('v2'), createMockVatConfig());
       mockPlatformServices.terminate.mockImplementationOnce(async () => {
-        // A queued termination of v1 runs while v2's worker stops.
+        // Another terminateAllVats, as on a dead run loop, retires v1 while
+        // v2's worker stops.
         await vatManager.stopVat(v1, true);
         mockKernelStore.isVatActive.mockReturnValue(false);
       });
@@ -1820,7 +1820,6 @@ describe('VatManager', () => {
     it('handles empty vat list', async () => {
       await vatManager.terminateAllVats();
 
-      expect(mockKernelQueue.waitForCrank).toHaveBeenCalled();
       expect(mockKernelStore.markVatAsTerminated).not.toHaveBeenCalled();
     });
   });

@@ -28,7 +28,8 @@ const config: VatConfig = { sourceSpec: 'test.js' };
 /**
  * A real store, run loop and vat manager, with vat workers mocked out. The run
  * loop routes queued terminations to the vat manager, as `KernelRouter` does,
- * and holds a send to `gate` open until the test calls `openGate`.
+ * control operations to what the test passes `onControl`, and holds a send to
+ * `gate` open until the test calls `openGate`.
  *
  * @param options - Options.
  * @param options.kdb - The database, to reuse one across a kernel restart.
@@ -97,12 +98,17 @@ async function setUp({
   const gateKit = makePromiseKit<void>();
   const crankOpen = makePromiseKit<void>();
   const delivered: RunLoopItem[] = [];
+  let performControl = async (): Promise<void> => undefined;
   const deliver = async (
     item: RunLoopItem,
   ): Promise<CrankResult | undefined> => {
     delivered.push(item);
     if (item.type === 'terminateVat') {
       return vatManager.performVatTermination(item.vatId, item.reason);
+    }
+    if (item.type === 'control') {
+      await performControl();
+      return undefined;
     }
     if (item.type === 'send' && item.target === gate) {
       crankOpen.resolve();
@@ -131,6 +137,9 @@ async function setUp({
       await crankOpen.promise;
     },
     openGate: () => gateKit.resolve(),
+    onControl: (perform: () => Promise<void>) => {
+      performControl = perform;
+    },
   };
 }
 
@@ -154,25 +163,25 @@ describe('VatManager queued termination', () => {
       const termination = vatManager.terminateVat(asVatId('v1'));
       termination.catch(() => undefined);
 
-      // `Kernel.reset`: stop the run loop, which writes the held request as the
-      // open crank ends, then tear the vats down, wipe the store and abandon
-      // queued work.
-      const stopping = kernelQueue.stopRunLoop();
+      // `Kernel.reset`, in the crank the run loop takes next, ahead of the
+      // held request it writes as the open crank ends: tear the vats down,
+      // wipe the store and abandon queued work.
+      harness.onControl(async () => {
+        await vatManager.stopVat(asVatId('v1'), true);
+        kernelStore.reset();
+        vatManager.abandonQueuedWork(
+          new Error('Kernel was reset; queued work was abandoned'),
+        );
+      });
+      const resetting = kernelQueue.enqueueControl('reset');
       harness.openGate();
-      expect(await stopping).toBe(true);
-      await vatManager.stopVat(asVatId('v1'), true);
-      kernelStore.reset();
-      vatManager.abandonQueuedWork(
-        new Error('Kernel was reset; queued work was abandoned'),
-      );
+      await resetting;
       await expect(termination).rejects.toThrow('Kernel was reset');
 
       // A vat launched into the fresh kernel gets the first id again.
       const vatId = kernelStore.getNextVatId();
       expect(vatId).toBe('v1');
       await harness.launch(vatId);
-
-      harness.run();
       await settle();
 
       expect({
