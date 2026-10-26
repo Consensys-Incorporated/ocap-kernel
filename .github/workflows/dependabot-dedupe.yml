@@ -22,6 +22,7 @@ jobs:
           is-high-risk-environment: true
           ref: ${{ github.head_ref }}
           skip-install: true
+          persist-credentials: true
 
       - name: Dedupe and push
         run: |
