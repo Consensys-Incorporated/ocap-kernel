@@ -86,6 +86,9 @@ describe('SubclusterManager', () => {
       waitForCrank: vi.fn().mockResolvedValue(undefined),
       resolvePromises: vi.fn(),
       assertRunLoopAlive: vi.fn(),
+      writeOutsideCrank: vi.fn<KernelQueue['writeOutsideCrank']>(
+        async (write) => write(),
+      ),
     } as unknown as Mocked<KernelQueue>;
 
     mockVatManager = {
@@ -228,6 +231,48 @@ describe('SubclusterManager', () => {
       expect(mockKernelQueue.resolvePromises).toHaveBeenCalledWith('kernel', [
         ['kp1', true, makeKernelError('VAT_TERMINATED', 'bob exploded')],
       ]);
+    });
+
+    it("makes a failed peer's promise in the same write as the bootstrap message", async () => {
+      const config: ClusterConfig = {
+        bootstrap: 'alice',
+        vats: {
+          alice: { sourceSpec: 'alice.js' },
+          bob: { sourceSpec: 'bob.js' },
+        },
+      };
+      mockVatManager.launchVat
+        .mockResolvedValueOnce('ko1' as KRef)
+        .mockRejectedValueOnce(new Error('bob exploded'));
+      let writeHeld: (() => void) | undefined;
+      mockKernelQueue.writeOutsideCrank.mockImplementationOnce(
+        async (write) =>
+          new Promise((resolve) => {
+            writeHeld = () => resolve(write());
+          }),
+      );
+
+      const launched = subclusterManager.launchSubcluster(config);
+      await vi.waitFor(() => expect(writeHeld).toBeDefined());
+      const madeBeforeTheWrite = [
+        mockKernelStore.initKernelPromise.mock.calls.length,
+        vi.mocked(mockQueueMessage).mock.calls.length,
+      ];
+      writeHeld?.();
+      const madeInTheWrite = [
+        mockKernelStore.initKernelPromise.mock.calls.length,
+        vi.mocked(mockQueueMessage).mock.calls.length,
+      ];
+
+      await expect(launched).rejects.toThrow('bob exploded');
+      expect({ madeBeforeTheWrite, madeInTheWrite }).toStrictEqual({
+        madeBeforeTheWrite: [0, 0],
+        madeInTheWrite: [1, 1],
+      });
+      // With no options: a bootstrap held through a stop is not written.
+      expect(mockKernelQueue.writeOutsideCrank).toHaveBeenCalledExactlyOnceWith(
+        expect.any(Function),
+      );
     });
 
     it('terminates successfully-launched vats when a peer vat fails', async () => {

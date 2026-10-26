@@ -470,10 +470,10 @@ export class SubclusterManager {
     }
     const rootKref = bootstrapLaunchResult.value;
 
-    // Build the roots map. Succeeded vats receive real ko<N> refs; failed peer
-    // vats receive an immediately-rejected kernel promise so bootstrap can
+    // Each vat's root, or a failed peer's launch error, which the write below
+    // turns into an immediately-rejected kernel promise so bootstrap can
     // observe the failure via E(roots.peer).method() pipelining.
-    const rootsEntries: [string, SlotValue][] = [];
+    const rootsEntries: [string, KRef | Error][] = [];
     const vatRootKrefsEntries: [string, KRef][] = [];
     let firstPeerFailure: Error | undefined;
     for (let i = 0; i < vatEntries.length; i++) {
@@ -487,7 +487,7 @@ export class SubclusterManager {
       // constructor, etc.) before using them as property keys.
       !(vatName in Object.prototype) || Fail`invalid vat name '${vatName}'`;
       if (result.status === 'fulfilled') {
-        rootsEntries.push([vatName, kslot(result.value, 'vatRoot')]);
+        rootsEntries.push([vatName, result.value]);
         vatRootKrefsEntries.push([vatName, result.value]);
       } else {
         // launchVat always wraps failures in new Error(...), so reason is an Error
@@ -496,21 +496,29 @@ export class SubclusterManager {
             ? result.reason
             : new Error(String(result.reason));
         firstPeerFailure ??= peerError;
-        const [kpid] = this.#kernelStore.initKernelPromise();
-        this.#kernelStore.setPromiseDecider(kpid, 'kernel');
-        this.#kernelQueue.resolvePromises('kernel', [
-          [kpid, true, makeKernelError('VAT_TERMINATED', peerError.message)],
-        ]);
-        rootsEntries.push([vatName, kslot(kpid)]);
+        rootsEntries.push([vatName, peerError]);
       }
     }
-    const roots = Object.fromEntries(rootsEntries);
     const vatRootKrefs = Object.fromEntries(vatRootKrefsEntries);
 
-    const bootstrapResult = await this.#queueMessage(rootKref, 'bootstrap', [
-      roots,
-      services,
-    ]);
+    // A failed peer's promise is made in the same write as the message, which
+    // `queueMessage` writes at once outside a crank: one made sooner, rejected
+    // and named by nothing else yet, would be collected by an open crank
+    // before the held message took its reference.
+    const { answer } = await this.#kernelQueue.writeOutsideCrank(() => {
+      const roots = Object.fromEntries(
+        rootsEntries.map(([vatName, root]): [string, SlotValue] => [
+          vatName,
+          root instanceof Error
+            ? this.#makeRejectedRoot(root)
+            : kslot(root, 'vatRoot'),
+        ]),
+      );
+      return {
+        answer: this.#queueMessage(rootKref, 'bootstrap', [roots, services]),
+      };
+    });
+    const bootstrapResult = await answer;
     const unserialized = kunser(bootstrapResult);
     if (unserialized instanceof Error) {
       throw unserialized;
@@ -523,6 +531,22 @@ export class SubclusterManager {
     }
 
     return { rootKref, bootstrapResult, vatRootKrefs };
+  }
+
+  /**
+   * Make the root a bootstrap vat is handed for a peer vat that failed to
+   * launch: a kernel promise rejected with the failure.
+   *
+   * @param peerError - Why the peer failed to launch.
+   * @returns The rejected promise, as a slot.
+   */
+  #makeRejectedRoot(peerError: Error): SlotValue {
+    const [kpid] = this.#kernelStore.initKernelPromise();
+    this.#kernelStore.setPromiseDecider(kpid, 'kernel');
+    this.#kernelQueue.resolvePromises('kernel', [
+      [kpid, true, makeKernelError('VAT_TERMINATED', peerError.message)],
+    ]);
+    return kslot(kpid);
   }
 
   /**
