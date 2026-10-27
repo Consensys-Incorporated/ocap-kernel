@@ -8,6 +8,7 @@ import { getBundleSpec, makeKernel, makeTestLogger } from './utils.ts';
 const VAT_COUNT = 4;
 const SPIN_ITERATIONS = 12_000_000;
 const SLEEP_MS = 300;
+const TRIALS = 3;
 
 const vatNames = Array.from({ length: VAT_COUNT }, (_, i) => `vat${i}`);
 
@@ -55,6 +56,24 @@ describe('vat parallelism', () => {
     return performance.now() - start;
   };
 
+  /**
+   * Time the same sends several times and keep the fastest. Load from other
+   * test files only ever adds time, and a spin lasts about 100 ms, so one
+   * unlucky trial would otherwise decide the ratio.
+   *
+   * @param args - The arguments to {@link timeAll}.
+   * @returns The fastest elapsed time in milliseconds.
+   */
+  const timeFastest = async (
+    ...args: Parameters<typeof timeAll>
+  ): Promise<number> => {
+    let fastest = Infinity;
+    for (let trial = 0; trial < TRIALS; trial++) {
+      fastest = Math.min(fastest, await timeAll(...args));
+    }
+    return fastest;
+  };
+
   // Launching the workers takes seconds.
   beforeEach(async () => {
     const kernelDatabase = await makeSQLKernelDatabase({
@@ -69,11 +88,20 @@ describe('vat parallelism', () => {
   }, 60_000);
 
   it('takes no longer for k vats computing at once than for each alone, summed', async () => {
-    let each = 0;
-    for (const root of roots) {
-      each += await timeAll([root], 'spin', SPIN_ITERATIONS);
+    // Trials alternate between the two measurements, so a burst of load from
+    // elsewhere is as likely to land on either.
+    const eachFastest = roots.map(() => Infinity);
+    let all = Infinity;
+    for (let trial = 0; trial < TRIALS; trial++) {
+      for (const [index, root] of roots.entries()) {
+        eachFastest[index] = Math.min(
+          eachFastest[index] as number,
+          await timeAll([root], 'spin', SPIN_ITERATIONS),
+        );
+      }
+      all = Math.min(all, await timeAll(roots, 'spin', SPIN_ITERATIONS));
     }
-    const all = await timeAll(roots, 'spin', SPIN_ITERATIONS);
+    const each = eachFastest.reduce((sum, time) => sum + time, 0);
 
     expect(
       all / each,
@@ -82,8 +110,8 @@ describe('vat parallelism', () => {
   });
 
   it('takes about as long for k vats waiting at once as for one', async () => {
-    const one = await timeAll(roots.slice(0, 1), 'sleep', SLEEP_MS);
-    const all = await timeAll(roots, 'sleep', SLEEP_MS);
+    const one = await timeFastest(roots.slice(0, 1), 'sleep', SLEEP_MS);
+    const all = await timeFastest(roots, 'sleep', SLEEP_MS);
 
     expect(
       all / one,
