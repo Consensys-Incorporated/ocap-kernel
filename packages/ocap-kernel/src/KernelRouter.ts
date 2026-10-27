@@ -564,8 +564,7 @@ export class KernelRouter {
     }
     // Liveslots forgets each vpid in the batch on receipt, and names the
     // promise by a fresh one if it ever sends it again, so the entries go now.
-    // Without this, a settled promise keeps its count, and with it whatever it
-    // resolved to, for good. A remote's c-list is mirrored by its peer, which
+    // A remote's c-list is mirrored by its peer, which
     // would have to retire the same entries, so remotes keep theirs for now.
     if (isVatId(endpointId)) {
       for (const toResolve of targets) {

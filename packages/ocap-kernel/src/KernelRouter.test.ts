@@ -626,16 +626,17 @@ describe('KernelRouter', () => {
       it.each([
         [
           'forgets',
+          'a vat',
           v1,
           [
             [v1, 'kp1'],
             [v1, 'kp2'],
           ],
         ],
-        ['keeps', asRemoteId('r1'), []],
+        ['keeps', 'a remote', asRemoteId('r1'), []],
       ])(
         '%s the c-list entries of the notified promises for %s',
-        async (_title, endpointId, forgotten) => {
+        async (_verb, _endpointKind, endpointId, forgotten) => {
           const kpid = asKRef('kp1');
           (
             kernelStore.getKernelPromise as unknown as MockInstance
@@ -661,6 +662,38 @@ describe('KernelRouter', () => {
           expect(endpointHandle.deliverNotify).toHaveBeenCalledOnce();
         },
       );
+
+      it('forgets the notified promises after translating them and before delivering', async () => {
+        const kpid = asKRef('kp1');
+        (
+          kernelStore.getKernelPromise as unknown as MockInstance
+        ).mockReturnValue({
+          state: 'fulfilled',
+          value: { body: '#"settled"', slots: [] },
+        });
+        (kernelStore.krefToEref as unknown as MockInstance).mockReturnValueOnce(
+          'p-1',
+        );
+        (
+          kernelStore.getKpidsToRetire as unknown as MockInstance
+        ).mockReturnValueOnce([kpid, asKRef('kp2')]);
+        (
+          endpointHandle.deliverNotify as unknown as MockInstance
+        ).mockResolvedValueOnce({ didDelivery: v1 });
+
+        await kernelRouter.deliver({ type: 'notify', endpointId: v1, kpid });
+
+        const [lastTranslation] = (
+          kernelStore.translateRefKtoE as unknown as MockInstance
+        ).mock.invocationCallOrder.slice(-1);
+        const forgets = (kernelStore.forgetKref as unknown as MockInstance).mock
+          .invocationCallOrder;
+        const [delivery] = (
+          endpointHandle.deliverNotify as unknown as MockInstance
+        ).mock.invocationCallOrder;
+        expect(Math.min(...forgets)).toBeGreaterThan(lastTranslation as number);
+        expect(Math.max(...forgets)).toBeLessThan(delivery as number);
+      });
 
       it('returns didDelivery when promise is not in vat clist', async () => {
         const endpointId = v1;

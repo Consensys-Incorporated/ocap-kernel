@@ -79,19 +79,32 @@ describe('VatSyscall', () => {
     );
   });
 
-  it('forgets the c-list entries of the promises it resolves', () => {
-    const resolutions = [
-      ['kp1', false, { body: '', slots: ['kp3'] }],
-      ['kp2', true, { body: '', slots: [] }],
-    ] as VatOneResolution[];
-    vatSys.handleSyscall(['resolve', resolutions] as VatSyscallObject);
-    expect(
-      (kernelStore.forgetKref as unknown as MockInstance).mock.calls,
-    ).toStrictEqual([
-      ['v1', 'kp1'],
-      ['v1', 'kp2'],
-    ]);
-  });
+  it.each([
+    ['inside', true],
+    ['outside', false],
+  ])(
+    'forgets the promises it resolves once they are resolved, %s a crank',
+    (_where, inCrank) => {
+      (kernelStore.isInCrank as unknown as MockInstance).mockReturnValue(
+        inCrank,
+      );
+      const resolutions = [
+        ['kp1', false, { body: '', slots: [] }],
+        ['kp2', true, { body: '', slots: [] }],
+      ] as VatOneResolution[];
+      vatSys.handleSyscall(['resolve', resolutions] as VatSyscallObject);
+      const forgetKref = kernelStore.forgetKref as unknown as MockInstance;
+      expect(forgetKref.mock.calls).toStrictEqual([
+        ['v1', 'kp1'],
+        ['v1', 'kp2'],
+      ]);
+      const [resolve] = (kernelQueue.resolvePromises as unknown as MockInstance)
+        .mock.invocationCallOrder;
+      expect(Math.min(...forgetKref.mock.invocationCallOrder)).toBeGreaterThan(
+        resolve as number,
+      );
+    },
+  );
 
   it('enqueues send immediately when outside a crank', () => {
     (kernelStore.isInCrank as unknown as MockInstance).mockReturnValue(false);

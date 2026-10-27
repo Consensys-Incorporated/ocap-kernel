@@ -1904,11 +1904,13 @@ describe('KernelQueue', () => {
     });
 
     it.each([
-      ['pins', true, ['ko1', 'kp2']],
-      ['does not pin', false, []],
+      ['pins', 'is', 'buffered', 'fulfilled', true, false, false],
+      ['pins', 'is', 'immediate', 'fulfilled', true, true, false],
+      ['pins', 'is', 'buffered', 'rejected', true, false, true],
+      ['does not pin', 'is not', 'buffered', 'fulfilled', false, false, false],
     ])(
-      '%s the resolution slots when the kernel is subscribed: %s',
-      (_title, subscribed, pinned) => {
+      '%s the resolution slots when the kernel %s subscribed (%s, %s)',
+      (_verb, _is, _mode, _outcome, subscribed, immediate, rejected) => {
         const kpid = asKRef('kp1');
         (
           kernelStore.getKernelPromise as unknown as MockInstance
@@ -1925,12 +1927,18 @@ describe('KernelQueue', () => {
         }
         kernelQueue.resolvePromises(
           v1,
-          [[kpid, false, { body: '', slots: [asKRef('ko1'), asKRef('kp2')] }]],
-          false,
+          [
+            [
+              kpid,
+              rejected,
+              { body: '', slots: [asKRef('ko1'), asKRef('kp2')] },
+            ],
+          ],
+          immediate,
         );
         expect(
           (kernelStore.pinObject as unknown as MockInstance).mock.calls,
-        ).toStrictEqual(pinned.map((slot) => [slot]));
+        ).toStrictEqual(subscribed ? [['ko1'], ['kp2']] : []);
       },
     );
 
