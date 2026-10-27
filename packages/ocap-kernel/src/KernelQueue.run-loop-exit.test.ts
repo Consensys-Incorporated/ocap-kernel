@@ -1,157 +1,14 @@
-import { makeSQLKernelDatabase } from '@metamask/kernel-store/sqlite/nodejs';
 import { delay } from '@metamask/kernel-utils';
-import type { JsonRpcMessage } from '@metamask/kernel-utils';
-import { Logger } from '@metamask/logger';
-import type { DuplexStream } from '@metamask/streams';
 import { describe, it, expect, vi } from 'vitest';
 
-import { Kernel } from './Kernel.ts';
-import { kser, makeFatalKernelError } from './liveslots/kernel-marshal.ts';
-import type {
-  CrankResult,
-  EndpointMessage,
-  PlatformServices,
-  KRef,
-  VatId,
-} from './types.ts';
-import { VatHandle } from './vats/VatHandle.ts';
-import { VatSyscall } from './vats/VatSyscall.ts';
-import { asVatId } from '../test/branded.ts';
+import type { Kernel } from './Kernel.ts';
+import { explosion, setUpRealKernel, watch } from '../test/real-kernel.ts';
+import type { RealKernel as Harness } from '../test/real-kernel.ts';
 
 /*
  * Invariant M2: each kind of caller waiting on queued work is rejected, not
  * left hanging, whichever way the run loop exits.
  */
-
-/**
- * A crank result asking for the termination of a vat that does not exist,
- * which throws out of the crank and kills the run loop.
- *
- * @param vatId - The vat whose delivery this is.
- * @returns The crank result.
- */
-function explosion(vatId: VatId): CrankResult {
-  return {
-    didDelivery: vatId,
-    terminate: {
-      vatId: asVatId('v404'),
-      reject: true,
-      info: makeFatalKernelError('INTERNAL_ERROR', 'exploded'),
-    },
-  };
-}
-
-/**
- * A kernel over a real store, running two mocked vats that answer `bootstrap`
- * and nothing else. A vat sent `explode` returns {@link explosion}. A vat sent
- * `stall` holds its crank open until the test calls `release`.
- *
- * @returns The kernel, the root and ID of each vat, the methods vats were
- * sent, and `release`, which ends a stalled crank with the given result.
- */
-async function setUp() {
-  const received: string[] = [];
-  let releaseStall: ((result: CrankResult) => void) | undefined;
-  const logger = new Logger('test');
-  for (const level of ['log', 'info', 'warn', 'error', 'debug'] as const) {
-    vi.spyOn(logger, level).mockImplementation(() => undefined);
-  }
-  vi.spyOn(logger, 'subLogger').mockReturnValue(logger);
-  vi.spyOn(console, 'debug').mockImplementation(() => undefined);
-
-  const platformServices = {
-    launch: vi.fn().mockResolvedValue({
-      end: vi.fn().mockResolvedValue(undefined),
-    } as unknown as DuplexStream<JsonRpcMessage, JsonRpcMessage>),
-    terminate: vi.fn().mockResolvedValue(undefined),
-    terminateAll: vi.fn().mockResolvedValue(undefined),
-    stopRemoteComms: vi.fn().mockResolvedValue(undefined),
-  } as unknown as PlatformServices;
-
-  vi.spyOn(VatHandle, 'make').mockImplementation(
-    async ({ vatId, vatConfig, kernelQueue, kernelStore }) => {
-      const vatSyscall = new VatSyscall({ vatId, kernelQueue, kernelStore });
-      return {
-        vatId,
-        config: vatConfig,
-        deliverMessage: async (
-          _target: string,
-          message: EndpointMessage,
-        ): Promise<CrankResult> => {
-          const [method] = JSON.parse(message.methargs.body.slice(1));
-          received.push(method);
-          if (method === 'bootstrap' && message.result) {
-            vatSyscall.handleSyscall([
-              'resolve',
-              [[message.result, false, kser('ready')]],
-            ]);
-          }
-          if (method === 'explode') {
-            return explosion(vatId);
-          }
-          if (method === 'stall') {
-            return new Promise<CrankResult>((resolve) => {
-              releaseStall = resolve;
-            });
-          }
-          return { didDelivery: vatId };
-        },
-        terminate: async (): Promise<void> => undefined,
-        expectClose: (): void => undefined,
-      } as unknown as VatHandle;
-    },
-  );
-
-  const kernel = await Kernel.make(
-    platformServices,
-    await makeSQLKernelDatabase({ dbFilename: ':memory:' }),
-    { logger },
-  );
-  const { vatRootKrefs } = await kernel.launchSubcluster({
-    bootstrap: 'waiter',
-    vats: {
-      waiter: { sourceSpec: 'waiter.js' },
-      doomed: { sourceSpec: 'doomed.js' },
-    },
-  });
-  const vatIdOf = (sourceSpec: string): VatId =>
-    kernel
-      .getVats()
-      .find(
-        ({ config }) =>
-          'sourceSpec' in config && config.sourceSpec === sourceSpec,
-      )?.id as VatId;
-  return {
-    kernel,
-    waiterRoot: vatRootKrefs.waiter as KRef,
-    doomedRoot: vatRootKrefs.doomed as KRef,
-    waiterId: vatIdOf('waiter.js'),
-    doomedId: vatIdOf('doomed.js'),
-    received,
-    release: (result: CrankResult): void => releaseStall?.(result),
-  };
-}
-
-type Harness = Awaited<ReturnType<typeof setUp>>;
-/**
- * Follow how a promise settles.
- *
- * @param promise - The promise.
- * @returns A function reporting `pending`, `fulfilled`, or the message it was
- * rejected with.
- */
-function watch(promise: Promise<unknown>): () => string {
-  let settlement = 'pending';
-  promise
-    .then(() => {
-      settlement = 'fulfilled';
-      return undefined;
-    })
-    .catch((error: Error) => {
-      settlement = error.message;
-    });
-  return () => settlement;
-}
 
 /**
  * Leave a caller waiting on a message its vat has taken but not answered, end
@@ -163,11 +20,11 @@ function watch(promise: Promise<unknown>): () => string {
 async function waitThrough(
   exit: (harness: Harness) => Promise<void>,
 ): Promise<string> {
-  const harness = await setUp();
+  const harness = await setUpRealKernel();
   const settlement = watch(
     harness.kernel.queueMessage(harness.waiterRoot, 'work', []),
   );
-  await vi.waitFor(() => expect(harness.received).toContain('work'));
+  await vi.waitFor(() => expect(harness.received).toContain('v1:work'));
   await harness.kernel.getStatus();
   await delay(0);
   expect(settlement()).toBe('pending');
@@ -199,10 +56,9 @@ async function explodeStalledCrank(harness: Harness): Promise<void> {
 
 /**
  * Begin `exit` while a crank a vat sent `stall` holds open, then end that
- * crank, so the run loop takes the control operation before anything queued
- * behind it.
+ * crank, so `exit` takes effect before anything queued behind it.
  *
- * @param exit - The host call that queues the control operation.
+ * @param exit - The host call.
  * @returns The exit, for a harness.
  */
 function afterStalledCrank(
@@ -292,11 +148,11 @@ describe('a restartVat or terminateVat caller the run loop has not reached', () 
   )(
     'a %s caller is rejected when %s',
     async (_request, _exit, makeRequest, exit, reason) => {
-      const harness = await setUp();
+      const harness = await setUpRealKernel();
       harness.kernel
         .queueMessage(harness.waiterRoot, 'stall', [])
         .catch(() => undefined);
-      await vi.waitFor(() => expect(harness.received).toContain('stall'));
+      await vi.waitFor(() => expect(harness.received).toContain('v1:stall'));
       const settlement = watch(makeRequest(harness));
       await delay(0);
       expect(settlement()).toBe('pending');
@@ -327,11 +183,11 @@ describe('a queueMessage caller whose message waits for the open crank', () => {
       CLEARED,
     ],
   ] as const)('is rejected when %s', async (_title, exit, reason) => {
-    const harness = await setUp();
+    const harness = await setUpRealKernel();
     harness.kernel
       .queueMessage(harness.waiterRoot, 'stall', [])
       .catch(() => undefined);
-    await vi.waitFor(() => expect(harness.received).toContain('stall'));
+    await vi.waitFor(() => expect(harness.received).toContain('v1:stall'));
     const settlement = watch(
       harness.kernel.queueMessage(harness.doomedRoot, 'work', []),
     );
@@ -342,6 +198,9 @@ describe('a queueMessage caller whose message waits for the open crank', () => {
     expect({
       settlement: settlement(),
       received: harness.received,
-    }).toStrictEqual({ settlement: reason, received: ['bootstrap', 'stall'] });
+    }).toStrictEqual({
+      settlement: reason,
+      received: ['v1:bootstrap', 'v1:stall'],
+    });
   });
 });

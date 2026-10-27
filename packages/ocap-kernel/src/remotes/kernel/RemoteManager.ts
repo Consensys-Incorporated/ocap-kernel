@@ -299,10 +299,9 @@ export class RemoteManager {
       );
     }
     const isRestart = stored !== undefined;
-    // `initRemoteComms` has yet to return, so there is no handle to clean up
-    // after.
+    // Before `initRemoteComms` returns there is no remote handle to clean up.
     // Recorded without that cleanup, the restart would be hidden from the next
-    // handshake, which reports it again instead.
+    // handshake, so it is left for that handshake to report again.
     if (isRestart && !this.isRemoteCommsInitialized()) {
       this.#logger?.log(
         `Peer ${peerId.slice(0, 8)} restart to ${incarnation.slice(0, 8)} not recorded: remote comms are not initialized`,

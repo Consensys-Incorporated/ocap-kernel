@@ -29,7 +29,7 @@ vi.mock('@endo/promise-kit', () => ({
 }));
 
 /**
- * Sentinel error used to kill the infinite run loop in tests.
+ * Sentinel error used to kill the run loop in tests.
  * Thrown by collectGarbage (which runs after each delivery) so the
  * test can assert on the side-effects of that delivery.
  */
@@ -131,7 +131,8 @@ describe('KernelQueue', () => {
    *
    * @param during - What happens while the crank is open.
    * @param options - Options bag.
-   * @param options.diesOf - What the run loop dies of instead of that stop.
+   * @param options.diesOf - What the run loop dies of instead of
+   * `KILL_RUN_LOOP`.
    */
   const runACrankWhile = async (
     during: () => void,
@@ -2237,7 +2238,7 @@ describe('KernelQueue', () => {
 
   describe('audit ordering', () => {
     /**
-     * Deliver one item, then stop the loop from the second crank so the first
+     * Deliver one item, then kill the loop in the second crank so the first
      * runs all the way through its flush.
      *
      * @param crankResult - What the delivery reports.

@@ -97,7 +97,6 @@ export class Kernel {
 
   readonly #onRunLoopFailure: OnRunLoopFailure | undefined;
 
-  /** The first `stop` under way or done, which later calls settle with. */
   #stopping: Promise<void> | undefined;
 
   /**
@@ -238,7 +237,7 @@ export class Kernel {
       applyIncarnationChange: this.#remoteManager.applyIncarnationChange.bind(
         this.#remoteManager,
       ),
-      performControl: async (operation) => this.#performControl(operation),
+      performControl: this.#performControl.bind(this),
       logger: this.#logger,
     });
 
@@ -370,8 +369,7 @@ export class Kernel {
   }
 
   /**
-   * The work of a control operation, in its crank or, on a run loop that has
-   * died, with no crank.
+   * Carry out a control operation, in the crank the run loop opened for it.
    *
    * @param operation - The operation.
    */
@@ -384,30 +382,20 @@ export class Kernel {
         );
         return;
       case 'reset':
-        try {
-          if (this.#ioManager) {
-            await this.#ioManager.destroyAllChannels();
-          }
-          await this.#vatManager.terminateAllVats();
-          this.#subclusterManager.clearSystemSubclusters();
-          this.#resetKernelState();
-          // Last, after every await, so a request made during the reset is
-          // abandoned with the rest.
-          this.#abandonQueuedWork(
-            new Error('Kernel was reset; queued work was abandoned'),
-          );
-        } catch (error) {
-          this.#logger.error('Error resetting kernel:', error);
-          throw error;
+        if (this.#ioManager) {
+          await this.#ioManager.destroyAllChannels();
         }
+        await this.#vatManager.terminateAllVats();
+        this.#subclusterManager.clearSystemSubclusters();
+        this.#resetKernelState();
+        // Last, after every await, so a request made during the reset is
+        // abandoned with the rest.
+        this.#abandonQueuedWork(
+          new Error('Kernel was reset; queued work was abandoned'),
+        );
         return;
       case 'terminateAllVats':
         await this.#vatManager.terminateAllVats();
-        return;
-      case 'stop':
-        // In the stop's crank, not before: a vat lost in an earlier crank must
-        // still fail the delivery waiting on it.
-        this.#vatManager.expectWorkersToStop();
         return;
       default:
         throw new Error(
@@ -716,7 +704,9 @@ export class Kernel {
   }
 
   /**
-   * Clear the database. A failure partway kills the run loop.
+   * Clear the database. A failure partway rolls back its store writes and
+   * kills the run loop. Refused once `stop` is called or the run loop has
+   * died.
    */
   async clearStorage(): Promise<void> {
     await this.#kernelQueue.enqueueControl('clearStorage');
@@ -921,10 +911,9 @@ export class Kernel {
    * Stop all running vats and reset the kernel state.
    * This is for debugging purposes only.
    *
-   * Does not revive a kernel whose run loop has died: this clears state, it does
-   * not restart the loop, so `getStatus` still reports `failed` afterwards and
-   * the queue still refuses new work. On a running kernel, a failure partway
-   * rolls back what it wrote to the store and kills the run loop.
+   * A failure partway rolls back its store writes and kills the run loop.
+   * Refused once `stop` is called or the run loop has died: a kernel whose run
+   * loop has died is restarted instead, with `resetStorage` to clear its state.
    */
   async reset(): Promise<void> {
     await this.#kernelQueue.enqueueControl('reset');
@@ -934,7 +923,8 @@ export class Kernel {
    * Terminate all vats and collect garbage.
    * This is for debugging purposes only.
    *
-   * A failure partway kills the run loop.
+   * A failure partway rolls back its store writes and kills the run loop.
+   * Refused once `stop` is called or the run loop has died.
    */
   async terminateAllVats(): Promise<void> {
     await this.#kernelQueue.enqueueControl('terminateAllVats');
@@ -943,62 +933,71 @@ export class Kernel {
   /**
    * Gracefully stop the kernel without deleting vats. Waits for the open crank
    * and any control operation queued before this; if one never ends, neither
-   * does this, and the embedder has to end the process.
+   * does this, and the embedder has to end the process. A later call settles as
+   * this one does.
    */
   async stop(): Promise<void> {
-    // Cleared on failure, so a later call tries the teardown again.
-    this.#stopping ??= this.#stop().catch((error: unknown) => {
-      this.#stopping = undefined;
-      throw error;
-    });
+    this.#stopping ??= this.#stop();
     await this.#stopping;
   }
 
   /**
-   * End the run loop, unless an earlier `stop` did, then let go of everything
-   * the kernel holds.
+   * End the run loop, then let go of everything the kernel holds.
    */
   async #stop(): Promise<void> {
-    if (this.#kernelQueue.getRunLoopStatus().state !== 'stopped') {
+    await this.#kernelQueue.endRunLoop();
+    try {
+      // Not before the loop has ended: a vat lost in its last crank must still
+      // fail the delivery waiting on it.
+      this.#vatManager.expectWorkersToStop();
       try {
-        await this.#kernelQueue.enqueueControl('stop');
+        this.#kernelStore.recordLastActiveTime();
       } catch (error) {
-        if (this.#kernelQueue.getRunLoopStatus().state !== 'failed') {
-          throw error;
-        }
-        // The stop's own crank killed the run loop; carried out again with no
-        // crank, since the rest of the kernel still has to be let go.
-        await this.#kernelQueue.enqueueControl('stop');
+        this.#logger.error('could not record last active time', error);
       }
-    }
-    try {
-      this.#kernelStore.recordLastActiveTime();
-    } catch (error) {
-      this.#logger.error('could not record last active time', error);
-    }
-    // Once the loop has ended, so it also reaches a message queued during the
-    // stop's crank.
-    this.#kernelQueue.discardQueuedWork(
-      new Error(
-        'Kernel was stopped before this message was answered; one still queued is delivered on its next start',
-      ),
-    );
-    this.#vatManager.abandonQueuedWork(
-      new Error(
-        'Kernel was stopped before answering; terminations already queued still take effect on its next start, restarts do not',
-      ),
-    );
-    // The rest runs even if stopping remote comms fails: a remote's timers
-    // left armed would fire against the closed database.
-    try {
-      await this.#platformServices.stopRemoteComms();
+      this.#kernelQueue.discardQueuedWork(
+        new Error(
+          'Kernel was stopped before this message was answered; one still queued is delivered on its next start',
+        ),
+      );
+      this.#vatManager.abandonQueuedWork(
+        new Error(
+          'Kernel was stopped before answering; terminations already queued still take effect on its next start, restarts do not',
+        ),
+      );
     } finally {
+      await this.#tearDown();
+    }
+  }
+
+  /**
+   * Stop remote comms and the vat workers, and close the database.
+   */
+  async #tearDown(): Promise<void> {
+    // Each step runs even if an earlier one failed: a remote's timers left
+    // armed would fire against the closed database, and a worker left running
+    // would outlive the kernel.
+    const failures: { step: string; error: unknown }[] = [];
+    for (const [step, run] of [
+      ['stopRemoteComms', async () => this.#platformServices.stopRemoteComms()],
+      ['remote cleanup', async () => this.#remoteManager.cleanup()],
+      ['terminateAll', async () => this.#platformServices.terminateAll()],
+      ['closing the database', async () => this.#kernelDatabase.close()],
+    ] as const) {
       try {
-        this.#remoteManager.cleanup();
-        await this.#platformServices.terminateAll();
-      } finally {
-        this.#kernelDatabase.close();
+        await run();
+      } catch (error) {
+        failures.push({ step, error });
       }
+    }
+    if (failures.length > 1) {
+      throw new AggregateError(
+        failures.map(({ error }) => error),
+        `Kernel stop failed in ${failures.map(({ step }) => step).join(', ')}`,
+      );
+    }
+    if (failures.length === 1) {
+      throw failures[0]?.error;
     }
   }
 

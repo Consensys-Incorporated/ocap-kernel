@@ -49,8 +49,8 @@ const mocks = vi.hoisted(() => {
 
     #stopped = false;
 
-    // Like the real run loop, this settles only when the kernel dies or a
-    // `stop` control operation ends it, and the state it reports follows.
+    // Like the real run loop, this settles only when the kernel dies or
+    // `endRunLoop` ends it, and `getRunLoopStatus` reports which.
     run = vi.fn(
       async (
         deliver: (item: RunLoopItem) => Promise<unknown>,
@@ -101,19 +101,24 @@ const mocks = vi.hoisted(() => {
     // Delivered at once through the router, standing in for the operation's
     // crank; a throw kills the run loop, as it would there.
     enqueueControl = vi.fn(async (operation: string) => {
+      if (this.#runLoopFailure) {
+        throw new Error(`Kernel run loop died; cannot ${operation}`);
+      }
       if (this.#stopped) {
         throw new Error(`Kernel run loop is stopped; cannot ${operation}`);
       }
-      const alive = this.#runLoopFailure === undefined;
       try {
         await this.#deliver?.({ type: 'control', operation } as RunLoopItem);
       } catch (error) {
-        if (alive) {
-          this.killRunLoop(error as Error);
-        }
+        this.killRunLoop(error as Error);
         throw error;
       }
-      if (operation === 'stop' && alive) {
+    });
+
+    // Ends a running loop at once, standing in for the real one ending
+    // between cranks.
+    endRunLoop = vi.fn(async () => {
+      if (this.#running) {
         this.#running = false;
         this.#stopped = true;
         this.#endRunLoop?.();
@@ -907,32 +912,30 @@ describe('Kernel', () => {
       expect(vatHandles[0]?.terminate).not.toHaveBeenCalled();
 
       // Verify stop sequence
-      expect(queueInstance.enqueueControl).toHaveBeenCalledExactlyOnceWith(
-        'stop',
-      );
+      expect(queueInstance.endRunLoop).toHaveBeenCalledOnce();
       expect(stopRemoteCommsMock).toHaveBeenCalledOnce();
       expect(remoteManagerInstance.cleanup).toHaveBeenCalledOnce();
       expect(workerTerminateAllMock).toHaveBeenCalledOnce();
     });
 
-    it("tells each vat its channel is closing only in the stop's crank", async () => {
+    it('tells each vat its channel is closing only once the run loop has ended', async () => {
       const kernel = await Kernel.make(
         mockPlatformServices,
         mockKernelDatabase,
       );
       await kernel.launchSubcluster(makeSingleVatClusterConfig());
-      const { enqueueControl } = mocks.KernelQueue.lastInstance;
-      const takeControl = enqueueControl.getMockImplementation();
-      const crankStarts = makePromiseKit<void>();
-      enqueueControl.mockImplementationOnce(async (operation) => {
-        await crankStarts.promise;
-        return takeControl?.(operation);
+      const { endRunLoop } = mocks.KernelQueue.lastInstance;
+      const end = endRunLoop.getMockImplementation();
+      const loopEnds = makePromiseKit<void>();
+      endRunLoop.mockImplementationOnce(async () => {
+        await loopEnds.promise;
+        return end?.();
       });
 
       const stopping = kernel.stop();
       await delay(0);
       const closingEarly = vatHandles[0]?.expectClose.mock.calls.length;
-      crankStarts.resolve();
+      loopEnds.resolve();
       await stopping;
 
       expect({
@@ -964,12 +967,12 @@ describe('Kernel', () => {
         mockPlatformServices,
         mockKernelDatabase,
       );
-      const { enqueueControl } = mocks.KernelQueue.lastInstance;
-      const takeControl = enqueueControl.getMockImplementation();
+      const { endRunLoop } = mocks.KernelQueue.lastInstance;
+      const end = endRunLoop.getMockImplementation();
       const loopEnds = makePromiseKit<void>();
-      enqueueControl.mockImplementationOnce(async (operation) => {
+      endRunLoop.mockImplementationOnce(async () => {
         await loopEnds.promise;
-        return takeControl?.(operation);
+        return end?.();
       });
       const closeSpy = vi.spyOn(mockKernelDatabase, 'close');
 
@@ -1004,18 +1007,15 @@ describe('Kernel', () => {
       }).toStrictEqual({ cleanup: 1, terminateAll: 1, close: 1 });
     });
 
-    it('tears down even when the run loop dies before the stop commits', async () => {
+    it('tears down even when the run loop dies before it ends', async () => {
       const kernel = await Kernel.make(
         mockPlatformServices,
         mockKernelDatabase,
       );
       await kernel.launchSubcluster(makeSingleVatClusterConfig());
       const queueInstance = mocks.KernelQueue.lastInstance;
-      queueInstance.enqueueControl.mockImplementationOnce(async () => {
+      queueInstance.endRunLoop.mockImplementationOnce(async () => {
         queueInstance.killRunLoop(new Error('died first'));
-        throw new Error(
-          'Kernel run loop died; this work will never be carried out',
-        );
       });
       const terminateAllSpy = vi.spyOn(mockPlatformServices, 'terminateAll');
       const closeSpy = vi.spyOn(mockKernelDatabase, 'close');
@@ -1034,8 +1034,7 @@ describe('Kernel', () => {
         mockPlatformServices,
         mockKernelDatabase,
       );
-      const { enqueueControl, discardQueuedWork } =
-        mocks.KernelQueue.lastInstance;
+      const { endRunLoop, discardQueuedWork } = mocks.KernelQueue.lastInstance;
 
       await kernel.stop();
 
@@ -1044,7 +1043,7 @@ describe('Kernel', () => {
           'Kernel was stopped before this message was answered; one still queued is delivered on its next start',
         ),
       );
-      expect(enqueueControl.mock.invocationCallOrder[0] as number).toBeLessThan(
+      expect(endRunLoop.mock.invocationCallOrder[0] as number).toBeLessThan(
         discardQueuedWork.mock.invocationCallOrder[0] as number,
       );
     });
@@ -1060,12 +1059,12 @@ describe('Kernel', () => {
       await kernel.stop();
 
       expect({
-        stops: mocks.KernelQueue.lastInstance.enqueueControl.mock.calls.length,
+        ends: mocks.KernelQueue.lastInstance.endRunLoop.mock.calls.length,
         closes: closeSpy.mock.calls.length,
-      }).toStrictEqual({ stops: 1, closes: 1 });
+      }).toStrictEqual({ ends: 1, closes: 1 });
     });
 
-    it('tries the teardown again after one that failed', async () => {
+    it('settles a stop after a failed one with the same failure', async () => {
       const kernel = await Kernel.make(
         mockPlatformServices,
         mockKernelDatabase,
@@ -1075,12 +1074,43 @@ describe('Kernel', () => {
         .mockRejectedValueOnce(new Error('worker would not die'));
 
       await expect(kernel.stop()).rejects.toThrow('worker would not die');
-      await kernel.stop();
+      await expect(kernel.stop()).rejects.toThrow('worker would not die');
+      expect(terminateAllSpy).toHaveBeenCalledOnce();
+    });
+
+    it('runs every teardown step, and reports each one that fails', async () => {
+      const kernel = await Kernel.make(
+        mockPlatformServices,
+        mockKernelDatabase,
+      );
+      const transport = new Error('transport stuck');
+      const cleanup = new Error('cleanup failed');
+      const worker = new Error('worker would not die');
+      vi.spyOn(mockPlatformServices, 'stopRemoteComms').mockRejectedValueOnce(
+        transport,
+      );
+      mocks.RemoteManager.lastInstance.cleanup.mockImplementationOnce(() => {
+        throw cleanup;
+      });
+      vi.spyOn(mockPlatformServices, 'terminateAll').mockRejectedValueOnce(
+        worker,
+      );
+      const closeSpy = vi.spyOn(mockKernelDatabase, 'close');
+
+      const failure = await kernel.stop().catch((error: unknown) => error);
 
       expect({
-        stops: mocks.KernelQueue.lastInstance.enqueueControl.mock.calls.length,
-        terminateAll: terminateAllSpy.mock.calls.length,
-      }).toStrictEqual({ stops: 1, terminateAll: 2 });
+        failure: failure instanceof AggregateError,
+        message: (failure as AggregateError).message,
+        errors: (failure as AggregateError).errors,
+        closes: closeSpy.mock.calls.length,
+      }).toStrictEqual({
+        failure: true,
+        message:
+          'Kernel stop failed in stopRemoteComms, remote cleanup, terminateAll',
+        errors: [transport, cleanup, worker],
+        closes: 1,
+      });
     });
 
     it('saves lastActiveTime to KV store', async () => {
@@ -1233,7 +1263,7 @@ describe('Kernel', () => {
       },
     );
 
-    it('resets a kernel whose run loop has died', async () => {
+    it('refuses one once the run loop has died, leaving the store as it was', async () => {
       const kernel = await Kernel.make(
         mockPlatformServices,
         mockKernelDatabase,
@@ -1241,9 +1271,10 @@ describe('Kernel', () => {
       mocks.KernelQueue.lastInstance.killRunLoop(new Error('died earlier'));
       const clearSpy = vi.spyOn(mockKernelDatabase, 'clear');
 
-      await kernel.reset();
-
-      expect(clearSpy).toHaveBeenCalledOnce();
+      await expect(kernel.reset()).rejects.toThrow(
+        'Kernel run loop died; cannot reset',
+      );
+      expect(clearSpy).not.toHaveBeenCalled();
     });
 
     it('refuses one once the kernel has stopped', async () => {
@@ -1415,23 +1446,16 @@ describe('Kernel', () => {
       ).toThrow('System subcluster "testSystemSubcluster" not found');
     });
 
-    it('logs an error if resetting the kernel state fails', async () => {
+    it('kills the run loop if resetting the kernel state fails', async () => {
       const mockDb = makeMapKernelDatabase();
-      const logger = new Logger('test');
-      const logErrorSpy = vi.spyOn(logger, 'error');
-      const kernel = await Kernel.make(mockPlatformServices, mockDb, {
-        logger,
-      });
+      const kernel = await Kernel.make(mockPlatformServices, mockDb);
       await kernel.launchSubcluster(makeSingleVatClusterConfig());
 
       vi.spyOn(mockDb, 'clear').mockImplementationOnce(() => {
         throw new Error('test error');
       });
       await expect(kernel.reset()).rejects.toThrow('test error');
-      expect(logErrorSpy).toHaveBeenCalledWith(
-        'Error resetting kernel:',
-        new Error('test error'),
-      );
+      expect((await kernel.getStatus()).runLoop.state).toBe('failed');
     });
   });
 

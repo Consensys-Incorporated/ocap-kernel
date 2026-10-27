@@ -711,8 +711,8 @@ export class KernelRouter {
    * awaiting the result of the message it was handling is told why the vat
    * ended.
    *
-   * A vat the kernel retired during the delivery is the exception: the crank
-   * commits, with whatever the vat sent before it was retired.
+   * A vat retired during the delivery is the exception: the crank commits,
+   * with whatever the vat sent before it was retired.
    *
    * @param endpointId - The endpoint the delivery is addressed to.
    * @param deliver - Makes the delivery.
@@ -732,8 +732,8 @@ export class KernelRouter {
         throw error;
       }
       if (!this.#kernelStore.isVatActive(endpointId)) {
-        // Retired while the delivery was in flight. A rollback would undo the
-        // retirement.
+        // Defensive: nothing outside the run loop retires a vat mid-delivery,
+        // but a rollback here would undo such a retirement.
         return harden({ didDelivery: endpointId });
       }
       this.#logger?.warn(
