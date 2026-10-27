@@ -54,7 +54,7 @@
   },
   "devDependencies": {
     "@agoric/internal": "0.4.0",
-    "@arethetypeswrong/cli": "^0.17.4",
+    "@arethetypeswrong/cli": "^0.18.5",
     "@lavamoat/allow-scripts": "^3.3.2",
     "@lavamoat/preinstall-always-fail": "^2.1.0",
     "@metamask/auto-changelog": "^6.2.1",
