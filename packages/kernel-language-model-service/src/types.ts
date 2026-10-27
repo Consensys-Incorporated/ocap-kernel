@@ -180,8 +180,7 @@ export type ChatResult = {
  * Minimal service interface required by `makeChatClient`.
  */
 export type ChatService = {
-  chat(params: ChatParams & { stream: true }): AsyncIterable<ChatStreamChunk>;
-  chat(params: ChatParams & { stream?: false }): Promise<ChatResult>;
+  chat: (params: ChatParams & { stream?: false }) => Promise<ChatResult>;
 };
 
 /**
