@@ -64,7 +64,7 @@
     "ses": "^2.3.0"
   },
   "devDependencies": {
-    "@arethetypeswrong/cli": "^0.17.4",
+    "@arethetypeswrong/cli": "^0.18.5",
     "@metamask/auto-changelog": "^6.2.1",
     "@ocap/repo-tools": "workspace:^",
     "@types/better-sqlite3": "^7.6.12",
