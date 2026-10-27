@@ -1,6 +1,14 @@
-# `@ocap/kernel-language-model-service`
+# `@metamask/kernel-language-model-service`
 
 A package providing language model service implementations for the ocap kernel. This package defines interfaces and implementations for integrating various language model providers (like Ollama) into the kernel's object capability system.
+
+## Installation
+
+`yarn add @metamask/kernel-language-model-service`
+
+or
+
+`npm install @metamask/kernel-language-model-service`
 
 ## Overview
 
@@ -21,20 +29,12 @@ The package follows the object capability pattern with clear separation of conce
 
 All model instances are hardened using `harden()` from `@endo/ses` for security.
 
-## Installation
-
-`yarn add @ocap/kernel-language-model-service`
-
-or
-
-`npm install @ocap/kernel-language-model-service`
-
 ## Usage
 
 ### Basic Ollama Integration
 
 ```typescript
-import { OllamaNodejsService } from '@ocap/kernel-language-model-service/ollama/nodejs';
+import { OllamaNodejsService } from '@metamask/kernel-language-model-service/ollama/nodejs';
 
 // Create a service instance with required endowments
 const service = new OllamaNodejsService({
@@ -60,23 +60,6 @@ for await (const chunk of response) {
 await model.unload();
 ```
 
-### Using Host-Restricted Fetch
-
-For enhanced security, you can use the host-restricted fetch utility:
-
-```typescript
-import { makeHostRestrictedFetch } from '@ocap/kernel-language-model-service/ollama/fetch';
-
-const restrictedFetch = makeHostRestrictedFetch(
-  ['localhost:11434'],
-  global.fetch,
-);
-
-const service = new OllamaNodejsService({
-  endowments: { fetch: restrictedFetch },
-});
-```
-
 ### Listing Available Models
 
 ```typescript
@@ -91,7 +74,6 @@ console.log(
 
 - **Object Capabilities**: All model instances are hardened and can be safely passed between vats
 - **Endowment Pattern**: External dependencies (like `fetch`) must be explicitly provided
-- **Host Restrictions**: Use `makeHostRestrictedFetch` to limit network access
 - **Validation**: All configurations are validated using Superstruct schemas
 
 ## API Reference

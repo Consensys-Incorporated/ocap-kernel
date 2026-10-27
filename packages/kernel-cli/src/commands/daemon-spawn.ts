@@ -73,11 +73,23 @@ export async function ensureDaemon(socketPath: string): Promise<void> {
       OCAP_SOCKET_PATH: socketPath,
     },
   });
+  // A daemon that dies starting up, say on a bad `llm.json`, would otherwise
+  // show only as the poll below timing out. Its error is in its log.
+  let exitCode: number | null | undefined;
+  child.once('exit', (code: number | null) => {
+    exitCode = code;
+  });
   child.unref();
 
   // Poll until daemon responds
   for (let i = 0; i < MAX_POLLS; i++) {
     await new Promise((resolve) => setTimeout(resolve, POLL_INTERVAL_MS));
+    if (exitCode !== undefined) {
+      throw new Error(
+        `Daemon exited during startup (code ${String(exitCode)}); ` +
+          `see ${join(getOcapHome(), 'daemon.log')}`,
+      );
+    }
     if (await pingDaemon(socketPath)) {
       process.stderr.write('Daemon ready.\n');
       return;

@@ -14,8 +14,8 @@ plus its sample-services daemon on the laptop.
 │  relay (libp2p) — writes ~/.libp2p-relay/relay.addr │
 │                                                     │
 │  matcher daemon   — OCAP_HOME=~/.ocap (default)     │
-│    (subcluster running the matcher vat,             │
-│     plus the llm-bridge process)                    │
+│    (subcluster running the matcher vat; the daemon  │
+│     registers a languageModelService from llm.json) │
 │                                                     │
 │  consumer daemon  — OCAP_HOME=~/.ocap-consumer      │
 │    (no subclusters; hosts the openclaw plugin's     │
@@ -81,10 +81,12 @@ Four things must be live before starting this validation:
     [Restarting](#restarting) section below for what this command
     actually does and when you should use a different one.
 
-    The matcher ranks via an LLM through `@ocap/llm-bridge`, which
-    talks to the openclaw gateway's OpenAI-compatible
-    `/v1/chat/completions` endpoint. That adds two requirements,
-    described in the next two subsections.
+    The matcher ranks via the daemon's `languageModelService`
+    kernel service, which talks to the openclaw gateway's
+    OpenAI-compatible `/v1/chat/completions` endpoint
+    (`start-matcher.sh` provisions the daemon's `~/.ocap/llm.json`
+    for this). That adds two requirements, described in the next
+    two subsections.
 
 3.  **Sample-services daemon** on the laptop (the same machine as the
     MetaMask extension), started via
@@ -129,7 +131,7 @@ already exists** — copy the existing value and reuse it; clobbering
 the token would invalidate any other clients pointed at the gateway.
 Only the `chatCompletions` endpoint flag is reliably new.
 
-### Bridge env vars
+### LLM env vars
 
 In the shell that runs `start-matcher.sh` (set these in your shell
 profile alongside `LIBP2P_RELAY_PUBLIC_IP`):
@@ -141,25 +143,15 @@ export OPENCLAW_GATEWAY_TOKEN=<the existing gateway.auth.token value>
 # export OPENCLAW_AGENT_MODEL=openclaw                # default
 ```
 
-The bridge runs as a background process beside the matcher daemon
-(pid file at `~/.ocap/matcher-llm-bridge.pid`, log at
-`~/.ocap/matcher-llm-bridge.log`). `start-matcher.sh` reaps any
-previous bridge before spawning a new one; `reset-everything.sh`
-tears it down alongside the daemons.
+The LLM calls run inside the matcher daemon itself (no separate
+bridge process). The daemon reads `~/.ocap/llm.json` at startup and
+registers the `languageModelService` kernel service; the matcher vat
+sends one chat-completion request per `findServices` call, carrying
+the full current registry in the prompt. Registrations are purely
+local to the vat and involve no LLM traffic.
 
-The bridge log captures both halves of every round trip so you can
-see exactly what's flowing to and from the LLM. Each ingest or
-query produces:
-
-```text
-[llm-bridge] -> ingest: {full request JSON}
-[llm-bridge] → chat-completions request: {full messages array sent to openclaw}
-[llm-bridge] ← chat-completions reply: {full response body from openclaw}
-[llm-bridge] <- ingested (svc:0)
-```
-
-`tail -f ~/.ocap/matcher-llm-bridge.log` while you exercise the
-matcher to watch prompts and replies in real time.
+`tail -f ~/.ocap/daemon.log` while you exercise the matcher to watch
+ranking activity (the matcher vat logs with a `[matcher]` prefix).
 
 ## Restarting
 
@@ -355,15 +347,15 @@ pre-configured.
 
    Expected tool: `discovery_find_services(description: "sign a
    message with my wallet")`. Expected response: PersonalMessageSigner
-   as the top candidate. The LLM bridge ranks candidates against the
+   as the top candidate. The LLM ranks candidates against the
    query, so the exact response shape depends on the model's output,
    but a competently-configured model should pick PMS clearly and
    either omit Echo/RandomNumber or rank them well below it. Each
    returned candidate carries a `contact (public): ocap:…` URL plus
    a `rationale` string in the model's own words. If you see a
-   "bridge query error" or "bridge ingest error" message instead,
-   check `~/.ocap/matcher-llm-bridge.log` and the openclaw gateway
-   config (token + chatCompletions endpoint enabled).
+   ranking error propagated from the LLM instead, check
+   `~/.ocap/daemon.log` and the openclaw gateway config (token +
+   chatCompletions endpoint enabled).
 
 3. **Inspect PMS.**
 
@@ -454,15 +446,14 @@ Light-touch. Prompts the agent to hit edge cases.
 
 ## Known limitations going in
 
-- Matcher `findServices` uses an LLM-backed Stage-2 ranker via
-  `@ocap/llm-bridge`, which calls openclaw's
-  `/v1/chat/completions`. The bridge is started by
-  `start-matcher.sh` and writes to `~/.ocap/matcher-llm-bridge.log`.
-  Bridge errors propagate to the consumer rather than falling back
-  to a heuristic ranker — silent fallbacks would hide LLM-side
-  problems during development. Stage-3 RAG-style indexing is the
-  next planned step; today every registration's full digest sits
-  in the matcher's LLM context window.
+- Matcher `findServices` uses an LLM-backed Stage-2 ranker via the
+  daemon's `languageModelService` kernel service, which calls
+  openclaw's `/v1/chat/completions`. LLM errors propagate to the
+  consumer rather than falling back to a heuristic ranker — silent
+  fallbacks would hide LLM-side problems during development.
+  Stage-3 RAG-style indexing is the next planned step; today every
+  registered service's full digest rides along in each ranking
+  prompt.
 - Matcher URL is stable across plain daemon restarts of the same
   OCAP home (durable `publicFacet` kref + persisted peer ID and
   encryption key), but **re-running `start-matcher.sh` allocates a

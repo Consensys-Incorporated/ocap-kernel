@@ -11,6 +11,18 @@
      * declarations, whose branded types do not match those in `src`.
      */
     "paths": {
+      "@metamask/kernel-language-model-service/ollama/nodejs": [
+        "./packages/kernel-language-model-service/src/ollama/nodejs.ts"
+      ],
+      "@metamask/kernel-language-model-service/open-v1/nodejs": [
+        "./packages/kernel-language-model-service/src/open-v1/nodejs.ts"
+      ],
+      "@metamask/kernel-language-model-service/test-utils": [
+        "./packages/kernel-language-model-service/src/test-utils/index.ts"
+      ],
+      "@metamask/kernel-language-model-service/utils/parse-tool-arguments": [
+        "./packages/kernel-language-model-service/src/utils/parse-tool-arguments.ts"
+      ],
       "@metamask/kernel-node-runtime/daemon": [
         "./packages/kernel-node-runtime/src/daemon/index.ts"
       ],
@@ -70,18 +82,6 @@
         "./packages/kernel-agents/src/types/messages.ts"
       ],
       "@ocap/kernel-agents/utils": ["./packages/kernel-agents/src/utils.ts"],
-      "@ocap/kernel-language-model-service/ollama/nodejs": [
-        "./packages/kernel-language-model-service/src/ollama/nodejs.ts"
-      ],
-      "@ocap/kernel-language-model-service/open-v1/nodejs": [
-        "./packages/kernel-language-model-service/src/open-v1/nodejs.ts"
-      ],
-      "@ocap/kernel-language-model-service/test-utils": [
-        "./packages/kernel-language-model-service/src/test-utils/index.ts"
-      ],
-      "@ocap/kernel-language-model-service/utils/parse-tool-arguments": [
-        "./packages/kernel-language-model-service/src/utils/parse-tool-arguments.ts"
-      ],
       "@ocap/*": ["./packages/*/src"]
     }
   }

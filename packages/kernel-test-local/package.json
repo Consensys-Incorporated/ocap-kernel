@@ -33,13 +33,13 @@
   },
   "dependencies": {
     "@endo/eventual-send": "^1.5.0",
+    "@metamask/kernel-language-model-service": "workspace:^",
     "@metamask/kernel-node-runtime": "workspace:^",
     "@metamask/kernel-store": "workspace:^",
     "@metamask/kernel-utils": "workspace:^",
     "@metamask/logger": "workspace:^",
     "@metamask/ocap-kernel": "workspace:^",
     "@ocap/kernel-agents": "workspace:^",
-    "@ocap/kernel-language-model-service": "workspace:^",
     "@ocap/repo-tools": "workspace:^"
   },
   "devDependencies": {

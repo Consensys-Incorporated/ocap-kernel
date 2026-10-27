@@ -35,7 +35,7 @@ describe('LANGUAGE_MODEL_SERVICE_NAME', () => {
 describe('makeKernelLanguageModelService', () => {
   it('returns object with correct name and a service', () => {
     const chat = vi.fn();
-    const result = makeKernelLanguageModelService(chat);
+    const result = makeKernelLanguageModelService({ chat });
     expect(result).toMatchObject({
       name: LANGUAGE_MODEL_SERVICE_NAME,
       service: expect.any(Object),
@@ -44,7 +44,7 @@ describe('makeKernelLanguageModelService', () => {
 
   it('service has chat and sample methods', () => {
     const chat = vi.fn();
-    const { service } = makeKernelLanguageModelService(chat);
+    const { service } = makeKernelLanguageModelService({ chat });
     expect(service).toMatchObject({
       chat: expect.any(Function),
       sample: expect.any(Function),
@@ -54,7 +54,7 @@ describe('makeKernelLanguageModelService', () => {
   it('chat delegates to underlying function and returns hardened result', async () => {
     const chatResult = makeChatResult();
     const chat = vi.fn().mockResolvedValue(chatResult);
-    const { service } = makeKernelLanguageModelService(chat);
+    const { service } = makeKernelLanguageModelService({ chat });
 
     const params: ChatParams = {
       model: 'test',
@@ -72,7 +72,7 @@ describe('makeKernelLanguageModelService', () => {
     const rawResult = makeSampleResult();
     const chat = vi.fn();
     const sample = vi.fn().mockResolvedValue(rawResult);
-    const { service } = makeKernelLanguageModelService(chat, sample);
+    const { service } = makeKernelLanguageModelService({ chat, sample });
 
     const params: SampleParams = { model: 'test', prompt: 'hello' };
     const result = await (
@@ -87,7 +87,7 @@ describe('makeKernelLanguageModelService', () => {
 
   it('sample throws when no sample function provided', async () => {
     const chat = vi.fn();
-    const { service } = makeKernelLanguageModelService(chat);
+    const { service } = makeKernelLanguageModelService({ chat });
 
     await expect(
       (
@@ -97,4 +97,26 @@ describe('makeKernelLanguageModelService', () => {
       ).sample({ model: 'test', prompt: 'hello' }),
     ).rejects.toThrow('raw sampling not supported by this backend');
   });
+
+  it.each([
+    ['chat', { model: 'test', messages: [], stream: true }],
+    ['sample', { model: 'test', prompt: 'hello', stream: true }],
+  ])(
+    '%s rejects stream: true without calling the backend',
+    async (method, params) => {
+      const chat = vi.fn();
+      const sample = vi.fn();
+      const { service } = makeKernelLanguageModelService({ chat, sample });
+
+      await expect(
+        (service as Record<string, (params: object) => Promise<unknown>>)[
+          method
+        ]?.(params),
+      ).rejects.toThrow(
+        `languageModelService.${method} does not support stream: true`,
+      );
+      expect(chat).not.toHaveBeenCalled();
+      expect(sample).not.toHaveBeenCalled();
+    },
+  );
 });

@@ -1,7 +1,7 @@
 import '@ocap/repo-tools/test-utils/mock-endoify';
 
+import type { LanguageModel } from '@metamask/kernel-language-model-service';
 import type { Logger } from '@metamask/logger';
-import type { LanguageModel } from '@ocap/kernel-language-model-service';
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 
 import { doAttempt } from './attempt.ts';
