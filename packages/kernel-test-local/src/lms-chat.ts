@@ -47,7 +47,7 @@ export const runLmsChatKernelTest = async (
     logger,
   });
 
-  const { name, service } = makeKernelLanguageModelService(chat);
+  const { name, service } = makeKernelLanguageModelService({ chat });
   kernel.registerKernelServiceObject(name, service);
 
   await kernel.launchSubcluster({

@@ -24,10 +24,10 @@ describe('lms-sample vat', () => {
     const kernel = await makeKernel(kernelDatabase, true, logger);
 
     const chat = vi.fn();
-    const { name, service } = makeKernelLanguageModelService(
+    const { name, service } = makeKernelLanguageModelService({
       chat,
-      makeMockSample(['The sky is blue.']),
-    );
+      sample: makeMockSample(['The sky is blue.']),
+    });
     kernel.registerKernelServiceObject(name, service);
 
     await runTestVats(kernel, {

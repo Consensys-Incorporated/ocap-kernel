@@ -2,6 +2,7 @@ import {
   makeKernelLanguageModelService,
   makeOpenV1NodejsService,
 } from '@metamask/kernel-language-model-service';
+import type { KernelLanguageModelServiceOptions } from '@metamask/kernel-language-model-service';
 import { stringify } from '@metamask/kernel-utils';
 import type { Logger } from '@metamask/logger';
 import type { Infer } from '@metamask/superstruct';
@@ -160,9 +161,9 @@ export async function makeLlmKernelService(
   });
   // The calling vat sees only the top-level message, e.g. "fetch failed";
   // the cause that says why stays here.
-  const loggedChat: Parameters<
-    typeof makeKernelLanguageModelService
-  >[0] = async (params) => {
+  const loggedChat: KernelLanguageModelServiceOptions['chat'] = async (
+    params,
+  ) => {
     try {
       return await chat(params);
     } catch (error) {
@@ -170,5 +171,5 @@ export async function makeLlmKernelService(
       throw error;
     }
   };
-  return makeKernelLanguageModelService(loggedChat);
+  return makeKernelLanguageModelService({ chat: loggedChat });
 }

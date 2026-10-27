@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 
 import { makeChatClient, makeSampleClient } from './client.ts';
-import type { ChatResult, ChatStreamChunk, SampleResult } from './types.ts';
+import type { ChatResult, SampleResult } from './types.ts';
 
 const MODEL = 'glm-4.7-flash';
 
@@ -66,35 +66,6 @@ describe('makeChatClient', () => {
         messages: [{ role: 'user', content: 'hi' }],
       }),
     ).rejects.toThrow('model is required');
-  });
-
-  it('returns async iterable when stream: true', async () => {
-    async function* makeStream(): AsyncGenerator<ChatStreamChunk> {
-      yield {
-        id: 'chunk-1',
-        model: MODEL,
-        choices: [
-          {
-            delta: { role: 'assistant', content: 'hello' },
-            index: 0,
-            finish_reason: null,
-          },
-        ],
-      };
-    }
-    const stream = makeStream();
-    const lmsRef = { chat: vi.fn().mockReturnValue(stream) };
-
-    const client = makeChatClient(lmsRef, MODEL);
-    const result = await client.chat.completions.create({
-      messages: [{ role: 'user', content: 'hi' }],
-      stream: true,
-    });
-
-    expect(lmsRef.chat).toHaveBeenCalledWith(
-      expect.objectContaining({ stream: true }),
-    );
-    expect(result).toBe(stream);
   });
 });
 

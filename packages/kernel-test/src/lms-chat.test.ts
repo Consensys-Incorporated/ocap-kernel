@@ -27,7 +27,7 @@ describe('lms-chat vat', () => {
       endowments: { fetch: makeMockOpenV1Fetch(['My name is Alice.']) },
       baseUrl: 'http://localhost:11434',
     });
-    const { name, service } = makeKernelLanguageModelService(chat);
+    const { name, service } = makeKernelLanguageModelService({ chat });
     kernel.registerKernelServiceObject(name, service);
 
     await runTestVats(kernel, {
