@@ -1,7 +1,7 @@
 import { makeSQLKernelDatabase } from '@metamask/kernel-store/sqlite/nodejs';
 import { waitUntilQuiescent } from '@metamask/kernel-utils';
 import type { KRef, VatId } from '@metamask/ocap-kernel';
-import { makeKernelStore } from '@metamask/ocap-kernel';
+import { kslot, makeKernelStore } from '@metamask/ocap-kernel';
 import { describe, expect, it, beforeEach } from 'vitest';
 
 import {
@@ -19,10 +19,11 @@ describe('Syscall Validation & Revoked Objects', { timeout: 30_000 }, () => {
   });
 
   it.each([
-    ['invalid-kref' as KRef, 'invalid reference context'],
-    ['' as KRef, 'incrementRefCount called with empty kref'],
+    ['invalid-kref' as KRef, 'not a valid KRef'],
+    ['' as KRef, 'not a valid KRef'],
+    ['ko999' as KRef, '[KERNEL:OBJECT_DELETED] ko999 does not exist'],
   ])(
-    'should throw "%s" error for malformed KRef "%s"',
+    'rejects a message to "%s" with "%s" and keeps running',
     async (kref, expectedError) => {
       const kernelDatabase = await makeSQLKernelDatabase({
         dbFilename: ':memory:',
@@ -37,7 +38,6 @@ describe('Syscall Validation & Revoked Objects', { timeout: 30_000 }, () => {
         kernel.queueMessage(kref, 'testMethod', ['test']),
       ).rejects.toThrow(expectedError);
 
-      // Verify kernel is still operational after malformed requests
       const workingSubcluster = {
         bootstrap: 'test',
         vats: {
@@ -52,6 +52,37 @@ describe('Syscall Validation & Revoked Objects', { timeout: 30_000 }, () => {
       expect(kernel.getVats()).toHaveLength(1);
     },
   );
+
+  it('rejects a message whose argument the kernel does not have, charging its target nothing', async () => {
+    const kernelDatabase = await makeSQLKernelDatabase({
+      dbFilename: ':memory:',
+    });
+    const kernel = await makeKernel(
+      kernelDatabase,
+      true,
+      logger.logger.subLogger({ tags: ['test'] }),
+    );
+    const kernelStore = makeKernelStore(kernelDatabase);
+    await runTestVats(kernel, {
+      bootstrap: 'exporter',
+      vats: {
+        exporter: {
+          bundleSpec: getBundleSpec('exporter-vat'),
+          parameters: { name: 'Exporter' },
+        },
+      },
+    });
+    await waitUntilQuiescent();
+    const exporterKRef = kernelStore.getRootObject(
+      kernel.getVats()[0]?.id as VatId,
+    ) as KRef;
+    const charged = kernelStore.getObjectRefCount(exporterKRef);
+
+    await expect(
+      kernel.queueMessage(exporterKRef, 'noop', [kslot('ko999' as KRef)]),
+    ).rejects.toThrow('[KERNEL:OBJECT_DELETED] ko999 does not exist');
+    expect(kernelStore.getObjectRefCount(exporterKRef)).toStrictEqual(charged);
+  });
 
   it('should handle message delivery to revoked objects', async () => {
     const kernelDatabase = await makeSQLKernelDatabase({

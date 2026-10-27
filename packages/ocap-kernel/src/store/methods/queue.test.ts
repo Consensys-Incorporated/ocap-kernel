@@ -99,6 +99,16 @@ describe('queue store methods', () => {
       expect(mockRunQueue.enqueue).toHaveBeenCalledWith(message);
     });
 
+    it('counts no message whose write failed', () => {
+      const fault = new Error('SQLITE_FULL');
+      mockRunQueue.enqueue.mockImplementationOnce(() => {
+        throw fault;
+      });
+
+      expect(() => queueMethods.enqueueRun({} as RunQueueItem)).toThrow(fault);
+      expect(context.runQueueLengthCache).toBe(0);
+    });
+
     it('increments runQueueLengthCache multiple times correctly', () => {
       const message1: RunQueueItem = {
         type: 'message',

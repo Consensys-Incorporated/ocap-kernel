@@ -224,7 +224,7 @@ describe('OcapURLManager', () => {
 
       expect(kref).toBe('ko123');
       expect(mockRemoteComms.redeemLocalOcapURL).toHaveBeenCalledWith(url);
-      expect(mockRemoteManager.remoteFor).not.toHaveBeenCalled();
+      expect(mockRemoteManager.withRemote).not.toHaveBeenCalled();
     });
 
     it('redeems remote OCAP URL', async () => {
@@ -233,21 +233,21 @@ describe('OcapURLManager', () => {
 
       expect(kref).toBe('ko456');
       expect(mockRemoteComms.redeemLocalOcapURL).not.toHaveBeenCalled();
-      expect(mockRemoteManager.remoteFor).toHaveBeenCalledWith(
+      expect(mockRemoteManager.withRemote).toHaveBeenCalledWith(
         'remote-peer-id',
-        [],
+        { hints: [], use: expect.any(Function) },
       );
       expect(mockRemoteHandle.redeemOcapURL).toHaveBeenCalledWith(url);
     });
 
-    it('passes parsed hints to remoteFor for remote OCAP URL', async () => {
+    it('passes parsed hints to withRemote for remote OCAP URL', async () => {
       const url = 'ocap:def456@remote-peer-id,relay1,relay2';
       const kref = await ocapURLManager.redeemOcapURL(url);
 
       expect(kref).toBe('ko456');
-      expect(mockRemoteManager.remoteFor).toHaveBeenCalledWith(
+      expect(mockRemoteManager.withRemote).toHaveBeenCalledWith(
         'remote-peer-id',
-        ['relay1', 'relay2'],
+        { hints: ['relay1', 'relay2'], use: expect.any(Function) },
       );
       expect(mockRemoteHandle.redeemOcapURL).toHaveBeenCalledWith(url);
     });

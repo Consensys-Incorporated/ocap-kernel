@@ -101,6 +101,28 @@ describe('base-methods', () => {
       expect(newValue.get()).toBe('changed-externally');
     });
 
+    it('keeps its cached value when writing a new one fails', () => {
+      const value = baseStore.provideCachedStoredValue('failing-key', 'kept');
+      const fault = new Error('SQLITE_FULL');
+      vi.spyOn(kv, 'set').mockImplementationOnce(() => {
+        throw fault;
+      });
+
+      expect(() => value.set('lost')).toThrow(fault);
+      expect(value.get()).toBe('kept');
+    });
+
+    it('keeps its cached value when deleting it fails', () => {
+      const value = baseStore.provideCachedStoredValue('failing-key', 'kept');
+      const fault = new Error('SQLITE_FULL');
+      vi.spyOn(kv, 'delete').mockImplementationOnce(() => {
+        throw fault;
+      });
+
+      expect(() => value.delete()).toThrow(fault);
+      expect(value.get()).toBe('kept');
+    });
+
     it('deletes values correctly', () => {
       const value = baseStore.provideCachedStoredValue(
         'delete-key',
@@ -238,6 +260,47 @@ describe('base-methods', () => {
         'enqueue into deleted queue test',
       );
     });
+
+    it.each([true, false])(
+      'leaves no gap when an entry fails to be written (cached: %s)',
+      (cached) => {
+        const queue = baseStore.provideStoredQueue('test', cached);
+        queue.enqueue({ id: 1 });
+        const fault = new Error('SQLITE_FULL');
+        const originalSet = kv.set;
+        const set = vi.spyOn(kv, 'set').mockImplementation((key, value) => {
+          if (key === 'queue.test.2') {
+            throw fault;
+          }
+          originalSet.call(kv, key, value);
+        });
+        expect(() => queue.enqueue({ id: 2 })).toThrow(fault);
+        set.mockRestore();
+        queue.enqueue({ id: 3 });
+
+        const reopened = baseStore.provideStoredQueue('test', cached);
+        expect([
+          reopened.dequeue(),
+          reopened.dequeue(),
+          reopened.dequeue(),
+        ]).toStrictEqual([{ id: 1 }, { id: 3 }, undefined]);
+      },
+    );
+
+    it.each([true, false])(
+      'keeps an entry when moving the tail past it fails (cached: %s)',
+      (cached) => {
+        const queue = baseStore.provideStoredQueue('test', cached);
+        queue.enqueue({ id: 1 });
+        const fault = new Error('SQLITE_FULL');
+        vi.spyOn(kv, 'set').mockImplementationOnce(() => {
+          throw fault;
+        });
+
+        expect(() => queue.dequeue()).toThrow(fault);
+        expect(queue.dequeue()).toStrictEqual({ id: 1 });
+      },
+    );
 
     it('returns undefined when dequeueing from an empty queue', () => {
       // Create a queue with matching head and tail (empty)

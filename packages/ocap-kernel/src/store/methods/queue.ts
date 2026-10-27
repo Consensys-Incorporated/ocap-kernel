@@ -38,8 +38,10 @@ export function getQueueMethods(ctx: StoreContext) {
     // that sentinel into a concrete (and wrong) count, and since the
     // result is no longer negative it would never be re-read.
     runQueueLength();
-    ctx.runQueueLengthCache += 1;
     ctx.runQueue.enqueue(message);
+    // Counted only once written, so that a write that fails leaves the count
+    // right.
+    ctx.runQueueLengthCache += 1;
   }
 
   /**

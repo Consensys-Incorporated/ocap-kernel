@@ -22,9 +22,20 @@ vi.mock('./remote-comms.ts', async () => {
   };
 });
 
+const remoteFor = async (
+  manager: RemoteManager,
+  peerId: string,
+  hints: string[] = [],
+): Promise<RemoteHandle> =>
+  manager.withRemote(peerId, { hints, use: (remote) => remote });
+
+const peerMessage = (seq: number): string =>
+  JSON.stringify({ seq, method: 'deliver', params: ['bringOutYourDead'] });
+
 describe('RemoteManager', () => {
   let remoteManager: RemoteManager;
   let mockPlatformServices: PlatformServices;
+  let kernelDatabase: ReturnType<typeof makeMapKernelDatabase>;
   let kernelStore: ReturnType<typeof makeKernelStore>;
   let mockKernelQueue: KernelQueue;
   let logger: Logger;
@@ -32,7 +43,8 @@ describe('RemoteManager', () => {
   let mockFactory: ReturnType<typeof createMockRemotesFactory>;
 
   beforeEach(() => {
-    kernelStore = makeKernelStore(makeMapKernelDatabase());
+    kernelDatabase = makeMapKernelDatabase();
+    kernelStore = makeKernelStore(kernelDatabase);
     logger = new Logger('test');
 
     mockFactory = createMockRemotesFactory({
@@ -345,8 +357,8 @@ describe('RemoteManager', () => {
       expect(restoredRemote2.remoteId).toBe(remote2Id);
 
       // Verify remotes are also accessible by peer ID
-      expect(newRemoteManager.remoteFor('peer-1')).toBe(restoredRemote1);
-      expect(newRemoteManager.remoteFor('peer-2')).toBe(restoredRemote2);
+      expect(await remoteFor(newRemoteManager, 'peer-1')).toBe(restoredRemote1);
+      expect(await remoteFor(newRemoteManager, 'peer-2')).toBe(restoredRemote2);
     });
 
     it('handles empty kernel store during initialization', async () => {
@@ -459,32 +471,221 @@ describe('RemoteManager', () => {
       expect(storedInfo?.hints).toHaveLength(3);
     });
 
-    it('reuses existing remote for same peer', () => {
+    it('reuses existing remote for same peer', async () => {
       const remote1 = remoteManager.establishRemote('peer123');
-      const remote2 = remoteManager.remoteFor('peer123');
+      const remote2 = await remoteFor(remoteManager, 'peer123');
       expect(remote1).toBe(remote2);
     });
 
-    it('creates new remote if not exists', () => {
-      const remote = remoteManager.remoteFor('new-peer');
+    it('creates new remote if not exists', async () => {
+      const remote = await remoteFor(remoteManager, 'new-peer');
       expect(remote).toBeDefined();
       expect(remote.remoteId).toMatch(/^r\d+$/u);
     });
 
-    it('creates new remote with hints using remoteFor', () => {
+    /**
+     * Hold the writes the manager hands the kernel queue, as an open crank
+     * would.
+     *
+     * @returns A function that makes the held writes, in order.
+     */
+    const holdWrites = (): (() => void) => {
+      const held: (() => void)[] = [];
+      vi.mocked(mockKernelQueue.writeOutsideCrank).mockImplementation(
+        async (write) =>
+          new Promise((resolve) => {
+            held.push(() => resolve(write()));
+          }),
+      );
+      return () => {
+        for (const write of held.splice(0)) {
+          write();
+        }
+      };
+    };
+
+    it('sets up a new remote only when the kernel queue makes the write', async () => {
+      const writeHeld = holdWrites();
+
+      const first = remoteFor(remoteManager, 'new-peer');
+      const second = remoteFor(remoteManager, 'new-peer', ['/dns4/relay']);
+      const recordsWhileHeld = kernelStore.getRemoteIDs();
+      writeHeld();
+      const remote = await first;
+
+      expect(recordsWhileHeld).toStrictEqual([]);
+      expect(kernelStore.getRemoteIDs()).toStrictEqual([remote.remoteId]);
+      expect(await second).toBe(remote);
+      expect(mockKernelQueue.writeOutsideCrank).toHaveBeenCalledWith(
+        expect.any(Function),
+        { outlivesStop: true },
+      );
+      expect(mockRemoteComms.registerLocationHints).toHaveBeenCalledWith(
+        'new-peer',
+        ['/dns4/relay'],
+      );
+    });
+
+    it("uses a known peer's remote at once, without the kernel queue", async () => {
+      const remote = remoteManager.establishRemote('existing-peer');
+      const use = vi.fn().mockReturnValue('used');
+
+      const used = remoteManager.withRemote('existing-peer', { use });
+
+      expect(use).toHaveBeenCalledExactlyOnceWith(remote);
+      expect(mockKernelQueue.writeOutsideCrank).not.toHaveBeenCalled();
+      expect(await used).toBe('used');
+    });
+
+    it('resolves to what a promise returned by use resolves to', async () => {
+      const writeHeld = holdWrites();
+
+      const used = remoteManager.withRemote('new-peer', {
+        use: async () => 'answered',
+      });
+      writeHeld();
+
+      expect(await used).toBe('answered');
+    });
+
+    it.each([0, 1, 2, 3])(
+      "takes a new peer's messages in the order they came, %i ticks apart",
+      async (ticks) => {
+        const first = remoteManager.handleRemoteMessage(
+          'new-peer',
+          peerMessage(1),
+        );
+        for (let tick = 0; tick < ticks; tick += 1) {
+          await Promise.resolve();
+        }
+        const second = remoteManager.handleRemoteMessage(
+          'new-peer',
+          peerMessage(2),
+        );
+        await Promise.all([first, second]);
+
+        expect(
+          vi
+            .mocked(mockKernelQueue.acceptRemoteInbound)
+            .mock.calls.map(([{ seq }]) => seq),
+        ).toStrictEqual([1, 2]);
+      },
+    );
+
+    it("takes a new peer's first message before one that comes once its setup is made", async () => {
+      const writeHeld = holdWrites();
+      const first = remoteManager.handleRemoteMessage(
+        'new-peer',
+        peerMessage(1),
+      );
+      writeHeld();
+      const second = remoteManager.handleRemoteMessage(
+        'new-peer',
+        peerMessage(2),
+      );
+      await Promise.all([first, second]);
+
+      expect(
+        vi
+          .mocked(mockKernelQueue.acceptRemoteInbound)
+          .mock.calls.map(([{ seq }]) => seq),
+      ).toStrictEqual([1, 2]);
+    });
+
+    it.each([
+      ['known', true],
+      ['new', false],
+    ])(
+      "rejects with what refusing a %s peer's message throws",
+      async (_, known) => {
+        if (known) {
+          remoteManager.establishRemote('peer');
+        }
+
+        await expect(
+          remoteManager.handleRemoteMessage('peer', peerMessage(0)),
+        ).rejects.toThrow('invalid message seq: 0');
+      },
+    );
+
+    it('sets up anew a remote whose setup failed to be written (gap, #1171)', async () => {
+      const fault = new Error('SQLITE_FULL');
+      const { kernelKVStore } = kernelDatabase;
+      const set = kernelKVStore.set.bind(kernelKVStore);
+      let failing = true;
+      vi.spyOn(kernelKVStore, 'set').mockImplementation((key, value) => {
+        if (failing && key.startsWith('e.nextObjectId.')) {
+          failing = false;
+          throw fault;
+        }
+        set(key, value);
+      });
+
+      await expect(remoteFor(remoteManager, 'new-peer')).rejects.toBe(fault);
+      const remote = await remoteFor(remoteManager, 'new-peer');
+
+      expect(kernelKVStore.get(`e.nextObjectId.${remote.remoteId}`)).toBe('1');
+      expect(kernelStore.getRemoteIDs()).toStrictEqual([remote.remoteId]);
+    });
+
+    it('leaves no record of a remote whose handle failed to be made', async () => {
+      const fault = new Error('SQLITE_IOERR');
+      const { kernelKVStore } = kernelDatabase;
+      const get = kernelKVStore.get.bind(kernelKVStore);
+      let failing = true;
+      vi.spyOn(kernelKVStore, 'get').mockImplementation((key) => {
+        if (failing && key.startsWith('remoteSeq.')) {
+          failing = false;
+          throw fault;
+        }
+        return get(key);
+      });
+
+      await expect(remoteFor(remoteManager, 'new-peer')).rejects.toBe(fault);
+      const remote = await remoteFor(remoteManager, 'new-peer');
+
+      expect(kernelStore.getRemoteIDs()).toStrictEqual([remote.remoteId]);
+    });
+
+    it('refuses to set up a remote once the run loop is dead', async () => {
+      vi.mocked(mockKernelQueue.assertRunLoopAlive).mockImplementationOnce(
+        (what) => {
+          throw new Error(`Kernel run loop died; cannot ${what}`);
+        },
+      );
+
+      await expect(remoteFor(remoteManager, 'new-peer')).rejects.toThrow(
+        'Kernel run loop died; cannot set up a remote',
+      );
+      expect(mockKernelQueue.writeOutsideCrank).not.toHaveBeenCalled();
+    });
+
+    it('costs no remote ID when remote comms are down', async () => {
+      const nextRemoteId = kernelStore.getNextRemoteId();
+      remoteManager.cleanup();
+
+      await expect(remoteFor(remoteManager, 'new-peer')).rejects.toThrow(
+        'Remote comms not initialized',
+      );
+      expect(kernelStore.getNextRemoteId()).toBe(
+        `r${Number(nextRemoteId.slice(1)) + 1}`,
+      );
+    });
+
+    it('creates new remote with hints using withRemote', async () => {
       const hints = ['/dns4/relay.example/tcp/443/wss/p2p/relay'];
-      const remote = remoteManager.remoteFor('new-peer-hints', hints);
+      const remote = await remoteFor(remoteManager, 'new-peer-hints', hints);
 
       expect(remote).toBeDefined();
       const storedInfo = kernelStore.getRemoteInfo(remote.remoteId);
       expect(storedInfo?.hints).toStrictEqual(hints);
     });
 
-    it('registers location hints for existing peer in remoteFor', () => {
+    it('registers location hints for existing peer in withRemote', async () => {
       const remote = remoteManager.establishRemote('existing-peer');
       const hints = ['/dns4/relay.example/tcp/443/wss/p2p/relay'];
 
-      const result = remoteManager.remoteFor('existing-peer', hints);
+      const result = await remoteFor(remoteManager, 'existing-peer', hints);
 
       expect(result).toBe(remote);
       expect(mockRemoteComms.registerLocationHints).toHaveBeenCalledWith(
@@ -493,10 +694,10 @@ describe('RemoteManager', () => {
       );
     });
 
-    it('does not register location hints for existing peer when hints are empty', () => {
+    it('does not register location hints for existing peer when hints are empty', async () => {
       const remote = remoteManager.establishRemote('existing-peer');
 
-      const result = remoteManager.remoteFor('existing-peer', []);
+      const result = await remoteFor(remoteManager, 'existing-peer', []);
 
       expect(result).toBe(remote);
       expect(mockRemoteComms.registerLocationHints).not.toHaveBeenCalled();
@@ -553,7 +754,7 @@ describe('RemoteManager', () => {
         await remoteManager.handleRemoteMessage('new-peer', message),
       ).toBeNull();
 
-      const remote = remoteManager.remoteFor('new-peer');
+      const remote = await remoteFor(remoteManager, 'new-peer');
       expect(remote).toBeDefined();
       await expect(remote.deliverInbound(message)).rejects.toThrow(
         'ko1 is not an ERef',
@@ -614,16 +815,16 @@ describe('RemoteManager', () => {
       expect(remoteManager.isRemoteCommsInitialized()).toBe(false);
     });
 
-    it('clears all remote handles after cleanup', () => {
+    it('clears all remote handles after cleanup', async () => {
       // Establish some remotes
       remoteManager.establishRemote('peer1');
       remoteManager.establishRemote('peer2');
       remoteManager.establishRemote('peer3');
 
       // Verify they exist
-      expect(remoteManager.remoteFor('peer1')).toBeDefined();
-      expect(remoteManager.remoteFor('peer2')).toBeDefined();
-      expect(remoteManager.remoteFor('peer3')).toBeDefined();
+      expect(await remoteFor(remoteManager, 'peer1')).toBeDefined();
+      expect(await remoteFor(remoteManager, 'peer2')).toBeDefined();
+      expect(await remoteFor(remoteManager, 'peer3')).toBeDefined();
 
       remoteManager.cleanup();
 
@@ -688,13 +889,13 @@ describe('RemoteManager', () => {
       expect(remoteComms.initRemoteComms).toHaveBeenCalledTimes(2);
     });
 
-    it('clears remote handles by peer ID', () => {
+    it('clears remote handles by peer ID', async () => {
       const remote1 = remoteManager.establishRemote('peer1');
       const remote2 = remoteManager.establishRemote('peer2');
 
       // Verify they're accessible
-      expect(remoteManager.remoteFor('peer1')).toBe(remote1);
-      expect(remoteManager.remoteFor('peer2')).toBe(remote2);
+      expect(await remoteFor(remoteManager, 'peer1')).toBe(remote1);
+      expect(await remoteFor(remoteManager, 'peer2')).toBe(remote2);
 
       remoteManager.cleanup();
 

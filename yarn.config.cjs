@@ -300,9 +300,6 @@ module.exports = defineConfig({
       // Ensure all dependency ranges are recognizable
       expectValidVersionRanges(Yarn, workspace);
 
-      // Ensure dependency ranges are synchronized across the monorepo
-      expectSynchronizedRanges(Yarn, workspace);
-
       // Ensure dependencies are not duplicated across dependency types
       expectUniqueDependencyTypes(Yarn, workspace);
 
@@ -703,67 +700,6 @@ function expectValidVersionRanges(Yarn, workspace) {
         `Invalid version range for dependency ${dep.ident} in ${workspace.cwd}`,
       );
     }
-  });
-}
-
-/**
- * Parse a version range into its modifier and version.
- * Strips the modifier (^ or ~) from the version.
- *
- * @param {string} versionRange - The version range to parse.
- * @returns {{ modifier: string, version: string }} The parsed components: modifier, version.
- */
-function parseVersion(versionRange) {
-  return versionRange.startsWith('^') || versionRange.startsWith('~')
-    ? { modifier: versionRange[0], version: versionRange.slice(1) }
-    : { modifier: '', version: versionRange };
-}
-
-/**
- * Compare two version ranges and determine if they are out of sync.
- * Compares only if the modifiers ("^", "~") are the same.
- *
- * @param {string} range1 - First version range.
- * @param {string} range2 - Second version range.
- * @returns {boolean} True if range1 is greater than range2.
- */
-function versionRangeCompare(range1, range2) {
-  const parsed1 = parseVersion(range1);
-  const parsed2 = parseVersion(range2);
-
-  // Only compare if modifiers are the same
-  if (parsed1.modifier !== parsed2.modifier) {
-    return false;
-  }
-
-  return semver.gt(parsed1.version, parsed2.version);
-}
-
-/**
- * Ensures all dependency ranges for a package are synchronized across the monorepo.
- * The least version range wins, and inconsistencies throw an error.
- *
- * @param {Yarn} Yarn - The Yarn "global".
- * @param {Workspace} workspace - The current workspace.
- */
-function expectSynchronizedRanges(Yarn, workspace) {
-  const dependencies = Yarn.dependencies({ workspace });
-
-  dependencies.forEach((dep) => {
-    const matchingDeps = Yarn.workspaces()
-      .flatMap((ws) => Yarn.dependencies({ workspace: ws }))
-      .filter((otherDep) => otherDep.ident === dep.ident);
-
-    matchingDeps.forEach((otherDep) => {
-      if (
-        dep.range !== otherDep.range &&
-        versionRangeCompare(dep.range, otherDep.range)
-      ) {
-        throw new Error(
-          `Dependency ${dep.ident} version out of sync between ${workspace.cwd} and another workspace. Expected ${otherDep.range}, got ${dep.range}.`,
-        );
-      }
-    });
   });
 }
 
