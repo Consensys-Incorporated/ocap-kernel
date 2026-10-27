@@ -104,9 +104,9 @@
   "dependencies": {
     "@endo/eventual-send": "^1.5.0",
     "@metamask/kernel-errors": "workspace:^",
+    "@metamask/kernel-language-model-service": "workspace:^",
     "@metamask/kernel-utils": "workspace:^",
     "@metamask/logger": "workspace:^",
-    "@ocap/kernel-language-model-service": "workspace:^",
     "partial-json": "^0.1.7",
     "ses": "^2.3.0"
   }

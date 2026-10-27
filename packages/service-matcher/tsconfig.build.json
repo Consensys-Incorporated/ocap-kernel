@@ -7,6 +7,7 @@
     "types": []
   },
   "references": [
+    { "path": "../kernel-language-model-service/tsconfig.build.json" },
     { "path": "../kernel-utils/tsconfig.build.json" },
     { "path": "../ocap-kernel/tsconfig.build.json" },
     { "path": "../service-discovery-types/tsconfig.build.json" }

@@ -1,7 +1,6 @@
 {
-  "name": "@ocap/kernel-language-model-service",
+  "name": "@metamask/kernel-language-model-service",
   "version": "0.0.0",
-  "private": true,
   "description": "A place for implementations providing language model services to the ocap kernel",
   "homepage": "https://github.com/Consensys-Incorporated/ocap-kernel/tree/main/packages/kernel-language-model-service#readme",
   "bugs": {
@@ -11,7 +10,9 @@
     "type": "git",
     "url": "https://github.com/Consensys-Incorporated/ocap-kernel.git"
   },
+  "license": "(MIT OR Apache-2.0)",
   "type": "module",
+  "sideEffects": false,
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -35,13 +36,16 @@
     },
     "./package.json": "./package.json"
   },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "files": [
     "dist/"
   ],
   "scripts": {
     "build": "rimraf --glob ./dist './*.tsbuildinfo' && tsc --project tsconfig.build.json",
     "build:docs": "npx -y -p typedoc@0.28.20 -p typescript@6.0.3 typedoc",
-    "changelog:validate": "../../scripts/validate-changelog.sh @ocap/kernel-language-model-service",
+    "changelog:update": "../../scripts/update-changelog.sh @metamask/kernel-language-model-service",
+    "changelog:validate": "../../scripts/validate-changelog.sh @metamask/kernel-language-model-service",
     "clean": "rimraf --glob './*.tsbuildinfo' ./coverage ./dist ./.turbo ./logs",
     "lint": "yarn lint:oxlint && yarn lint:oxfmt && yarn constraints && yarn lint:dependencies",
     "lint:dependencies": "depcheck --quiet",
@@ -81,5 +85,14 @@
     "@metamask/superstruct": "^3.4.1",
     "ollama": "^0.5.16",
     "ses": "^2.3.0"
-  }
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "keywords": [
+    "MetaMask",
+    "object capabilities",
+    "ocap"
+  ]
 }
