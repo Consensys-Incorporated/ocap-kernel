@@ -31,6 +31,8 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../../.." && pwd)"
 OCAP_BIN="$REPO_ROOT/packages/kernel-cli/dist/app.js"
 CONSUMER_HOME="${OCAP_CONSUMER_HOME:-${HOME}/.ocap-consumer}"
 MATCHER_HOME="${HOME}/.ocap"
+# Stale artifacts from the retired llm-bridge architecture; swept up so a
+# reset also cleans state left behind by older checkouts.
 LLM_BRIDGE_PID_PATH="$MATCHER_HOME/matcher-llm-bridge.pid"
 LLM_BRIDGE_LOG_PATH="$MATCHER_HOME/matcher-llm-bridge.log"
 LLM_SOCKET_PATH="$MATCHER_HOME/matcher-llm.sock"
@@ -65,7 +67,8 @@ node "$OCAP_BIN" --home "$CONSUMER_HOME" daemon stop >/dev/null 2>&1 || true
 info "Stopping matcher daemon (if running)..."
 node "$OCAP_BIN" --home "$MATCHER_HOME" daemon stop >/dev/null 2>&1 || true
 
-# Stop the matcher's llm-bridge process (started by start-matcher.sh).
+# Stop any llm-bridge process left behind by an older checkout (the
+# matcher now ranks via the daemon's languageModelService; no bridge).
 if [[ -f "$LLM_BRIDGE_PID_PATH" ]]; then
   BRIDGE_PID="$(tr -d '[:space:]' < "$LLM_BRIDGE_PID_PATH" || true)"
   if [[ -n "$BRIDGE_PID" ]] && kill -0 "$BRIDGE_PID" 2>/dev/null; then

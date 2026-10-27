@@ -47,10 +47,12 @@
   },
   "dependencies": {
     "@endo/promise-kit": "^1.2.1",
+    "@metamask/kernel-language-model-service": "workspace:^",
     "@metamask/kernel-node-runtime": "workspace:^",
     "@metamask/kernel-shims": "workspace:^",
     "@metamask/kernel-utils": "workspace:^",
     "@metamask/logger": "workspace:^",
+    "@metamask/superstruct": "^3.4.1",
     "@metamask/utils": "^12.0.0",
     "@types/node": "^22.13.1",
     "acorn": "^8.15.0",

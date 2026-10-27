@@ -43,9 +43,11 @@
   },
   "dependencies": {
     "@endo/eventual-send": "^1.5.0",
+    "@metamask/kernel-language-model-service": "workspace:^",
     "@metamask/kernel-utils": "workspace:^",
     "@metamask/ocap-kernel": "workspace:^",
-    "@metamask/service-discovery-types": "workspace:^"
+    "@metamask/service-discovery-types": "workspace:^",
+    "@metamask/superstruct": "^3.4.1"
   },
   "devDependencies": {
     "@arethetypeswrong/cli": "^0.17.4",

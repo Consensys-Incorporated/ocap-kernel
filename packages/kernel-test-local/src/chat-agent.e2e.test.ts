@@ -1,9 +1,9 @@
 import '@ocap/repo-tools/test-utils/mock-endoify';
 
+import { makeOpenV1NodejsService } from '@metamask/kernel-language-model-service';
 import { add } from '@ocap/kernel-agents/capabilities/math';
 import { makeChatAgent } from '@ocap/kernel-agents/chat';
 import type { BoundChat } from '@ocap/kernel-agents/chat';
-import { makeOpenV1NodejsService } from '@ocap/kernel-language-model-service';
 import { fetchMock } from '@ocap/repo-tools/test-utils/fetch-mock';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 

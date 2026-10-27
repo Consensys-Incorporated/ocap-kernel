@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `Kernel.make` takes `kernelServices`, kernel services registered before the run loop starts; one registered later writes into whatever crank is open ([#1215](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1215))
 - Add `Request`, `Headers`, and `Response` to the globals a vat may request, for `makeFetch` from `@metamask/kernel-platforms` ([#942](https://github.com/MetaMask/ocap-kernel/pull/942), [#1163](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1163))
 - Add `getRemoteIDs` to the kernel store, listing every remote the kernel knows about ([#1088](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1088))
 - Add a `vatRelaunchTimeoutMs` option to `Kernel.make`: how long a vat restart waits for the new worker before giving up, 30 seconds by default ([#1096](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1096))

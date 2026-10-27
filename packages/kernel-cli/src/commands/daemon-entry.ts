@@ -20,6 +20,7 @@ import {
 import { resolveDevMode } from '../dev-mode.ts';
 import { getOcapHome } from '../ocap-home.ts';
 import { isProcessAlive } from '../utils.ts';
+import { makeLlmKernelService, readLlmConfig } from './llm-config.ts';
 
 // Mirror of @metamask/logger's level ordering (`logLevels` is not part
 // of the package's public surface). Higher numbers are more severe.
@@ -133,12 +134,24 @@ async function main(): Promise<void> {
     exit: (code) => process.exit(code),
   });
 
+  // Built before the kernel so it is registered before the run loop starts:
+  // registered later, its store writes would land in whatever crank is open.
+  const llmConfig = await readLlmConfig(ocapDir);
+  const llmService =
+    llmConfig && (await makeLlmKernelService(llmConfig, logger));
+
   const { kernel, kernelDatabase } = await makeKernel({
     resetStorage: false,
     dbFilename,
     logger,
     onRunLoopFailure: runLoop.onRunLoopFailure,
+    ...(llmService && { kernelServices: [llmService] }),
   });
+  if (llmConfig && llmService) {
+    logger.info(
+      `Registered kernel service "${llmService.name}" (${llmConfig.provider} at ${llmConfig.baseUrl})`,
+    );
+  }
 
   // Interlock: refuse to start a second daemon under the same OCAP_HOME.
   // The socket-binding interlock in startDaemon handles the live-socket
