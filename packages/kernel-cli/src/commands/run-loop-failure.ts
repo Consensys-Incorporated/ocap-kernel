@@ -213,7 +213,8 @@ export async function cleanUpFailedStartup({
   removePidFile,
   timeoutMs = SHUTDOWN_TIMEOUT_MS,
 }: FailedStartupCleanupOptions): Promise<void> {
-  // Bounded: `stop` waits for the open crank, which may never end.
+  // Bounded: `stop` waits for the current crank first, and a run loop that died
+  // mid-crank may never end it.
   let giveUpTimer: ReturnType<typeof setTimeout> | undefined;
   try {
     await Promise.race([
