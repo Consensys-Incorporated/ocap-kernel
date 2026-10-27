@@ -1790,8 +1790,8 @@ describe('VatManager', () => {
       await vatManager.runVat(v1, createMockVatConfig());
       await vatManager.runVat(asVatId('v2'), createMockVatConfig());
       mockPlatformServices.terminate.mockImplementationOnce(async () => {
-        // Another terminateAllVats, as on a dead run loop, retires v1 while
-        // v2's worker stops.
+        // A launch failing alongside retires its own vat, v1, while v2's
+        // worker stops.
         await vatManager.stopVat(v1, true);
         mockKernelStore.isVatActive.mockReturnValue(false);
       });

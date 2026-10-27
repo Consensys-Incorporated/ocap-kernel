@@ -163,9 +163,9 @@ describe('VatManager queued termination', () => {
       const termination = vatManager.terminateVat(asVatId('v1'));
       termination.catch(() => undefined);
 
-      // `Kernel.reset`, in the crank the run loop takes next, ahead of the
-      // held request it writes as the open crank ends: tear the vats down,
-      // wipe the store and abandon queued work.
+      // `Kernel.reset`, taken in the next crank, ahead of the termination
+      // written as this crank ends: tear the vats down, wipe the store and
+      // abandon queued work.
       harness.onControl(async () => {
         await vatManager.stopVat(asVatId('v1'), true);
         kernelStore.reset();

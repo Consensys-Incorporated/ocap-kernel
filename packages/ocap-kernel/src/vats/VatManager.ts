@@ -457,8 +457,8 @@ export class VatManager {
    * terminates it in that delivery's crank. A launch or restart that has yet
    * to return finds the loss on its start's record and fails instead.
    * Otherwise the termination queued here records the death, in a crank of
-   * its own. With the run loop dead nothing does short of `terminateAllVats`:
-   * the vat stays persisted, and the next start relaunches it.
+   * its own. With the run loop dead or stopped nothing does: the vat stays
+   * persisted, and the next start relaunches it.
    *
    * @param options - Named options.
    * @param options.vatId - The vat whose channel was lost.
@@ -902,8 +902,9 @@ export class VatManager {
       }
     }
     if (!this.#kernelStore.isVatActive(vatId)) {
-      // Retired while this crank waited on a worker. The new worker is stopped,
-      // and the state its `initVat` wrote deleted with it.
+      // Defensive: nothing outside the run loop retires a vat while a restart
+      // waits on its worker. The new worker is stopped, and the state its
+      // `initVat` wrote deleted with it.
       const error = new VatDeletedError(vatId);
       if (this.#vats.has(vatId)) {
         await this.#stopVat({
@@ -1119,8 +1120,8 @@ export class VatManager {
    * Terminate all vats and collect garbage.
    * This is for debugging purposes only.
    *
-   * `stopVat`, not `terminateVat`: this runs inside a crank or on a dead run
-   * loop, where the crank `terminateVat` waits for cannot start.
+   * `stopVat`, not `terminateVat`: this runs inside a crank, and `terminateVat`
+   * would wait for a crank that cannot start until this one ends.
    */
   async terminateAllVats(): Promise<void> {
     // With the persisted vats that have no handle: one that failed to start,
@@ -1131,9 +1132,9 @@ export class VatManager {
       ...this.#kernelStore.getVatIDs(),
     ]);
     for (const id of [...ids].reverse()) {
-      // Skipped if retired while an earlier one stopped, by a `reset` or
-      // `terminateAllVats` running alongside on a dead run loop. Checked with no
-      // await before `stopVat`'s own check, so nothing can retire it in between.
+      // Skipped if retired while an earlier one stopped, e.g. by a launch
+      // failing alongside, which retires its own vat. Checked with no await
+      // before `stopVat`'s own check, so nothing can retire it in between.
       if (!this.#isVatKnown(id)) {
         continue;
       }

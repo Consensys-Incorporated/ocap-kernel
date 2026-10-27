@@ -441,12 +441,11 @@ export type PeerArrival =
   | RunQueueItemRemoteInbound
   | RunQueueItemPeerIncarnation;
 
-/** A host call that wipes or tears down kernel state. */
-export type ControlOperation =
-  | 'clearStorage'
-  | 'reset'
-  | 'terminateAllVats'
-  | 'stop';
+/**
+ * A host call the run loop carries out ahead of all other work, in a crank of
+ * its own.
+ */
+export type ControlOperation = 'clearStorage' | 'reset' | 'terminateAllVats';
 
 export type RunLoopItemControl = {
   type: 'control';

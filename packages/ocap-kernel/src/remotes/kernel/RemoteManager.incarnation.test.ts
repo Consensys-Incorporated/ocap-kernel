@@ -453,7 +453,7 @@ describe('a peer incarnation change on the run loop', () => {
     expect(sentSeqs(sent)).toStrictEqual([1, 1]);
   });
 
-  it('stops the run loop when the restart cannot be recorded, keeping the old session', async () => {
+  it('kills the run loop when the restart cannot be recorded, keeping the old session', async () => {
     const harness = await setUp();
     const { kernelStore, remoteManager, remote, onIncarnationChange } = harness;
     const running = harness.startRunLoop();

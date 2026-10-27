@@ -44,7 +44,7 @@ vi.mock('./remotes/kernel/remote-comms.ts', async () => {
   return { ...actual, initRemoteComms: vi.fn() };
 });
 
-const STOP_RUN_LOOP = 'test: stop run loop';
+const KILL_RUN_LOOP = 'test: kill run loop';
 const PEER_ID = '12D3KooWPeer1';
 const NEW_PEER_ID = '12D3KooWPeer2';
 
@@ -223,7 +223,7 @@ async function abortACrankWhile(
       };
     }
     if (item.type === 'send' && item.target === sentinel) {
-      throw new Error(STOP_RUN_LOOP);
+      throw new Error(KILL_RUN_LOOP);
     }
     if (
       item.type === 'send' &&
@@ -268,7 +268,7 @@ async function abortACrankWhile(
     methargs: kser(['stop', []]),
     result: null,
   });
-  await expect(running).rejects.toThrow(STOP_RUN_LOOP);
+  await expect(running).rejects.toThrow(KILL_RUN_LOOP);
   // A writer that waits for the crank may still be finishing.
   await delay(10);
   harness.remoteManager.cleanup();
@@ -596,7 +596,7 @@ describe('a writer acting while a crank aborts', () => {
         return undefined;
       }
       if (item.type === 'send' && item.target === sentinel) {
-        throw new Error(STOP_RUN_LOOP);
+        throw new Error(KILL_RUN_LOOP);
       }
       if (item.type === 'terminateVat') {
         return await vatManager.performVatTermination(item.vatId, item.reason);
@@ -610,7 +610,7 @@ describe('a writer acting while a crank aborts', () => {
       methargs: kser(['stop', []]),
       result: null,
     });
-    await expect(running).rejects.toThrow(STOP_RUN_LOOP);
+    await expect(running).rejects.toThrow(KILL_RUN_LOOP);
     harness.remoteManager.cleanup();
 
     expect({
