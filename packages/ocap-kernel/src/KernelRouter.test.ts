@@ -623,6 +623,45 @@ describe('KernelRouter', () => {
         expect(result).toStrictEqual(mockCrankResult);
       });
 
+      it.each([
+        [
+          'forgets',
+          v1,
+          [
+            [v1, 'kp1'],
+            [v1, 'kp2'],
+          ],
+        ],
+        ['keeps', asRemoteId('r1'), []],
+      ])(
+        '%s the c-list entries of the notified promises for %s',
+        async (_title, endpointId, forgotten) => {
+          const kpid = asKRef('kp1');
+          (
+            kernelStore.getKernelPromise as unknown as MockInstance
+          ).mockReturnValue({
+            state: 'fulfilled',
+            value: { body: '#"settled"', slots: [] },
+          });
+          (
+            kernelStore.krefToEref as unknown as MockInstance
+          ).mockReturnValueOnce('p-1');
+          (
+            kernelStore.getKpidsToRetire as unknown as MockInstance
+          ).mockReturnValueOnce([kpid, asKRef('kp2')]);
+          (
+            endpointHandle.deliverNotify as unknown as MockInstance
+          ).mockResolvedValueOnce({ didDelivery: endpointId });
+
+          await kernelRouter.deliver({ type: 'notify', endpointId, kpid });
+
+          expect(
+            (kernelStore.forgetKref as unknown as MockInstance).mock.calls,
+          ).toStrictEqual(forgotten);
+          expect(endpointHandle.deliverNotify).toHaveBeenCalledOnce();
+        },
+      );
+
       it('returns didDelivery when promise is not in vat clist', async () => {
         const endpointId = v1;
         const kpid = asKRef('kp123');

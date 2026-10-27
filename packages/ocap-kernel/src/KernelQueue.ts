@@ -1136,6 +1136,14 @@ export class KernelQueue {
       for (const slot of data.slots || []) {
         this.#kernelStore.incrementRefCount(slot, 'resolve|slot');
       }
+      // A kernel subscriber hands these krefs to a caller outside the kernel,
+      // which holds them as bare strings. Pinned here rather than when the
+      // subscription settles, which is after the crank has collected garbage.
+      if (this.subscriptions.has(kpid)) {
+        for (const slot of data.slots || []) {
+          this.#kernelStore.pinObject(slot);
+        }
+      }
 
       // Enqueue notifications for each subscriber (immediate or buffered based on flag).
       for (const subscriber of subscribers) {

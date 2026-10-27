@@ -562,10 +562,16 @@ export class KernelRouter {
         this.#kernelStore.translateCapDataKtoE(endpointId, tPromise.value),
       ]);
     }
-    // TODO(#1006 follow-up): SwingSet also tears down the c-list entry for each
-    // promise in the batch here, since the endpoint can never refer to a
-    // settled promise by that eref again. Left alone for now because the
-    // debug UI discovers exported ocap URLs by scanning these entries.
+    // Liveslots forgets each vpid in the batch on receipt, and names the
+    // promise by a fresh one if it ever sends it again, so the entries go now.
+    // Without this, a settled promise keeps its count, and with it whatever it
+    // resolved to, for good. A remote's c-list is mirrored by its peer, which
+    // would have to retire the same entries, so remotes keep theirs for now.
+    if (isVatId(endpointId)) {
+      for (const toResolve of targets) {
+        this.#kernelStore.forgetKref(endpointId, toResolve);
+      }
+    }
     return await this.#deliverUnlessLost(endpointId, async () =>
       endpoint.deliverNotify(resolutions),
     );

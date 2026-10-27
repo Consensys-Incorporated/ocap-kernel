@@ -63,6 +63,7 @@ describe('KernelQueue', () => {
       initKernelPromise: vi.fn().mockReturnValue(['kp1']),
       kernelRefExists: vi.fn().mockReturnValue(true),
       incrementRefCount: vi.fn(),
+      pinObject: vi.fn(),
       getKernelPromise: vi.fn(),
       resolveKernelPromise: vi.fn().mockReturnValue([]),
       nextReapAction: vi.fn().mockReturnValue(null),
@@ -1901,6 +1902,37 @@ describe('KernelQueue', () => {
       // Subscription is still registered, will be invoked during flush
       expect(kernelQueue.subscriptions.has(kpid)).toBe(true);
     });
+
+    it.each([
+      ['pins', true, ['ko1', 'kp2']],
+      ['does not pin', false, []],
+    ])(
+      '%s the resolution slots when the kernel is subscribed: %s',
+      (_title, subscribed, pinned) => {
+        const kpid = asKRef('kp1');
+        (
+          kernelStore.getKernelPromise as unknown as MockInstance
+        ).mockReturnValue({
+          state: 'unresolved',
+          decider: v1,
+          subscribers: [],
+        });
+        if (subscribed) {
+          kernelQueue.subscriptions.set(kpid, {
+            resolve: vi.fn(),
+            reject: vi.fn(),
+          });
+        }
+        kernelQueue.resolvePromises(
+          v1,
+          [[kpid, false, { body: '', slots: [asKRef('ko1'), asKRef('kp2')] }]],
+          false,
+        );
+        expect(
+          (kernelStore.pinObject as unknown as MockInstance).mock.calls,
+        ).toStrictEqual(pinned.map((slot) => [slot]));
+      },
+    );
 
     it('handles resolutions with undefined vatId (kernel decider)', () => {
       const kpid = asKRef('kp123');

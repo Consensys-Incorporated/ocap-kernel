@@ -79,6 +79,20 @@ describe('VatSyscall', () => {
     );
   });
 
+  it('forgets the c-list entries of the promises it resolves', () => {
+    const resolutions = [
+      ['kp1', false, { body: '', slots: ['kp3'] }],
+      ['kp2', true, { body: '', slots: [] }],
+    ] as VatOneResolution[];
+    vatSys.handleSyscall(['resolve', resolutions] as VatSyscallObject);
+    expect(
+      (kernelStore.forgetKref as unknown as MockInstance).mock.calls,
+    ).toStrictEqual([
+      ['v1', 'kp1'],
+      ['v1', 'kp2'],
+    ]);
+  });
+
   it('enqueues send immediately when outside a crank', () => {
     (kernelStore.isInCrank as unknown as MockInstance).mockReturnValue(false);
     const target = 'ko1';
