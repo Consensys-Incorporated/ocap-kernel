@@ -82,25 +82,6 @@ test.describe('Control Panel', () => {
   }
 
   /**
-   * Find the kref of the promise a vat is the subject of, by its c-list entry.
-   *
-   * Unstable for the same reason as the roots: `kp3` and `kp4` are allocated as
-   * the bootstrap's calls to Bob and Carol are answered.
-   *
-   * @param dump - The kv pairs to search.
-   * @param vatId - The vat whose promise is wanted.
-   * @returns The promise's kref.
-   */
-  function promiseKrefOf(
-    dump: { key: string; value: string }[],
-    vatId: string,
-  ): string {
-    const entry = dump.find(({ key }) => key.startsWith(`${vatId}.c.kp`));
-    expect(entry, `no promise in ${vatId}'s c-list`).toBeDefined();
-    return (entry as { key: string }).key.slice(`${vatId}.c.`.length);
-  }
-
-  /**
    * Find the eref a vat knows a kref by.
    *
    * Needed in full rather than by prefix: a c-list entry's reverse direction is
@@ -242,17 +223,17 @@ test.describe('Control Panel', () => {
     const dump = await readKvDump();
     const v2Root = rootKrefOf(dump, 'v2');
     const v3Root = rootKrefOf(dump, 'v3');
-    const v2Promise = promiseKrefOf(dump, 'v2');
-    const v3Promise = promiseKrefOf(dump, 'v3');
+    // Each vat forgets a promise once it is settled, so the bootstrap's calls
+    // to Bob and Carol leave nothing behind in any c-list.
+    expect(
+      dump.filter(({ key }) => /^v\d+\.c\.(?:kp|p[+-])/u.test(key)),
+    ).toStrictEqual([]);
     const v3Values = [
       '{"key":"e.nextPromiseId.v3","value":"2"}',
       '{"key":"e.nextObjectId.v3","value":"1"}',
       `{"key":"${v3Root}.owner","value":"v3"}`,
       `{"key":"v3.c.${v3Root}","value":"R o+0"}`,
       `{"key":"v3.c.o+0","value":"${v3Root}"}`,
-      `{"key":"v3.c.${v3Promise}","value":"R p-1"}`,
-      `{"key":"v3.c.p-1","value":"${v3Promise}"}`,
-      `{"key":"${v3Promise}.refCount","value":"2"}`,
     ];
     // Derived too: v1 imports the two roots as the bootstrap's calls are
     // answered, so which of `o-1`/`o-2` names which root varies with the same
@@ -265,9 +246,6 @@ test.describe('Control Panel', () => {
       `{"key":"v1.c.${v3Root}","value":"R ${v3Eref}"}`,
       `{"key":"v1.c.${v3Eref}","value":"${v3Root}"}`,
     ];
-    await expect(
-      popupPage.locator('[data-testid="message-output"]'),
-    ).toContainText(`{"key":"${v2Promise}.refCount","value":"2"}`);
     await expect(
       popupPage.locator('[data-testid="message-output"]'),
     ).toContainText('{"key":"vatConfig.v3","value"');
@@ -352,10 +330,6 @@ test.describe('Control Panel', () => {
         popupPage.locator('[data-testid="message-output"]'),
       ).toContainText(value);
     }
-    // kp4 reference dropped to 1
-    await expect(
-      popupPage.locator('[data-testid="message-output"]'),
-    ).toContainText(`{"key":"${v3Promise}.refCount","value":"1"}`);
     await popupPage.click('button:text("Control Panel")');
     await popupPage.locator('[data-testid="accordion-header"]').first().click();
     // delete v1
