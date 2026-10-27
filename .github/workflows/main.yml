@@ -134,8 +134,9 @@ jobs:
   lint-build-test:
     name: Lint, build, and test
     needs: [check-skip-merge-queue, check-workflows, detect-changes]
+    # Not always(): that would keep superseded runs going after cancel-in-progress.
     if: |
-      always()
+      !cancelled()
       && needs.check-skip-merge-queue.outputs.skip-merge-queue != 'true'
       && needs.detect-changes.outputs.has-code == 'true'
       && needs.check-workflows.result != 'failure'
