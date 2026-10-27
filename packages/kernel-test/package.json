@@ -59,7 +59,7 @@
     "@ocap/remote-iterables": "workspace:^"
   },
   "devDependencies": {
-    "@arethetypeswrong/cli": "^0.17.4",
+    "@arethetypeswrong/cli": "^0.18.5",
     "@metamask/kernel-cli": "workspace:^",
     "@metamask/kernel-shims": "workspace:^",
     "@ocap/repo-tools": "workspace:^",

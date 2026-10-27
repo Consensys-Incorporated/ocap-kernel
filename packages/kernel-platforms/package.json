@@ -49,7 +49,7 @@
     "test:dev:quiet": "yarn test:dev --reporter @ocap/repo-tools/vitest-reporters/silent"
   },
   "devDependencies": {
-    "@arethetypeswrong/cli": "^0.17.4",
+    "@arethetypeswrong/cli": "^0.18.5",
     "@metamask/auto-changelog": "^6.2.1",
     "@metamask/utils": "^12.0.0",
     "@ocap/repo-tools": "workspace:^",

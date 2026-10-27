@@ -85,7 +85,7 @@
     "viem": "^2.31.4"
   },
   "devDependencies": {
-    "@arethetypeswrong/cli": "^0.17.4",
+    "@arethetypeswrong/cli": "^0.18.5",
     "@metamask/auto-changelog": "^6.2.1",
     "@metamask/kernel-cli": "workspace:^",
     "@metamask/kernel-node-runtime": "workspace:^",
