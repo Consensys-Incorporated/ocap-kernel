@@ -309,7 +309,7 @@ platform-specific caveat and before segments are joined into a path.
 
 The same shape serves any capability whose authority is hierarchical, provided
 the hierarchy is written most-significant-first. Host names are
-least-significant-first, so a `fetch` capability narrowed by domain wants
+least-significant-first, so an `http` capability narrowed by domain wants
 reversed host segments — `['com', 'example']` for `*.example.com` — at which
 point domain scoping is the identical prefix construction.
 
@@ -372,10 +372,78 @@ empty `root` would denote the entire filesystem and is a config error.
 Config stays JSON — it is a config file validated by superstruct — while patterns
 are Passable tagged records, so a config narrowing cannot itself be a delta and
 has to be sugar that compiles to one. The sugar is per-capability: `fs` defines
-what `root` means, and a future `fetch` capability defines its own spelling. A
+what `root` means, and `http` defines its own spelling. A
 single JSON encoding of deltas that every capability shares would unify them, and
 is on the roadmap rather than in this design; the compile step is a separate
 function so that introducing one does not mean rewriting the capability.
+
+## The http capability
+
+`@metamask/kernel-platforms` vends `http` the same way. Its one method takes the
+host's labels reversed, the path's segments, and an options record. Reversed,
+labels run most significant first, as patterns compare, so narrowing to a domain
+is a prefix:
+
+```js
+await E(http).request(['com', 'example', 'api'], ['v1', 'users'], {
+  method: 'GET',
+});
+```
+
+Config lists rules. A rule's constraints all hold at once, and the capability
+admits a request any one rule admits, so no rule's host is paired with another's
+path. Each rule compiles to a narrowing of the base, and the rules' narrowings
+are joined:
+
+```json
+"platformConfig": {
+  "http": {
+    "allow": [
+      { "host": "example.com" },
+      {
+        "host": "api.example.org",
+        "exactHost": true,
+        "path": "v1/users",
+        "protocol": "https",
+        "ports": [8443],
+        "methods": ["GET", "POST"]
+      }
+    ]
+  }
+}
+```
+
+A host names itself and its subdomains, and a path itself and the paths below
+it, unless `exactHost` or `exactPath` asks for that one alone. `protocol`,
+`ports` and `methods` narrow the options record. A request that leaves an option
+out gets its default (`https`, the scheme's port, `GET`), so leaving it out is
+admitted exactly when the default is: `ports: []` admits default ports only, and
+`methods` without `GET` requires a method be named.
+
+The capability requires each label to be one lowercase label, and requires the
+host `URL` parses the joined labels as to equal them, so `['1', '0x7f']` cannot
+reach `127.0.0.1` under a pattern that never named it. Path segments are encoded
+one at a time, and `.`, `..`, and any segment containing a separator are
+rejected, since a server may decode `%2F` before routing; so a narrowing by path
+prefix is sound as well. The options record is required rather than optional, since
+omitting a narrowed position would otherwise request the defaults unchecked.
+
+Redirects are returned rather than followed. A narrowing is visible only at the
+call, so the shared base following a `Location` would check the hop against no
+holder's bound; the holder re-requests through its own capability instead.
+
+Vat code calls it through `makeFetch(http)`, also from
+`@metamask/kernel-platforms`, which names hosts as `api.example.com` again. It
+is `makeGuardedFetch` from `@metamask/kernel-utils` over a transport that makes
+one request through `http`: the guarded fetch walks redirects a hop at a time,
+and each hop is a call on `http`, so the narrowing is the guard. Bodies are
+strings, aborting a `signal` rejects the `fetch` though a request already sent
+completes, and a response's `url` is empty. The vat must
+request the `URL`, `Request`, `Headers`, and `Response` globals, and `crypto` to
+check an `integrity`.
+
+It is the only way a vat reaches the network; there is no `fetch` global. Its
+requests are made with a `fetch` the vat supervisor tears down with the vat.
 
 ## Limits
 
@@ -383,9 +451,8 @@ function so that introducing one does not mean rewriting the capability.
 admits `'data/../../etc'`, and the vocabulary has no regex or glob to narrow it
 with. So any capability whose authority is hierarchical must
 check that its segments are well-formed before a prefix pattern carries weight —
-for `fs`, one path component each; for the reversed-host-segment `fetch`
-narrowing on the roadmap, one label each, since a segment containing a dot would
-span several.
+for `fs`, one path component each; for `http`, one label each, since a segment
+containing a dot would span several.
 
 **Aliasing defeats syntactic narrowing.** Patterns are equally blind to the
 filesystem: a symlink at `/srv/data/evil -> /etc` makes
@@ -406,6 +473,10 @@ the path to still name the opened file. `access` has no handle to pin, so a swap
 can still reveal whether something outside the root exists. Hard links are
 aliases the check cannot see, and remain open.
 
+`http` has the same hole one level down: a name under an allowed domain
+resolves to whatever address its DNS records say, private ones included, and the
+capability checks names only.
+
 **Arity is not narrowable.** A delta constrains patterns at inherited positions
 and cannot drop trailing optionals or make an optional required.
 
@@ -414,8 +485,8 @@ and cannot drop trailing optionals or make an optional required.
 **Arguments and results must be Passable.** Forwarding through `E()` marshals
 every value, and `@endo/pass-style` rejects `Buffer` and `Uint8Array` alike as
 mutable typed arrays, which `harden` does not change. So `fs.readFile` requires
-an encoding and returns a string, and the `fetch` narrowing on the roadmap meets
-the same constraint in its response bodies.
+an encoding and returns a string, and `http` likewise takes and returns string
+bodies.
 
 **Non-narrowing attenuations are out of scope.** Anything that alters, augments,
 or filters rather than forwarding — including the state-dependent cases such as
@@ -428,11 +499,6 @@ provide.
 with `byteArray` pass style, so `readFile` could return bytes after all. Deferred
 because `transferToImmutable` is not guaranteed at the declared `engines: >=22`,
 and because a caller would then handle an `ArrayBuffer` rather than a `Buffer`.
-
-**Re-vend `fetch` by reversed host segments**, replacing `network.allowedHosts`
-with narrowings of a request exo. This is the case that forced the segment
-design, and proves the vocabulary generalizes past one capability before the
-kernel commits to it.
 
 **A kernel `narrow` service**, so narrowings can be minted for and passed between
 vats, with the `WeakMap` becoming a kernel store table keyed by kref. Any vat
@@ -458,7 +524,7 @@ those every operand names, each position conjoining the operands' patterns.
 Flattening already computes that conjunction along a chain; `meet` would compute
 it across siblings.
 
-**A general JSON delta encoding**, so `fs` and `fetch` config share one spelling.
+**A general JSON delta encoding**, so `fs` and `http` config share one spelling.
 
 **Stateful narrowings** — "only on Wednesday", "usable four times" — which need a
 leaf kind patterns cannot express, and therefore probably need the kernel to hold

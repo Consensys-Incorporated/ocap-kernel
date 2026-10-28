@@ -34,7 +34,13 @@ export { resolveFetchInput } from './fetch-input.ts';
 export type { FetchInput, ResolvedFetchInput } from './fetch-input.ts';
 export { makeGuardedFetch } from './guarded-fetch.ts';
 export type { FetchGuard } from './guarded-fetch.ts';
-export { abortableDelay, delay, ifDefined, makeCounter } from './misc.ts';
+export {
+  abortableDelay,
+  delay,
+  ifDefined,
+  makeCounter,
+  raceAbort,
+} from './misc.ts';
 export { stringify } from './stringify.ts';
 export { installWakeDetector } from './wake-detector.ts';
 export type { WakeDetectorOptions } from './wake-detector.ts';
