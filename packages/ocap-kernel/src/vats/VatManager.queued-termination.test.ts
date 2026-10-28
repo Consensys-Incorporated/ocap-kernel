@@ -164,14 +164,17 @@ describe('VatManager queued termination', () => {
       termination.catch(() => undefined);
 
       // `Kernel.reset`, taken in the next crank, ahead of the termination
-      // written as this crank ends: tear the vats down, wipe the store and
-      // abandon queued work.
+      // written as this crank ends. Its steps, less the IO and remote ones
+      // this harness has none of.
       harness.onControl(async () => {
-        await vatManager.stopVat(asVatId('v1'), true);
+        await vatManager.terminateAllVats();
         kernelStore.reset();
-        vatManager.abandonQueuedWork(
-          new Error('Kernel was reset; queued work was abandoned'),
+        const abandoned = new Error(
+          'Kernel was reset; queued work was abandoned',
         );
+        kernelQueue.discardQueuedWork(abandoned);
+        kernelQueue.discardHeldRequests(abandoned);
+        vatManager.abandonQueuedWork(abandoned);
       });
       const resetting = kernelQueue.enqueueControl('reset');
       harness.openGate();

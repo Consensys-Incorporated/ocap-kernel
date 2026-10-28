@@ -1,4 +1,5 @@
 import { makeSQLKernelDatabase } from '@metamask/kernel-store/sqlite/nodejs';
+import { delay } from '@metamask/kernel-utils';
 import { describe, it, expect, vi } from 'vitest';
 
 import { KernelQueue } from './KernelQueue.ts';
@@ -6,6 +7,7 @@ import { makeKernelStore } from './store/index.ts';
 import type { RunLoopItem, RunQueueItem } from './types.ts';
 import { makeGCAction } from './types.ts';
 import { asRRef, asRemoteId, asVatId } from '../test/branded.ts';
+import { watch } from '../test/real-kernel.ts';
 
 const arrival = {
   remoteId: asRemoteId('r1'),
@@ -353,6 +355,17 @@ describe('ending the run loop', () => {
       queued: 1,
       state: 'stopped',
     });
+  });
+
+  it('settles every caller asking for it', async () => {
+    const { kernelQueue } = await makeFixture(0);
+    const running = kernelQueue.run(async () => undefined);
+    const first = watch(kernelQueue.endRunLoop());
+    const second = watch(kernelQueue.endRunLoop());
+
+    await running;
+    await delay(0);
+    expect([first(), second()]).toStrictEqual(['fulfilled', 'fulfilled']);
   });
 
   it('waits for the control operations queued before it', async () => {

@@ -10,7 +10,7 @@ import type { RealKernel } from '../test/real-kernel.ts';
 
 describe('a control operation on a real kernel', () => {
   it.each(['clearStorage', 'reset', 'terminateAllVats'] as const)(
-    'keeps what %s wrote when the crank queued behind the one it waited for dies',
+    'runs %s ahead of the crank queued behind the one it waited for, and keeps what it wrote',
     async (method) => {
       const harness = await setUpRealKernel();
       await harness.stall();
@@ -27,7 +27,8 @@ describe('a control operation on a real kernel', () => {
       );
       const secondDelivered = harness.received.includes('v2:stall');
       if (secondDelivered) {
-        // Only if the write went into this crank, which now dies with it.
+        // Reached only if the operation ran inside this crank: killing the
+        // crank then shows its write lost.
         harness.release(explosion(harness.doomedId));
       }
       await vi.waitFor(() => expect(settlement()).not.toBe('pending'));
@@ -115,6 +116,60 @@ describe('a control operation on a real kernel', () => {
     },
   );
 
+  it.each([
+    {
+      method: 'clearStorage' as const,
+      fail: ({ kernelDatabase }: RealKernel): void => {
+        const clear = kernelDatabase.clear.bind(kernelDatabase);
+        vi.spyOn(kernelDatabase, 'clear').mockImplementationOnce(() => {
+          clear();
+          throw new Error('SQLITE_FULL');
+        });
+      },
+    },
+    ...(['reset', 'terminateAllVats'] as const).map((method) => ({
+      method,
+      // Armed once the first vat is retired, so its retirement is what the
+      // rollback has to undo.
+      fail: ({ kernelDatabase, onTerminate }: RealKernel): void => {
+        onTerminate(() => {
+          onTerminate(() => undefined);
+          vi.spyOn(
+            kernelDatabase.kernelKVStore,
+            'delete',
+          ).mockImplementationOnce(() => {
+            throw new Error('SQLITE_FULL');
+          });
+        });
+      },
+    })),
+  ])(
+    'rolls back what $method wrote when it fails partway, and kills the run loop',
+    async ({ method, fail }) => {
+      const harness = await setUpRealKernel();
+      fail(harness);
+
+      const settled = watch(harness.kernel[method]());
+      await vi.waitFor(() =>
+        expect(harness.onRunLoopFailure).toHaveBeenCalled(),
+      );
+
+      expect({
+        settled: settled(),
+        runLoop: (await harness.kernel.getStatus()).runLoop.state,
+        reported: harness.onRunLoopFailure.mock.calls.map(
+          ([failure]) => (failure as Error).message,
+        ),
+        persisted: makeKernelStore(harness.kernelDatabase).getVatIDs(),
+      }).toStrictEqual({
+        settled: 'SQLITE_FULL',
+        runLoop: 'failed',
+        reported: ['SQLITE_FULL'],
+        persisted: ['v1', 'v2'],
+      });
+    },
+  );
+
   it.each(['clearStorage', 'reset', 'terminateAllVats'] as const)(
     '%s is refused once the run loop has died, leaving the store as it was',
     async (method) => {
@@ -152,26 +207,41 @@ describe('stop on a real kernel', () => {
     }).toStrictEqual({ stopRemoteComms: 1, terminateAll: 1, closed: 1 });
   });
 
-  it('settles two concurrent stops together, closing the database once', async () => {
+  it('runs a control operation asked for before it, then ends the run loop', async () => {
     const harness = await setUpRealKernel();
+    harness.close.mockImplementation(() => undefined);
+    await harness.stall();
+    const reset = watch(harness.kernel.reset());
+    const stopping = harness.kernel.stop();
+    await delay(0);
 
-    await Promise.all([harness.kernel.stop(), harness.kernel.stop()]);
+    harness.release({ didDelivery: harness.waiterId });
+    await stopping;
 
-    expect(harness.close).toHaveBeenCalledOnce();
+    expect({
+      reset: reset(),
+      runLoop: (await harness.kernel.getStatus()).runLoop.state,
+      persisted: makeKernelStore(harness.kernelDatabase).getVatIDs(),
+    }).toStrictEqual({ reset: 'fulfilled', runLoop: 'stopped', persisted: [] });
   });
 
   it.each([
-    { loop: 'running', kill: async (): Promise<void> => undefined },
+    {
+      loop: 'running',
+      kill: async (): Promise<void> => undefined,
+      refusal: 'Kernel run loop is stopping; cannot reset',
+    },
     {
       loop: 'dead',
       kill: async ({ stall, explode }: RealKernel): Promise<void> => {
         await stall();
         await explode();
       },
+      refusal: 'Kernel run loop died; cannot reset',
     },
   ])(
     'refuses a reset asked for once it has begun on a $loop kernel',
-    async ({ kill }) => {
+    async ({ kill, refusal }) => {
       const harness = await setUpRealKernel();
       harness.close.mockImplementation(() => undefined);
       await kill(harness);
@@ -185,10 +255,26 @@ describe('stop on a real kernel', () => {
         terminated: harness.terminated,
         persisted: makeKernelStore(harness.kernelDatabase).getVatIDs(),
       }).toStrictEqual({
-        reset: expect.stringMatching(/^Kernel run loop (is stopping|died)/u),
+        reset: refusal,
         terminated: [],
         persisted: ['v1', 'v2'],
       });
+    },
+  );
+
+  it.each(['clearStorage', 'reset', 'terminateAllVats'] as const)(
+    'refuses %s once it has ended the run loop',
+    async (method) => {
+      const harness = await setUpRealKernel();
+      harness.close.mockImplementation(() => undefined);
+      await harness.kernel.stop();
+
+      await expect(harness.kernel[method]()).rejects.toThrow(
+        `Kernel run loop is stopped; cannot ${method}`,
+      );
+      expect(makeKernelStore(harness.kernelDatabase).getVatIDs()).toStrictEqual(
+        ['v1', 'v2'],
+      );
     },
   );
 
@@ -196,7 +282,6 @@ describe('stop on a real kernel', () => {
     const harness = await setUpRealKernel();
     harness.close.mockImplementation(() => undefined);
     await harness.stall();
-    await delay(5);
     const before = Date.now();
 
     const stopping = harness.kernel.stop();

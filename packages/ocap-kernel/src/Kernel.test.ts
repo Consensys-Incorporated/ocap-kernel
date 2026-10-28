@@ -1438,6 +1438,26 @@ describe('Kernel', () => {
       expect(kernel.getVatIds()).toHaveLength(0);
     });
 
+    it('closes the IO listeners of every subcluster', async () => {
+      const listener = {
+        accept: vi.fn(async () => null),
+        close: vi.fn(async () => undefined),
+      };
+      const kernel = await Kernel.make(
+        mockPlatformServices,
+        makeMapKernelDatabase(),
+        { ioListenerFactory: async () => listener },
+      );
+      await kernel.launchSubcluster({
+        ...makeSingleVatClusterConfig(),
+        io: { repl: { type: 'console' } },
+      });
+
+      await kernel.reset();
+
+      expect(listener.close).toHaveBeenCalledOnce();
+    });
+
     it('clears system subcluster roots', async () => {
       const mockDb = makeMapKernelDatabase();
       const kernel = await Kernel.make(mockPlatformServices, mockDb, {
