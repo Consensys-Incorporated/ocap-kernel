@@ -141,11 +141,13 @@ describe('isVatConfig', () => {
       expected: true,
     },
     {
-      name: 'with valid network config',
+      name: 'with http platform config',
       config: {
         bundleSpec: 'bundle.js',
-        globals: ['fetch'],
-        network: { allowedHosts: ['api.github.com'] },
+        globals: ['URL', 'Request', 'Headers', 'Response'],
+        platformConfig: {
+          http: { allow: [{ host: 'api.github.com' }] },
+        },
       },
       expected: true,
     },
@@ -164,17 +166,17 @@ describe('isVatConfig', () => {
       },
     },
     {
-      name: 'network.allowedHosts not an array',
+      name: 'the removed network config',
       config: {
         bundleSpec: 'bundle.js',
-        network: { allowedHosts: 'not-an-array' },
+        network: { allowedHosts: ['api.github.com'] },
       },
     },
     {
-      name: 'network.allowedHosts contains non-strings',
+      name: 'the removed fetch global',
       config: {
         bundleSpec: 'bundle.js',
-        network: { allowedHosts: ['ok.test', 123] },
+        globals: ['fetch'],
       },
     },
   ])('rejects configs with $name', ({ config }) => {

@@ -3,9 +3,11 @@ import { waitUntilQuiescent } from '@metamask/kernel-utils';
 import { kunser } from '@metamask/ocap-kernel';
 import type { Kernel, KRef, VatConfig } from '@metamask/ocap-kernel';
 import { mkdir, mkdtemp, realpath, symlink, writeFile } from 'node:fs/promises';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join, sep } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, onTestFinished } from 'vitest';
 
 import { getBundleSpec, makeKernel, makeTestLogger } from './utils.ts';
 
@@ -15,10 +17,12 @@ const V1_ROOT = 'ko4' as KRef;
  * Launch the narrowing vat.
  *
  * @param platformConfig - Platform capabilities to grant the vat, if any.
+ * @param globals - Globals to grant the vat, if any.
  * @returns The running kernel.
  */
 const launchNarrowingVat = async (
   platformConfig?: VatConfig['platformConfig'],
+  globals?: VatConfig['globals'],
 ): Promise<Kernel> => {
   const { logger } = makeTestLogger();
   const database = await makeSQLKernelDatabase({});
@@ -27,6 +31,7 @@ const launchNarrowingVat = async (
     bundleSpec: getBundleSpec('narrowing-vat'),
     parameters: {},
     ...(platformConfig && { platformConfig }),
+    ...(globals && { globals }),
   };
   await kernel.launchSubcluster({ bootstrap: 'main', vats: { main: vat } });
   await waitUntilQuiescent();
@@ -82,6 +87,31 @@ const makeTempTree = async (): Promise<{
     size: contents.length,
   };
 };
+
+/**
+ * Serve two resources and a redirect on localhost until the current test ends.
+ *
+ * @returns The options that address the server.
+ */
+const serveLocally = async (): Promise<{ protocol: 'http'; port: number }> => {
+  const server = createServer((request, response) => {
+    if (request.url === '/redirect') {
+      response.writeHead(302, { location: '/inner/hello' }).end();
+      return;
+    }
+    const body = { '/inner/hello': 'hello', '/sibling': 'sibling' }[
+      request.url ?? ''
+    ];
+    response.writeHead(body ? 200 : 404).end(body ?? '');
+  });
+  await new Promise<void>((resolve) => server.listen(0, 'localhost', resolve));
+  onTestFinished(() => {
+    server.close();
+  });
+  return { protocol: 'http', port: (server.address() as AddressInfo).port };
+};
+
+const localHttp = { http: { allow: [{ host: 'localhost' }] } };
 
 describe('narrowing', () => {
   it('narrows a vat-local exo', async () => {
@@ -255,5 +285,145 @@ describe('narrowing', () => {
     expect(
       await probe(kernel, 'probeFsNarrowed', [inner, throughLink]),
     ).toMatch(/^rejected:.*not canonical/u);
+  });
+
+  it('receives http as an exo', async () => {
+    const options = await serveLocally();
+    const kernel = await launchNarrowingVat(localHttp);
+    expect(
+      await probe(kernel, 'probeHttp', [
+        ['localhost'],
+        ['inner', 'hello'],
+        options,
+      ]),
+    ).toBe('ok:200:hello');
+  });
+
+  it('scopes http by config', async () => {
+    const options = await serveLocally();
+    const kernel = await launchNarrowingVat(localHttp);
+    expect(
+      await probe(kernel, 'probeHttp', [['com', 'example'], [], options]),
+    ).toMatch(/^rejected:In "request" method of \(Http\)/u);
+  });
+
+  it.each([
+    { name: 'a listed port', rule: { protocol: 'http' }, listPort: true },
+    { name: 'default ports only', rule: { ports: [] }, listPort: false },
+    { name: 'https only', rule: { protocol: 'https' }, listPort: false },
+    {
+      name: 'methods without GET',
+      rule: { methods: ['POST'] },
+      listPort: false,
+    },
+  ] as {
+    name: string;
+    rule: { protocol?: 'http' | 'https'; ports?: number[]; methods?: string[] };
+    listPort: boolean;
+  }[])('scopes http by a rule with $name', async ({ name, rule, listPort }) => {
+    const options = await serveLocally();
+    const kernel = await launchNarrowingVat({
+      http: {
+        allow: [
+          {
+            host: 'localhost',
+            ...rule,
+            ...(listPort && { ports: [options.port] }),
+          },
+        ],
+      },
+    });
+    const outcome = await probe(kernel, 'probeHttp', [
+      ['localhost'],
+      ['inner', 'hello'],
+      options,
+    ]);
+    expect(outcome).toMatch(
+      name === 'a listed port'
+        ? /^ok:200:hello$/u
+        : /^rejected:In "request" method of \(Http\)/u,
+    );
+  });
+
+  it.each([
+    { path: ['inner', 'hello'], outcome: /^ok:200:hello$/u },
+    { path: ['other'], outcome: /^rejected:In "request" method of \(Http\)/u },
+  ])(
+    "pairs each rule's host with its own path: $path",
+    async ({ path, outcome }) => {
+      const options = await serveLocally();
+      const kernel = await launchNarrowingVat({
+        http: {
+          allow: [
+            { host: 'localhost', path: 'inner' },
+            { host: 'example.com', path: 'other' },
+          ],
+        },
+      });
+      expect(
+        await probe(kernel, 'probeHttp', [['localhost'], path, options]),
+      ).toMatch(outcome);
+    },
+  );
+
+  it('rejects a dot inside a label the config pattern admits', async () => {
+    const options = await serveLocally();
+    const kernel = await launchNarrowingVat(localHttp);
+    expect(
+      await probe(kernel, 'probeHttp', [
+        ['localhost', 'evil.test'],
+        [],
+        options,
+      ]),
+    ).toMatch(/^rejected:.*invalid label/u);
+  });
+
+  it('returns a redirect rather than following it', async () => {
+    const options = await serveLocally();
+    const kernel = await launchNarrowingVat(localHttp);
+    expect(
+      await probe(kernel, 'probeHttp', [['localhost'], ['redirect'], options]),
+    ).toBe('ok:302:');
+  });
+
+  it('narrows the config-scoped http further by path', async () => {
+    const options = await serveLocally();
+    const kernel = await launchNarrowingVat(localHttp);
+    expect(
+      await probe(kernel, 'probeHttpNarrowed', [
+        ['inner'],
+        ['inner', 'hello'],
+        options,
+      ]),
+    ).toBe('ok:200:hello');
+    expect(
+      await probe(kernel, 'probeHttpNarrowed', [
+        ['inner'],
+        ['sibling'],
+        options,
+      ]),
+    ).toMatch(/^rejected:/u);
+  });
+
+  it.each([
+    ['follows a redirect through makeFetch', [], 'ok:200:true:hello'],
+    [
+      'checks each redirect hop against the narrowing',
+      ['redirect'],
+      /^rejected:In "request" method of \(ScopedHttp\)/u,
+    ],
+  ])('%s', async (_, prefix, expected) => {
+    const { port } = await serveLocally();
+    const kernel = await launchNarrowingVat(localHttp, [
+      'URL',
+      'Request',
+      'Headers',
+      'Response',
+    ]);
+    const result = await probe(kernel, 'probeAdaptedFetch', [
+      `http://localhost:${port}/redirect`,
+      prefix,
+    ]);
+    expect(result).toMatch(expected);
   });
 });

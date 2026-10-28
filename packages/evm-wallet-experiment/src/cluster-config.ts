@@ -8,6 +8,7 @@ export type WalletClusterConfigOptions = {
   role?: 'home' | 'away';
   forceReset?: boolean;
   services?: string[];
+  // Each admits its subdomains too.
   allowedHosts?: string[];
 };
 
@@ -26,6 +27,9 @@ export function makeWalletClusterConfig(
     services = ['ocapURLIssuerService', 'ocapURLRedemptionService'],
     allowedHosts,
   } = options;
+
+  // An empty list grants nothing, as it always has: no rule would admit a host.
+  const grantsHttp = allowedHosts !== undefined && allowedHosts.length > 0;
 
   const coordinatorBundle =
     role === 'home'
@@ -62,10 +66,12 @@ export function makeWalletClusterConfig(
       },
       provider: {
         bundleSpec: `${bundleBaseUrl}/provider-vat.bundle`,
-        globals: allowedHosts
-          ? ['fetch', 'Request', 'Headers', 'Response']
-          : [],
-        ...(allowedHosts ? { network: { allowedHosts } } : {}),
+        globals: grantsHttp ? ['URL', 'Request', 'Headers', 'Response'] : [],
+        ...(grantsHttp && {
+          platformConfig: {
+            http: { allow: allowedHosts.map((host) => ({ host })) },
+          },
+        }),
       },
       ...auxiliaryVat,
     },
