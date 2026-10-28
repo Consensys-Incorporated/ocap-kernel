@@ -65,6 +65,7 @@
  *   nextPromiseId = NN                       // allocation counter for promise KRefs
  *   pinned.${kref} = NN                      // number of pins held on ${kref}
  *   ocapURLObjects.${kref} = NN              // number of ocap URLs naming ${kref}
+ *   ocapURLString.${kref} = ${url}           // latest ocap URL issued for ${kref}, for display
  *   kernelService.${serviceName} = ${koid}   // kref of kernel service object ${serviceName}
  */
 
@@ -101,6 +102,9 @@ import type { StoreContext, StoredValue } from './types.ts';
  * nothing the kernel controls.
  */
 const OCAP_URL_PREFIX = 'ocapURLObjects.';
+
+/** The prefix of the latest URL string issued for each object, for display. */
+const OCAP_URL_STRING_PREFIX = 'ocapURLString.';
 
 /** The context fields holding a cached stored value. */
 type CachedValueField = {
@@ -463,6 +467,13 @@ export function makeKernelStore(kdb: KernelDatabase, logger?: Logger) {
       }
       kv.set(`${OCAP_URL_PREFIX}${kref}`, `${issuances + 1}`);
     },
+    recordOcapURL(kref: KRef, url: string): void {
+      // Minting awaits, so every retention may have been released by the time
+      // the URL exists; it must not be listed then.
+      if (this.getOcapURLIssuanceCount(kref) > 0) {
+        kv.set(`${OCAP_URL_STRING_PREFIX}${kref}`, url);
+      }
+    },
     undoOcapURLRetention(kref: KRef): void {
       const issuances = this.getOcapURLIssuanceCount(kref);
       if (issuances > 1) {
@@ -481,6 +492,7 @@ export function makeKernelStore(kdb: KernelDatabase, logger?: Logger) {
       // it leaves a ledger that still says the retention is held.
       this.unpinObject(kref);
       kv.delete(`${OCAP_URL_PREFIX}${kref}`);
+      kv.delete(`${OCAP_URL_STRING_PREFIX}${kref}`);
     },
   });
 }

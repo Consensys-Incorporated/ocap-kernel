@@ -262,7 +262,7 @@ describe('parseObjectRegistry', () => {
     expect(result).toStrictEqual(expectedResult);
   });
 
-  it('should parse ocap URLs from promise values', () => {
+  it('lists the latest URL issued for each object, with its owner', () => {
     const entries = [
       { key: 'gcActions', value: '[]' },
       { key: 'reapQueue', value: '[]' },
@@ -272,59 +272,27 @@ describe('parseObjectRegistry', () => {
         value:
           '{"bundleSpec":"http://localhost:3000/sample-vat.bundle","parameters":{"name":"Alice"}}',
       },
-      {
-        key: 'vatConfig.v2',
-        value:
-          '{"bundleSpec":"http://localhost:3000/sample-vat.bundle","parameters":{"name":"Bob"}}',
-      },
-      // Promise with ocap URL
+      { key: 'ko1.owner', value: 'v1' },
+      { key: 'ocapURLObjects.ko1', value: '2' },
+      { key: 'ocapURLString.ko1', value: 'ocap:first@peer' },
+      { key: 'ko2.owner', value: 'kernel' },
+      { key: 'ocapURLObjects.ko2', value: '1' },
+      { key: 'ocapURLString.ko2', value: 'ocap:second@peer' },
+      // A settled promise whose value is a URL string is no longer a source.
       { key: 'kp1.state', value: 'fulfilled' },
       {
         key: 'kp1.value',
-        value: '{"body":"#\\"ocap://example.com/capability1\\"","slots":[]}',
+        value: '{"body":"#\\"ocap:stale@peer\\"","slots":[]}',
       },
       { key: 'v1.c.kp1', value: 'R p+1' },
       { key: 'v1.c.p+1', value: 'kp1' },
-      // Another promise with ocap URL
-      { key: 'kp2.state', value: 'fulfilled' },
-      {
-        key: 'kp2.value',
-        value: '{"body":"#\\"ocap://example.com/capability2\\"","slots":[]}',
-      },
-      { key: 'v2.c.kp2', value: 'R p+2' },
-      { key: 'v2.c.p+2', value: 'kp2' },
-      // Promise without ocap URL
-      { key: 'kp3.state', value: 'fulfilled' },
-      { key: 'kp3.value', value: '{"body":"#\\"regular value\\"","slots":[]}' },
-      { key: 'v1.c.kp3', value: 'R p+3' },
-      { key: 'v1.c.p+3', value: 'kp3' },
     ];
 
     const result = parseObjectRegistry(entries);
 
     expect(result.ocapUrls).toStrictEqual([
-      {
-        vatId: 'v1',
-        promiseId: 'kp1',
-        ocapUrl: 'ocap://example.com/capability1',
-      },
-      {
-        vatId: 'v2',
-        promiseId: 'kp2',
-        ocapUrl: 'ocap://example.com/capability2',
-      },
+      { kref: 'ko1', owner: 'v1', ocapUrl: 'ocap:first@peer' },
+      { kref: 'ko2', owner: 'kernel', ocapUrl: 'ocap:second@peer' },
     ]);
-
-    // Verify the promises are still parsed correctly
-    expect(result.vats.v1?.exportedPromises).toHaveLength(2);
-    expect(result.vats.v1?.exportedPromises[0]).toMatchObject({
-      kref: 'kp1',
-      eref: 'p+1',
-      state: 'fulfilled',
-      value: {
-        body: '#"ocap://example.com/capability1"',
-        slots: [],
-      },
-    });
   });
 });
