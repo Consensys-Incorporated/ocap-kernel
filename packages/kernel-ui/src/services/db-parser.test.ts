@@ -278,7 +278,7 @@ describe('parseObjectRegistry', () => {
       { key: 'ko2.owner', value: 'kernel' },
       { key: 'ocapURLObjects.ko2', value: '1' },
       { key: 'ocapURLString.ko2', value: 'ocap:second@peer' },
-      // A settled promise whose value is a URL string is no longer a source.
+      // A settled promise whose value is a URL string is not a source.
       { key: 'kp1.state', value: 'fulfilled' },
       {
         key: 'kp1.value',

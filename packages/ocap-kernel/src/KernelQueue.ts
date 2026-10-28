@@ -1137,8 +1137,9 @@ export class KernelQueue {
         this.#kernelStore.incrementRefCount(slot, 'resolve|slot');
       }
       // A kernel subscriber hands these krefs to a caller outside the kernel,
-      // which holds them as bare strings. Pinned here rather than when the
-      // subscription settles, which is after the crank has collected garbage.
+      // which holds them as bare strings. Pinned here, at resolution, because
+      // a buffered subscription settles only after the crank has collected
+      // garbage.
       if (this.subscriptions.has(kpid)) {
         for (const slot of data.slots || []) {
           this.#kernelStore.pinObject(slot);

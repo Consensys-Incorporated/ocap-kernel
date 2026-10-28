@@ -223,8 +223,8 @@ test.describe('Control Panel', () => {
     const dump = await readKvDump();
     const v2Root = rootKrefOf(dump, 'v2');
     const v3Root = rootKrefOf(dump, 'v3');
-    // Each vat forgets a promise once it is settled, so the bootstrap's calls
-    // to Bob and Carol leave nothing behind in any c-list.
+    // The kernel retires a vat's c-list entry for a promise once it is
+    // settled, so the bootstrap's calls to Bob and Carol leave none behind.
     expect(
       dump.filter(({ key }) => /^v\d+\.c\.(?:kp|p[+-])/u.test(key)),
     ).toStrictEqual([]);

@@ -83,7 +83,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Settled promises are no longer kept in vat c-lists forever, so they and the objects they resolved to are now collected ([#1229](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1229))
-  - Every kref in the result of a `queueMessage` call, promises included, is pinned instead, and nothing releases the pin. An object a subcluster returned this way now outlives `terminateSubcluster`
+  - Every kref in the result of a `queueMessage` call, promises included, is pinned instead, and nothing releases the pin, not even terminating the subcluster that returned it
   - Remotes keep their c-list entries for settled promises
 - A `queueMessage` made while a crank is running is no longer lost if that crank aborts; its caller used to wait forever or get another promise's value ([#1204](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1204))
 - A `queueMessage` naming a kref the kernel does not have, as its target or in an argument, rejects with `OBJECT_DELETED` instead of an internal error that leaked its result promise and could leave its target uncollectable ([#1204](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1204))
