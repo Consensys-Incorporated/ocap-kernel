@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- `agent.task` no longer reads `Date.now()` for its default seed, which throws inside a vat. The default is now the task's ordinal; a caller wanting unpredictable REPL delimiters passes `seed` ([#1239](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1239))
-- The chat agent sends a copy of its message history to `chat`, so a chat that hardens its arguments, as one across a kernel boundary does, no longer freezes the history the agent must keep appending to ([#1239](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1239))
+- `agent.task` no longer reads `Date.now()` for its default seed, which throws inside a vat. The default is now the task's ordinal; a caller wanting unpredictable REPL delimiters passes `seed` ([#1241](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1241))
+- The chat agent sends a copy of its message history to `chat`, so a chat that hardens its arguments, as one across a kernel boundary does, no longer freezes the history the agent must keep appending to ([#1241](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1241))
 
 [Unreleased]: https://github.com/Consensys-Incorporated/ocap-kernel/

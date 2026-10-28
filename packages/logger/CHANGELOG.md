@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Logging no longer hardens the logged data. Under lockdown, an entry's `data` was deep-frozen along with the entry, so logging an object froze it for its owner ([#1239](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1239))
+- Logging no longer hardens the logged data. Under lockdown, an entry's `data` was deep-frozen along with the entry, so logging an object froze it for its owner ([#1241](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1241))
 
 ## [0.7.0]
 
