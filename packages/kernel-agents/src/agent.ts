@@ -1,6 +1,6 @@
+import type { LanguageModel } from '@metamask/kernel-language-model-service';
 import { mergeDisjointRecords } from '@metamask/kernel-utils';
 import type { Logger } from '@metamask/logger';
-import type { LanguageModel } from '@ocap/kernel-language-model-service';
 
 import { doAttempt } from './attempt.ts';
 import { TaskManager } from './task.ts';
@@ -51,7 +51,9 @@ export const makeAgent = <
      * @param judgment - A function that determines if the task is complete.
      * @param options - The options for the task.
      * @param options.invocationBudget - The maximum number of steps the agent is allowed to take.
-     * @param options.seed - The seed for the task.
+     * @param options.seed - The seed for the task. Defaults to the task's
+     * ordinal: an agent may run in a vat, which has no clock or entropy, so
+     * a caller wanting an unpredictable seed supplies one.
      * @param options.logger - The logger for the task.
      * @param options.capabilities - The capabilities for the task.
      * @param options.nAttempts - The number of attempts the agent is allowed to make.
@@ -62,7 +64,7 @@ export const makeAgent = <
       judgment?: (result: unknown) => result is Result,
       {
         invocationBudget = 10,
-        seed = Date.now().valueOf(), // XXX: Replace with something more real
+        seed: taskSeed,
         logger: printLogger,
         capabilities: taskCapabilities = {},
         nAttempts = 1,
@@ -79,6 +81,7 @@ export const makeAgent = <
         ...ifDefined({ judgment }),
       });
       const { id: taskId, objective, context } = thisTask;
+      const seed = taskSeed ?? taskManager.tasks.length;
       const taskLogger = agentLogger?.subLogger({ tags: [taskId] });
       taskLogger?.info('intent:', intent);
 

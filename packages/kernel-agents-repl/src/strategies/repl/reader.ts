@@ -5,11 +5,12 @@ import {
   gatherStreamingResponse,
 } from '@ocap/kernel-agents/utils';
 
-import type { StatementMessage } from './messages.ts';
+import { StatementMessage } from './messages.ts';
+import type { Parser } from './parse/syntax-tree.ts';
 import { makeSampleCollector } from './sample-collector.ts';
 
 export const makeReader =
-  ({ logger }: { logger?: Logger }) =>
+  ({ parser, logger }: { parser: Parser; logger?: Logger }) =>
   async ({
     stream,
     abort,
@@ -18,12 +19,12 @@ export const makeReader =
     stream: AsyncIterable<{ response: string }>;
     abort: () => Promise<void>;
     stop: string;
-  }) => {
+  }): Promise<StatementMessage> => {
     const sampleLogger = logger?.subLogger({ tags: ['sample'] });
     const gatherLogger = logger?.subLogger({ tags: ['gather'] });
-    return await withAbort(
+    const code = await withAbort(
       abort,
-      async (): Promise<StatementMessage> =>
+      async (): Promise<string> =>
         await gatherStreamingResponse({
           stream,
           parse: makeSampleCollector({
@@ -33,4 +34,5 @@ export const makeReader =
           ...ifDefined({ logger: gatherLogger }),
         }),
     );
+    return await StatementMessage.fromCode(code, parser);
   };

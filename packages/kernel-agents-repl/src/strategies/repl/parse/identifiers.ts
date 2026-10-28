@@ -1,6 +1,6 @@
-import type { SyntaxNode } from 'tree-sitter';
+import type { SyntaxTree } from './syntax-tree.ts';
 
-const extractIdentifiers = (pattern?: SyntaxNode): string[] => {
+const extractIdentifiers = (pattern?: SyntaxTree): string[] => {
   if (!pattern) {
     // This would be a tree-sitter error.
     throw new Error('Internal: Declarator missing pattern');
@@ -43,15 +43,15 @@ const extractIdentifiers = (pattern?: SyntaxNode): string[] => {
  * @returns The names of the identifiers declared in the declaration.
  */
 export const extractNamesFromDeclaration = (
-  declaration: SyntaxNode,
+  declaration: SyntaxTree,
 ): string[] => {
-  const variableIdentifiers = ({ children }: SyntaxNode): string[] =>
+  const variableIdentifiers = ({ children }: SyntaxTree): string[] =>
     children
       .filter(({ type }) =>
         ['variable_declarator', 'declarator'].includes(type),
       )
       .flatMap(({ children: [pattern] }) => extractIdentifiers(pattern));
-  const functionIdentifier = ({ children }: SyntaxNode): string => {
+  const functionIdentifier = ({ children }: SyntaxTree): string => {
     const identifier = children.find((child) => child.type === 'identifier');
     if (!identifier) {
       throw new Error('Internal: Function declaration missing identifier');

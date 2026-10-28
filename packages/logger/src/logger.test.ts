@@ -7,6 +7,7 @@ import { Logger } from './logger.ts';
 import { lser } from './stream.ts';
 import type { LogMessage } from './stream.ts';
 import { makeConsoleTransport } from './transports.ts';
+import type { LogEntry } from './types.ts';
 
 const consoleMethod = ['log', 'debug', 'info', 'warn', 'error'] as const;
 const transports = [makeConsoleTransport({ tags: true })];
@@ -89,6 +90,16 @@ describe('Logger', () => {
     const data = { bar: 'bar' };
     logger.log(message, data);
     expect(consoleSpy).toHaveBeenCalledWith(['test'], message, data);
+  });
+
+  it('leaves the logged data mutable', () => {
+    const entries: LogEntry[] = [];
+    const logger = new Logger({ transports: [(entry) => entries.push(entry)] });
+    const history = ['first'];
+    logger.log('history:', history);
+    history.push('second');
+    expect(entries[0]?.data).toStrictEqual([['first', 'second']]);
+    expect(Object.isFrozen(entries[0])).toBe(true);
   });
 
   describe('subLogger', () => {

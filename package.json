@@ -54,7 +54,7 @@
   },
   "devDependencies": {
     "@agoric/internal": "0.4.0",
-    "@arethetypeswrong/cli": "^0.17.4",
+    "@arethetypeswrong/cli": "^0.18.5",
     "@lavamoat/allow-scripts": "^3.3.2",
     "@lavamoat/preinstall-always-fail": "^2.1.0",
     "@metamask/auto-changelog": "^6.2.1",
@@ -121,6 +121,8 @@
     "@multiformats/dns": "1.0.9",
     "bn.js@npm:5.2.1": "^5.2.3",
     "@metamask/rpc-errors/@metamask/utils": "^12.0.0",
-    "@metamask/json-rpc-engine/@metamask/utils": "^12.0.0"
+    "@metamask/json-rpc-engine/@metamask/utils": "^12.0.0",
+    "uuid@npm:^8.3.2": "^11.1.1",
+    "uuid@npm:^9.0.1": "^11.1.1"
   }
 }

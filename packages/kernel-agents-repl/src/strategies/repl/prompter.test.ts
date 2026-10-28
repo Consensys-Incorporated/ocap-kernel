@@ -1,3 +1,4 @@
+import 'ses'; // We need the real Compartment, not the mock.
 import '@ocap/repo-tools/test-utils/mock-endoify';
 
 import { describe, it, expect } from 'vitest';

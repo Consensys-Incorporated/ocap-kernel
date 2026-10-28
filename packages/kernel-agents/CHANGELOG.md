@@ -15,4 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **BREAKING:** Remove the `capability()` authoring helper from `@ocap/kernel-agents/capabilities/capability`. Author capabilities as pattern-guarded discoverable exos (via the `described*()` combinators in `@metamask/kernel-utils`) and convert them with `discover`, so the exo's interface guard is the sole argument enforcer ([#960](https://github.com/MetaMask/ocap-kernel/pull/960))
 
+### Fixed
+
+- `agent.task` no longer reads `Date.now()` for its default seed, which throws inside a vat. The default is now the task's ordinal; a caller wanting unpredictable REPL delimiters passes `seed` ([#1241](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1241))
+- The chat agent sends a copy of its message history to `chat`, so a chat that hardens its arguments, as one across a kernel boundary does, no longer freezes the history the agent must keep appending to ([#1241](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1241))
+
 [Unreleased]: https://github.com/Consensys-Incorporated/ocap-kernel/

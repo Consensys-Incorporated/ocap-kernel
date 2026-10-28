@@ -1,10 +1,10 @@
 import '@ocap/repo-tools/test-utils/mock-endoify';
 import { Logger } from '@metamask/logger';
-import type { SyntaxNode } from 'tree-sitter';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { MockInstance } from 'vitest';
 
 import * as identifiers from './parse/identifiers.ts';
+import type { SyntaxTree } from './parse/syntax-tree.ts';
 import { prepareEvaluation } from './prepare-evaluation.ts';
 import { ERROR, RETURN } from './symbols.ts';
 import type { EvaluatorState } from './types.ts';
@@ -20,14 +20,8 @@ describe('prepareEvaluation', () => {
   const createMockNode = (
     type: string,
     text: string,
-    children: SyntaxNode[] = [],
-  ): SyntaxNode =>
-    ({
-      type,
-      text,
-      children,
-      toString: () => type,
-    }) as SyntaxNode;
+    children: SyntaxTree[] = [],
+  ): SyntaxTree => ({ type, text, isNamed: true, children });
 
   beforeEach(() => {
     state = { consts: {}, lets: {} };

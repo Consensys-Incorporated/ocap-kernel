@@ -1,6 +1,6 @@
 import '@metamask/kernel-shims/endoify-node';
 
-import { makeOpenV1NodejsService } from '@ocap/kernel-language-model-service';
+import { makeOpenV1NodejsService } from '@metamask/kernel-language-model-service';
 import { fetchMock } from '@ocap/repo-tools/test-utils/fetch-mock';
 import { afterAll, beforeAll, describe, it } from 'vitest';
 

@@ -2,7 +2,7 @@
   "name": "@ocap/kernel-test-local",
   "version": "0.0.0",
   "private": true,
-  "description": "Local-only E2E tests for kernel agents requiring external dependencies (Ollama)",
+  "description": "Local-only E2E tests for kernel agents requiring a locally hosted language model",
   "homepage": "https://github.com/Consensys-Incorporated/ocap-kernel/tree/main/packages/kernel-test-local#readme",
   "bugs": {
     "url": "https://github.com/Consensys-Incorporated/ocap-kernel/issues"
@@ -33,17 +33,17 @@
   },
   "dependencies": {
     "@endo/eventual-send": "^1.5.0",
+    "@metamask/kernel-language-model-service": "workspace:^",
     "@metamask/kernel-node-runtime": "workspace:^",
     "@metamask/kernel-store": "workspace:^",
     "@metamask/kernel-utils": "workspace:^",
     "@metamask/logger": "workspace:^",
     "@metamask/ocap-kernel": "workspace:^",
-    "@ocap/kernel-agents": "workspace:^",
-    "@ocap/kernel-language-model-service": "workspace:^",
+    "@ocap/kernel-test": "workspace:^",
     "@ocap/repo-tools": "workspace:^"
   },
   "devDependencies": {
-    "@arethetypeswrong/cli": "^0.17.4",
+    "@arethetypeswrong/cli": "^0.18.5",
     "@metamask/kernel-cli": "workspace:^",
     "@metamask/kernel-shims": "workspace:^",
     "@ocap/kernel-agents-repl": "workspace:^",

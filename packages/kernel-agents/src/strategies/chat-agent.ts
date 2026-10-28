@@ -1,10 +1,10 @@
-import type { Logger } from '@metamask/logger';
 import type {
   ChatMessage,
   ChatResult,
   Tool,
-} from '@ocap/kernel-language-model-service';
-import { parseToolArguments } from '@ocap/kernel-language-model-service/utils/parse-tool-arguments';
+} from '@metamask/kernel-language-model-service';
+import { parseToolArguments } from '@metamask/kernel-language-model-service/utils/parse-tool-arguments';
+import type { Logger } from '@metamask/logger';
 
 import { extractCapabilitySchemas } from '../capabilities/capability.ts';
 import type { Agent } from '../types/agent.ts';
@@ -131,8 +131,10 @@ export const makeChatAgent = ({
         for (let step = 0; step < invocationBudget; step++) {
           logger?.info(`Step ${step + 1} of ${invocationBudget}`);
 
+          // A copy, because a chat that crosses a kernel boundary hardens its
+          // arguments, and the history grows after the call.
           const chatResult = await chat({
-            messages: chatHistory,
+            messages: [...chatHistory],
             ...(tools.length > 0 && { tools }),
           });
           const choiceMessage = chatResult.choices[0]?.message;

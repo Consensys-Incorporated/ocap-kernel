@@ -14,13 +14,17 @@ import {
   ResultMessage,
 } from './messages.ts';
 import type { ReplTranscript, StatementMessage } from './messages.ts';
+import { toSExpression } from './parse/syntax-tree.ts';
+import type { SyntaxTree } from './parse/syntax-tree.ts';
 import { prepareEvaluation } from './prepare-evaluation.ts';
 import { ERROR, RETURN } from './symbols.ts';
 import type { EvaluatorState } from './types.ts';
 
-const validateStatement = (
-  statement: StatementMessage,
-): { earlyResult?: ResultMessage | null } => {
+type Validation =
+  | { earlyResult: ResultMessage | null }
+  | { earlyResult?: never; node: SyntaxTree };
+
+const validateStatement = (statement: StatementMessage): Validation => {
   if (statement instanceof CommentMessage) {
     // Comments are not evaluated.
     return { earlyResult: null };
@@ -33,18 +37,19 @@ const validateStatement = (
       }),
     };
   }
-  if (!(statement instanceof EvaluationMessage)) {
+  const { code, node } = statement.messageBody;
+  if (!(statement instanceof EvaluationMessage) || !node) {
     // This should never happen.
     throw new Error(
       [
         'Internal: Unknown statement',
-        `statement: ${statement.messageBody.node.text}`,
-        `type: ${statement.messageBody.node.toString()}`,
+        `statement: ${code}`,
+        `type: ${node ? toSExpression(node) : 'unparsed'}`,
       ].join('\n'),
     );
   }
   // Otherwise, proceed with the evaluation.
-  return {};
+  return { node };
 };
 
 export const makeEvaluator = ({
@@ -74,7 +79,7 @@ export const makeEvaluator = ({
     // Prepare the evaluation.
     const { code, endowments, result, commit } = prepareEvaluation(
       state,
-      statement.messageBody.node,
+      validation.node,
       ifDefined({ logger }),
     );
 

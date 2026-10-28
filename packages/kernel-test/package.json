@@ -18,7 +18,8 @@
       "default": "./dist/index.js"
     },
     "./minimal-cluster": "./src/vats/default/minimal-cluster.json",
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./agent-vat": "./src/agent-vat.ts"
   },
   "files": [
     "dist/"
@@ -48,17 +49,19 @@
     "@endo/promise-kit": "^1.2.1",
     "@libp2p/crypto": "5.1.23",
     "@libp2p/peer-id": "6.0.5",
+    "@metamask/kernel-language-model-service": "workspace:^",
     "@metamask/kernel-node-runtime": "workspace:^",
     "@metamask/kernel-store": "workspace:^",
     "@metamask/kernel-utils": "workspace:^",
     "@metamask/logger": "workspace:^",
     "@metamask/ocap-kernel": "workspace:^",
-    "@ocap/kernel-language-model-service": "workspace:^",
+    "@ocap/kernel-agents": "workspace:^",
+    "@ocap/kernel-agents-repl": "workspace:^",
     "@ocap/nodejs-test-workers": "workspace:^",
     "@ocap/remote-iterables": "workspace:^"
   },
   "devDependencies": {
-    "@arethetypeswrong/cli": "^0.17.4",
+    "@arethetypeswrong/cli": "^0.18.5",
     "@metamask/kernel-cli": "workspace:^",
     "@metamask/kernel-shims": "workspace:^",
     "@ocap/repo-tools": "workspace:^",
