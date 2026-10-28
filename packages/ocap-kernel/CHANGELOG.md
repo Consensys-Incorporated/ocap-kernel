@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Record the latest ocap URL issued for each object, as `ocapURLString.${kref}`, until its URLs are released ([#1229](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1229))
 - `Kernel.make` takes `kernelServices`, kernel services registered before the run loop starts; one registered later writes into whatever crank is open ([#1215](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1215))
+- Add `Request`, `Headers`, and `Response` to the globals a vat may request, for `makeFetch` from `@metamask/kernel-platforms` ([#942](https://github.com/MetaMask/ocap-kernel/pull/942), [#1163](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1163))
 - Add `getRemoteIDs` to the kernel store, listing every remote the kernel knows about ([#1088](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1088))
 - Add a `vatRelaunchTimeoutMs` option to `Kernel.make`: how long a vat restart waits for the new worker before giving up, 30 seconds by default ([#1096](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1096))
 - A `CrankResult` may carry `afterCommit`, work the run loop runs once the crank has committed and skips if it aborts, for what a rollback could not undo anyway: in-memory state, and sending a message the crank has already written down. While it runs it may not write the kernel store, since by then there is no transaction to write into ([#1101](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1101))
@@ -24,8 +25,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **BREAKING:** `runLoop` is required, so `KernelStatus` gains a mandatory property and a `getStatus` reply from a kernel built before this field fails result validation outright. It cannot be made optional: `exactOptional` would leave the type and the validator disagreeing inside a `type()`, and `optional` widens the property to `| undefined`, which an RPC result may not be
 - Add `onRunLoopFailure` to `Kernel.make` options, called with the error that killed the run loop so an embedder that outlives the kernel can exit or restart ([#1005](https://github.com/MetaMask/ocap-kernel/pull/1005))
 - Launch all vats in a subcluster concurrently during `launchSubcluster`, reducing startup latency from serial to parallel; failed peer vats receive a rejected kernel promise observable via `E(roots.peer).method()` pipelining ([#983](https://github.com/MetaMask/ocap-kernel/pull/983))
-- Add `fetch`, `Request`, `Headers`, and `Response` to available vat endowments ([#942](https://github.com/MetaMask/ocap-kernel/pull/942))
-  - Add `VatConfig.network: { allowedHosts: string[] }`; requesting `'fetch'` without it rejects `initVat`
 - Integrate Snaps attenuated endowment factories into vat globals ([#937](https://github.com/MetaMask/ocap-kernel/pull/937))
   - Add `setInterval`, `clearInterval`, `crypto`, `SubtleCrypto`, and `Math` (crypto-backed `Math.random`) to the default vat endowments
   - **BREAKING:** `setTimeout` now enforces a 10 ms minimum delay (upstream Snaps `MINIMUM_TIMEOUT`); shorter delays are silently coerced to 10 ms
@@ -56,7 +55,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **BREAKING:** `getImporters` returns `EndpointId[]`, and includes remotes and terminated vats ([#1088](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1088))
 - **BREAKING:** `Kernel.make`'s `ioChannelFactory` option is now `ioListenerFactory`, and the exported `IOChannelFactory` type is replaced by `IOListener` and `IOListenerFactory`. A cluster config's `io` entries now create listeners; vats call `accept()` to obtain a channel instead of reading and writing the endowment directly ([#1007](https://github.com/MetaMask/ocap-kernel/pull/1007))
 - Attribute a failed subcluster vat launch to the specific vat by kernel id and `ClusterConfig` name (e.g. `Failed to launch vat v3 (bob)`), preserving the original error as the `cause` ([#975](https://github.com/MetaMask/ocap-kernel/pull/975))
-- **BREAKING:** Remove `VatConfig.platformConfig.fetch` — migrate to `globals: ['fetch', ...]` + `network.allowedHosts` ([#942](https://github.com/MetaMask/ocap-kernel/pull/942))
+- **BREAKING:** Replace `VatConfig.platformConfig.fetch` with `platformConfig.http`, an exo that vat code wraps as a `fetch` with `makeFetch` from `@metamask/kernel-platforms`; see its changelog ([#942](https://github.com/MetaMask/ocap-kernel/pull/942), [#1163](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1163))
+  - Its requests are made with the `fetch` the vat's endowments supply, so terminating the vat aborts them; a `MakeAllowedGlobals` factory supplies it as `VatEndowments.fetch`
 - **BREAKING:** `MakeAllowedGlobals` now takes a `{ logger }` options bag ([#942](https://github.com/MetaMask/ocap-kernel/pull/942))
 - **BREAKING:** Type `VatConfig.globals` and `Kernel.make`'s `allowedGlobalNames` as `AllowedGlobalName[]` (a literal union) instead of `string[]`; unknown names are now rejected at the `initVat` RPC boundary ([#941](https://github.com/MetaMask/ocap-kernel/pull/941))
   - Exports: `AllowedGlobalName`, `AllowedGlobalNameStruct`, `MakeAllowedGlobals`, `VatEndowmentsStruct`
@@ -185,11 +185,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - A peer's first message or an ocap URL redemption that arrives while a crank aborts no longer leaves two peers sharing one c-list, through which either could reach objects the kernel exported to the other ([#1204](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1204))
 - An endpoint can no longer retire or abandon a kernel object it does not own, nor one it names only as an import: `abandonExports` on an import ref tore that import down unchecked ([#1085](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1085))
-- A vat's `fetch` can no longer reach a host outside its `network.allowedHosts`. The allowlist was checked against one resolution of the vat's input while `fetch` resolved it again (CWE-367), and a redirect from an allowed host to a forbidden one was followed unchecked ([#1026](https://github.com/MetaMask/ocap-kernel/pull/1026))
-  - A vat's `redirect: 'follow'`, in `init` or on a `Request`, no longer reaches the hop unchecked; `manual` and `error` behave as asked. A `dispatcher` in `init` is rejected
-  - A redirect that keeps the request body now fails when that body cannot be sent again, which includes any `Request` carrying one — pass the body via `init` instead
-  - A vat hosted in a browser can no longer follow a redirect at all: the runtime hides the target of a manual redirect, so the hop cannot be checked and the fetch fails instead
-  - An `integrity` a vat asks for is checked against the body the chain ends on rather than by `fetch`, which sees one hop at a time and would hold the digest against a redirect body
 
 ## [0.7.0]
 

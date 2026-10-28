@@ -207,7 +207,7 @@ A vat can also request host/Web API globals (timers, `Date`, `crypto`, `URL`, â€
 }
 ```
 
-Network access is a special case: requesting `fetch` (and optionally `Request`/`Headers`/`Response`) also requires a per-vat host allowlist under `network.allowedHosts`. Without it, `initVat` rejects the vat.
+Network access is not a global. A vat is granted the `http` platform capability scoped to some domains, and wraps it as a `fetch` with `makeFetch` from `@metamask/kernel-platforms`, which needs the `URL`, `Request`, `Headers`, and `Response` globals:
 
 ```json
 {
@@ -215,8 +215,10 @@ Network access is a special case: requesting `fetch` (and optionally `Request`/`
   "vats": {
     "alice": {
       "bundleSpec": "http://localhost:3000/sample-vat.bundle",
-      "globals": ["fetch", "Request", "Headers", "Response"],
-      "network": { "allowedHosts": ["api.example.com"] }
+      "globals": ["URL", "Request", "Headers", "Response"],
+      "platformConfig": {
+        "http": { "allow": [{ "host": "api.example.com" }] }
+      }
     }
   }
 }

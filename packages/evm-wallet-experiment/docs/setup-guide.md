@@ -472,8 +472,16 @@ yarn ocap daemon exec launchSubcluster '{
       },
       "provider": {
         "bundleSpec": "packages/evm-wallet-experiment/src/vats/provider-vat.bundle",
-        "globals": ["fetch", "Request", "Headers", "Response"],
-        "network": { "allowedHosts": ["<chain>.infura.io", "api.pimlico.io", "swap.api.cx.metamask.io"] }
+        "globals": ["URL", "Request", "Headers", "Response"],
+        "platformConfig": {
+          "http": {
+            "allow": [
+              { "host": "<chain>.infura.io" },
+              { "host": "api.pimlico.io" },
+              { "host": "swap.api.cx.metamask.io" }
+            ]
+          }
+        }
       },
       "delegator": {
         "bundleSpec": "packages/evm-wallet-experiment/src/vats/delegator-vat.bundle",
@@ -487,7 +495,7 @@ yarn ocap daemon exec launchSubcluster '{
 
 Note the `rootKref` from the output (e.g. `ko4`). This is the wallet coordinator reference. The CLI automatically converts absolute file paths to `file://` URLs.
 
-> **Note:** Replace `<chain>.infura.io` in `allowedHosts` with the actual Infura subdomain for your chain (e.g. `mainnet.infura.io`, `base-mainnet.infura.io`, `sepolia.infura.io`). If using a custom RPC provider via `--rpc-url`, use that provider's hostname instead.
+> **Note:** Each `hosts` entry admits that host and its subdomains. Replace `<chain>.infura.io` with the Infura subdomain for your chain (e.g. `mainnet.infura.io`, `base-mainnet.infura.io`, `sepolia.infura.io`). If using a custom RPC provider via `--rpc-url`, use that provider's hostname instead.
 
 > **Warning:** `forceReset: true` destroys all existing subcluster state (keyrings, delegations, OCAP URLs). Omit it on subsequent runs to preserve state.
 
@@ -553,7 +561,7 @@ yarn ocap daemon exec registerLocationHints '{"peerId": "HOME_PEER_ID", "hints":
 
 ### 3d. Launch the wallet subcluster
 
-The away role uses `away-coordinator.bundle` and pairs it with a `redeemer` vat (not `delegator`); the home role is the one that signs delegations, so the away kernel only needs the redeeming half. Set `allowedHosts` to the chain's RPC endpoints this VPS is permitted to reach.
+The away role uses `away-coordinator.bundle` and pairs it with a `redeemer` vat (not `delegator`); the home role is the one that signs delegations, so the away kernel only needs the redeeming half. Set the provider's `http.allow` rules to the chain's RPC endpoints this VPS is permitted to reach.
 
 ```bash
 yarn ocap daemon exec launchSubcluster '{
@@ -572,8 +580,16 @@ yarn ocap daemon exec launchSubcluster '{
       },
       "provider": {
         "bundleSpec": "packages/evm-wallet-experiment/src/vats/provider-vat.bundle",
-        "globals": ["fetch", "Request", "Headers", "Response"],
-        "network": { "allowedHosts": ["<chain>.infura.io", "api.pimlico.io", "swap.api.cx.metamask.io"] }
+        "globals": ["URL", "Request", "Headers", "Response"],
+        "platformConfig": {
+          "http": {
+            "allow": [
+              { "host": "<chain>.infura.io" },
+              { "host": "api.pimlico.io" },
+              { "host": "swap.api.cx.metamask.io" }
+            ]
+          }
+        }
       },
       "redeemer": {
         "bundleSpec": "packages/evm-wallet-experiment/src/vats/redeemer-vat.bundle",

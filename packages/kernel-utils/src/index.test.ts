@@ -43,6 +43,7 @@ describe('index', () => {
       'narrow',
       'pathUnder',
       'prettifySmallcaps',
+      'raceAbort',
       'resolveFetchInput',
       'retry',
       'retryWithBackoff',

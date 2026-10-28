@@ -1,6 +1,6 @@
 import { makeSQLKernelDatabase } from '@metamask/kernel-store/sqlite/nodejs';
 import { waitUntilQuiescent } from '@metamask/kernel-utils';
-import type { KRef, VatId } from '@metamask/ocap-kernel';
+import type { Kernel, KRef, VatId } from '@metamask/ocap-kernel';
 import { getWorkerFile } from '@ocap/nodejs-test-workers';
 import { describe, expect, it } from 'vitest';
 
@@ -11,193 +11,137 @@ import {
   makeTestLogger,
 } from './utils.ts';
 
-describe('endowments', () => {
-  it('can use endowments', async () => {
-    const expectedResponse = 'Hello, world!';
-    const vatId = 'v1' as VatId;
-    const v1Root = 'ko4' as KRef;
-    const { logger, entries } = makeTestLogger();
-    const database = await makeSQLKernelDatabase({});
-    const kernel = await makeKernel(
-      database,
-      true,
-      logger,
-      getWorkerFile('mock-fetch'),
-    );
-    const goodHost = 'good-url.test';
-    const badHost = 'bad-url.test';
-    const vat = await kernel.launchSubcluster({
-      bootstrap: 'main',
-      vats: {
-        main: {
-          bundleSpec: getBundleSpec('endowment-fetch'),
-          parameters: {},
-          globals: ['fetch', 'Request', 'Headers', 'Response'],
-          network: {
-            allowedHosts: [goodHost],
-          },
+const vatId = 'v1' as VatId;
+const v1Root = 'ko4' as KRef;
+const goodHost = 'good-url.test';
+const badHost = 'bad-url.test';
+
+/**
+ * Launch the endowment-fetch vat on the mock-fetch worker, granted `http` to
+ * `goodHost` and its subdomains.
+ *
+ * @returns The kernel, and a reader of the vat's test logs.
+ */
+const launchFetchVat = async (): Promise<{
+  kernel: Kernel;
+  vatLogs: () => string[];
+}> => {
+  const { logger, entries } = makeTestLogger();
+  const database = await makeSQLKernelDatabase({});
+  const kernel = await makeKernel(
+    database,
+    true,
+    logger,
+    getWorkerFile('mock-fetch'),
+  );
+  await kernel.launchSubcluster({
+    bootstrap: 'main',
+    vats: {
+      main: {
+        bundleSpec: getBundleSpec('endowment-fetch'),
+        parameters: {},
+        globals: ['URL', 'Request', 'Headers', 'Response', 'crypto'],
+        platformConfig: {
+          http: { allow: [{ host: goodHost }] },
         },
       },
-    });
-    expect(vat).toBeDefined();
-    const vats = kernel.getVatIds();
-    expect(vats).toStrictEqual([vatId]);
+    },
+  });
+  await waitUntilQuiescent();
+  return { kernel, vatLogs: () => extractTestLogs(entries, vatId) };
+};
 
-    await waitUntilQuiescent();
-    await kernel.queueMessage(v1Root, 'hello', [`https://${goodHost}`]);
+/**
+ * Send a message to the vat's root and wait for the kernel to settle.
+ *
+ * @param kernel - The kernel to send through.
+ * @param method - The method to invoke.
+ * @param args - Its arguments.
+ */
+const send = async (
+  kernel: Kernel,
+  method: string,
+  args: unknown[],
+): Promise<void> => {
+  await kernel.queueMessage(v1Root, method, args);
+  await waitUntilQuiescent();
+};
 
-    await waitUntilQuiescent();
+const refusedHost =
+  'error: Error: In "request" method of (Http): arg 0: arg 1: "bad-url" - Must be: "good-url"';
 
+describe('endowments', () => {
+  it('reaches an allowed host and its subdomains, and not another', async () => {
+    const { kernel, vatLogs } = await launchFetchVat();
+
+    await send(kernel, 'hello', [`https://${goodHost}`]);
+    await send(kernel, 'hello', [`https://api.${goodHost}`]);
     await expect(
       kernel.queueMessage(v1Root, 'hello', [`https://${badHost}`]),
-    ).rejects.toThrow(`Invalid host: ${badHost}`);
-
+    ).rejects.toThrow('In "request" method of (Http)');
     await waitUntilQuiescent();
 
-    const vatLogs = extractTestLogs(entries, vatId);
-    expect(vatLogs).toStrictEqual([
+    expect(vatLogs()).toStrictEqual([
       'buildRootObject',
       'bootstrap',
-      `response: ${expectedResponse}`,
-      `Request constructor: ok`,
-      `Headers constructor: ok`,
-      `Response constructor: ok`,
-      `error: Error: Invalid host: ${badHost}`,
+      'response: Hello, world!',
+      'response: Hello, world!',
+      refusedHost,
     ]);
   });
 
-  // CWE-367 regression. Both probes live in the endowment-fetch vat bundle.
-  it('confines a vat that resolves a fetch input differently on each read', async () => {
-    const vatId = 'v1' as VatId;
-    const v1Root = 'ko4' as KRef;
-    const { logger, entries } = makeTestLogger();
-    const database = await makeSQLKernelDatabase({});
-    const kernel = await makeKernel(
-      database,
-      true,
-      logger,
-      getWorkerFile('mock-fetch'),
-    );
-    const goodHost = 'good-url.test';
-    const badHost = 'bad-url.test';
-    await kernel.launchSubcluster({
-      bootstrap: 'main',
-      vats: {
-        main: {
-          bundleSpec: getBundleSpec('endowment-fetch'),
-          parameters: {},
-          globals: ['fetch', 'Request', 'Headers', 'Response'],
-          network: { allowedHosts: [goodHost] },
-        },
-      },
-    });
-    await waitUntilQuiescent();
+  // CWE-367 regression: the host checked must be the host requested.
+  it.each([
+    ['a plain object', false],
+    ['a URL', true],
+  ])(
+    'refuses %s that resolves differently when read again',
+    async (_, asUrl) => {
+      const { kernel, vatLogs } = await launchFetchVat();
 
-    const decoyUrl = `https://${goodHost}/decoy`;
-    const targetUrl = `https://${badHost}/exfil?srp=stolen`;
+      await send(kernel, 'fetchWithTwoFacedUrl', [
+        `https://${goodHost}/decoy`,
+        `https://${badHost}/exfil?srp=stolen`,
+        asUrl,
+      ]);
 
-    await kernel.queueMessage(v1Root, 'fetchWithTwoFacedUrl', [
-      decoyUrl,
-      targetUrl,
-    ]);
-    await waitUntilQuiescent();
+      expect(vatLogs()).toStrictEqual([
+        'buildRootObject',
+        'bootstrap',
+        'error: Error: fetch input resolved to a different URL when read again.',
+        'reads: 2',
+      ]);
+    },
+  );
 
-    await kernel.queueMessage(v1Root, 'fetchWithSpoofedRequest', [
-      decoyUrl,
-      targetUrl,
-    ]);
-    await waitUntilQuiescent();
-
-    expect(extractTestLogs(entries, vatId)).toStrictEqual([
-      'buildRootObject',
-      'bootstrap',
-      'error: Error: fetch input resolved to a different URL when read again.',
-      // Two reads, both the kernel's: it resolves once and checks once.
-      'reads: 2',
-      // The copy defeats the lying getter; see `resolveFetchInput`.
-      `error: Error: Invalid host: ${badHost}`,
-    ]);
-  });
-
-  // Regression test for the unchecked redirect hop; see `makeGuardedFetch`.
-  it('confines a vat whose allowed host redirects it elsewhere', async () => {
-    const vatId = 'v1' as VatId;
-    const v1Root = 'ko4' as KRef;
-    const { logger, entries } = makeTestLogger();
-    const database = await makeSQLKernelDatabase({});
-    const kernel = await makeKernel(
-      database,
-      true,
-      logger,
-      getWorkerFile('mock-fetch'),
-    );
-    const goodHost = 'good-url.test';
-    const badHost = 'bad-url.test';
-    await kernel.launchSubcluster({
-      bootstrap: 'main',
-      vats: {
-        main: {
-          bundleSpec: getBundleSpec('endowment-fetch'),
-          parameters: {},
-          globals: ['fetch', 'Request', 'Headers', 'Response'],
-          network: { allowedHosts: [goodHost] },
-        },
-      },
-    });
-    await waitUntilQuiescent();
-
+  it('checks each redirect hop against the narrowing', async () => {
+    const { kernel, vatLogs } = await launchFetchVat();
     const redirectFrom = (target: string): string =>
       `https://${goodHost}/start?redirectTo=${encodeURIComponent(target)}`;
 
-    await kernel.queueMessage(v1Root, 'fetchFollowingRedirect', [
+    await send(kernel, 'fetchFollowingRedirect', [
       redirectFrom(`https://${badHost}/exfil?srp=stolen`),
     ]);
-    await waitUntilQuiescent();
-
-    await kernel.queueMessage(v1Root, 'fetchFollowingRedirect', [
+    await send(kernel, 'fetchFollowingRedirect', [
       redirectFrom(`https://${goodHost}/landed`),
     ]);
-    await waitUntilQuiescent();
 
-    expect(extractTestLogs(entries, vatId)).toStrictEqual([
+    expect(vatLogs()).toStrictEqual([
       'buildRootObject',
       'bootstrap',
-      `error: Error: Invalid host: ${badHost}`,
+      refusedHost,
       `fetched: https://${goodHost}/landed`,
-      // Overridden all the way through the Snaps endowment, which rebuilds the
-      // init before calling the real fetch.
+      // The base asks the endowments' `fetch` not to follow, through the
+      // Snaps wrapping; `makeFetch` followed instead.
       'redirect mode: manual',
       'redirected: true',
       'body: Hello, world!',
     ]);
   });
 
-  // The digest is spent on the body the chain ends on; see `makeGuardedFetch`.
-  it('checks a vat’s integrity against the resource a redirect led to', async () => {
-    const vatId = 'v1' as VatId;
-    const v1Root = 'ko4' as KRef;
-    const { logger, entries } = makeTestLogger();
-    const database = await makeSQLKernelDatabase({});
-    const kernel = await makeKernel(
-      database,
-      true,
-      logger,
-      getWorkerFile('mock-fetch'),
-    );
-    const goodHost = 'good-url.test';
-    await kernel.launchSubcluster({
-      bootstrap: 'main',
-      vats: {
-        main: {
-          bundleSpec: getBundleSpec('endowment-fetch'),
-          parameters: {},
-          globals: ['fetch', 'Request', 'Headers', 'Response'],
-          network: { allowedHosts: [goodHost] },
-        },
-      },
-    });
-    await waitUntilQuiescent();
-
+  // The digest is spent on the body the chain ends on, not on a hop's.
+  it('checks an integrity against the resource a redirect led to', async () => {
+    const { kernel, vatLogs } = await launchFetchVat();
     const landed = `https://${goodHost}/landed`;
     const start = `https://${goodHost}/start?redirectTo=${encodeURIComponent(landed)}`;
     // Of `Hello, world!`, which the mock answers `/landed` with.
@@ -205,24 +149,12 @@ describe('endowments', () => {
       'sha256-MV9b23bQeMQ7isAGTkoBZGErH853yGk0W/yUx1iU7dM=';
     const otherDigest = 'sha256-LPJNul+wow4m6DsqxbninhsWHlwfp0JecwQzYpOLmCQ=';
 
-    await kernel.queueMessage(v1Root, 'fetchWithIntegrity', [
-      start,
-      resourceDigest,
-    ]);
-    await waitUntilQuiescent();
+    await send(kernel, 'fetchWithIntegrity', [start, resourceDigest]);
+    await send(kernel, 'fetchWithIntegrity', [start, otherDigest]);
 
-    await kernel.queueMessage(v1Root, 'fetchWithIntegrity', [
-      start,
-      otherDigest,
-    ]);
-    await waitUntilQuiescent();
-
-    expect(extractTestLogs(entries, vatId)).toStrictEqual([
+    expect(vatLogs()).toStrictEqual([
       'buildRootObject',
       'bootstrap',
-      // Read through the hardened Snaps response wrapper, which the digest is
-      // checked through too — `fetch` handed the same digest would have held it
-      // against the 302's body and failed.
       'body: Hello, world!',
       `error: Error: Fetch of ${landed} does not match the requested integrity \`${otherDigest}\`.`,
     ]);
