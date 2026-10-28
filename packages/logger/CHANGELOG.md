@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **BREAKING:** Remove the CommonJS build; the package is ESM-only. Its entry points are `.js` and `.d.ts` files, formerly `.mjs`/`.cjs` and `.d.mts`/`.d.cts` ([#1186](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1186))
 
+### Fixed
+
+- Logging no longer hardens the logged data. Under lockdown, an entry's `data` was deep-frozen along with the entry, so logging an object froze it for its owner ([#1239](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1239))
+
 ## [0.7.0]
 
 ### Changed

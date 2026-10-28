@@ -25,12 +25,7 @@ import { makeKernel, makeTestLogger, runTestVats } from './utils.ts';
 type Sample = (params: SampleParams) => Promise<SampleResult>;
 type Chat = (params: ChatParams) => Promise<ChatResult>;
 
-// The REPL's parser is native code, which cannot initialize in this locked-down
-// realm, so it runs in a worker that every kernel below offers as a service.
 const parser = makeTreeSitterWorkerParser();
-afterAll(async () => {
-  await parser.terminate();
-});
 
 /**
  * Launch the agent vat on a fresh kernel whose language model service answers
@@ -144,6 +139,10 @@ const intent = 'What is 1 plus 2?';
 const final = 'The sum is 3.';
 
 describe('agent vat', () => {
+  afterAll(async () => {
+    await parser.terminate();
+  });
+
   it.each([
     [
       'json',
@@ -202,7 +201,8 @@ describe('agent vat', () => {
     });
     expect(report).toStrictEqual({
       invocations: ['count {"word":"three"}'],
-      error: 'Invocation budget exceeded',
+      error:
+        'Failed to complete task in 1 attempt\n1: Invocation budget exceeded',
     });
     expect(result).toBeUndefined();
   });

@@ -21,13 +21,10 @@ export type AgentCapabilityName = (typeof AGENT_CAPABILITY_NAMES)[number];
 
 export type AgentVatParameters = {
   strategy: AgentStrategy;
-  /** The model the vat asks the language model service for. */
   model: string;
-  /** The task given to the agent. */
   intent: string;
   /** Capabilities granted to the agent; each invocation is logged. */
   capabilities?: AgentCapabilityName[];
-  /** The agent's step budget for the task. */
   invocationBudget?: number;
   /**
    * A cap on tokens per sample. The kernel service cannot stream, so a sample

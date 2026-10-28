@@ -110,7 +110,10 @@ export function buildRootObject(
     };
   };
 
-  const makeAgent = ({ languageModelService, parserService }: Services): Agent => {
+  const makeAgent = ({
+    languageModelService,
+    parserService,
+  }: Services): Agent => {
     switch (strategy) {
       case 'json':
         return makeJsonAgent({

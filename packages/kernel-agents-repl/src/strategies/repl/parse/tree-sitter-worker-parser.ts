@@ -28,7 +28,6 @@ export type WorkerParser = Parser & {
  */
 export const makeTreeSitterWorkerParser = (): WorkerParser => {
   const worker = new Worker(WORKER_URL);
-  // The parser never holds the process open on its own.
   worker.unref();
 
   let nextId = 0;

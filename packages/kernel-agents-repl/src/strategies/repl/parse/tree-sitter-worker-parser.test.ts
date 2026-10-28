@@ -9,7 +9,8 @@ import { makeTreeSitterWorkerParser } from './tree-sitter-worker-parser.ts';
 type Listener = (event: unknown) => void;
 
 const { MockWorker, workers } = vi.hoisted(() => {
-  class MockWorker {
+  const spawned: FakeWorker[] = [];
+  class FakeWorker {
     readonly url: URL;
 
     readonly listeners = new Map<string, Listener>();
@@ -22,7 +23,7 @@ const { MockWorker, workers } = vi.hoisted(() => {
 
     constructor(url: URL) {
       this.url = url;
-      workers.push(this);
+      spawned.push(this);
     }
 
     on(event: string, listener: Listener): this {
@@ -38,8 +39,7 @@ const { MockWorker, workers } = vi.hoisted(() => {
       this.listeners.get(event)?.(payload);
     }
   }
-  const workers: MockWorker[] = [];
-  return { MockWorker, workers };
+  return { MockWorker: FakeWorker, workers: spawned };
 });
 
 vi.mock('node:worker_threads', () => ({ Worker: MockWorker }));

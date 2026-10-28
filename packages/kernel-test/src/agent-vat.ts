@@ -31,6 +31,8 @@ export const getAgentVatBundleSpec = (): string =>
 export const reportFromLogs = (entries: LogEntry[]): AgentVatReport =>
   parseAgentLogs(
     entries
-      .filter(({ tags }) => tags.includes('test') && tags.includes(AGENT_VAT_TAG))
+      .filter(
+        ({ tags }) => tags.includes('test') && tags.includes(AGENT_VAT_TAG),
+      )
       .map(({ message }) => message ?? ''),
   );
