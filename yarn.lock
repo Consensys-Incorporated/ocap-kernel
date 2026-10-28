@@ -105,11 +105,11 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@arethetypeswrong/cli@npm:^0.17.4":
-  version: 0.17.4
-  resolution: "@arethetypeswrong/cli@npm:0.17.4"
+"@arethetypeswrong/cli@npm:^0.18.5":
+  version: 0.18.5
+  resolution: "@arethetypeswrong/cli@npm:0.18.5"
   dependencies:
-    "@arethetypeswrong/core": "npm:0.17.4"
+    "@arethetypeswrong/core": "npm:0.18.5"
     chalk: "npm:^4.1.2"
     cli-table3: "npm:^0.6.3"
     commander: "npm:^10.0.1"
@@ -117,24 +117,24 @@ __metadata:
     marked-terminal: "npm:^7.1.0"
     semver: "npm:^7.5.4"
   bin:
-    attw: dist/index.js
-  checksum: 10/5309b7f0a35d8d9118f0bc658448112bfcc76e36a5bf1f237acc492cab56446902b3bdbb2f7b37506521edc722ac2a3c4e16227c8e4eece7c837573122f6c4bb
+    attw: ./dist/index.js
+  checksum: 10/70d2d75f678f751061760e686a67a9f0b85187f0371c33a241e6f6aef7ffc7410de0809e1b858321fdd5792fd3f3a6ad882cdef83f8cf679a8beea1b275c238c
   languageName: node
   linkType: hard
 
-"@arethetypeswrong/core@npm:0.17.4":
-  version: 0.17.4
-  resolution: "@arethetypeswrong/core@npm:0.17.4"
+"@arethetypeswrong/core@npm:0.18.5":
+  version: 0.18.5
+  resolution: "@arethetypeswrong/core@npm:0.18.5"
   dependencies:
     "@andrewbranch/untar.js": "npm:^1.0.3"
     "@loaderkit/resolve": "npm:^1.0.2"
     cjs-module-lexer: "npm:^1.2.3"
-    fflate: "npm:^0.8.2"
-    lru-cache: "npm:^10.4.3"
+    fflate: "npm:^0.8.3"
+    lru-cache: "npm:^11.0.1"
     semver: "npm:^7.5.4"
     typescript: "npm:5.6.1-rc"
     validate-npm-package-name: "npm:^5.0.0"
-  checksum: 10/0aa5d8c21de977fdca3b79d25b07e9346b4b8f45ea95146c2b08961c8e0842326fb8879e9e1f001fadf132d9bede78a13df7974ca15cfb0a2e08000369b75c43
+  checksum: 10/9cbb7156327005463a0eb7ce6117ffa17ad48a18448548eefb88b94ebd6553e22d4f576253c4f91cc76f409933c36733b4802b22718189802d8d0c8da823116e
   languageName: node
   linkType: hard
 
@@ -2387,7 +2387,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@metamask/kernel-browser-runtime@workspace:packages/kernel-browser-runtime"
   dependencies:
-    "@arethetypeswrong/cli": "npm:^0.17.4"
+    "@arethetypeswrong/cli": "npm:^0.18.5"
     "@endo/captp": "npm:4.5.0"
     "@endo/eventual-send": "npm:^1.5.0"
     "@metamask/auto-changelog": "npm:^6.2.1"
@@ -2425,13 +2425,15 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@metamask/kernel-cli@workspace:packages/kernel-cli"
   dependencies:
-    "@arethetypeswrong/cli": "npm:^0.17.4"
+    "@arethetypeswrong/cli": "npm:^0.18.5"
     "@endo/promise-kit": "npm:^1.2.1"
     "@metamask/auto-changelog": "npm:^6.2.1"
+    "@metamask/kernel-language-model-service": "workspace:^"
     "@metamask/kernel-node-runtime": "workspace:^"
     "@metamask/kernel-shims": "workspace:^"
     "@metamask/kernel-utils": "workspace:^"
     "@metamask/logger": "workspace:^"
+    "@metamask/superstruct": "npm:^3.4.1"
     "@metamask/utils": "npm:^12.0.0"
     "@ocap/repo-tools": "workspace:^"
     "@types/node": "npm:^22.13.1"
@@ -2461,7 +2463,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@metamask/kernel-errors@workspace:packages/kernel-errors"
   dependencies:
-    "@arethetypeswrong/cli": "npm:^0.17.4"
+    "@arethetypeswrong/cli": "npm:^0.18.5"
     "@libp2p/interface": "npm:3.3.0"
     "@metamask/auto-changelog": "npm:^6.2.1"
     "@metamask/superstruct": "npm:^3.4.1"
@@ -2480,11 +2482,36 @@ __metadata:
   languageName: unknown
   linkType: soft
 
+"@metamask/kernel-language-model-service@workspace:^, @metamask/kernel-language-model-service@workspace:packages/kernel-language-model-service":
+  version: 0.0.0-use.local
+  resolution: "@metamask/kernel-language-model-service@workspace:packages/kernel-language-model-service"
+  dependencies:
+    "@arethetypeswrong/cli": "npm:^0.18.5"
+    "@endo/eventual-send": "npm:^1.5.0"
+    "@metamask/auto-changelog": "npm:^6.2.1"
+    "@metamask/kernel-utils": "workspace:^"
+    "@metamask/streams": "workspace:^"
+    "@metamask/superstruct": "npm:^3.4.1"
+    "@ocap/repo-tools": "workspace:^"
+    "@types/chrome": "npm:^0.0.313"
+    depcheck: "npm:^1.4.7"
+    ollama: "npm:^0.5.16"
+    oxfmt: "npm:0.74.0"
+    oxlint: "npm:1.89.0"
+    rimraf: "npm:^6.0.1"
+    ses: "npm:^2.3.0"
+    turbo: "npm:^2.9.1"
+    typescript: "npm:~7.0.2"
+    vite: "npm:^8.3.3"
+    vitest: "npm:^4.1.3"
+  languageName: unknown
+  linkType: soft
+
 "@metamask/kernel-node-runtime@workspace:^, @metamask/kernel-node-runtime@workspace:packages/kernel-node-runtime":
   version: 0.0.0-use.local
   resolution: "@metamask/kernel-node-runtime@workspace:packages/kernel-node-runtime"
   dependencies:
-    "@arethetypeswrong/cli": "npm:^0.17.4"
+    "@arethetypeswrong/cli": "npm:^0.18.5"
     "@chainsafe/libp2p-quic": "npm:^2.0.1"
     "@endo/captp": "npm:4.5.0"
     "@endo/eventual-send": "npm:^1.5.0"
@@ -2520,7 +2547,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@metamask/kernel-platforms@workspace:packages/kernel-platforms"
   dependencies:
-    "@arethetypeswrong/cli": "npm:^0.17.4"
+    "@arethetypeswrong/cli": "npm:^0.18.5"
     "@endo/exo": "npm:^1.7.0"
     "@endo/patterns": "npm:^1.9.1"
     "@metamask/auto-changelog": "npm:^6.2.1"
@@ -2545,7 +2572,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@metamask/kernel-rpc-methods@workspace:packages/kernel-rpc-methods"
   dependencies:
-    "@arethetypeswrong/cli": "npm:^0.17.4"
+    "@arethetypeswrong/cli": "npm:^0.18.5"
     "@endo/promise-kit": "npm:^1.2.1"
     "@metamask/auto-changelog": "npm:^6.2.1"
     "@metamask/kernel-utils": "workspace:^"
@@ -2592,7 +2619,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@metamask/kernel-store@workspace:packages/kernel-store"
   dependencies:
-    "@arethetypeswrong/cli": "npm:^0.17.4"
+    "@arethetypeswrong/cli": "npm:^0.18.5"
     "@metamask/auto-changelog": "npm:^6.2.1"
     "@metamask/logger": "workspace:^"
     "@ocap/repo-tools": "workspace:^"
@@ -2615,7 +2642,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@metamask/kernel-ui@workspace:packages/kernel-ui"
   dependencies:
-    "@arethetypeswrong/cli": "npm:^0.17.4"
+    "@arethetypeswrong/cli": "npm:^0.18.5"
     "@metamask/auto-changelog": "npm:^6.2.1"
     "@metamask/design-system-react": "npm:^0.47.0"
     "@metamask/design-system-tailwind-preset": "npm:^0.15.0"
@@ -2658,7 +2685,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@metamask/kernel-utils@workspace:packages/kernel-utils"
   dependencies:
-    "@arethetypeswrong/cli": "npm:^0.17.4"
+    "@arethetypeswrong/cli": "npm:^0.18.5"
     "@chainsafe/libp2p-noise": "npm:^17.0.0"
     "@chainsafe/libp2p-yamux": "npm:8.0.1"
     "@endo/errors": "npm:^1.3.1"
@@ -2724,7 +2751,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@metamask/logger@workspace:packages/logger"
   dependencies:
-    "@arethetypeswrong/cli": "npm:^0.17.4"
+    "@arethetypeswrong/cli": "npm:^0.18.5"
     "@metamask/auto-changelog": "npm:^6.2.1"
     "@metamask/kernel-shims": "workspace:^"
     "@metamask/kernel-utils": "workspace:^"
@@ -3040,7 +3067,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@metamask/service-discovery-types@workspace:packages/service-discovery-types"
   dependencies:
-    "@arethetypeswrong/cli": "npm:^0.17.4"
+    "@arethetypeswrong/cli": "npm:^0.18.5"
     "@metamask/auto-changelog": "npm:^6.2.1"
     "@metamask/kernel-utils": "workspace:^"
     "@metamask/superstruct": "npm:^3.4.1"
@@ -3060,7 +3087,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@metamask/sheaves@workspace:packages/sheaves"
   dependencies:
-    "@arethetypeswrong/cli": "npm:^0.17.4"
+    "@arethetypeswrong/cli": "npm:^0.18.5"
     "@endo/eventual-send": "npm:^1.5.0"
     "@endo/exo": "npm:^1.7.0"
     "@endo/patterns": "npm:^1.9.1"
@@ -3185,7 +3212,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@metamask/streams@workspace:packages/streams"
   dependencies:
-    "@arethetypeswrong/cli": "npm:^0.17.4"
+    "@arethetypeswrong/cli": "npm:^0.18.5"
     "@endo/promise-kit": "npm:^1.2.1"
     "@metamask/auto-changelog": "npm:^6.2.1"
     "@metamask/kernel-errors": "workspace:^"
@@ -3533,7 +3560,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@ocap/agentmask@workspace:packages/agentmask"
   dependencies:
-    "@arethetypeswrong/cli": "npm:^0.17.4"
+    "@arethetypeswrong/cli": "npm:^0.18.5"
     "@metamask/auto-changelog": "npm:^6.2.1"
     "@ocap/repo-tools": "workspace:^"
     depcheck: "npm:^1.4.7"
@@ -3551,7 +3578,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@ocap/create-package@workspace:packages/create-package"
   dependencies:
-    "@arethetypeswrong/cli": "npm:^0.17.4"
+    "@arethetypeswrong/cli": "npm:^0.18.5"
     "@metamask/auto-changelog": "npm:^6.2.1"
     "@metamask/utils": "npm:^12.0.0"
     "@ocap/repo-tools": "workspace:^"
@@ -3574,7 +3601,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@ocap/evm-wallet-experiment@workspace:packages/evm-wallet-experiment"
   dependencies:
-    "@arethetypeswrong/cli": "npm:^0.17.4"
+    "@arethetypeswrong/cli": "npm:^0.18.5"
     "@endo/eventual-send": "npm:^1.5.0"
     "@endo/patterns": "npm:^1.9.1"
     "@metamask/auto-changelog": "npm:^6.2.1"
@@ -3608,7 +3635,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@ocap/extension@workspace:packages/extension"
   dependencies:
-    "@arethetypeswrong/cli": "npm:^0.17.4"
+    "@arethetypeswrong/cli": "npm:^0.18.5"
     "@endo/eventual-send": "npm:^1.5.0"
     "@metamask/auto-changelog": "npm:^6.2.1"
     "@metamask/kernel-browser-runtime": "workspace:^"
@@ -3649,8 +3676,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@ocap/kernel-agents-repl@workspace:packages/kernel-agents-repl"
   dependencies:
-    "@arethetypeswrong/cli": "npm:^0.17.4"
-    "@endo/eventual-send": "npm:^1.5.0"
+    "@arethetypeswrong/cli": "npm:^0.18.5"
     "@metamask/auto-changelog": "npm:^6.2.1"
     "@metamask/kernel-errors": "workspace:^"
     "@metamask/kernel-utils": "workspace:^"
@@ -3676,13 +3702,13 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@ocap/kernel-agents@workspace:packages/kernel-agents"
   dependencies:
-    "@arethetypeswrong/cli": "npm:^0.17.4"
+    "@arethetypeswrong/cli": "npm:^0.18.5"
     "@endo/eventual-send": "npm:^1.5.0"
     "@metamask/auto-changelog": "npm:^6.2.1"
     "@metamask/kernel-errors": "workspace:^"
+    "@metamask/kernel-language-model-service": "workspace:^"
     "@metamask/kernel-utils": "workspace:^"
     "@metamask/logger": "workspace:^"
-    "@ocap/kernel-language-model-service": "workspace:^"
     "@ocap/repo-tools": "workspace:^"
     "@types/node": "npm:^22.13.1"
     depcheck: "npm:^1.4.7"
@@ -3698,38 +3724,14 @@ __metadata:
   languageName: unknown
   linkType: soft
 
-"@ocap/kernel-language-model-service@workspace:^, @ocap/kernel-language-model-service@workspace:packages/kernel-language-model-service":
-  version: 0.0.0-use.local
-  resolution: "@ocap/kernel-language-model-service@workspace:packages/kernel-language-model-service"
-  dependencies:
-    "@arethetypeswrong/cli": "npm:^0.17.4"
-    "@endo/eventual-send": "npm:^1.5.0"
-    "@metamask/auto-changelog": "npm:^6.2.1"
-    "@metamask/kernel-utils": "workspace:^"
-    "@metamask/streams": "workspace:^"
-    "@metamask/superstruct": "npm:^3.4.1"
-    "@ocap/repo-tools": "workspace:^"
-    "@types/chrome": "npm:^0.0.313"
-    depcheck: "npm:^1.4.7"
-    ollama: "npm:^0.5.16"
-    oxfmt: "npm:0.74.0"
-    oxlint: "npm:1.89.0"
-    rimraf: "npm:^6.0.1"
-    ses: "npm:^2.3.0"
-    turbo: "npm:^2.9.1"
-    typescript: "npm:~7.0.2"
-    vite: "npm:^8.3.3"
-    vitest: "npm:^4.1.3"
-  languageName: unknown
-  linkType: soft
-
 "@ocap/kernel-test-local@workspace:packages/kernel-test-local":
   version: 0.0.0-use.local
   resolution: "@ocap/kernel-test-local@workspace:packages/kernel-test-local"
   dependencies:
-    "@arethetypeswrong/cli": "npm:^0.17.4"
+    "@arethetypeswrong/cli": "npm:^0.18.5"
     "@endo/eventual-send": "npm:^1.5.0"
     "@metamask/kernel-cli": "workspace:^"
+    "@metamask/kernel-language-model-service": "workspace:^"
     "@metamask/kernel-node-runtime": "workspace:^"
     "@metamask/kernel-shims": "workspace:^"
     "@metamask/kernel-store": "workspace:^"
@@ -3738,7 +3740,6 @@ __metadata:
     "@metamask/ocap-kernel": "workspace:^"
     "@ocap/kernel-agents": "workspace:^"
     "@ocap/kernel-agents-repl": "workspace:^"
-    "@ocap/kernel-language-model-service": "workspace:^"
     "@ocap/repo-tools": "workspace:^"
     "@types/node": "npm:^22.13.1"
     depcheck: "npm:^1.4.7"
@@ -3757,7 +3758,7 @@ __metadata:
   resolution: "@ocap/kernel-test@workspace:packages/kernel-test"
   dependencies:
     "@agoric/store": "npm:0.10.0"
-    "@arethetypeswrong/cli": "npm:^0.17.4"
+    "@arethetypeswrong/cli": "npm:^0.18.5"
     "@endo/eventual-send": "npm:^1.5.0"
     "@endo/exo": "npm:^1.7.0"
     "@endo/marshal": "npm:^1.10.0"
@@ -3766,15 +3767,13 @@ __metadata:
     "@libp2p/crypto": "npm:5.1.23"
     "@libp2p/peer-id": "npm:6.0.5"
     "@metamask/kernel-cli": "workspace:^"
+    "@metamask/kernel-language-model-service": "workspace:^"
     "@metamask/kernel-node-runtime": "workspace:^"
     "@metamask/kernel-shims": "workspace:^"
     "@metamask/kernel-store": "workspace:^"
     "@metamask/kernel-utils": "workspace:^"
     "@metamask/logger": "workspace:^"
     "@metamask/ocap-kernel": "workspace:^"
-    "@ocap/kernel-agents": "workspace:^"
-    "@ocap/kernel-agents-repl": "workspace:^"
-    "@ocap/kernel-language-model-service": "workspace:^"
     "@ocap/nodejs-test-workers": "workspace:^"
     "@ocap/remote-iterables": "workspace:^"
     "@ocap/repo-tools": "workspace:^"
@@ -3807,34 +3806,12 @@ __metadata:
   languageName: unknown
   linkType: soft
 
-"@ocap/llm-bridge@workspace:packages/llm-bridge":
-  version: 0.0.0-use.local
-  resolution: "@ocap/llm-bridge@workspace:packages/llm-bridge"
-  dependencies:
-    "@arethetypeswrong/cli": "npm:^0.17.4"
-    "@metamask/auto-changelog": "npm:^6.2.1"
-    "@metamask/superstruct": "npm:^3.4.1"
-    "@ocap/repo-tools": "workspace:^"
-    "@types/node": "npm:^22.13.1"
-    depcheck: "npm:^1.4.7"
-    oxfmt: "npm:0.74.0"
-    oxlint: "npm:1.89.0"
-    rimraf: "npm:^6.0.1"
-    turbo: "npm:^2.9.1"
-    typescript: "npm:~7.0.2"
-    vite: "npm:^8.3.3"
-    vitest: "npm:^4.1.3"
-  bin:
-    ocap-llm-bridge: ./dist/index.js
-  languageName: unknown
-  linkType: soft
-
 "@ocap/monorepo@workspace:.":
   version: 0.0.0-use.local
   resolution: "@ocap/monorepo@workspace:."
   dependencies:
     "@agoric/internal": "npm:0.4.0"
-    "@arethetypeswrong/cli": "npm:^0.17.4"
+    "@arethetypeswrong/cli": "npm:^0.18.5"
     "@lavamoat/allow-scripts": "npm:^3.3.2"
     "@lavamoat/preinstall-always-fail": "npm:^2.1.0"
     "@metamask/auto-changelog": "npm:^6.2.1"
@@ -3870,7 +3847,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@ocap/nodejs-test-workers@workspace:packages/nodejs-test-workers"
   dependencies:
-    "@arethetypeswrong/cli": "npm:^0.17.4"
+    "@arethetypeswrong/cli": "npm:^0.18.5"
     "@metamask/auto-changelog": "npm:^6.2.1"
     "@metamask/kernel-node-runtime": "workspace:^"
     "@metamask/kernel-shims": "workspace:^"
@@ -3892,7 +3869,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@ocap/ocap-jsonrpc-vat@workspace:packages/ocap-jsonrpc-vat"
   dependencies:
-    "@arethetypeswrong/cli": "npm:^0.17.4"
+    "@arethetypeswrong/cli": "npm:^0.18.5"
     "@endo/eventual-send": "npm:^1.5.0"
     "@endo/pass-style": "npm:^1.8.2"
     "@metamask/auto-changelog": "npm:^6.2.1"
@@ -3914,7 +3891,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@ocap/omnium-gatherum@workspace:packages/omnium-gatherum"
   dependencies:
-    "@arethetypeswrong/cli": "npm:^0.17.4"
+    "@arethetypeswrong/cli": "npm:^0.18.5"
     "@endo/eventual-send": "npm:^1.5.0"
     "@endo/exo": "npm:^1.7.0"
     "@endo/promise-kit": "npm:^1.2.1"
@@ -3964,7 +3941,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@ocap/remote-iterables@workspace:packages/remote-iterables"
   dependencies:
-    "@arethetypeswrong/cli": "npm:^0.17.4"
+    "@arethetypeswrong/cli": "npm:^0.18.5"
     "@endo/eventual-send": "npm:^1.5.0"
     "@endo/exo": "npm:^1.7.0"
     "@endo/patterns": "npm:^1.9.1"
@@ -4007,7 +3984,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@ocap/sample-services@workspace:packages/sample-services"
   dependencies:
-    "@arethetypeswrong/cli": "npm:^0.17.4"
+    "@arethetypeswrong/cli": "npm:^0.18.5"
     "@endo/eventual-send": "npm:^1.5.0"
     "@metamask/auto-changelog": "npm:^6.2.1"
     "@metamask/kernel-utils": "workspace:^"
@@ -4029,12 +4006,14 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@ocap/service-matcher@workspace:packages/service-matcher"
   dependencies:
-    "@arethetypeswrong/cli": "npm:^0.17.4"
+    "@arethetypeswrong/cli": "npm:^0.18.5"
     "@endo/eventual-send": "npm:^1.5.0"
     "@metamask/auto-changelog": "npm:^6.2.1"
+    "@metamask/kernel-language-model-service": "workspace:^"
     "@metamask/kernel-utils": "workspace:^"
     "@metamask/ocap-kernel": "workspace:^"
     "@metamask/service-discovery-types": "workspace:^"
+    "@metamask/superstruct": "npm:^3.4.1"
     "@ocap/repo-tools": "workspace:^"
     depcheck: "npm:^1.4.7"
     oxfmt: "npm:0.74.0"
@@ -4051,7 +4030,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@ocap/template-package@workspace:packages/template-package"
   dependencies:
-    "@arethetypeswrong/cli": "npm:^0.17.4"
+    "@arethetypeswrong/cli": "npm:^0.18.5"
     "@metamask/auto-changelog": "npm:^6.2.1"
     "@ocap/repo-tools": "workspace:^"
     depcheck: "npm:^1.4.7"
@@ -7233,9 +7212,9 @@ __metadata:
   linkType: hard
 
 "diff@npm:^5.0.0":
-  version: 5.2.0
-  resolution: "diff@npm:5.2.0"
-  checksum: 10/01b7b440f83a997350a988e9d2f558366c0f90f15be19f4aa7f1bb3109a4e153dfc3b9fbf78e14ea725717017407eeaa2271e3896374a0181e8f52445740846d
+  version: 5.2.2
+  resolution: "diff@npm:5.2.2"
+  checksum: 10/8a885b38113d96138d87f6cb474ee959b7e9ab33c0c4cb1b07dcf019ec544945a2309d53d721532af020de4b3a58fb89f1026f64f42f9421aa9c3ae48a36998b
   languageName: node
   linkType: hard
 
@@ -7954,10 +7933,10 @@ __metadata:
   languageName: node
   linkType: hard
 
-"fflate@npm:^0.8.2":
-  version: 0.8.2
-  resolution: "fflate@npm:0.8.2"
-  checksum: 10/2bd26ba6d235d428de793c6a0cd1aaa96a06269ebd4e21b46c8fd1bd136abc631acf27e188d47c3936db090bf3e1ede11d15ce9eae9bffdc4bfe1b9dc66ca9cb
+"fflate@npm:^0.8.3":
+  version: 0.8.3
+  resolution: "fflate@npm:0.8.3"
+  checksum: 10/6ebf528dc9c56e78e715eac615b009b25dc33e15c1920b11ebba44e6d76181c647756a81a23e19247907496b93aa99928514c53090579a65109e026ac2824aa7
   languageName: node
   linkType: hard
 
@@ -9585,14 +9564,14 @@ __metadata:
   languageName: node
   linkType: hard
 
-"lru-cache@npm:^10.0.1, lru-cache@npm:^10.2.0, lru-cache@npm:^10.4.3":
+"lru-cache@npm:^10.0.1, lru-cache@npm:^10.2.0":
   version: 10.4.3
   resolution: "lru-cache@npm:10.4.3"
   checksum: 10/e6e90267360476720fa8e83cc168aa2bf0311f3f2eea20a6ba78b90a885ae72071d9db132f40fda4129c803e7dcec3a6b6a6fbb44ca90b081630b810b5d6a41a
   languageName: node
   linkType: hard
 
-"lru-cache@npm:^11.0.0, lru-cache@npm:^11.1.0, lru-cache@npm:^11.2.1, lru-cache@npm:^11.3.5":
+"lru-cache@npm:^11.0.0, lru-cache@npm:^11.0.1, lru-cache@npm:^11.1.0, lru-cache@npm:^11.2.1, lru-cache@npm:^11.3.5":
   version: 11.5.3
   resolution: "lru-cache@npm:11.5.3"
   checksum: 10/824394f43827de37e961e9e344d4f0d2afb0347106ddafae620d0035c36337bc64e64cddbc17f6c630a73c9db34cf3f81211e3d43699a32e9f3641f391415b82
@@ -11352,12 +11331,12 @@ __metadata:
   linkType: hard
 
 "qs@npm:~6.16.0":
-  version: 6.16.0
-  resolution: "qs@npm:6.16.0"
+  version: 6.16.1
+  resolution: "qs@npm:6.16.1"
   dependencies:
     es-define-property: "npm:^1.0.1"
     side-channel: "npm:^1.1.1"
-  checksum: 10/7fbf9c2eb9c9bbd8997700caecc4b057ac259635873deefd5027fb26d06d79426cf468da55da87ffd147a24e93d3641352d8ac6664bd84688ad5b2f0b8d04828
+  checksum: 10/e33e0a5ceecb7bef81ea1f855365482045f55ba55278f40b8dbf9ee18eae8ef82d44246fe4e4009d6b6f102cbf2885a34b88c4272536cd628cde40b4ac9912c2
   languageName: node
   linkType: hard
 
@@ -13202,21 +13181,12 @@ __metadata:
   languageName: node
   linkType: hard
 
-"uuid@npm:^8.3.2":
-  version: 8.3.2
-  resolution: "uuid@npm:8.3.2"
+"uuid@npm:^11.1.1":
+  version: 11.1.1
+  resolution: "uuid@npm:11.1.1"
   bin:
-    uuid: dist/bin/uuid
-  checksum: 10/9a5f7aa1d6f56dd1e8d5f2478f855f25c645e64e26e347a98e98d95781d5ed20062d6cca2eecb58ba7c84bc3910be95c0451ef4161906abaab44f9cb68ffbdd1
-  languageName: node
-  linkType: hard
-
-"uuid@npm:^9.0.1":
-  version: 9.0.1
-  resolution: "uuid@npm:9.0.1"
-  bin:
-    uuid: dist/bin/uuid
-  checksum: 10/9d0b6adb72b736e36f2b1b53da0d559125ba3e39d913b6072f6f033e0c87835b414f0836b45bcfaf2bdf698f92297fea1c3cc19b0b258bc182c9c43cc0fab9f2
+    uuid: dist/esm/bin/uuid
+  checksum: 10/16411d3dc12a08d6691616c09a75e66a7f900ba1beef6628a76fe0602f82fae2ee537b564d0b7bc95c24f58d059ca9b58c75a1e806118efb50e17822ff00ddd2
   languageName: node
   linkType: hard
 
@@ -13812,18 +13782,18 @@ __metadata:
   linkType: hard
 
 "yaml@npm:^1.10.0":
-  version: 1.10.2
-  resolution: "yaml@npm:1.10.2"
-  checksum: 10/e088b37b4d4885b70b50c9fa1b7e54bd2e27f5c87205f9deaffd1fb293ab263d9c964feadb9817a7b129a5bf30a06582cb08750f810568ecc14f3cdbabb79cb3
+  version: 1.10.3
+  resolution: "yaml@npm:1.10.3"
+  checksum: 10/e2ef2feb92c708138f016c69777a0f1e45f6d3c5e7cbcda30807a98a37eda2e008bd4fa57352b043c65245a4c799d0c99d1f9b3425de40e70929e26d2ea38215
   languageName: node
   linkType: hard
 
 "yaml@npm:^2.2.2, yaml@npm:^2.3.4, yaml@npm:^2.7.0":
-  version: 2.8.0
-  resolution: "yaml@npm:2.8.0"
+  version: 2.9.1
+  resolution: "yaml@npm:2.9.1"
   bin:
     yaml: bin.mjs
-  checksum: 10/7d4bd9c10d0e467601f496193f2ac254140f8e36f96f5ff7f852b9ce37974168eb7354f4c36dc8837dde527a2043d004b6aff48818ec24a69ab2dd3c6b6c381c
+  checksum: 10/123c5e56a26f4962d3d5954971b2071a533d17041e00ae9ff6a5e634aed2503639bbdeea143b1610eac29613aad95a3a1d10f5fbda87b92203c039ce63934295
   languageName: node
   linkType: hard
 

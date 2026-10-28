@@ -1,6 +1,6 @@
+import type { LanguageModel } from '@metamask/kernel-language-model-service';
 import { mergeDisjointRecords } from '@metamask/kernel-utils';
 import type { Logger } from '@metamask/logger';
-import type { LanguageModel } from '@ocap/kernel-language-model-service';
 
 import { doAttempt } from './attempt.ts';
 import { TaskManager } from './task.ts';

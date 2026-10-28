@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Initial release as a published package (previously the private `@ocap/kernel-language-model-service`) ([#1215](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1215))
+
 ### Security
 
 - `makeHostRestrictedFetch` can no longer reach a host outside `allowedHosts`. The host was checked against one resolution of the input while `fetch` resolved it again (CWE-367), and a redirect out of the allowlist was followed unchecked ([#1026](https://github.com/MetaMask/ocap-kernel/pull/1026))
