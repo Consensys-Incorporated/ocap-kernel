@@ -45,6 +45,16 @@ jobs:
           path: packages/*/logs/performance/runs/
           if-no-files-found: ignore
           retention-days: 30
+      # One trial is enough to show. Summaries can't load the SVG charts, so
+      # those stay in the artifact.
+      - name: Summarize the report
+        if: ${{ always() && matrix.trial == 1 }}
+        run: |
+          for report in packages/*/logs/performance/runs/*/REPORT.md; do
+            [[ -f "$report" ]] || continue
+            grep -v '^!\[.*\](charts/.*\.svg)$' "$report" >>"$GITHUB_STEP_SUMMARY"
+            echo "Charts are in the \`report-1\` artifact." >>"$GITHUB_STEP_SUMMARY"
+          done
 
   verdict:
     name: Verdict
