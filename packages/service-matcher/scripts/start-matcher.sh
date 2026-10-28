@@ -14,17 +14,21 @@
 # If none of these yields an address the script exits with an error so
 # the operator can start the relay first (or pass its address directly).
 #
-# The matcher vat now ranks via an LLM-backed bridge process
-# (`@ocap/llm-bridge`) connected through a Unix-socket IOChannel. This
-# script also starts the bridge, which calls openclaw's OpenAI-compatible
-# /v1/chat/completions endpoint. Required env:
+# The matcher vat ranks via the `languageModelService` kernel service.
+# This script provisions the daemon's LLM config (`llm.json` in the OCAP
+# home) to point at openclaw's OpenAI-compatible /v1/chat/completions
+# endpoint; the daemon registers the service at startup and reads the
+# bearer token from this script's environment. Required env:
 #   OPENCLAW_GATEWAY_TOKEN  Bearer token for the openclaw gateway. Must
 #                           match `gateway.auth.token` in openclaw config.
 #   OPENCLAW_GATEWAY_URL    Optional. Default http://127.0.0.1:18789.
 #   OPENCLAW_AGENT_MODEL    Optional. Default "openclaw" (the gateway's
-#                           configured default agent).
+#                           configured default agent). Passed to the
+#                           matcher vat as its `model` parameter.
 # The matching openclaw config flag must be enabled on the gateway:
 #   gateway.http.endpoints.chatCompletions.enabled = true
+# `llm.json` stays in the OCAP home, and every later daemon start uses it,
+# until `ocap daemon purge`.
 #
 # Usage:
 #   start-matcher.sh [--relay MULTIADDR] [--no-build] [--keep-state]
@@ -53,8 +57,7 @@ Usage: $0 [--relay MULTIADDR] [--no-build] [--keep-state]
                      \$OCAP_RELAY_MULTIADDR and
                      \$LIBP2P_RELAY_HOME/relay.addr (default
                      \$HOME/.libp2p-relay/relay.addr).
-  --no-build         Skip building/bundling the matcher vat and
-                     building the llm-bridge package.
+  --no-build         Skip building/bundling the matcher vat.
   --keep-state       Do not purge any existing daemon state before
                      launching the matcher subcluster.
   --help, -h         Show this help.
@@ -93,7 +96,7 @@ fail() { echo "[start-matcher] ERROR: $*" >&2; exit 1; }
 # ---------------------------------------------------------------------------
 
 if [[ -z "${OPENCLAW_GATEWAY_TOKEN:-}" ]]; then
-  fail "OPENCLAW_GATEWAY_TOKEN must be set (the matcher vat now talks to an LLM bridge that calls the openclaw gateway)."
+  fail "OPENCLAW_GATEWAY_TOKEN must be set (the daemon's languageModelService calls the openclaw gateway with it)."
 fi
 
 # ---------------------------------------------------------------------------
@@ -117,14 +120,10 @@ PKG_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 REPO_ROOT="$(cd "$PKG_DIR/../.." && pwd)"
 OCAP_BIN="$REPO_ROOT/packages/kernel-cli/dist/app.js"
 BUNDLE_FILE="$PKG_DIR/src/matcher-vat/index.bundle"
-LLM_BRIDGE_BIN="$REPO_ROOT/packages/llm-bridge/dist/index.js"
 
-# Where the matcher vat's `llm` IOService lives, plus bookkeeping files
-# for the bridge process this script will spawn.
+# Where the daemon reads its LLM config from at startup.
 OCAP_HOME_DIR="${OCAP_HOME:-${HOME}/.ocap}"
-LLM_SOCKET_PATH="$OCAP_HOME_DIR/matcher-llm.sock"
-LLM_BRIDGE_PID_PATH="$OCAP_HOME_DIR/matcher-llm-bridge.pid"
-LLM_BRIDGE_LOG_PATH="$OCAP_HOME_DIR/matcher-llm-bridge.log"
+LLM_CONFIG_PATH="$OCAP_HOME_DIR/llm.json"
 
 if [[ ! -f "$OCAP_BIN" ]]; then
   fail "ocap CLI not found at $OCAP_BIN. Run \`yarn workspace @metamask/kernel-cli build\` first."
@@ -137,29 +136,11 @@ fi
 if $SKIP_BUILD; then
   info "Skipping build (--no-build)"
   [[ -f "$BUNDLE_FILE" ]] || fail "Bundle not found at $BUNDLE_FILE. Remove --no-build or build first."
-  [[ -f "$LLM_BRIDGE_BIN" ]] || fail "llm-bridge build not found at $LLM_BRIDGE_BIN. Remove --no-build or build first."
 else
   info "Building service-matcher package..."
   (cd "$REPO_ROOT" && yarn workspace @ocap/service-matcher build >&2)
   info "Bundling matcher vat..."
   (cd "$REPO_ROOT" && yarn workspace @ocap/service-matcher bundle-vat >&2)
-  info "Building llm-bridge package..."
-  (cd "$REPO_ROOT" && yarn workspace @ocap/llm-bridge build >&2)
-fi
-
-# ---------------------------------------------------------------------------
-# Reap any old llm-bridge process from a previous run
-# ---------------------------------------------------------------------------
-
-if [[ -f "$LLM_BRIDGE_PID_PATH" ]]; then
-  OLD_PID="$(tr -d '[:space:]' < "$LLM_BRIDGE_PID_PATH" || true)"
-  if [[ -n "$OLD_PID" ]] && kill -0 "$OLD_PID" 2>/dev/null; then
-    info "Reaping previous llm-bridge (pid $OLD_PID)..."
-    kill "$OLD_PID" 2>/dev/null || true
-    sleep 0.5
-    kill -KILL "$OLD_PID" 2>/dev/null || true
-  fi
-  rm -f "$LLM_BRIDGE_PID_PATH"
 fi
 
 # ---------------------------------------------------------------------------
@@ -171,11 +152,29 @@ if $FORCE_RESET; then
   (cd "$REPO_ROOT" && node "$OCAP_BIN" daemon purge --force >&2) || true
 fi
 
-info "Starting daemon..."
-# `daemon start` fails if one is already running; detect and continue.
-if ! (cd "$REPO_ROOT" && node "$OCAP_BIN" daemon start >&2); then
-  info "daemon start failed — assuming one is already running"
-fi
+# Provision the daemon's LLM config. Written after the purge (which
+# deletes it) and before `daemon start` (which reads it once, at
+# startup). The token itself stays out of the file: the daemon reads
+# it from OPENCLAW_GATEWAY_TOKEN, inherited from this script's
+# environment via `daemon start` below.
+mkdir -p "$OCAP_HOME_DIR"
+GATEWAY_URL="${OPENCLAW_GATEWAY_URL:-http://127.0.0.1:18789}" node -e "
+  const config = {
+    provider: 'open-v1',
+    baseUrl: process.env.GATEWAY_URL,
+    apiKeyEnv: 'OPENCLAW_GATEWAY_TOKEN',
+  };
+  require('fs').writeFileSync(process.argv[1], JSON.stringify(config, null, 2) + '\n');
+" "$LLM_CONFIG_PATH"
+info "Wrote LLM config → $LLM_CONFIG_PATH"
+
+# A daemon still running under --keep-state read llm.json, and the token,
+# when it started; restart it so this run's URL and token take effect.
+info "Restarting daemon..."
+(cd "$REPO_ROOT" && node "$OCAP_BIN" daemon stop >&2) ||
+  fail "Could not stop the running daemon."
+(cd "$REPO_ROOT" && node "$OCAP_BIN" daemon start >&2) ||
+  fail "Daemon failed to start; see $OCAP_HOME_DIR/daemon.log"
 
 daemon_exec() {
   (cd "$REPO_ROOT" && node "$OCAP_BIN" daemon exec "$@")
@@ -225,18 +224,22 @@ info "Remote comms connected"
 
 CONFIG=$(BUNDLE="file://$BUNDLE_FILE" \
          RESET="$FORCE_RESET" \
-         LLM_SOCKET="$LLM_SOCKET_PATH" \
+         MODEL="${OPENCLAW_AGENT_MODEL:-openclaw}" \
          node -e "
   const config = {
     config: {
       bootstrap: 'matcher',
       forceReset: process.env.RESET === 'true',
-      services: ['ocapURLIssuerService', 'ocapURLRedemptionService'],
-      io: {
-        llm: { type: 'socket', path: process.env.LLM_SOCKET }
-      },
+      services: [
+        'ocapURLIssuerService',
+        'ocapURLRedemptionService',
+        'languageModelService',
+      ],
       vats: {
-        matcher: { bundleSpec: process.env.BUNDLE }
+        matcher: {
+          bundleSpec: process.env.BUNDLE,
+          parameters: { model: process.env.MODEL },
+        }
       }
     }
   };
@@ -264,46 +267,6 @@ MATCHER_URL=$(echo "$LAUNCH_RESULT" | node -e "
   }
   process.stdout.write(url);
 ")
-
-# ---------------------------------------------------------------------------
-# Start the LLM bridge
-#
-# The matcher subcluster is now running, which means the kernel has
-# created the Unix socket at $LLM_SOCKET_PATH. Spawn the bridge as a
-# detached background process; it will connect to the socket (with its
-# own retry loop) and proxy ingest/query traffic to the openclaw
-# gateway.
-# ---------------------------------------------------------------------------
-
-info "Starting llm-bridge..."
-mkdir -p "$OCAP_HOME_DIR"
-: > "$LLM_BRIDGE_LOG_PATH"
-
-# Export the socket path so the bridge picks it up. The other env
-# vars (OPENCLAW_GATEWAY_TOKEN/_URL/_MODEL) are inherited verbatim
-# from this script's environment.
-export LLM_BRIDGE_SOCKET="$LLM_SOCKET_PATH"
-
-# `setsid` (where available) detaches the bridge from this script's
-# process group so a `kill` on the script doesn't take the bridge with
-# it. macOS doesn't ship setsid by default; fall back to `nohup`.
-if command -v setsid >/dev/null 2>&1; then
-  setsid node "$LLM_BRIDGE_BIN" >>"$LLM_BRIDGE_LOG_PATH" 2>&1 &
-else
-  nohup node "$LLM_BRIDGE_BIN" >>"$LLM_BRIDGE_LOG_PATH" 2>&1 &
-fi
-LLM_BRIDGE_PID=$!
-echo "$LLM_BRIDGE_PID" > "$LLM_BRIDGE_PID_PATH"
-info "llm-bridge spawned (pid $LLM_BRIDGE_PID); log → $LLM_BRIDGE_LOG_PATH"
-
-# Quick liveness check: if the bridge died immediately (e.g. token
-# misconfigured at the openclaw side), surface that here rather than
-# letting the operator discover it on the first registration attempt.
-sleep 0.5
-if ! kill -0 "$LLM_BRIDGE_PID" 2>/dev/null; then
-  rm -f "$LLM_BRIDGE_PID_PATH"
-  fail "llm-bridge exited immediately — see $LLM_BRIDGE_LOG_PATH"
-fi
 
 info "Matcher ready."
 echo "$MATCHER_URL"

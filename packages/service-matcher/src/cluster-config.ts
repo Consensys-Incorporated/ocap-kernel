@@ -25,25 +25,38 @@ export type MatcherBootstrapResult = {
 /**
  * Build a `ClusterConfig` for launching the matcher subcluster.
  *
+ * The matcher requires the `languageModelService` kernel service for
+ * ranking, so the daemon hosting this subcluster must have an LLM
+ * configured (see the kernel CLI's `llm.json`).
+ *
  * @param options - Configuration options.
  * @param options.bundleBaseUrl - Base URL (or filesystem path) where the
  * matcher vat bundle is reachable. The bundle filename is appended.
+ * @param options.model - Model name the matcher sends with every ranking
+ * request. For an openclaw gateway this is an agent target like
+ * `openclaw` or `openclaw/<agentId>`.
  * @param options.forceReset - Whether to reset the subcluster on launch.
  * Defaults to `false`.
  * @returns A ClusterConfig ready for `kernel.launchSubcluster(...)`.
  */
 export function makeMatcherClusterConfig(options: {
   bundleBaseUrl: string;
+  model: string;
   forceReset?: boolean;
 }): ClusterConfig {
-  const { bundleBaseUrl, forceReset = false } = options;
+  const { bundleBaseUrl, model, forceReset = false } = options;
   return {
     bootstrap: MATCHER_VAT_NAME,
     forceReset,
-    services: ['ocapURLIssuerService', 'ocapURLRedemptionService'],
+    services: [
+      'ocapURLIssuerService',
+      'ocapURLRedemptionService',
+      'languageModelService',
+    ],
     vats: {
       [MATCHER_VAT_NAME]: {
         bundleSpec: `${bundleBaseUrl}/${MATCHER_BUNDLE_FILENAME}`,
+        parameters: { model },
       },
     },
   };

@@ -1,6 +1,9 @@
 import { assertSupportedPlatform } from '@metamask/kernel-node-runtime/daemon';
 import { spawn } from 'node:child_process';
-import { describe, expect, it, vi } from 'vitest';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 
 import { pingDaemon } from './daemon-client.ts';
 import { ensureDaemon } from './daemon-spawn.ts';
@@ -36,5 +39,27 @@ describe('ensureDaemon', () => {
     await ensureDaemon('/tmp/daemon.sock');
 
     expect(spawn).not.toHaveBeenCalled();
+  });
+
+  it('fails at once, naming the log, when the daemon exits during startup', async () => {
+    const ocapHome = await mkdtemp(join(tmpdir(), 'daemon-spawn-'));
+    vi.stubEnv('OCAP_HOME', ocapHome);
+    onTestFinished(async () => {
+      vi.unstubAllEnvs();
+      await rm(ocapHome, { recursive: true, force: true });
+    });
+    vi.mocked(pingDaemon).mockResolvedValue(false);
+    vi.mocked(spawn).mockReturnValueOnce({
+      unref: vi.fn(),
+      once: vi.fn((event: string, listener: (code: number) => void) => {
+        if (event === 'exit') {
+          listener(1);
+        }
+      }),
+    } as never);
+
+    await expect(ensureDaemon('/tmp/daemon.sock')).rejects.toThrow(
+      `Daemon exited during startup (code 1); see ${ocapHome}/daemon.log`,
+    );
   });
 });

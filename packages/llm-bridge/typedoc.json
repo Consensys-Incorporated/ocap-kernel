@@ -1,8 +1,0 @@
-{
-  "entryPoints": [],
-  "excludePrivate": true,
-  "hideGenerator": true,
-  "out": "docs",
-  "tsconfig": "./tsconfig.build.json",
-  "projectDocuments": ["documents/*.md"]
-}

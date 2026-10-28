@@ -5,7 +5,7 @@ import type {
   ChatMessage,
   ChatResult,
   ToolCall,
-} from '@ocap/kernel-language-model-service';
+} from '@metamask/kernel-language-model-service';
 import { describe, expect, it, vi } from 'vitest';
 
 import { makeChatAgent } from './chat-agent.ts';
