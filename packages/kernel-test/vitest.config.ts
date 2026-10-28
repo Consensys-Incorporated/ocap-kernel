@@ -11,11 +11,7 @@ export default defineConfig((args) => {
     defineProject({
       test: {
         name: 'kernel-test',
-        exclude: [
-          ...configDefaults.exclude,
-          './src/**/*.perf.test.ts',
-          './src/performance/**',
-        ],
+        exclude: [...configDefaults.exclude, './src/**/*.perf.test.ts'],
         setupFiles: [
           fileURLToPath(
             import.meta.resolve('@metamask/kernel-shims/endoify-node'),

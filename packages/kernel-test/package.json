@@ -34,7 +34,6 @@
     "test": "vitest run --config vitest.config.ts",
     "test:clean": "yarn test --no-cache --coverage.clean",
     "test:dev": "yarn test --mode development",
-    "test:performance": "vitest run --config vitest.config.performance.ts",
     "perf:report": "node src/performance/report.ts",
     "test:types": "tsc --project tsconfig.json",
     "test:verbose": "yarn test --reporter verbose",

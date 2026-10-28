@@ -9,7 +9,6 @@
     "../../vitest.config.ts",
     "./src",
     "./vitest.config.ts",
-    "./vitest.config.performance.ts",
     "./vitest.config.perf.ts"
   ]
 }
