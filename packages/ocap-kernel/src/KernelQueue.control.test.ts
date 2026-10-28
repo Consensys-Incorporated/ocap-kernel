@@ -398,6 +398,27 @@ describe('ending the run loop', () => {
     });
   });
 
+  it('writes at once a request made during the afterCommit of the last crank', async () => {
+    const { kernelQueue } = await makeFixture(1);
+    let written: (() => string) | undefined;
+    const running = kernelQueue.run(async () => {
+      kernelQueue.endRunLoop().catch(() => undefined);
+      return {
+        afterCommit: async () => {
+          written = watch(kernelQueue.writeOutsideCrank(() => 'written'));
+          await delay(0);
+        },
+      };
+    });
+
+    await running;
+    await delay(0);
+    expect({
+      written: written?.(),
+      state: kernelQueue.getRunLoopStatus().state,
+    }).toStrictEqual({ written: 'fulfilled', state: 'stopped' });
+  });
+
   it('refuses a control operation asked for after it', async () => {
     const { kernelQueue } = await makeFixture(0);
     const running = kernelQueue.run(async () => undefined);
