@@ -114,6 +114,8 @@ export class Kernel {
    * counts against the references the kernel actually holds at the end of each
    * crank, and throw on any mismatch. Intended for tests and debugging; the
    * audit walks the whole store.
+   * @param options.kernelServices - Kernel services to register before the run
+   * loop starts.
    */
   // oxlint-disable-next-line ocap/no-restricted-syntax
   private constructor(
@@ -129,6 +131,7 @@ export class Kernel {
       onRunLoopFailure?: OnRunLoopFailure;
       vatRelaunchTimeoutMs?: number;
       auditRefCounts?: boolean;
+      kernelServices?: { name: string; service: object }[];
     } = {},
   ) {
     this.#platformServices = platformServices;
@@ -248,6 +251,9 @@ export class Kernel {
       redemptionService.name,
       redemptionService.service,
     );
+    for (const { name, service } of options.kernelServices ?? []) {
+      this.#kernelServiceManager.registerKernelServiceObject(name, service);
+    }
 
     harden(this);
   }
@@ -269,6 +275,9 @@ export class Kernel {
    * @param options.vatRelaunchTimeoutMs - How long a vat restart waits for the new worker before terminating the vat, in milliseconds: more than 0 and at most 2^31 - 1. Defaults to 30 seconds.
    * @param options.auditRefCounts - If true, verify reference counts against
    * ground truth at the end of each crank and throw on any mismatch.
+   * @param options.kernelServices - Kernel services to register before the run
+   * loop starts. Registering one later writes the store into whatever crank is
+   * open (#1171).
    * @returns A promise for the new kernel instance.
    */
   static async make(
@@ -285,6 +294,7 @@ export class Kernel {
       onRunLoopFailure?: OnRunLoopFailure;
       vatRelaunchTimeoutMs?: number;
       auditRefCounts?: boolean;
+      kernelServices?: { name: string; service: object }[];
     } = {},
   ): Promise<Kernel> {
     const kernel = new Kernel(platformServices, kernelDatabase, options);

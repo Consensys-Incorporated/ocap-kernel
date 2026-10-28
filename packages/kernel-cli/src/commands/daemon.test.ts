@@ -1,7 +1,10 @@
 import '@metamask/kernel-shims/endoify';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { rm } from 'node:fs/promises';
+
 import {
+  handleDaemonBegone,
   handleDaemonQueueMessage,
   handleDaemonStart,
   handleRedeemURL,
@@ -46,6 +49,23 @@ vi.mock('./relay.ts', () => ({
 }));
 
 const socketPath = '/tmp/test.sock';
+
+describe('handleDaemonBegone', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+  });
+
+  it('deletes the LLM config with the rest of the daemon state', async () => {
+    vi.stubEnv('OCAP_HOME', '/mock/.ocap');
+    vi.spyOn(process.stderr, 'write').mockReturnValue(true);
+    vi.mocked(readPidFile).mockResolvedValueOnce(undefined);
+
+    await handleDaemonBegone(socketPath);
+
+    expect(rm).toHaveBeenCalledWith('/mock/.ocap/llm.json', { force: true });
+  });
+});
 
 describe('handleDaemonStart', () => {
   afterEach(() => {
