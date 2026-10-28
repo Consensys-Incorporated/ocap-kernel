@@ -1942,6 +1942,28 @@ describe('KernelQueue', () => {
       },
     );
 
+    it('does not pin the resolution slots of a resolve it refuses', () => {
+      const kpid = asKRef('kp1');
+      (kernelStore.getKernelPromise as unknown as MockInstance).mockReturnValue(
+        {
+          state: 'fulfilled',
+          decider: v1,
+          subscribers: [],
+        },
+      );
+      kernelQueue.subscriptions.set(kpid, {
+        resolve: vi.fn(),
+        reject: vi.fn(),
+      });
+
+      expect(() =>
+        kernelQueue.resolvePromises(v1, [
+          [kpid, false, { body: '', slots: [asKRef('ko1')] }],
+        ]),
+      ).toThrow('already resolved');
+      expect(kernelStore.pinObject).not.toHaveBeenCalled();
+    });
+
     it('handles resolutions with undefined vatId (kernel decider)', () => {
       const kpid = asKRef('kp123');
       const resolution: KernelOneResolution = [

@@ -106,6 +106,22 @@ describe('VatSyscall', () => {
     },
   );
 
+  it('does not forget the promises of a resolve the kernel refuses', () => {
+    (
+      kernelQueue.resolvePromises as unknown as MockInstance
+    ).mockImplementationOnce(() => {
+      throw new Error('"kp1" was already resolved');
+    });
+
+    const result = vatSys.handleSyscall([
+      'resolve',
+      [['kp1', false, { body: '', slots: [] }]],
+    ] as VatSyscallObject);
+
+    expect(result).toStrictEqual(['error', '"kp1" was already resolved']);
+    expect(kernelStore.forgetKref).not.toHaveBeenCalled();
+  });
+
   it('enqueues send immediately when outside a crank', () => {
     (kernelStore.isInCrank as unknown as MockInstance).mockReturnValue(false);
     const target = 'ko1';

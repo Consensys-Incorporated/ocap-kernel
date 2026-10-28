@@ -562,10 +562,12 @@ export class KernelRouter {
         this.#kernelStore.translateCapDataKtoE(endpointId, tPromise.value),
       ]);
     }
-    // Liveslots forgets each vpid in the batch on receipt, and names the
-    // promise by a fresh one if it ever sends it again, so the entries go now.
-    // A remote's c-list is mirrored by its peer, which
-    // would have to retire the same entries, so remotes keep theirs for now.
+    // Liveslots forgets each vpid in the batch on receipt, so the entries go
+    // now. One exception: a promise that virtual data still holds keeps its
+    // vpid, and a vat that sends it again is terminated, as under SwingSet.
+    // An entry may already be gone, and forgetting it then does nothing.
+    // Remotes keep theirs, since a remote's peer mirrors its c-list and would
+    // have to retire the same entries.
     if (isVatId(endpointId)) {
       for (const toResolve of targets) {
         this.#kernelStore.forgetKref(endpointId, toResolve);

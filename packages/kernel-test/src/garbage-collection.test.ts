@@ -302,8 +302,7 @@ describe('Garbage Collection', () => {
       expect(kernelStore.getImporters(sharedKRef)).toStrictEqual(
         [importerVatId, secondImporterVatId].sort(),
       );
-      // Two importers, plus the resolved createObject promise whose value
-      // still carries the slot
+      // Two importers, plus the pin taken for the caller of `createObject`
       expect(kernelStore.getObjectRefCount(sharedKRef)).toStrictEqual({
         reachable: 3,
         recognizable: 3,
@@ -365,7 +364,7 @@ describe('Garbage Collection', () => {
       });
 
       expect(kernelStore.getImporters(sharedKRef)).toStrictEqual([]);
-      // Only the createObject result's stored value still names it
+      // Only the pin taken for the caller of `createObject` still holds it
       expect(kernelStore.getObjectRefCount(sharedKRef)).toStrictEqual({
         reachable: 1,
         recognizable: 1,
