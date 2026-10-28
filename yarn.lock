@@ -3650,6 +3650,7 @@ __metadata:
   resolution: "@ocap/kernel-agents-repl@workspace:packages/kernel-agents-repl"
   dependencies:
     "@arethetypeswrong/cli": "npm:^0.17.4"
+    "@endo/eventual-send": "npm:^1.5.0"
     "@metamask/auto-changelog": "npm:^6.2.1"
     "@metamask/kernel-errors": "workspace:^"
     "@metamask/kernel-utils": "workspace:^"
@@ -3771,6 +3772,8 @@ __metadata:
     "@metamask/kernel-utils": "workspace:^"
     "@metamask/logger": "workspace:^"
     "@metamask/ocap-kernel": "workspace:^"
+    "@ocap/kernel-agents": "workspace:^"
+    "@ocap/kernel-agents-repl": "workspace:^"
     "@ocap/kernel-language-model-service": "workspace:^"
     "@ocap/nodejs-test-workers": "workspace:^"
     "@ocap/remote-iterables": "workspace:^"

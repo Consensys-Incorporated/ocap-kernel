@@ -2,11 +2,9 @@ import { SampleGenerationError } from '@metamask/kernel-errors';
 import type { Logger } from '@metamask/logger';
 import type { SampleCollector } from '@ocap/kernel-agents/types';
 
-import { StatementMessage } from './messages.ts';
-
 /**
  * A simple sample collector that collects content from a stream until a stop
- * string is encountered and returns the content prior, formatted.
+ * string is encountered and returns the content prior, trimmed.
  *
  * XXX This functionality is typically available in the language model service,
  * but a reimplementation appears here to remain agnostic to the service API.
@@ -16,8 +14,8 @@ import { StatementMessage } from './messages.ts';
  * @param args.maxChunkCount - The maximum number of chunks to collect before
  *   throwing an error.
  * @param args.logger - The logger to use for the sample collector.
- * @returns A function that collects a delta of a streaming response, returning a
- *   StatementMessage if the stop string is encountered or null otherwise.
+ * @returns A function that collects a delta of a streaming response, returning
+ *   the statement code if the stop string is encountered or null otherwise.
  */
 export const makeSampleCollector = ({
   stop,
@@ -27,7 +25,7 @@ export const makeSampleCollector = ({
   stop: string;
   maxChunkCount?: number;
   logger?: Logger;
-}): SampleCollector<StatementMessage> => {
+}): SampleCollector<string> => {
   let buffer = '';
   let chunkCount = 0;
   return (delta: string) => {
@@ -39,7 +37,7 @@ export const makeSampleCollector = ({
         throw new SampleGenerationError(buffer, new Error('Empty content'));
       }
       logger?.info('content:', content);
-      return StatementMessage.fromCode(content.trim());
+      return content.trim();
     }
     if (maxChunkCount && chunkCount > maxChunkCount) {
       throw new SampleGenerationError(
