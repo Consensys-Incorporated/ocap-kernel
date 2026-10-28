@@ -59,7 +59,7 @@
     "@metamask/utils": "^12.0.0"
   },
   "devDependencies": {
-    "@arethetypeswrong/cli": "^0.17.4",
+    "@arethetypeswrong/cli": "^0.18.5",
     "@metamask/auto-changelog": "^6.2.1",
     "@metamask/kernel-shims": "workspace:^",
     "@ocap/repo-tools": "workspace:^",

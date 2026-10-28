@@ -85,7 +85,7 @@
     "test:dev:quiet": "yarn test:dev --reporter @ocap/repo-tools/vitest-reporters/silent"
   },
   "devDependencies": {
-    "@arethetypeswrong/cli": "^0.17.4",
+    "@arethetypeswrong/cli": "^0.18.5",
     "@metamask/auto-changelog": "^6.2.1",
     "@ocap/repo-tools": "workspace:^",
     "@types/node": "^22.13.1",
@@ -104,9 +104,9 @@
   "dependencies": {
     "@endo/eventual-send": "^1.5.0",
     "@metamask/kernel-errors": "workspace:^",
+    "@metamask/kernel-language-model-service": "workspace:^",
     "@metamask/kernel-utils": "workspace:^",
     "@metamask/logger": "workspace:^",
-    "@ocap/kernel-language-model-service": "workspace:^",
     "partial-json": "^0.1.7",
     "ses": "^2.3.0"
   }

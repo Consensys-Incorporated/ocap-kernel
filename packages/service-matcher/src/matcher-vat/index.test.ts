@@ -1,4 +1,8 @@
 import type {
+  ChatParams,
+  ChatResult,
+} from '@metamask/kernel-language-model-service';
+import type {
   ContactPoint,
   ServiceDescription,
 } from '@metamask/service-discovery-types';
@@ -13,16 +17,15 @@ vi.mock('@endo/eventual-send', () => ({
   E: vi.fn((obj: unknown) => obj),
 }));
 
-type IOService = {
-  read: () => Promise<string | null>;
-  write: (data: string) => Promise<void>;
-};
-
 type Services = {
   ocapURLIssuerService: { issue: (obj: unknown) => Promise<string> };
   ocapURLRedemptionService: { redeem: (url: string) => Promise<unknown> };
-  llm: IOService;
+  languageModelService: {
+    chat: (params: ChatParams) => Promise<ChatResult>;
+  };
 };
+
+const TEST_MODEL = 'test-model';
 
 const sampleDescription = (
   name = 'Signer',
@@ -67,91 +70,81 @@ function makeMockContact(options: {
 }
 
 /**
- * Build a fake `llm` IOService. Every `write()` call enqueues the
- * incoming line and synthesizes a reply via the supplied `replyFor`
- * callback; subsequent `read()` calls drain the queued replies in
- * order, matching the kernel-side IOChannel's "one line at a time"
- * semantics. Defaults to acknowledging every ingest with `{ kind:
- * "ingested" }` and answering every query with an empty match list,
- * which the per-test setup can override.
+ * Build a fake `languageModelService`. Each `chat()` call records its
+ * params and replies with assistant content synthesized by the supplied
+ * `replyContent` callback (default: an empty match list, `[]`).
  *
  * @param options - Mock options.
- * @param options.replyFor - Custom reply function. Receives the parsed
- * request and returns the reply object the bridge would send back.
- * @returns The IOService plus inspection helpers.
+ * @param options.replyContent - Custom reply function. Receives the
+ * chat params and returns the assistant message content (or throws to
+ * simulate a gateway failure).
+ * @returns The mock service plus inspection helpers.
  */
-function makeMockLlm(
+function makeMockLms(
   options: {
-    replyFor?: (request: unknown) => unknown;
+    replyContent?: (params: ChatParams) => string | Promise<string>;
   } = {},
 ) {
-  const writes: unknown[] = [];
-  const replyQueue: string[] = [];
-  const replyFor =
-    options.replyFor ??
-    ((request: unknown) => {
-      const { kind } = request as { kind?: string };
-      if (kind === 'ingest') {
-        return { kind: 'ingested' };
-      }
-      if (kind === 'query') {
-        return { kind: 'matches', matches: [] };
-      }
-      return { kind: 'error', message: `unknown request kind: ${kind ?? '?'}` };
-    });
+  const calls: ChatParams[] = [];
+  const replyContent = options.replyContent ?? (() => '[]');
 
-  const write = vi.fn(async (data: string) => {
-    const parsed: unknown = JSON.parse(data);
-    writes.push(parsed);
-    replyQueue.push(JSON.stringify(replyFor(parsed)));
-  });
-  const read = vi.fn(async () => {
-    const next = replyQueue.shift();
-    return next ?? null;
+  const chat = vi.fn(async (params: ChatParams): Promise<ChatResult> => {
+    calls.push(params);
+    const content = await replyContent(params);
+    return {
+      id: `chat-${calls.length}`,
+      model: params.model,
+      choices: [
+        {
+          index: 0,
+          message: { role: 'assistant', content },
+          finish_reason: 'stop',
+        },
+      ],
+      usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
+    };
   });
 
-  const llm: IOService = { read, write };
   return {
-    llm,
-    writes,
-    write,
-    read,
+    service: { chat },
+    chat,
+    calls,
     /**
-     * Inspect the most recently sent request.
+     * Inspect the most recent chat request.
      *
-     * @returns The last parsed request the matcher wrote, or `undefined`.
+     * @returns The last chat params the matcher sent, or `undefined`.
      */
-    lastRequest: (): unknown => writes[writes.length - 1],
+    lastParams: (): ChatParams | undefined => calls[calls.length - 1],
   };
 }
 
 /**
  * Build a default services bag whose `issue` returns a deterministic
  * URL, whose `redeem` resolves a preconfigured contact, and whose
- * `llm` IOService can be swapped per-test.
+ * `languageModelService` can be swapped per-test.
  *
  * @param options - Mock options.
- * @param options.llm - Override for the llm IOService and inspection
- * helpers (default: an LLM that acks ingests and returns empty matches).
+ * @param options.lms - Override for the language model service mock
+ * (default: a model that answers every ranking request with `[]`).
  * @returns The services bag plus helpers to inspect calls.
  */
 function makeMockServices(
-  options: { llm?: ReturnType<typeof makeMockLlm> } = {},
+  options: { lms?: ReturnType<typeof makeMockLms> } = {},
 ) {
   const issue = vi.fn(async (_obj: unknown) => 'ocap:matcher-url@peer');
   let redeemResult: unknown = null;
   const redeem = vi.fn(async (_url: string) => redeemResult);
-  const llmMock = options.llm ?? makeMockLlm();
+  const lmsMock = options.lms ?? makeMockLms();
   const services: Services = {
     ocapURLIssuerService: { issue },
     ocapURLRedemptionService: { redeem },
-    llm: llmMock.llm,
+    languageModelService: lmsMock.service,
   };
   return {
     services,
     issue,
     redeem,
-    llm: llmMock,
+    lms: lmsMock,
     setRedeem: (value: unknown) => {
       redeemResult = value;
     },
@@ -227,8 +220,28 @@ describe('matcher vat', () => {
   let mocks: ReturnType<typeof makeMockServices>;
 
   beforeEach(async () => {
-    root = buildRootObject(makeFakeVatPowers(), {}, makeFakeBaggage() as never);
+    root = buildRootObject(
+      makeFakeVatPowers(),
+      { model: TEST_MODEL },
+      makeFakeBaggage() as never,
+    );
     mocks = makeMockServices();
+  });
+
+  describe('parameters', () => {
+    it.each([
+      ['missing', {}],
+      ['empty', { model: '' }],
+      ['non-string', { model: 42 }],
+    ])('throws when the model parameter is %s', (_case, parameters) => {
+      expect(() =>
+        buildRootObject(
+          makeFakeVatPowers(),
+          parameters,
+          makeFakeBaggage() as never,
+        ),
+      ).toThrow(/"model" vat parameter is required/u);
+    });
   });
 
   describe('bootstrap', () => {
@@ -242,7 +255,7 @@ describe('matcher vat', () => {
       await expect(
         root.bootstrap({}, {
           ocapURLRedemptionService: mocks.services.ocapURLRedemptionService,
-          llm: mocks.services.llm,
+          languageModelService: mocks.services.languageModelService,
         } as Services),
       ).rejects.toThrow('ocapURLIssuerService is required');
     });
@@ -251,23 +264,23 @@ describe('matcher vat', () => {
       await expect(
         root.bootstrap({}, {
           ocapURLIssuerService: mocks.services.ocapURLIssuerService,
-          llm: mocks.services.llm,
+          languageModelService: mocks.services.languageModelService,
         } as Services),
       ).rejects.toThrow('ocapURLRedemptionService is required');
     });
 
-    it('throws if the llm IOService is missing', async () => {
+    it('throws if the languageModelService is missing', async () => {
       await expect(
         root.bootstrap({}, {
           ocapURLIssuerService: mocks.services.ocapURLIssuerService,
           ocapURLRedemptionService: mocks.services.ocapURLRedemptionService,
         } as Services),
-      ).rejects.toThrow(/llm IOService is required/u);
+      ).rejects.toThrow(/languageModelService is required/u);
     });
   });
 
   describe('registerServiceByRef', () => {
-    it('confirms the token, stores the service, and feeds it to the bridge', async () => {
+    it('confirms the token and stores the service without calling the LLM', async () => {
       await root.bootstrap({}, mocks.services);
       const publicFacet = root.getPublicFacet();
       const description = sampleDescription('Foo');
@@ -283,14 +296,9 @@ describe('matcher vat', () => {
       expect(all).toHaveLength(1);
       expect(all[0]?.description).toStrictEqual(description);
 
-      // Bridge round-trip should have happened: one ingest write,
-      // one ingest read.
-      expect(mocks.llm.write).toHaveBeenCalledTimes(1);
-      expect(mocks.llm.read).toHaveBeenCalledTimes(1);
-      expect(mocks.llm.lastRequest()).toMatchObject({
-        kind: 'ingest',
-        service: { id: 'svc:0', description: description.description },
-      });
+      // Registration is purely local; the LLM only sees the registry
+      // at query time.
+      expect(mocks.lms.chat).not.toHaveBeenCalled();
     });
 
     it('rejects when the provider reports a token mismatch', async () => {
@@ -305,7 +313,6 @@ describe('matcher vat', () => {
         publicFacet.registerServiceByRef(contact, 'wrong-token'),
       ).rejects.toThrow(/token mismatch/u);
       expect(root.listAll()).toHaveLength(0);
-      expect(mocks.llm.write).not.toHaveBeenCalled();
     });
 
     it('calls confirmServiceRegistration before getServiceDescription', async () => {
@@ -341,11 +348,13 @@ describe('matcher vat', () => {
       expect(getServiceDescription).not.toHaveBeenCalled();
     });
 
-    it('rolls back the local registry when bridge ingest fails', async () => {
-      const llm = makeMockLlm({
-        replyFor: () => ({ kind: 'error', message: 'bridge bad' }),
+    it('registers successfully even when the LLM is failing', async () => {
+      const lms = makeMockLms({
+        replyContent: () => {
+          throw new Error('gateway down');
+        },
       });
-      mocks = makeMockServices({ llm });
+      mocks = makeMockServices({ lms });
       await root.bootstrap({}, mocks.services);
       const publicFacet = root.getPublicFacet();
       const { contact } = makeMockContact({
@@ -353,10 +362,46 @@ describe('matcher vat', () => {
         expectedToken: 'tok',
       });
 
+      // Registration never touches the LLM, so a broken gateway can't
+      // block providers from registering.
+      await publicFacet.registerServiceByRef(contact, 'tok');
+      expect(root.listAll()).toHaveLength(1);
+    });
+  });
+
+  describe('description validation', () => {
+    it('refuses a description whose apiSpec is malformed, and keeps answering queries', async () => {
+      const lms = makeMockLms({
+        replyContent: () => '[{"id":"svc:0","rationale":"fits"}]',
+      });
+      mocks = makeMockServices({ lms });
+      await root.bootstrap({}, mocks.services);
+      const publicFacet = root.getPublicFacet();
+      const bad = makeMockContact({
+        description: {
+          ...sampleDescription('Bad'),
+          apiSpec: {},
+        } as unknown as ServiceDescription,
+        expectedToken: 'tok-bad',
+      });
+      const good = makeMockContact({
+        description: sampleDescription('Good'),
+        expectedToken: 'tok-good',
+      });
+
       await expect(
-        publicFacet.registerServiceByRef(contact, 'tok'),
-      ).rejects.toThrow(/bridge ingest error: bridge bad/u);
-      expect(root.listAll()).toHaveLength(0);
+        publicFacet.registerServiceByRef(bad.contact, 'tok-bad'),
+      ).rejects.toThrow(/invalid service description/u);
+      await publicFacet.registerServiceByRef(good.contact, 'tok-good');
+
+      expect(
+        await publicFacet.findServices({ description: 'anything' }),
+      ).toStrictEqual([
+        {
+          description: sampleDescription('Good'),
+          rationale: 'fits',
+        },
+      ]);
     });
   });
 
@@ -519,107 +564,167 @@ describe('matcher vat', () => {
   });
 
   describe('findServices', () => {
-    it('asks the bridge and returns whatever services it cites', async () => {
-      const llm = makeMockLlm({
-        replyFor: (request: unknown) => {
-          const { kind } = request as { kind?: string };
-          if (kind === 'ingest') {
-            return { kind: 'ingested' };
-          }
-          // Cite svc:0 (the only one we'll register) on every query.
-          return {
-            kind: 'matches',
-            matches: [{ id: 'svc:0', rationale: 'because' }],
-          };
-        },
-      });
-      mocks = makeMockServices({ llm });
-      await root.bootstrap({}, mocks.services);
+    /**
+     * Register one sample service so ranking has something to cite.
+     *
+     * @param description - The service description to register.
+     * @returns The registered description.
+     */
+    async function registerOne(
+      description = sampleDescription('Foo'),
+    ): Promise<ServiceDescription> {
       const publicFacet = root.getPublicFacet();
-      const description = sampleDescription('Foo');
       const { contact } = makeMockContact({
         description,
         expectedToken: 't',
       });
       await publicFacet.registerServiceByRef(contact, 't');
+      return description;
+    }
 
-      const matches = await publicFacet.findServices({
+    it('asks the model and returns whatever services it cites', async () => {
+      const lms = makeMockLms({
+        // Cite svc:0 (the only one we'll register) on every query.
+        replyContent: () => '[{"id":"svc:0","rationale":"because"}]',
+      });
+      mocks = makeMockServices({ lms });
+      await root.bootstrap({}, mocks.services);
+      const description = await registerOne();
+
+      const matches = await root.getPublicFacet().findServices({
         description: 'whatever',
       });
 
       expect(matches).toHaveLength(1);
       expect(matches[0]?.description).toStrictEqual(description);
       expect(matches[0]?.rationale).toBe('because');
-      // Last bridge request was the query (with the user's text).
-      expect(llm.lastRequest()).toMatchObject({
-        kind: 'query',
-        query: 'whatever',
-      });
     });
 
-    it('returns an empty list when the bridge cites no services', async () => {
-      await root.bootstrap({}, mocks.services);
-      const publicFacet = root.getPublicFacet();
-      const matches = await publicFacet.findServices({ description: 'q' });
-      expect(matches).toStrictEqual([]);
-    });
-
-    it('skips ids the bridge cites that do not exist in the registry', async () => {
-      const llm = makeMockLlm({
-        replyFor: (request: unknown) => {
-          const { kind } = request as { kind?: string };
-          if (kind === 'ingest') {
-            return { kind: 'ingested' };
-          }
-          return {
-            kind: 'matches',
-            matches: [
-              { id: 'svc:0', rationale: 'real one' },
-              { id: 'svc:nonexistent', rationale: 'hallucinated' },
-            ],
-          };
+    it('answers with the service the prompt described when it is replaced mid-call', async () => {
+      const original = sampleDescription('Foo', 'ocap:key1@peerA', 'foo');
+      const replacement = sampleDescription('Foo', 'ocap:key2@peerA', 'foo');
+      const lms = makeMockLms({
+        // While the model is thinking, the same provider re-registers,
+        // evicting the svc:0 the prompt carried.
+        replyContent: async () => {
+          const { contact } = makeMockContact({
+            description: replacement,
+            expectedToken: 't2',
+          });
+          await root.getPublicFacet().registerServiceByRef(contact, 't2');
+          return '[{"id":"svc:0","rationale":"because"}]';
         },
       });
-      mocks = makeMockServices({ llm });
+      mocks = makeMockServices({ lms });
       await root.bootstrap({}, mocks.services);
-      const publicFacet = root.getPublicFacet();
-      const { contact } = makeMockContact({
-        description: sampleDescription(),
-        expectedToken: 't',
-      });
-      await publicFacet.registerServiceByRef(contact, 't');
+      await registerOne(original);
 
-      const matches = await publicFacet.findServices({ description: 'q' });
+      const matches = await root.getPublicFacet().findServices({
+        description: 'whatever',
+      });
+
+      expect(matches).toStrictEqual([
+        { description: original, rationale: 'because' },
+      ]);
+    });
+
+    it('sends the configured model, the registry digest, and the query', async () => {
+      const lms = makeMockLms({
+        replyContent: () => '[]',
+      });
+      mocks = makeMockServices({ lms });
+      await root.bootstrap({}, mocks.services);
+      const description = await registerOne();
+
+      await root.getPublicFacet().findServices({ description: 'find me foo' });
+
+      const params = lms.lastParams();
+      expect(params?.model).toBe(TEST_MODEL);
+      expect(params?.messages).toHaveLength(2);
+      expect(params?.messages[0]?.role).toBe('system');
+      const userContent = params?.messages[1]?.content;
+      expect(userContent).toContain('svc:0');
+      expect(userContent).toContain(description.description);
+      expect(userContent).toContain('find me foo');
+    });
+
+    it('returns an empty list without calling the model when nothing is registered', async () => {
+      await root.bootstrap({}, mocks.services);
+      const matches = await root
+        .getPublicFacet()
+        .findServices({ description: 'q' });
+      expect(matches).toStrictEqual([]);
+      expect(mocks.lms.chat).not.toHaveBeenCalled();
+    });
+
+    it('returns an empty list when the model cites no services', async () => {
+      await root.bootstrap({}, mocks.services);
+      await registerOne();
+      const matches = await root
+        .getPublicFacet()
+        .findServices({ description: 'q' });
+      expect(matches).toStrictEqual([]);
+      expect(mocks.lms.chat).toHaveBeenCalledTimes(1);
+    });
+
+    it('skips ids the model cites that do not exist in the registry', async () => {
+      const lms = makeMockLms({
+        replyContent: () =>
+          '[{"id":"svc:0","rationale":"real one"},' +
+          '{"id":"svc:nonexistent","rationale":"hallucinated"}]',
+      });
+      mocks = makeMockServices({ lms });
+      await root.bootstrap({}, mocks.services);
+      await registerOne();
+
+      const matches = await root
+        .getPublicFacet()
+        .findServices({ description: 'q' });
 
       expect(matches).toHaveLength(1);
       expect(matches[0]?.rationale).toBe('real one');
     });
 
-    it('propagates bridge errors instead of falling back', async () => {
-      let queryCount = 0;
-      const llm = makeMockLlm({
-        replyFor: (request: unknown) => {
-          const { kind } = request as { kind?: string };
-          if (kind === 'ingest') {
-            return { kind: 'ingested' };
-          }
-          queryCount += 1;
-          return { kind: 'error', message: 'gateway sad' };
-        },
+    it('throws when the model cites only unknown ids', async () => {
+      const lms = makeMockLms({
+        replyContent: () => '[{"id":"svc:999","rationale":"hallucinated"}]',
       });
-      mocks = makeMockServices({ llm });
+      mocks = makeMockServices({ lms });
       await root.bootstrap({}, mocks.services);
-      const publicFacet = root.getPublicFacet();
-      const { contact } = makeMockContact({
-        description: sampleDescription(),
-        expectedToken: 't',
-      });
-      await publicFacet.registerServiceByRef(contact, 't');
+      await registerOne();
 
       await expect(
-        publicFacet.findServices({ description: 'q' }),
-      ).rejects.toThrow(/bridge query error: gateway sad/u);
-      expect(queryCount).toBe(1);
+        root.getPublicFacet().findServices({ description: 'q' }),
+      ).rejects.toThrow(/cited only unknown ids/u);
+    });
+
+    it('propagates LLM errors instead of falling back', async () => {
+      const lms = makeMockLms({
+        replyContent: () => {
+          throw new Error('gateway sad');
+        },
+      });
+      mocks = makeMockServices({ lms });
+      await root.bootstrap({}, mocks.services);
+      await registerOne();
+
+      await expect(
+        root.getPublicFacet().findServices({ description: 'q' }),
+      ).rejects.toThrow(/gateway sad/u);
+      expect(lms.chat).toHaveBeenCalledTimes(1);
+    });
+
+    it('throws when the model reply is not valid match JSON', async () => {
+      const lms = makeMockLms({
+        replyContent: () => 'Sure! Here are your matches: none.',
+      });
+      mocks = makeMockServices({ lms });
+      await root.bootstrap({}, mocks.services);
+      await registerOne();
+
+      await expect(
+        root.getPublicFacet().findServices({ description: 'q' }),
+      ).rejects.toThrow(/not parseable JSON/u);
     });
   });
 

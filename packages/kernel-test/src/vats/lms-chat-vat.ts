@@ -1,7 +1,7 @@
 import type { ERef } from '@endo/eventual-send';
+import { makeChatClient } from '@metamask/kernel-language-model-service';
+import type { ChatService } from '@metamask/kernel-language-model-service';
 import { makeDefaultExo } from '@metamask/kernel-utils/exo';
-import { makeChatClient } from '@ocap/kernel-language-model-service';
-import type { ChatService } from '@ocap/kernel-language-model-service';
 
 import { unwrapTestLogger } from '../test-powers.ts';
 import type { TestPowers } from '../test-powers.ts';

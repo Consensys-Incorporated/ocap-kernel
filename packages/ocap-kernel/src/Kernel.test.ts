@@ -23,6 +23,7 @@ import type {
 } from './types.ts';
 import { VatHandle } from './vats/VatHandle.ts';
 import { asKRef, asSubclusterId, asVatId } from '../test/branded.ts';
+import { KernelServiceManager } from './KernelServiceManager.ts';
 import { makeMapKernelDatabase } from '../test/storage.ts';
 
 const mocks = vi.hoisted(() => {
@@ -324,6 +325,30 @@ describe('Kernel', () => {
         mockKernelDatabase,
       );
       expect(kernel).toBeDefined();
+    });
+
+    it('registers the kernel services it is given before the run loop starts', async () => {
+      const register = vi.spyOn(
+        KernelServiceManager.prototype,
+        'registerKernelServiceObject',
+      );
+      const service = { chat: vi.fn() };
+      const db = makeMapKernelDatabase();
+
+      await Kernel.make(mockPlatformServices, db, {
+        kernelServices: [{ name: 'languageModelService', service }],
+      });
+
+      const call = register.mock.calls.findIndex(
+        ([name]) => name === 'languageModelService',
+      );
+      expect(call).not.toBe(-1);
+      expect(register.mock.invocationCallOrder[call]).toBeLessThan(
+        mocks.KernelQueue.lastInstance.run.mock.invocationCallOrder[0] ?? 0,
+      );
+      expect(
+        db.kernelKVStore.get('kernelService.languageModelService'),
+      ).toBeDefined();
     });
 
     it('honors resetStorage option and clears persistent state', async () => {
