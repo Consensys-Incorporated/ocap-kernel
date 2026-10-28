@@ -73,6 +73,7 @@
   "dependencies": {
     "@endo/eventual-send": "^1.5.0",
     "@endo/patterns": "^1.9.1",
+    "@metamask/kernel-platforms": "workspace:^",
     "@metamask/kernel-utils": "workspace:^",
     "@metamask/logger": "workspace:^",
     "@metamask/ocap-kernel": "workspace:^",

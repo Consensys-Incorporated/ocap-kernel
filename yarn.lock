@@ -2548,6 +2548,7 @@ __metadata:
   resolution: "@metamask/kernel-platforms@workspace:packages/kernel-platforms"
   dependencies:
     "@arethetypeswrong/cli": "npm:^0.18.5"
+    "@endo/eventual-send": "npm:^1.5.0"
     "@endo/exo": "npm:^1.7.0"
     "@endo/patterns": "npm:^1.9.1"
     "@metamask/auto-changelog": "npm:^6.2.1"
@@ -3607,6 +3608,7 @@ __metadata:
     "@metamask/auto-changelog": "npm:^6.2.1"
     "@metamask/kernel-cli": "workspace:^"
     "@metamask/kernel-node-runtime": "workspace:^"
+    "@metamask/kernel-platforms": "workspace:^"
     "@metamask/kernel-shims": "workspace:^"
     "@metamask/kernel-store": "workspace:^"
     "@metamask/kernel-utils": "workspace:^"
@@ -3769,6 +3771,7 @@ __metadata:
     "@metamask/kernel-cli": "workspace:^"
     "@metamask/kernel-language-model-service": "workspace:^"
     "@metamask/kernel-node-runtime": "workspace:^"
+    "@metamask/kernel-platforms": "workspace:^"
     "@metamask/kernel-shims": "workspace:^"
     "@metamask/kernel-store": "workspace:^"
     "@metamask/kernel-utils": "workspace:^"

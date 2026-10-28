@@ -660,26 +660,11 @@ export type PlatformServices = {
 
 // Cluster configuration
 
-/**
- * Per-vat network configuration. Present only when the vat opts into the
- * `fetch` endowment via {@link VatConfig.globals}; an absent or missing
- * `allowedHosts` is treated as a denial of all hosts (there is no implicit
- * allow-all).
- */
-export type VatNetworkConfig = {
-  allowedHosts: string[];
-};
-
-export const vatNetworkConfigStruct = object({
-  allowedHosts: array(string()),
-});
-
 export type VatConfig = UserCodeSpec & {
   creationOptions?: Record<string, Json>;
   parameters?: Record<string, Json>;
   platformConfig?: Partial<PlatformConfig>;
   globals?: AllowedGlobalName[];
-  network?: VatNetworkConfig;
 };
 
 const UserCodeSpecStruct = union([
@@ -701,22 +686,15 @@ export const VatConfigStruct = define<VatConfig>('VatConfig', (value) => {
     return false;
   }
 
-  const {
-    creationOptions,
-    parameters,
-    platformConfig,
-    globals,
-    network,
-    ...specOnly
-  } = value as Record<string, unknown>;
+  const { creationOptions, parameters, platformConfig, globals, ...specOnly } =
+    value as Record<string, unknown>;
 
   return (
     is(specOnly, UserCodeSpecStruct) &&
     (!creationOptions || is(creationOptions, UnsafeJsonStruct)) &&
     (!parameters || is(parameters, UnsafeJsonStruct)) &&
     (!platformConfig || is(platformConfig, platformConfigStruct)) &&
-    (!globals || is(globals, array(AllowedGlobalNameStruct))) &&
-    (!network || is(network, vatNetworkConfigStruct))
+    (!globals || is(globals, array(AllowedGlobalNameStruct)))
   );
 });
 
