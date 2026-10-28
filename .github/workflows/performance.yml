@@ -1,0 +1,63 @@
+name: Performance
+
+# Runs each package's `test:perf` script. Timings depend on the host, so these
+# tests stay out of the blocking suite and run here weekly, each trial on its
+# own runner.
+
+on:
+  schedule:
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  trial:
+    name: Trial ${{ matrix.trial }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        trial: [1, 2, 3, 4, 5]
+    steps:
+      - name: Checkout and setup environment
+        uses: MetaMask/action-checkout-and-setup@0543b5929698c71e3ccc6ed24eac87825669b5de # v3
+        with:
+          is-high-risk-environment: false
+          node-version: 24.x
+      - run: yarn build
+      # A failing timing is a result, not an error: the verdict job judges it.
+      - run: yarn test:perf --reporter=default --reporter=json --outputFile=perf-report.json
+        continue-on-error: true
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: perf-${{ matrix.trial }}
+          path: packages/*/perf-report.json
+          retention-days: 7
+
+  verdict:
+    name: Verdict
+    needs: trial
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          sparse-checkout: scripts
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: perf-*
+          path: reports
+      - run: ./scripts/performance-verdict.sh reports
+        env:
+          # A majority of the five trials.
+          MIN_FAILURES: 3
+          LABEL: performance-regression
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}

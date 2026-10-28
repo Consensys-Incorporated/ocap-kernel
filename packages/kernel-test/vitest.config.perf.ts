@@ -4,7 +4,7 @@ import { defineConfig, defineProject } from 'vitest/config';
 
 import defaultConfig from '../../vitest.config.ts';
 
-// Timing tests, run on a schedule by .github/workflows/vat-parallelism.yml
+// Timing tests, run on a schedule by .github/workflows/performance.yml
 // rather than in the default suite.
 export default defineConfig((args) => {
   const config = mergeConfig(

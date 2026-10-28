@@ -34,7 +34,7 @@ const testSubcluster = {
 // available, and only its upper bound is pinned. Waits use no CPU, so k vats
 // waiting should take about as long as one on any hardware.
 //
-// Runs weekly in .github/workflows/vat-parallelism.yml, which reads each test's
+// Runs weekly in .github/workflows/performance.yml, which reads each test's
 // `ratio` and `bound` from its task meta.
 describe('vat parallelism', () => {
   let kernel: Kernel;
