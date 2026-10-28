@@ -9,6 +9,8 @@ const VAT_COUNT = 4;
 const SPIN_ITERATIONS = 12_000_000;
 const SLEEP_MS = 300;
 const TRIALS = 3;
+const SPIN_BOUND = 1.25;
+const SLEEP_BOUND = 1.5;
 
 const vatNames = Array.from({ length: VAT_COUNT }, (_, i) => `vat${i}`);
 
@@ -31,6 +33,9 @@ const testSubcluster = {
 // one. Compute can't beat the CPU, so its speed-up depends on the cores
 // available, and only its upper bound is pinned. Waits use no CPU, so k vats
 // waiting should take about as long as one on any hardware.
+//
+// Runs weekly in .github/workflows/performance.yml, which reads each test's
+// `ratio` and `bound` from its task meta.
 describe('vat parallelism', () => {
   let kernel: Kernel;
   let roots: KRef[];
@@ -87,7 +92,9 @@ describe('vat parallelism', () => {
     await timeAll(roots, 'spin', SPIN_ITERATIONS);
   }, 60_000);
 
-  it('takes no longer for k vats computing at once than for each alone, summed', async () => {
+  it('takes no longer for k vats computing at once than for each alone, summed', async ({
+    task,
+  }) => {
     // Trials alternate between the two measurements, so a burst of load from
     // elsewhere is as likely to land on either.
     const eachFastest = roots.map(() => Infinity);
@@ -102,20 +109,24 @@ describe('vat parallelism', () => {
       all = Math.min(all, await timeAll(roots, 'spin', SPIN_ITERATIONS));
     }
     const each = eachFastest.reduce((sum, time) => sum + time, 0);
+    Object.assign(task.meta, { ratio: all / each, bound: SPIN_BOUND });
 
     expect(
       all / each,
       `each vat alone ${each.toFixed(0)} ms in total, ${VAT_COUNT} at once ${all.toFixed(0)} ms`,
-    ).toBeLessThan(1.25);
+    ).toBeLessThan(SPIN_BOUND);
   });
 
-  it('takes about as long for k vats waiting at once as for one', async () => {
+  it('takes about as long for k vats waiting at once as for one', async ({
+    task,
+  }) => {
     const one = await timeFastest(roots.slice(0, 1), 'sleep', SLEEP_MS);
     const all = await timeFastest(roots, 'sleep', SLEEP_MS);
+    Object.assign(task.meta, { ratio: all / one, bound: SLEEP_BOUND });
 
     expect(
       all / one,
       `one vat ${one.toFixed(0)} ms, ${VAT_COUNT} vats ${all.toFixed(0)} ms`,
-    ).toBeLessThan(1.5);
+    ).toBeLessThan(SLEEP_BOUND);
   });
 });

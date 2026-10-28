@@ -4,28 +4,30 @@ import { defineConfig, defineProject } from 'vitest/config';
 
 import defaultConfig from '../../vitest.config.ts';
 
+// Timing tests, run on a schedule by .github/workflows/performance.yml
+// rather than in the default suite.
 export default defineConfig((args) => {
   const config = mergeConfig(
     args,
     defaultConfig,
     defineProject({
       test: {
-        name: 'kernel-test:performance',
+        name: 'kernel-test:perf',
         setupFiles: [
           fileURLToPath(
             import.meta.resolve('@metamask/kernel-shims/endoify-node'),
           ),
         ],
-        include: ['./src/performance/**/*.test.ts'],
-        // Charts the run's reports when it is over.
+        include: ['./src/**/*.perf.test.ts'],
+        testTimeout: 30_000,
+        // Charts the run's profile reports when it is over.
         globalSetup: ['./src/performance/global-setup.ts'],
-        // One profile at a time, so they do not compete for the CPU.
+        // One file at a time, so they do not compete for the CPU.
         fileParallelism: false,
       },
     }),
   );
-  // Instrumentation would skew the timings.
-  delete config.test.coverage;
+  config.test.coverage.enabled = false;
   // Profiles print their results, but the kernel's own console output would
   // bury them.
   config.test.silent = false;

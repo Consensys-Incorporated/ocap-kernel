@@ -11,14 +11,13 @@ export default defineConfig((args) => {
     defineProject({
       test: {
         name: 'kernel-test',
+        exclude: [...configDefaults.exclude, './src/**/*.perf.test.ts'],
         setupFiles: [
           fileURLToPath(
             import.meta.resolve('@metamask/kernel-shims/endoify-node'),
           ),
         ],
         testTimeout: 30_000,
-        // Run on their own by `test:performance`.
-        exclude: [...configDefaults.exclude, './src/performance/**'],
       },
     }),
   );

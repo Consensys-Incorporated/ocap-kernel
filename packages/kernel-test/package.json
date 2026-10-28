@@ -34,11 +34,11 @@
     "test": "vitest run --config vitest.config.ts",
     "test:clean": "yarn test --no-cache --coverage.clean",
     "test:dev": "yarn test --mode development",
-    "test:performance": "vitest run --config vitest.config.performance.ts",
     "perf:report": "node src/performance/report.ts",
     "test:types": "tsc --project tsconfig.json",
     "test:verbose": "yarn test --reporter verbose",
     "test:watch": "vitest --config vitest.config.ts",
+    "test:perf": "vitest run --config vitest.config.perf.ts",
     "test:dev:quiet": "yarn test:dev --reporter @ocap/repo-tools/vitest-reporters/silent"
   },
   "dependencies": {
