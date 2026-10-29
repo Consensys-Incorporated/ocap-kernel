@@ -205,16 +205,12 @@ export class KernelQueue {
     this.#runLoopState.state === 'idle' || Fail`run loop already started`;
     this.#runLoopState = { state: 'running' };
     this.#isOffline = isOffline;
-    // So the store can refuse a savepoint taken alongside a crank.
-    this.#kernelStore.setRunLoopRunning(true);
     try {
       return await this.#runLoop(deliver);
     } catch (error) {
       // The recorded failure rather than the raw throw, so that the embedder's
       // handler and `getRunLoopStatus` describe one object rather than two.
       throw this.#failRunLoop(error);
-    } finally {
-      this.#kernelStore.setRunLoopRunning(false);
     }
   }
 

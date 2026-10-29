@@ -68,7 +68,7 @@
  *   kernelService.${serviceName} = ${koid}   // kref of kernel service object ${serviceName}
  */
 
-import { Fail, q } from '@endo/errors';
+import { Fail } from '@endo/errors';
 import type { KernelDatabase, KVStore, VatStore } from '@metamask/kernel-store';
 import { Logger } from '@metamask/logger';
 
@@ -208,7 +208,6 @@ export function makeKernelStore(kdb: KernelDatabase, logger?: Logger) {
     // replay).
     maybeFreeKrefs: new Set<KRef>(),
     inCrank: false,
-    runLoopRunning: false,
     savepoints: [],
     crankBuffer: [],
     auditRefCounts: false,
@@ -316,50 +315,6 @@ export function makeKernelStore(kdb: KernelDatabase, logger?: Logger) {
     return newId;
   }
 
-  /**
-   * Record whether the run loop is running, which is what decides whether a
-   * caller may take a savepoint of its own.
-   *
-   * @param running - Whether it is running.
-   */
-  function setRunLoopRunning(running: boolean): void {
-    context.runLoopRunning = running;
-  }
-
-  /**
-   * Create a savepoint for atomic operations on persistent storage.
-   *
-   * @param name - The savepoint name.
-   */
-  function createSavepoint(name: string): void {
-    // The run loop's own savepoints do not come through here; this one is the
-    // outermost on the connection, and so the transaction's commit point.
-    // Taken while the loop runs, it nests inside whatever crank is open, or
-    // opens a transaction the next crank nests inside, and either way the run
-    // loop decides whether the caller's writes survive.
-    !context.runLoopRunning ||
-      Fail`createSavepoint ${q(name)} while the run loop is running`;
-    kdb.createSavepoint(name);
-  }
-
-  /**
-   * Release (commit) a savepoint.
-   *
-   * @param name - The savepoint name.
-   */
-  function releaseSavepoint(name: string): void {
-    kdb.releaseSavepoint(name);
-  }
-
-  /**
-   * Rollback to a savepoint.
-   *
-   * @param name - The savepoint name.
-   */
-  function rollbackSavepoint(name: string): void {
-    kdb.rollbackSavepoint(name);
-  }
-
   return harden({
     ...id,
     ...queue,
@@ -384,10 +339,6 @@ export function makeKernelStore(kdb: KernelDatabase, logger?: Logger) {
     clear,
     reset,
     provideIncarnationId,
-    createSavepoint,
-    setRunLoopRunning,
-    releaseSavepoint,
-    rollbackSavepoint,
     // NOTE: kv is intentionally NOT exposed here. All KV access should go
     // through typed store methods to preserve branded type safety.
 

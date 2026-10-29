@@ -485,47 +485,6 @@ describe('ending the run loop', () => {
 });
 
 describe('the run loop', () => {
-  it('refuses a savepoint taken alongside a crank', async () => {
-    const { kernelStore, kernelQueue } = await makeFixture(0);
-    const running = kernelQueue.run(async () => undefined);
-
-    expect(() => kernelStore.createSavepoint('mine')).toThrow(
-      'while the run loop is running',
-    );
-    await kernelQueue.endRunLoop();
-    await running;
-  });
-
-  it.each([
-    {
-      ended: 'is ended',
-      end: async (kernelQueue: KernelQueue): Promise<void> => {
-        const running = kernelQueue.run(async () => undefined);
-        await kernelQueue.endRunLoop();
-        await running;
-      },
-    },
-    {
-      ended: 'dies',
-      end: async (kernelQueue: KernelQueue): Promise<void> => {
-        kernelQueue.enqueueTerminateVat(asVatId('v1'));
-        await kernelQueue
-          .run(async () => {
-            throw new Error('boom');
-          })
-          .catch(() => undefined);
-      },
-    },
-  ])('allows a savepoint once it $ended', async ({ end }) => {
-    const { kernelStore, kernelQueue } = await makeFixture(0);
-    await end(kernelQueue);
-
-    expect(() => {
-      kernelStore.createSavepoint('mine');
-      kernelStore.releaseSavepoint('mine');
-    }).not.toThrow();
-  });
-
   it('cannot run again once it has been ended', async () => {
     const { kernelQueue } = await makeFixture(0);
     const running = kernelQueue.run(async () => undefined);

@@ -54,7 +54,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **BREAKING:** `clearStorage`, `reset` and `terminateAllVats` are refused once the run loop has died; restart the kernel instead, with `resetStorage` to clear its state ([#1105](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1105))
 - **BREAKING:** `getImporters` returns `EndpointId[]`, and includes remotes and terminated vats ([#1088](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1088))
-- `KernelStore.createSavepoint` refuses one taken while the run loop is running, whose writes would commit or roll back with whatever crank is open ([#1106](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1106))
 - **BREAKING:** `Kernel.make`'s `ioChannelFactory` option is now `ioListenerFactory`, and the exported `IOChannelFactory` type is replaced by `IOListener` and `IOListenerFactory`. A cluster config's `io` entries now create listeners; vats call `accept()` to obtain a channel instead of reading and writing the endowment directly ([#1007](https://github.com/MetaMask/ocap-kernel/pull/1007))
 - Attribute a failed subcluster vat launch to the specific vat by kernel id and `ClusterConfig` name (e.g. `Failed to launch vat v3 (bob)`), preserving the original error as the `cause` ([#975](https://github.com/MetaMask/ocap-kernel/pull/975))
 - **BREAKING:** Remove `VatConfig.platformConfig.fetch` — migrate to `globals: ['fetch', ...]` + `network.allowedHosts` ([#942](https://github.com/MetaMask/ocap-kernel/pull/942))
@@ -78,6 +77,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Removed
 
+- **BREAKING:** Remove the kernel store's `createSavepoint`, `releaseSavepoint`, `rollbackSavepoint` and `releaseAllSavepoints`; called from outside the run loop's own crank handling, they could commit or roll back part of a crank ([#1106](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1106))
 - **BREAKING:** Remove the CommonJS build; the package is ESM-only. Its entry points are `.js` and `.d.ts` files, formerly `.mjs`/`.cjs` and `.d.mts`/`.d.cts` ([#1186](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1186))
 - **BREAKING:** Remove `rpc.js`, the CommonJS mirror of the `./rpc` export for Browserify ([#1186](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1186))
 

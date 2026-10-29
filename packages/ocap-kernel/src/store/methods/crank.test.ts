@@ -298,22 +298,6 @@ describe('crank methods', () => {
       expect(context.resolveCrank).toBeUndefined();
       expect(await waiter).toBeUndefined();
     });
-  });
-
-  describe('releaseAllSavepoints', () => {
-    it('should release all savepoints', () => {
-      context.inCrank = true;
-      context.savepoints = [makeSavepoint('test')];
-      crankMethods.releaseAllSavepoints();
-      expect(kdb.releaseSavepoint).toHaveBeenCalledWith('t0');
-      expect(context.savepoints).toStrictEqual([]);
-    });
-
-    it('should not call releaseSavepoint if no savepoints exist', () => {
-      context.inCrank = true;
-      crankMethods.releaseAllSavepoints();
-      expect(kdb.releaseSavepoint).not.toHaveBeenCalled();
-    });
 
     it('goes back to the outermost savepoint when the release fails', () => {
       context.inCrank = true;
@@ -325,9 +309,7 @@ describe('crank methods', () => {
         throw new Error('database is gone');
       });
 
-      expect(() => crankMethods.releaseAllSavepoints()).toThrow(
-        'database is gone',
-      );
+      expect(() => crankMethods.endCrank()).toThrow('database is gone');
 
       expect([...context.maybeFreeKrefs]).toStrictEqual(['ko1']);
       expect(context.savepoints).toStrictEqual([]);
@@ -345,7 +327,7 @@ describe('crank methods', () => {
         throw new Error('caches are gone');
       });
 
-      expect(() => crankMethods.releaseAllSavepoints()).toThrow(
+      expect(() => crankMethods.endCrank()).toThrow(
         expect.objectContaining({
           message: expect.stringContaining('caches are gone'),
           cause: expect.objectContaining({ message: 'database is gone' }),

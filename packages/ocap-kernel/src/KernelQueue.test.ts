@@ -57,7 +57,6 @@ describe('KernelQueue', () => {
       nextTerminatedVatCleanup: vi.fn(),
       collectGarbage: vi.fn(),
       assertRefCountsIfAuditing: vi.fn(),
-      setRunLoopRunning: vi.fn(),
       runQueueLength: vi.fn(),
       dequeueRun: vi.fn(),
       enqueueRun: vi.fn(),

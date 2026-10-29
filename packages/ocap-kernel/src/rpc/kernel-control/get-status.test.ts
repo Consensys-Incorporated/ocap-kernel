@@ -79,7 +79,6 @@ describe('getStatusHandler', () => {
         nextTerminatedVatCleanup: vi.fn(),
         dequeueRun: vi.fn(),
         flushCrankBuffer: vi.fn().mockReturnValue([]),
-        setRunLoopRunning: vi.fn(),
       } as unknown as KernelStore;
       return { queue: new KernelQueue(store, vi.fn()), store };
     };
