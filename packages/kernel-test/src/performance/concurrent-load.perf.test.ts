@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   countKeys,
-  describePlatform,
   envNumber,
   envNumbers,
   makeProfileKernel,
@@ -11,8 +10,8 @@ import {
   runClosedLoop,
   summarize,
   toMarkdown,
-  publishTable,
-  writeReport,
+  printTable,
+  writeTable,
 } from './utils.ts';
 import type { Stats } from './utils.ts';
 
@@ -106,13 +105,6 @@ describe('message delivery under concurrent load', () => {
       };
 
       const results: CellResult[] = [];
-      const report = {
-        date: new Date().toISOString(),
-        platform: describePlatform(),
-        krefs: KREFS,
-        messages: MESSAGES,
-        results,
-      };
       const stem = `concurrent-load-${pairs * 2}-vats`;
 
       for (const [route, routeSend] of Object.entries(routes) as [
@@ -139,11 +131,11 @@ describe('message delivery under concurrent load', () => {
             latencyMs: summarize(latencies),
             rssBytes: process.memoryUsage.rss(),
           });
-          await writeReport(stem, report);
+          await writeTable(stem, renderResults(results));
         }
       }
 
-      await publishTable(stem, renderResults(results));
+      printTable(stem, renderResults(results));
 
       expect(results).toHaveLength(2 * CONCURRENCIES.length);
     },

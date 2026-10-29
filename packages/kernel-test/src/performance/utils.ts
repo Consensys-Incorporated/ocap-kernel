@@ -234,23 +234,6 @@ export async function runClosedLoop({
 }
 
 /**
- * Describe the machine a profile ran on.
- *
- * @returns The platform description.
- */
-export function describePlatform(): Record<string, unknown> {
-  return {
-    os: `${os.platform()} ${os.release()}`,
-    arch: os.arch(),
-    cpu: os.cpus()[0]?.model,
-    cpus: os.cpus().length,
-    memoryBytes: os.totalmem(),
-    node: process.version,
-    store: 'sqlite (nodejs, file)',
-  };
-}
-
-/**
  * Render rows as a Markdown table.
  *
  * @param headers - The column headers.
@@ -264,45 +247,40 @@ export function toMarkdown(headers: string[], rows: string[][]): string {
 }
 
 /**
- * Where profiles leave their results. The performance workflow uploads it.
+ * Where profiles leave their results tables. The performance workflow uploads
+ * it.
  */
 export const RESULTS_DIR = fileURLToPath(
   new URL('../../logs/performance/', import.meta.url),
 );
 
 /**
- * Write a profile's report as JSON to {@link RESULTS_DIR}.
- *
- * @param stem - The file name, less its extension.
- * @param report - The report.
- */
-export async function writeReport(
-  stem: string,
-  report: unknown,
-): Promise<void> {
-  await mkdir(RESULTS_DIR, { recursive: true });
-  await writeFile(
-    path.join(RESULTS_DIR, `${stem}.json`),
-    `${JSON.stringify(report, null, 2)}\n`,
-  );
-}
-
-/**
- * Print a profile's results table and write it to {@link RESULTS_DIR}, from
- * which the performance workflow shows it in the run summary.
+ * Write a profile's results table to {@link RESULTS_DIR}, from which the
+ * performance workflow shows it in the run summary. Profiles call it after each
+ * step, so that a run cut short keeps the steps it finished.
  *
  * @param stem - The file name, less its extension.
  * @param table - The Markdown table.
  */
-export async function publishTable(stem: string, table: string): Promise<void> {
-  // Shown through the filter in `vitest.config.perf.ts`.
-  // oxlint-disable-next-line no-console
-  console.log(`[performance] ${stem}\n\n${table}\n`);
+export async function writeTable(stem: string, table: string): Promise<void> {
+  const platform = `Node ${process.version}, ${os.cpus().length}× ${os.cpus()[0]?.model ?? 'unknown CPU'}, ${(os.totalmem() / 2 ** 30).toFixed(0)} GiB`;
   await mkdir(RESULTS_DIR, { recursive: true });
   await writeFile(
     path.join(RESULTS_DIR, `${stem}.md`),
-    `### ${stem}\n\n${table}\n`,
+    `### ${stem}\n\n${platform}\n\n${table}\n`,
   );
+}
+
+/**
+ * Print a profile's finished results table.
+ *
+ * @param stem - The profile's name.
+ * @param table - The Markdown table.
+ */
+export function printTable(stem: string, table: string): void {
+  // Shown through the filter in `vitest.config.perf.ts`.
+  // oxlint-disable-next-line no-console
+  console.log(`[performance] ${stem}\n\n${table}\n`);
 }
 
 /**
