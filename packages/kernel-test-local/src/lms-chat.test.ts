@@ -1,7 +1,7 @@
 import '@metamask/kernel-shims/endoify-node';
 
-import { makeOpenV1NodejsService } from '@ocap/kernel-language-model-service';
-import { makeMockOpenV1Fetch } from '@ocap/kernel-language-model-service/test-utils';
+import { makeOpenV1NodejsService } from '@metamask/kernel-language-model-service';
+import { makeMockOpenV1Fetch } from '@metamask/kernel-language-model-service/test-utils';
 import { describe, it } from 'vitest';
 
 import { runLmsChatKernelTest } from './lms-chat.ts';

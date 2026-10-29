@@ -13,25 +13,30 @@
  * matcher restart, providers must re-register. Making the registry
  * durable is a planned follow-up; doing so brings its own obligations
  * (eviction of stale registrations when providers disappear, liveness
- * detection, and reconciling persisted entries with the bridge's LLM
- * context) that need to be designed before that change lands.
+ * detection) that need to be designed before that change lands.
  *
- * Ranking is delegated to an LLM-backed bridge process via an
- * `IOService` endowment named `llm`. On every successful registration
- * the matcher feeds the LLM a digest of the service (description +
- * method names); on every `findServices` call it asks the LLM to pick
- * matches against the user's natural-language query and replies
- * accordingly. There is no fallback ranker — bridge errors propagate
- * to the caller so problems are visible during development.
+ * Ranking is delegated to the `languageModelService` kernel service
+ * (see `@metamask/kernel-language-model-service`), requested via the
+ * cluster config's `services` list. Ranking is stateless: every
+ * `findServices` call sends the full current registry plus the query
+ * in a single chat-completion request, so registrations never involve
+ * the LLM and there is no model-side context to drift out of sync with
+ * the registry. There is no fallback ranker — LLM errors propagate to
+ * the caller so problems are visible during development.
  */
 
 import { E } from '@endo/eventual-send';
+import type {
+  ChatParams,
+  ChatResult,
+} from '@metamask/kernel-language-model-service';
 import { makeDefaultExo } from '@metamask/kernel-utils/exo';
 import type {
   Baggage,
   OcapURLIssuerService,
   OcapURLRedemptionService,
 } from '@metamask/ocap-kernel';
+import { ServiceDescriptionStruct } from '@metamask/service-discovery-types';
 import type {
   ContactPoint,
   ObjectSpec,
@@ -41,6 +46,14 @@ import type {
   ServiceMatcher,
   ServiceQuery,
 } from '@metamask/service-discovery-types';
+import { validate } from '@metamask/superstruct';
+
+import type { MatchEntry, ServiceDigest } from './ranker.ts';
+import {
+  MATCHER_SYSTEM_PROMPT,
+  formatRankingPrompt,
+  parseMatches,
+} from './ranker.ts';
 
 type RegisteredService = {
   id: string;
@@ -49,43 +62,19 @@ type RegisteredService = {
 };
 
 /**
- * The vat-facing shape of an `IOService`. The kernel-side
- * implementation lives in `packages/ocap-kernel/src/io/io-service.ts`
- * and is wired up via the cluster config's `io` block.
+ * The vat-facing shape of the `languageModelService` kernel service.
+ * Kernel services exclude the streaming `chat` overload because an
+ * `AsyncIterable` cannot cross the kernel marshal boundary.
  */
-type IOService = {
-  read: () => Promise<string | null>;
-  write: (data: string) => Promise<void>;
+type LanguageModelService = {
+  chat: (params: ChatParams & { stream?: false }) => Promise<ChatResult>;
 };
 
 type Services = {
   ocapURLIssuerService: OcapURLIssuerService;
   ocapURLRedemptionService: OcapURLRedemptionService;
-  llm: IOService;
+  languageModelService: LanguageModelService;
 };
-
-/** Wire-protocol shapes — must agree with `@ocap/llm-bridge`'s `protocol.ts`. */
-type IngestRequest = {
-  kind: 'ingest';
-  service: {
-    id: string;
-    description: string;
-    methods: { name: string; description?: string }[];
-  };
-};
-
-type QueryRequest = {
-  kind: 'query';
-  query: string;
-};
-
-type IngestedReply = { kind: 'ingested' };
-type MatchesReply = {
-  kind: 'matches';
-  matches: { id: string; rationale: string }[];
-};
-type ErrorReply = { kind: 'error'; message: string };
-type Reply = IngestedReply | MatchesReply | ErrorReply;
 
 /**
  * Vat-data primitives we need from the `vatPowers` argument. Provided
@@ -109,7 +98,10 @@ type VatPowers = {
  *
  * @param vatPowers - Vat powers; `VatData` is required for the durable
  * publicFacet.
- * @param _parameters - Parameters passed to the vat (unused).
+ * @param parameters - Parameters passed to the vat. `model` (required)
+ * is the model name sent with every ranking request — for an openclaw
+ * gateway this is an agent target like `openclaw` or
+ * `openclaw/<agentId>`.
  * @param baggage - Vat baggage. The matcher uses it to make the
  * publicFacet's kref durable, and to remember (across restarts) the
  * services bag and the issued matcher URL.
@@ -119,7 +111,7 @@ type VatPowers = {
 // oxlint-disable-next-line typescript/explicit-function-return-type
 export function buildRootObject(
   vatPowers: VatPowers,
-  _parameters: Record<string, unknown>,
+  parameters: Record<string, unknown>,
   baggage: Baggage,
 ) {
   const { VatData } = vatPowers;
@@ -128,6 +120,14 @@ export function buildRootObject(
       'matcher vat: vatPowers.VatData.{defineDurableKind,makeKindHandle} required',
     );
   }
+
+  const { model: modelParameter } = parameters;
+  if (typeof modelParameter !== 'string' || modelParameter.length === 0) {
+    throw new Error(
+      'matcher vat: a non-empty "model" vat parameter is required',
+    );
+  }
+  const model: string = modelParameter;
 
   // Registry is in-memory. On matcher restart it starts empty;
   // providers must re-register. Making this durable is a planned
@@ -252,124 +252,63 @@ export function buildRootObject(
     return out;
   }
 
-  // -------------------------------------------------------------------
-  // Bridge mutex.
-  //
-  // The vat may have many register* / findServices calls in flight
-  // concurrently. The bridge channel is a single line-stream and the
-  // protocol is strictly request-then-reply, so we serialize round-trips
-  // through a chained promise to keep replies matched to their requests.
-  // -------------------------------------------------------------------
-
-  let bridgeChain: Promise<unknown> = Promise.resolve();
-
   /**
-   * Run `fn` only after the previous bridge round-trip has settled.
-   * Errors from the previous holder are swallowed so they don't poison
-   * subsequent calls.
+   * Project a registry entry into the compact digest the ranking
+   * prompt presents to the model.
    *
-   * @param fn - The bridge round-trip to serialize.
-   * @returns Whatever `fn` returns.
+   * @param entry - The registry entry.
+   * @returns The service digest.
    */
-  async function withBridgeLock<Result>(
-    fn: () => Promise<Result>,
-  ): Promise<Result> {
-    const previous = bridgeChain;
-    let release: () => void = () => undefined;
-    bridgeChain = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    try {
-      // Wait for the previous holder to finish; ignore its outcome —
-      // an error there shouldn't poison subsequent calls.
-      await previous.catch(() => undefined);
-      return await fn();
-    } finally {
-      release();
-    }
-  }
-
-  /**
-   * Send a single request to the bridge over the `llm` IOService and
-   * await its single-line reply.
-   *
-   * @param request - The request object to send (will be JSON-encoded).
-   * @returns The parsed reply.
-   * @throws If the channel has closed, or the reply isn't valid JSON.
-   */
-  async function bridgeRoundTrip(
-    request: IngestRequest | QueryRequest,
-  ): Promise<Reply> {
-    return withBridgeLock(async () => {
-      const { llm } = getServices();
-      // The kernel-side IOChannel appends '\n' itself, so we just send
-      // the JSON-encoded request body.
-      await E(llm).write(JSON.stringify(request));
-      const line = await E(llm).read();
-      if (line === null) {
-        throw new Error('matcher vat: llm bridge channel closed');
-      }
-      try {
-        return JSON.parse(line) as Reply;
-      } catch {
-        throw new Error(
-          `matcher vat: llm bridge sent unparseable line: ${line}`,
-        );
-      }
-    });
-  }
-
-  /**
-   * Tell the bridge to ingest a new service registration into its
-   * conversation context.
-   *
-   * @param id - The matcher's local registry id for the service.
-   * @param description - The full service description.
-   * @throws If the bridge replies with `error` or any non-`ingested` kind.
-   */
-  async function ingestService(
-    id: string,
-    description: ServiceDescription,
-  ): Promise<void> {
-    const request: IngestRequest = {
-      kind: 'ingest',
-      service: {
-        id,
-        description: description.description,
-        methods: extractMethodDigests(description.apiSpec),
-      },
+  function entryDigest(entry: RegisteredService): ServiceDigest {
+    return {
+      id: entry.id,
+      description: entry.description.description,
+      methods: extractMethodDigests(entry.description.apiSpec),
     };
-    const reply = await bridgeRoundTrip(request);
-    if (reply.kind === 'error') {
-      throw new Error(`matcher vat: bridge ingest error: ${reply.message}`);
-    }
-    if (reply.kind !== 'ingested') {
-      throw new Error(
-        `matcher vat: unexpected bridge reply kind for ingest: ${reply.kind}`,
-      );
-    }
   }
 
   /**
-   * Ask the bridge to rank registered services against a query.
+   * Rank the registered services against a query via the
+   * `languageModelService`. Stateless: the full current registry rides
+   * along in the prompt, so concurrent calls are independent and need
+   * no serialization.
    *
    * @param query - The free-text query from the consumer.
-   * @returns The ranked matches the bridge returned.
-   * @throws If the bridge replies with `error` or any non-`matches` kind.
+   * @returns The ranked matches the model returned, and the entries the
+   * prompt described, by id. A registration made or evicted while the model
+   * answers doesn't change what its ids refer to.
+   * @throws If the LLM call fails or its reply isn't a valid match list.
    */
-  async function queryServicesViaBridge(
-    query: string,
-  ): Promise<{ id: string; rationale: string }[]> {
-    const reply = await bridgeRoundTrip({ kind: 'query', query });
-    if (reply.kind === 'error') {
-      throw new Error(`matcher vat: bridge query error: ${reply.message}`);
+  async function rankServices(query: string): Promise<{
+    ranked: MatchEntry[];
+    prompted: Map<string, RegisteredService>;
+  }> {
+    const prompted = new Map(registry);
+    if (prompted.size === 0) {
+      // Nothing registered — no point burning a model call to learn
+      // that nothing matches.
+      return { ranked: [], prompted };
     }
-    if (reply.kind !== 'matches') {
-      throw new Error(
-        `matcher vat: unexpected bridge reply kind for query: ${reply.kind}`,
-      );
+    const { languageModelService } = getServices();
+    const params: ChatParams & { stream?: false } = {
+      model,
+      messages: [
+        { role: 'system', content: MATCHER_SYSTEM_PROMPT },
+        {
+          role: 'user',
+          content: formatRankingPrompt(
+            [...prompted.values()].map(entryDigest),
+            query,
+          ),
+        },
+      ],
+    };
+    const result = await E(languageModelService).chat(harden(params));
+    const content = result.choices[0]?.message?.content;
+    if (typeof content !== 'string') {
+      throw new Error('matcher vat: LLM reply contained no message content');
     }
-    return reply.matches;
+    return { ranked: parseMatches(content), prompted };
   }
 
   /**
@@ -444,53 +383,33 @@ export function buildRootObject(
 
   /**
    * Final step shared by all `register*` paths: evict any superseded
-   * registrations, store the new entry locally, and tell the bridge. If
-   * the bridge call fails, undo the local store so the registry never
-   * contains entries the LLM doesn't know about.
+   * registrations and store the new entry locally. Purely local — the
+   * LLM only ever sees the registry at query time, so there is no
+   * model-side state to update (or roll back) here.
    *
    * Eviction key is (peerId, providerTag) — see ServiceDescription's
-   * `providerTag` for the contract. The dead `svc:N` entries that get
-   * evicted here may still be cited by the LLM bridge's stale
-   * conversation context; `findServices` filters those out via the
-   * existing "bridge cited unknown id" guard.
+   * `providerTag` for the contract.
    *
    * @param description - The validated service description.
    * @param contact - The validated contact endpoint.
    */
-  async function commitRegistration(
+  function commitRegistration(
     description: ServiceDescription,
     contact: ContactPoint,
-  ): Promise<void> {
-    // Stash superseded entries so we can restore them if the bridge
-    // ingest fails — otherwise a transient bridge failure would
-    // silently destroy whatever previous registration shared this
-    // providerTag, defeating the atomicity property the dedup commit
-    // was supposed to provide.
-    const evicted: [string, RegisteredService][] = [];
+  ): void {
+    // A stored description is read by every later ranking prompt, so one that
+    // doesn't validate would break `findServices` for every consumer.
+    const [error] = validate(description, ServiceDescriptionStruct);
+    if (error) {
+      throw new Error(`invalid service description: ${error.message}`);
+    }
     for (const supersededId of findSamePeerSameTagEntries(description)) {
-      const prior = registry.get(supersededId);
-      if (prior) {
-        evicted.push([supersededId, prior]);
-      }
       registry.delete(supersededId);
       log(
         `evicted superseded registration ${supersededId} (providerTag=${description.providerTag})`,
       );
     }
-    const id = store(description, contact);
-    try {
-      await ingestService(id, description);
-    } catch (cause) {
-      registry.delete(id);
-      for (const [oldId, oldEntry] of evicted) {
-        registry.set(oldId, oldEntry);
-      }
-      log(
-        `bridge ingest failed for ${id}; rolled back new entry and restored ${evicted.length} evicted entries:`,
-        cause,
-      );
-      throw cause;
-    }
+    store(description, contact);
   }
 
   // Behavior methods for `defineDurableKind` receive a `context` arg
@@ -515,7 +434,7 @@ export function buildRootObject(
         contactUrl,
       )) as ContactPoint;
       await confirmRegistration(contact, registrationToken);
-      await commitRegistration(description, contact);
+      commitRegistration(description, contact);
     },
 
     async registerServiceByUrl(
@@ -532,7 +451,7 @@ export function buildRootObject(
       // into work the matcher performs on the victim's behalf.
       await confirmRegistration(contact, registrationToken);
       const description = await E(contact).getServiceDescription();
-      await commitRegistration(description, contact);
+      commitRegistration(description, contact);
     },
 
     async registerServiceByRef(
@@ -543,24 +462,23 @@ export function buildRootObject(
       // Confirm FIRST — see comment above in registerServiceByUrl.
       await confirmRegistration(contact, registrationToken);
       const description = await E(contact).getServiceDescription();
-      await commitRegistration(description, contact);
+      commitRegistration(description, contact);
     },
 
     async findServices(
       _context: unknown,
       query: ServiceQuery,
     ): Promise<ServiceMatch[]> {
-      const ranked = await queryServicesViaBridge(query.description);
+      const { ranked, prompted } = await rankServices(query.description);
       const matches: ServiceMatch[] = [];
       let dropped = 0;
       for (const entry of ranked) {
-        const registered = registry.get(entry.id);
+        const registered = prompted.get(entry.id);
         if (!registered) {
-          // The bridge cited an id we no longer have — could happen if
-          // the LLM hallucinates one, or if a service was unregistered
-          // between ingest and query. Skip and log; don't bubble up.
+          // The model cited an id the prompt didn't carry — it can only be
+          // a hallucination. Skip and log; don't bubble up.
           dropped += 1;
-          log(`bridge cited unknown id ${entry.id}; skipping`);
+          log(`model cited unknown id ${entry.id}; skipping`);
           continue;
         }
         matches.push(
@@ -570,15 +488,14 @@ export function buildRootObject(
           }),
         );
       }
-      // If the bridge offered candidates and *all* of them were
-      // unknown, the registry is either out of sync with the bridge or
-      // the ranker is hallucinating ids wholesale. Loud failure is
-      // better than silently returning [], which would be
+      // If the model offered candidates and *all* of them were
+      // unknown, the ranker is hallucinating ids wholesale. Loud
+      // failure is better than silently returning [], which would be
       // indistinguishable from a legitimate zero-match query.
       if (ranked.length > 0 && matches.length === 0) {
         throw new Error(
-          `matcher: LLM bridge cited only unknown ids (${dropped}/${ranked.length}); ` +
-            'registry may be out of sync or ranker is hallucinating.',
+          `matcher: LLM cited only unknown ids (${dropped}/${ranked.length}); ` +
+            'the ranker is hallucinating.',
         );
       }
       log(
@@ -612,9 +529,10 @@ export function buildRootObject(
       if (!incoming.ocapURLRedemptionService) {
         throw new Error('ocapURLRedemptionService is required');
       }
-      if (!incoming.llm) {
+      if (!incoming.languageModelService) {
         throw new Error(
-          'llm IOService is required (configure it in the cluster config under `io.llm`)',
+          'languageModelService is required (list it in the cluster config ' +
+            "`services` and configure the daemon's llm.json)",
         );
       }
       // Persist services so the durable matcher facet's behavior can

@@ -23,6 +23,7 @@ import type {
 } from './types.ts';
 import { VatHandle } from './vats/VatHandle.ts';
 import { asKRef, asSubclusterId, asVatId } from '../test/branded.ts';
+import { KernelServiceManager } from './KernelServiceManager.ts';
 import { makeMapKernelDatabase } from '../test/storage.ts';
 
 const mocks = vi.hoisted(() => {
@@ -125,7 +126,9 @@ const mocks = vi.hoisted(() => {
       }
     });
 
-    discardQueuedWork = vi.fn();
+    discardArrivals = vi.fn();
+
+    abandonSubscriptions = vi.fn();
 
     // A stand-in for the run loop: the item is delivered through the router,
     // on a later turn, exactly as a crank would deliver it.
@@ -324,6 +327,30 @@ describe('Kernel', () => {
         mockKernelDatabase,
       );
       expect(kernel).toBeDefined();
+    });
+
+    it('registers the kernel services it is given before the run loop starts', async () => {
+      const register = vi.spyOn(
+        KernelServiceManager.prototype,
+        'registerKernelServiceObject',
+      );
+      const service = { chat: vi.fn() };
+      const db = makeMapKernelDatabase();
+
+      await Kernel.make(mockPlatformServices, db, {
+        kernelServices: [{ name: 'languageModelService', service }],
+      });
+
+      const call = register.mock.calls.findIndex(
+        ([name]) => name === 'languageModelService',
+      );
+      expect(call).not.toBe(-1);
+      expect(register.mock.invocationCallOrder[call]).toBeLessThan(
+        mocks.KernelQueue.lastInstance.run.mock.invocationCallOrder[0] ?? 0,
+      );
+      expect(
+        db.kernelKVStore.get('kernelService.languageModelService'),
+      ).toBeDefined();
     });
 
     it('honors resetStorage option and clears persistent state', async () => {
@@ -1034,17 +1061,23 @@ describe('Kernel', () => {
         mockPlatformServices,
         mockKernelDatabase,
       );
-      const { endRunLoop, discardQueuedWork } = mocks.KernelQueue.lastInstance;
+      const { endRunLoop, discardArrivals, abandonSubscriptions } =
+        mocks.KernelQueue.lastInstance;
 
       await kernel.stop();
 
-      expect(discardQueuedWork).toHaveBeenCalledExactlyOnceWith(
+      expect(discardArrivals).toHaveBeenCalledOnce();
+      expect(abandonSubscriptions).toHaveBeenCalledExactlyOnceWith(
         new Error(
           'Kernel was stopped before this message was answered; one still queued is delivered on its next start',
         ),
       );
-      expect(endRunLoop.mock.invocationCallOrder[0] as number).toBeLessThan(
-        discardQueuedWork.mock.invocationCallOrder[0] as number,
+      const endedAt = endRunLoop.mock.invocationCallOrder[0] as number;
+      expect(endedAt).toBeLessThan(
+        discardArrivals.mock.invocationCallOrder[0] as number,
+      );
+      expect(endedAt).toBeLessThan(
+        abandonSubscriptions.mock.invocationCallOrder[0] as number,
       );
     });
 
@@ -1197,20 +1230,21 @@ describe('Kernel', () => {
           mockPlatformServices,
           makeMapKernelDatabase(),
         );
-        const { discardQueuedWork, discardHeldRequests } =
+        const { discardArrivals, abandonSubscriptions, discardHeldRequests } =
           mocks.KernelQueue.lastInstance;
         const { releaseRestartHolds } = mocks.RemoteManager.lastInstance;
 
         await kernel[method]();
 
-        expect(discardQueuedWork).toHaveBeenCalledExactlyOnceWith(
+        expect(discardArrivals).toHaveBeenCalledOnce();
+        expect(abandonSubscriptions).toHaveBeenCalledExactlyOnceWith(
           new Error(abandoned),
         );
         expect(discardHeldRequests).toHaveBeenCalledExactlyOnceWith(
           new Error(abandoned),
         );
         expect(
-          discardQueuedWork.mock.invocationCallOrder[0] as number,
+          discardArrivals.mock.invocationCallOrder[0] as number,
         ).toBeLessThan(
           releaseRestartHolds.mock.invocationCallOrder[0] as number,
         );
@@ -1411,6 +1445,26 @@ describe('Kernel', () => {
       await kernel.reset();
       expect(clearSpy).toHaveBeenCalled();
       expect(kernel.getVatIds()).toHaveLength(0);
+    });
+
+    it('closes the IO listeners of every subcluster', async () => {
+      const listener = {
+        accept: vi.fn(async () => null),
+        close: vi.fn(async () => undefined),
+      };
+      const kernel = await Kernel.make(
+        mockPlatformServices,
+        makeMapKernelDatabase(),
+        { ioListenerFactory: async () => listener },
+      );
+      await kernel.launchSubcluster({
+        ...makeSingleVatClusterConfig(),
+        io: { repl: { type: 'console' } },
+      });
+
+      await kernel.reset();
+
+      expect(listener.close).toHaveBeenCalledOnce();
     });
 
     it('clears system subcluster roots', async () => {

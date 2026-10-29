@@ -8,7 +8,7 @@
  */
 import '@ocap/repo-tools/test-utils/mock-endoify';
 
-import { makeOpenV1NodejsService } from '@ocap/kernel-language-model-service/open-v1/nodejs';
+import { makeOpenV1NodejsService } from '@metamask/kernel-language-model-service/open-v1/nodejs';
 import { fetchMock } from '@ocap/repo-tools/test-utils/fetch-mock';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 

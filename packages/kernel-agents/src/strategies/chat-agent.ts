@@ -1,10 +1,10 @@
-import type { Logger } from '@metamask/logger';
 import type {
   ChatMessage,
   ChatResult,
   Tool,
-} from '@ocap/kernel-language-model-service';
-import { parseToolArguments } from '@ocap/kernel-language-model-service/utils/parse-tool-arguments';
+} from '@metamask/kernel-language-model-service';
+import { parseToolArguments } from '@metamask/kernel-language-model-service/utils/parse-tool-arguments';
+import type { Logger } from '@metamask/logger';
 
 import { extractCapabilitySchemas } from '../capabilities/capability.ts';
 import type { Agent } from '../types/agent.ts';
