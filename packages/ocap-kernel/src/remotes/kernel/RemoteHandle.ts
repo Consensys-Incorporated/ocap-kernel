@@ -778,7 +778,7 @@ export class RemoteHandle implements RemoteEndpointHandle {
    * @param options - Options bag.
    * @param options.exemptFromCapacityLimit - Whether the pending queue's
    * capacity limit does not apply. A GC delivery is exempt: refusing one would
-   * stop the run loop, and the remote's c-list bounds how many there can be.
+   * kill the run loop, and the remote's c-list bounds how many there can be.
    * @returns This handle's crank result, carrying the send.
    */
   #deliverToPeer(
@@ -898,16 +898,6 @@ export class RemoteHandle implements RemoteEndpointHandle {
    * @param persisted - What that call returned.
    */
   #transmitRemoteCommand(persisted: PersistedCommand): void {
-    // Until #1105, a reset or clearStorage can wipe the store while this
-    // message's crank is still open, taking the message and the session it was
-    // numbered in, so it is owed to no one.
-    if (
-      this.#kernelStore.getPendingMessage(this.remoteId, persisted.seq) ===
-      undefined
-    ) {
-      return;
-    }
-
     this.#awaitingTransmit.set(persisted.seq, persisted);
     this.#flushTransmitQueue();
   }

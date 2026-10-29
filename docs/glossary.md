@@ -77,9 +77,10 @@ management, and [syscall](#syscall) coordination.
 ### crank
 
 A single execution cycle of the kernel's [run loop](#run-loop). Each crank processes one
-item: an item off the [run queue](#run-queue), such as a message or notification for
-[a vat](#vat), or a message from a remote peer, which waits in memory until its crank
-comes. Cranks can be aborted and rolled back if errors occur. See the
+item: a control operation such as `reset`, a message from a remote peer, or an item off
+the [run queue](#run-queue), such as a message or notification for [a vat](#vat). The
+first two wait in memory until their crank comes. Cranks can be aborted and rolled back if
+errors occur. See the
 [KernelQueue](../packages/ocap-kernel/src/KernelQueue.ts) for the run loop implementation.
 
 ### syscall
@@ -207,15 +208,17 @@ details.
 ### run loop
 
 The loop in [KernelQueue](../packages/ocap-kernel/src/KernelQueue.ts) that takes items one
-at a time, each in a [crank](#crank) of its own, and sleeps when none are waiting. After
-any garbage collection action or reap, it takes from the [run queue](#run-queue) and from
-the messages remote peers have sent, in turns, so a peer that sends faster than cranks
-finish cannot crowd out the run queue. It is the one writer meant to change the kernel
-store: work asked for from outside it, such as a vat restart or termination, or a peer's
-message or change of incarnation (though not yet the acknowledgement a message carries),
-is queued for it to carry out rather than written into whichever crank happens to be
-open. A crank that throws kills the run loop for the life of the kernel instance; callers
-still waiting on queued work are then rejected.
+at a time, each in a [crank](#crank) of its own, and sleeps when none are waiting. It takes
+a control operation (`clearStorage`, `reset` or `terminateAllVats`) ahead of everything
+else, then any garbage collection action or reap, then the [run queue](#run-queue) and the
+messages remote peers have sent, in turns, so a peer that sends faster than cranks finish
+cannot crowd out the run queue. It is the one writer meant to change the kernel store: work
+asked for from outside it, such as a vat restart or termination, or a peer's message or
+change of incarnation (but not the acknowledgement a message carries), is queued for it to
+carry out rather than written into whichever crank happens to be open. `stop` ends the run
+loop between cranks, once the control operations asked for before it have run. A crank that
+throws kills the run loop for the life of the kernel instance; callers still waiting on
+queued work, control operations included, are then rejected.
 
 ### kernel router
 
