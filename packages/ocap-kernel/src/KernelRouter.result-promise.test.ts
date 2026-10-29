@@ -47,6 +47,7 @@ describe('a result promise whose delivery fails', () => {
       restartVat: async () => undefined,
       terminateVat: async () => undefined,
       applyIncarnationChange: () => ({}),
+      performControl: async () => undefined,
       logger,
     });
 

@@ -679,6 +679,18 @@ describe('VatManager', () => {
         expect(storeWrites()).toStrictEqual(before);
       });
 
+      it('is left alone for a vat launched once the kernel is stopping every worker', async () => {
+        vatManager.expectWorkersToStop();
+        await vatManager.runVat(v1, createMockVatConfig());
+
+        reportStreamFailure(new Error('vat channel closed'));
+        await delay(10);
+
+        expect(vatManager.hasVat(v1)).toBe(true);
+        expect(mockKernelQueue.enqueueTerminateVat).not.toHaveBeenCalled();
+        expect(vatHandles[0]?.expectClose).toHaveBeenCalledOnce();
+      });
+
       it('is left alone once the kernel is stopping every worker', async () => {
         await vatManager.runVat(v1, createMockVatConfig());
         vatManager.expectWorkersToStop();
@@ -1540,37 +1552,6 @@ describe('VatManager', () => {
       );
     });
 
-    it('leaves its crank uncommitted when a kernel stop fails the relaunch', async () => {
-      await vatManager.runVat(v1, createMockVatConfig());
-      leaveRequestQueued();
-      const restarting = vatManager.restartVat(v1);
-      vatManager.expectWorkersToStop();
-      mockPlatformServices.launch.mockRejectedValueOnce(
-        new Error('channel closed'),
-      );
-
-      const crank = vatManager.performVatRestart(v1).then(() => 'settled');
-
-      await expect(restarting).rejects.toThrow(
-        'Restart of vat v1 was cut short by a kernel stop',
-      );
-      expect(await Promise.race([crank, delay(10)])).toBeUndefined();
-      expect(mockKernelStore.markVatAsTerminated).not.toHaveBeenCalled();
-    });
-
-    it('leaves a vat it brings up during a kernel stop to close quietly', async () => {
-      await vatManager.runVat(v1, createMockVatConfig());
-      leaveRequestQueued();
-      const restarting = vatManager.restartVat(v1);
-      vatManager.expectWorkersToStop();
-
-      const crankResult = await vatManager.performVatRestart(v1);
-      await crankResult?.afterCommit?.();
-
-      expect(await restarting).toBe(vatHandles[1]);
-      expect(vatHandles[1]?.expectClose).toHaveBeenCalledOnce();
-    });
-
     it('relaunches even when the old channel never finishes closing', async () => {
       await vatManager.runVat(v1, createMockVatConfig());
       vatHandles[0]?.terminate.mockReturnValueOnce(
@@ -1959,7 +1940,6 @@ describe('VatManager', () => {
 
       await vatManager.terminateAllVats();
 
-      expect(mockKernelQueue.waitForCrank).toHaveBeenCalled();
       expect(vatHandles[1]?.terminate).toHaveBeenCalled();
       expect(vatHandles[0]?.terminate).toHaveBeenCalled();
       expect(mockKernelStore.markVatAsTerminated).toHaveBeenCalledWith('v2');
@@ -1972,7 +1952,8 @@ describe('VatManager', () => {
       await vatManager.runVat(v1, createMockVatConfig());
       await vatManager.runVat(asVatId('v2'), createMockVatConfig());
       mockPlatformServices.terminate.mockImplementationOnce(async () => {
-        // A queued termination of v1 runs while v2's worker stops.
+        // A launch failing alongside retires its own vat, v1, while v2's
+        // worker stops.
         await vatManager.stopVat(v1, true);
         mockKernelStore.isVatActive.mockReturnValue(false);
       });
@@ -2001,7 +1982,6 @@ describe('VatManager', () => {
     it('handles empty vat list', async () => {
       await vatManager.terminateAllVats();
 
-      expect(mockKernelQueue.waitForCrank).toHaveBeenCalled();
       expect(mockKernelStore.markVatAsTerminated).not.toHaveBeenCalled();
     });
   });
