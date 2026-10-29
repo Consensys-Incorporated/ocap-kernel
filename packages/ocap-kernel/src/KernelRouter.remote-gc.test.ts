@@ -48,6 +48,7 @@ describe('a GC action for a remote that is offline', () => {
       restartVat: async () => undefined,
       terminateVat: async () => undefined,
       applyIncarnationChange: () => ({}),
+      performControl: async () => undefined,
     });
 
     let sends = 0;

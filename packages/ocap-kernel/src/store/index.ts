@@ -287,7 +287,6 @@ export function makeKernelStore(kdb: KernelDatabase, logger?: Logger) {
     }));
     kdb.clear();
     discardCachedState();
-    crank.releaseAllSavepoints();
     preservedState?.forEach(({ key, value }) => {
       if (value) {
         context.kv.set(key, value);
@@ -320,33 +319,6 @@ export function makeKernelStore(kdb: KernelDatabase, logger?: Logger) {
     return newId;
   }
 
-  /**
-   * Create a savepoint for atomic operations on persistent storage.
-   *
-   * @param name - The savepoint name.
-   */
-  function createSavepoint(name: string): void {
-    kdb.createSavepoint(name);
-  }
-
-  /**
-   * Release (commit) a savepoint.
-   *
-   * @param name - The savepoint name.
-   */
-  function releaseSavepoint(name: string): void {
-    kdb.releaseSavepoint(name);
-  }
-
-  /**
-   * Rollback to a savepoint.
-   *
-   * @param name - The savepoint name.
-   */
-  function rollbackSavepoint(name: string): void {
-    kdb.rollbackSavepoint(name);
-  }
-
   return harden({
     ...id,
     ...queue,
@@ -371,9 +343,6 @@ export function makeKernelStore(kdb: KernelDatabase, logger?: Logger) {
     clear,
     reset,
     provideIncarnationId,
-    createSavepoint,
-    releaseSavepoint,
-    rollbackSavepoint,
     // NOTE: kv is intentionally NOT exposed here. All KV access should go
     // through typed store methods to preserve branded type safety.
 
