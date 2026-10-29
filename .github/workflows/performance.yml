@@ -37,7 +37,7 @@ jobs:
           path: packages/*/perf-report.json
           retention-days: 7
       # Kept apart from `perf-*`, whose JSON the verdict job parses: these are
-      # the profiles' own tables and results.
+      # the profiles' own results tables.
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: ${{ always() }}
         with:

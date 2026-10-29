@@ -33,17 +33,5 @@ export function buildRootObject() {
     async pingHeld(index: number) {
       return E(held[index] as Token).ping();
     },
-
-    // Mint tokens, use one, and drop them all, leaving garbage in both vats.
-    async churn(count: number) {
-      const [token] = await E(minter as Minter).mint(count);
-      return E(token as Token).ping();
-    },
-
-    // Mint a token and hand it to the caller without keeping it.
-    async fetch() {
-      const [token] = await E(minter as Minter).mint(1);
-      return token;
-    },
   });
 }

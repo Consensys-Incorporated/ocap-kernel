@@ -2,7 +2,6 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   countKeys,
-  describePlatform,
   envNumber,
   envNumbers,
   makeProfileKernel,
@@ -11,8 +10,8 @@ import {
   summarize,
   sum,
   toMarkdown,
-  publishTable,
-  writeReport,
+  printTable,
+  writeTable,
 } from './utils.ts';
 import type { Stats } from './utils.ts';
 
@@ -111,12 +110,6 @@ describe('message delivery against kref count', () => {
       const { kernelDatabase, send, held, grow } = profile;
 
       const results: LevelResult[] = [];
-      const report = {
-        date: new Date().toISOString(),
-        platform: describePlatform(),
-        samples: SAMPLES,
-        results,
-      };
       const stem = `kref-scaling-${pairs * 2}-vats`;
 
       for (let exponent = 1; exponent <= MAX_EXPONENT; exponent += 1) {
@@ -160,10 +153,10 @@ describe('message delivery against kref count', () => {
         });
         // Rewritten after every count, so that a vat running out of memory
         // at the next one does not lose the counts already measured.
-        await writeReport(stem, report);
+        await writeTable(stem, renderResults(results));
       }
 
-      await publishTable(stem, renderResults(results));
+      printTable(stem, renderResults(results));
 
       expect(results).toHaveLength(MAX_EXPONENT);
     },
