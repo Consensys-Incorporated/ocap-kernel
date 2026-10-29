@@ -100,25 +100,25 @@ const RemoteCommsExportedUrls: React.FC<{
       </TextComponent>
 
       <Box className="space-y-3">
-        {exportedUrls.map(({ vatId, promiseId, ocapUrl }) => (
-          <Box key={promiseId} className="border border-muted rounded p-3">
+        {exportedUrls.map(({ kref, owner, ocapUrl }) => (
+          <Box key={kref} className="border border-muted rounded p-3">
             <Box className="flex items-center gap-2 mb-2">
               <TextComponent
                 variant={TextVariant.BodyXs}
                 fontWeight={FontWeight.Medium}
               >
-                Vat {vatId}
+                Owner {owner ?? 'none'}
               </TextComponent>
               <TextComponent
                 variant={TextVariant.BodyXs}
                 color={TextColor.TextMuted}
               >
-                ({promiseId})
+                ({kref})
               </TextComponent>
             </Box>
 
             <Input
-              data-testid={`ocap-url-${promiseId}`}
+              data-testid={`ocap-url-${kref}`}
               value={ocapUrl}
               style={{ width: '100%', fontSize: '12px' }}
               readOnly

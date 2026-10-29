@@ -166,6 +166,7 @@ describe('kernel store', () => {
         'provideIncarnationId',
         'recomputeRefCounts',
         'recordLastActiveTime',
+        'recordOcapURL',
         'releaseOcapURLRetentions',
         'removeAnonymousKernelObject',
         'removeVatFromSubcluster',
@@ -472,6 +473,39 @@ describe('kernel store', () => {
         reachable: 0,
         recognizable: 0,
       });
+    });
+
+    it('records the latest URL issued for a retained target, and forgets it on release', () => {
+      const ks = makeKernelStore(mockKernelDatabase);
+      const kref = ks.initKernelObject(v1);
+      const urlKey = `ocapURLString.${kref}`;
+      ks.retainForOcapURL(kref);
+      ks.retainForOcapURL(kref);
+
+      ks.recordOcapURL(kref, 'ocap:first@peer');
+      ks.recordOcapURL(kref, 'ocap:second@peer');
+      expect(mockKernelDatabase.kernelKVStore.get(urlKey)).toBe(
+        'ocap:second@peer',
+      );
+
+      ks.undoOcapURLRetention(kref);
+      expect(mockKernelDatabase.kernelKVStore.get(urlKey)).toBe(
+        'ocap:second@peer',
+      );
+
+      ks.releaseOcapURLRetentions(kref);
+      expect(mockKernelDatabase.kernelKVStore.get(urlKey)).toBeUndefined();
+    });
+
+    it('does not record a URL for a target with no retention', () => {
+      const ks = makeKernelStore(mockKernelDatabase);
+      const kref = ks.initKernelObject(v1);
+
+      ks.recordOcapURL(kref, 'ocap:late@peer');
+
+      expect(
+        mockKernelDatabase.kernelKVStore.get(`ocapURLString.${kref}`),
+      ).toBeUndefined();
     });
 
     it('releasing retentions of a target that has none leaves other pins alone', () => {

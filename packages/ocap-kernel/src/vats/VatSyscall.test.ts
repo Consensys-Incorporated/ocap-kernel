@@ -79,6 +79,49 @@ describe('VatSyscall', () => {
     );
   });
 
+  it.each([
+    ['inside', true],
+    ['outside', false],
+  ])(
+    'forgets the promises it resolves once they are resolved, %s a crank',
+    (_where, inCrank) => {
+      (kernelStore.isInCrank as unknown as MockInstance).mockReturnValue(
+        inCrank,
+      );
+      const resolutions = [
+        ['kp1', false, { body: '', slots: [] }],
+        ['kp2', true, { body: '', slots: [] }],
+      ] as VatOneResolution[];
+      vatSys.handleSyscall(['resolve', resolutions] as VatSyscallObject);
+      const forgetKref = kernelStore.forgetKref as unknown as MockInstance;
+      expect(forgetKref.mock.calls).toStrictEqual([
+        ['v1', 'kp1'],
+        ['v1', 'kp2'],
+      ]);
+      const [resolve] = (kernelQueue.resolvePromises as unknown as MockInstance)
+        .mock.invocationCallOrder;
+      expect(Math.min(...forgetKref.mock.invocationCallOrder)).toBeGreaterThan(
+        resolve as number,
+      );
+    },
+  );
+
+  it('does not forget the promises of a resolve the kernel refuses', () => {
+    (
+      kernelQueue.resolvePromises as unknown as MockInstance
+    ).mockImplementationOnce(() => {
+      throw new Error('"kp1" was already resolved');
+    });
+
+    const result = vatSys.handleSyscall([
+      'resolve',
+      [['kp1', false, { body: '', slots: [] }]],
+    ] as VatSyscallObject);
+
+    expect(result).toStrictEqual(['error', '"kp1" was already resolved']);
+    expect(kernelStore.forgetKref).not.toHaveBeenCalled();
+  });
+
   it('enqueues send immediately when outside a crank', () => {
     (kernelStore.isInCrank as unknown as MockInstance).mockReturnValue(false);
     const target = 'ko1';

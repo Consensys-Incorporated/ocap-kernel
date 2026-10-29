@@ -98,6 +98,10 @@ export class VatSyscall {
   #handleSyscallResolve(resolutions: KernelOneResolution[]): void {
     const immediate = !this.#kernelStore.isInCrank();
     this.#kernelQueue.resolvePromises(this.vatId, resolutions, immediate);
+    // Liveslots forgets a vpid once it has resolved it.
+    for (const [kpid] of resolutions) {
+      this.#kernelStore.forgetKref(this.vatId, kpid);
+    }
   }
 
   /**

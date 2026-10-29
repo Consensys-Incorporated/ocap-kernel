@@ -7,8 +7,10 @@ import type { RemoteHandle } from './RemoteHandle.ts';
 import type { RemoteManager } from './RemoteManager.ts';
 import { asKRef } from '../../../test/branded.ts';
 import { createMockRemotesFactory } from '../../../test/remotes-mocks.ts';
+import { makeMapKernelDatabase } from '../../../test/storage.ts';
 import type { SlotValue } from '../../liveslots/kernel-marshal.ts';
 import { kslot } from '../../liveslots/kernel-marshal.ts';
+import { makeKernelStore } from '../../store/index.ts';
 import type { KernelStore } from '../../store/index.ts';
 import type { KRef } from '../../types.ts';
 import type { RemoteComms } from '../types.ts';
@@ -119,6 +121,22 @@ describe('OcapURLManager', () => {
       mockKernelStore.collectGarbage();
       expect([...mockKernelStore.getGCActions()]).toStrictEqual([]);
       expect(mockKernelStore.kernelRefExists(objectKRef)).toBe(true);
+    });
+
+    it('records the issued URL for display', async () => {
+      const kernelDatabase = makeMapKernelDatabase();
+      const kernelStore = makeKernelStore(kernelDatabase);
+      const kref = kernelStore.initKernelObject('kernel');
+      const manager = new OcapURLManager({
+        remoteManager: mockRemoteManager,
+        kernelStore,
+      });
+
+      const url = await manager.issueOcapURL(kref);
+
+      expect(kernelDatabase.kernelKVStore.get(`ocapURLString.${kref}`)).toBe(
+        url,
+      );
     });
 
     it('counts a retention per URL naming the target, on the one pin', async () => {

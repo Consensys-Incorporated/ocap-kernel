@@ -63,6 +63,7 @@ describe('KernelQueue', () => {
       initKernelPromise: vi.fn().mockReturnValue(['kp1']),
       kernelRefExists: vi.fn().mockReturnValue(true),
       incrementRefCount: vi.fn(),
+      pinObject: vi.fn(),
       getKernelPromise: vi.fn(),
       resolveKernelPromise: vi.fn().mockReturnValue([]),
       nextReapAction: vi.fn().mockReturnValue(null),
@@ -1878,6 +1879,67 @@ describe('KernelQueue', () => {
       expect(resolveHandler).not.toHaveBeenCalled();
       // Subscription is still registered, will be invoked during flush
       expect(kernelQueue.subscriptions.has(kpid)).toBe(true);
+    });
+
+    it.each([
+      ['pins', 'is', 'buffered', 'fulfilled', true, false, false],
+      ['pins', 'is', 'immediate', 'fulfilled', true, true, false],
+      ['pins', 'is', 'buffered', 'rejected', true, false, true],
+      ['does not pin', 'is not', 'buffered', 'fulfilled', false, false, false],
+    ])(
+      '%s the resolution slots when the kernel %s subscribed (%s, %s)',
+      (_verb, _is, _mode, _outcome, subscribed, immediate, rejected) => {
+        const kpid = asKRef('kp1');
+        (
+          kernelStore.getKernelPromise as unknown as MockInstance
+        ).mockReturnValue({
+          state: 'unresolved',
+          decider: v1,
+          subscribers: [],
+        });
+        if (subscribed) {
+          kernelQueue.subscriptions.set(kpid, {
+            resolve: vi.fn(),
+            reject: vi.fn(),
+          });
+        }
+        kernelQueue.resolvePromises(
+          v1,
+          [
+            [
+              kpid,
+              rejected,
+              { body: '', slots: [asKRef('ko1'), asKRef('kp2')] },
+            ],
+          ],
+          immediate,
+        );
+        expect(
+          (kernelStore.pinObject as unknown as MockInstance).mock.calls,
+        ).toStrictEqual(subscribed ? [['ko1'], ['kp2']] : []);
+      },
+    );
+
+    it('does not pin the resolution slots of a resolve it refuses', () => {
+      const kpid = asKRef('kp1');
+      (kernelStore.getKernelPromise as unknown as MockInstance).mockReturnValue(
+        {
+          state: 'fulfilled',
+          decider: v1,
+          subscribers: [],
+        },
+      );
+      kernelQueue.subscriptions.set(kpid, {
+        resolve: vi.fn(),
+        reject: vi.fn(),
+      });
+
+      expect(() =>
+        kernelQueue.resolvePromises(v1, [
+          [kpid, false, { body: '', slots: [asKRef('ko1')] }],
+        ]),
+      ).toThrow('already resolved');
+      expect(kernelStore.pinObject).not.toHaveBeenCalled();
     });
 
     it('handles resolutions with undefined vatId (kernel decider)', () => {

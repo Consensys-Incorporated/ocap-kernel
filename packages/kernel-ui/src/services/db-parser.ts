@@ -31,7 +31,7 @@ export function parseObjectRegistry(
   let gcActions = '';
   let reapQueue = '';
   let terminatedVats = '';
-  const ocapUrls: ExportedOcapURL[] = [];
+  const ocapUrlStrings: { kref: KRef; ocapUrl: string }[] = [];
 
   // 1) Collect
   for (const { key, value } of entries) {
@@ -57,6 +57,15 @@ export function parseObjectRegistry(
       continue;
     }
     let matches;
+    if ((matches = key.match(/^ocapURLString\.(ko\d+)$/u))) {
+      matches[1] &&
+        ocapUrlStrings.push({
+          // Safe cast: regex capture group guarantees KRef format
+          kref: matches[1] as KRef,
+          ocapUrl: value,
+        });
+      continue;
+    }
     if ((matches = key.match(/^(ko\d+)\.owner$/u))) {
       matches[1] && (koOwner[matches[1]] = value);
       continue;
@@ -169,18 +178,6 @@ export function parseObjectRegistry(
     const raw = kpValueRaw[kref] ?? { body: '', slots: [] };
     const slots = raw.slots.map(resolveSlot);
 
-    // Extract ocap URL if present in the promise body
-    if (raw.body && typeof raw.body === 'string') {
-      const ocapMatch = raw.body.match(/^#"(ocap:[^"]+)"/u);
-      if (ocapMatch) {
-        ocapUrls.push({
-          vatId: vat,
-          promiseId: kref,
-          ocapUrl: ocapMatch[1] ?? '',
-        });
-      }
-    }
-
     const base = {
       kref,
       eref,
@@ -213,6 +210,10 @@ export function parseObjectRegistry(
         .map((entry) => entry.vat);
     }
   }
+
+  const ocapUrls: ExportedOcapURL[] = ocapUrlStrings.map(
+    ({ kref, ocapUrl }) => ({ kref, owner: koOwner[kref] ?? null, ocapUrl }),
+  );
 
   return {
     gcActions,
