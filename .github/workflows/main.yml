@@ -24,7 +24,7 @@ jobs:
       - name: Check pull request merge queue status
         id: check-skip-merge-queue
         if: github.event_name == 'merge_group'
-        uses: MetaMask/github-tools/.github/actions/check-skip-merge-queue@b1b556ff7ab5b6054698d078c661a7b149b8609e # v1
+        uses: MetaMask/github-tools/.github/actions/check-skip-merge-queue@88836cf1473f73a64848a809cf89e616ed6ed692 # v1
 
   detect-changes:
     name: Detect changes
@@ -152,7 +152,7 @@ jobs:
         node-version: [24.x]
     steps:
       - name: Checkout and setup environment
-        uses: MetaMask/action-checkout-and-setup@0543b5929698c71e3ccc6ed24eac87825669b5de # v3
+        uses: MetaMask/action-checkout-and-setup@097d47e741dfa9c09ee779a020b8851875e72904 # v3
         with:
           is-high-risk-environment: false
           node-version: ${{ matrix.node-version }}

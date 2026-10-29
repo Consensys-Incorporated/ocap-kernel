@@ -17,7 +17,7 @@ jobs:
     steps:
       # Skip the install so no dependency code runs while the token can push.
       - name: Checkout and setup environment
-        uses: MetaMask/action-checkout-and-setup@0543b5929698c71e3ccc6ed24eac87825669b5de # v3
+        uses: MetaMask/action-checkout-and-setup@097d47e741dfa9c09ee779a020b8851875e72904 # v3
         with:
           is-high-risk-environment: true
           ref: ${{ github.head_ref }}
