@@ -57,7 +57,7 @@
   },
   "devDependencies": {
     "@arethetypeswrong/cli": "^0.18.5",
-    "@metamask/auto-changelog": "^6.2.1",
+    "@metamask/auto-changelog": "^7.0.1",
     "@ocap/kernel-test": "workspace:^",
     "@ocap/repo-tools": "workspace:^",
     "@playwright/test": "^1.59.1",
