@@ -93,7 +93,7 @@
     "uint8arrays": "^5.1.0"
   },
   "devDependencies": {
-    "@metamask/auto-changelog": "^6.2.1",
+    "@metamask/auto-changelog": "^7.0.1",
     "@ocap/repo-tools": "workspace:^",
     "@types/setimmediate": "^1.0.4",
     "depcheck": "^1.4.7",
