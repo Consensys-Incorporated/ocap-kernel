@@ -34,6 +34,7 @@
     "test:e2e:ci": "yarn workspaces foreach --all run test:e2e:ci",
     "test:e2e:local": "yarn workspaces foreach --all run test:e2e:local",
     "test:integration": "yarn workspaces foreach --all run test:integration",
+    "test:perf": "yarn workspaces foreach --all --exclude @ocap/monorepo --verbose run test:perf",
     "test:types": "yarn exec turbo run test:types --continue --output-logs=errors-only",
     "test:verbose": "yarn test --reporter verbose",
     "test:watch": "vitest",

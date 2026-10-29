@@ -1,6 +1,6 @@
 import { mergeConfig } from '@ocap/repo-tools/vitest-config';
 import { fileURLToPath } from 'node:url';
-import { defineConfig, defineProject } from 'vitest/config';
+import { configDefaults, defineConfig, defineProject } from 'vitest/config';
 
 import defaultConfig from '../../vitest.config.ts';
 
@@ -11,6 +11,7 @@ export default defineConfig((args) => {
     defineProject({
       test: {
         name: 'kernel-test',
+        exclude: [...configDefaults.exclude, './src/**/*.perf.test.ts'],
         setupFiles: [
           fileURLToPath(
             import.meta.resolve('@metamask/kernel-shims/endoify-node'),
