@@ -115,8 +115,7 @@ export function getCrankMethods(ctx: StoreContext, kdb: KernelDatabase) {
   }
 
   /**
-   * Release all savepoints, committing the crank. Only `endCrank` calls it:
-   * mid-crank it would leave a rollback nothing to undo.
+   * Release all savepoints, committing the crank.
    */
   function releaseAllSavepoints(): void {
     const [outermost] = ctx.savepoints;
@@ -197,7 +196,6 @@ export function getCrankMethods(ctx: StoreContext, kdb: KernelDatabase) {
     createCrankSavepoint,
     rollbackCrank,
     endCrank,
-    releaseAllSavepoints,
     waitForCrank,
     bufferCrankOutput,
     flushCrankBuffer,
