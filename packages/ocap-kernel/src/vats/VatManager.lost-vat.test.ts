@@ -248,16 +248,21 @@ async function setUp({ onDisk = false }: { onDisk?: boolean } = {}) {
      *
      * @param options - What `boot` takes.
      * @param options.failToStart - Vats whose worker will not launch.
-     * @returns The new kernel's pieces, its run loop running.
+     * @param options.run - Whether to start the run loop. Defaults to true.
+     * @returns The new kernel's pieces.
      */
-    reboot: async (options: { failToStart?: Set<VatId> } = {}) => {
+    reboot: async (
+      options: { failToStart?: Set<VatId>; run?: boolean } = {},
+    ) => {
       if (!onDisk) {
         throw new Error('Only a store on disk can be booted again');
       }
       kdb.close();
       const next = boot(await makeSQLKernelDatabase({ dbFilename }), options);
       await next.vatManager.initializeAllVats();
-      next.run();
+      if (options.run ?? true) {
+        next.run();
+      }
       return next;
     },
   };
@@ -429,21 +434,43 @@ describe('a vat that loses its channel mid-delivery', () => {
   );
 });
 
-describe('a vat that failed to start at boot', () => {
-  it('is terminated by terminateAllVats', async () => {
+describe('a vat whose worker will not start at boot', () => {
+  it('is terminated, and the others still take deliveries', async () => {
     const harness = await setUp({ onDisk: true });
     const next = await harness.reboot({
       failToStart: new Set([v1]),
     });
 
-    await next.vatManager.terminateAllVats();
+    await deliverEverythingQueued({ ...harness, ...next });
 
     expect({
       running: next.vatManager.getVatIds(),
       persisted: [...next.kernelStore.getAllVatRecords()].map(
         ({ vatID }) => vatID,
       ),
-    }).toStrictEqual({ running: [], persisted: [] });
+    }).toStrictEqual({ running: ['v2'], persisted: ['v2'] });
+  });
+
+  it('has the promises it decides rejected', async () => {
+    const harness = await setUp({ onDisk: true });
+    harness.kernelQueue
+      .enqueueMessage(harness.doomedRoot, 'work', [])
+      .catch(() => undefined);
+    harness.run();
+    await deliverEverythingQueued(harness);
+    const [decided] = harness.kernelStore.getPromisesByDecider(v1);
+
+    // With no run loop, whose collection deletes it: nothing holds it now.
+    const next = await harness.reboot({
+      failToStart: new Set([v1]),
+      run: false,
+    });
+
+    const { state, value } = next.kernelStore.getKernelPromise(decided as KRef);
+    expect({ state, body: value?.body }).toStrictEqual({
+      state: 'rejected',
+      body: expect.stringContaining('VAT_TERMINATED'),
+    });
   });
 });
 
