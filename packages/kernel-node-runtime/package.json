@@ -75,7 +75,7 @@
   "devDependencies": {
     "@arethetypeswrong/cli": "^0.18.5",
     "@endo/captp": "4.5.0",
-    "@metamask/auto-changelog": "^6.2.1",
+    "@metamask/auto-changelog": "^7.0.1",
     "@ocap/repo-tools": "workspace:^",
     "@types/node": "^22.13.1",
     "depcheck": "^1.4.7",
