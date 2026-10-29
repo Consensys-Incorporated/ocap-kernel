@@ -20,8 +20,6 @@ export default defineConfig((args) => {
         ],
         include: ['./src/**/*.perf.test.ts'],
         testTimeout: 30_000,
-        // Charts the run's profile reports when it is over.
-        globalSetup: ['./src/performance/global-setup.ts'],
         // One file at a time, so they do not compete for the CPU.
         fileParallelism: false,
       },

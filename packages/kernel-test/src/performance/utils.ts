@@ -4,10 +4,10 @@ import { makeSQLKernelDatabase } from '@metamask/kernel-store/sqlite/nodejs';
 import { Logger } from '@metamask/logger';
 import { kunser } from '@metamask/ocap-kernel';
 import type { ClusterConfig, Kernel, KRef } from '@metamask/ocap-kernel';
-import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { inject } from 'vitest';
+import { fileURLToPath } from 'node:url';
 
 import { makeTrackedKernel } from '../utils.ts';
 
@@ -264,8 +264,14 @@ export function toMarkdown(headers: string[], rows: string[][]): string {
 }
 
 /**
- * Write a profile's report as JSON to the run's directory, where
- * `global-setup.ts` charts it once the run is over.
+ * Where profiles leave their results. The performance workflow uploads it.
+ */
+export const RESULTS_DIR = fileURLToPath(
+  new URL('../../logs/performance/', import.meta.url),
+);
+
+/**
+ * Write a profile's report as JSON to {@link RESULTS_DIR}.
  *
  * @param stem - The file name, less its extension.
  * @param report - The report.
@@ -274,9 +280,28 @@ export async function writeReport(
   stem: string,
   report: unknown,
 ): Promise<void> {
+  await mkdir(RESULTS_DIR, { recursive: true });
   await writeFile(
-    path.join(inject('performanceRunDir'), `${stem}.json`),
+    path.join(RESULTS_DIR, `${stem}.json`),
     `${JSON.stringify(report, null, 2)}\n`,
+  );
+}
+
+/**
+ * Print a profile's results table and write it to {@link RESULTS_DIR}, from
+ * which the performance workflow shows it in the run summary.
+ *
+ * @param stem - The file name, less its extension.
+ * @param table - The Markdown table.
+ */
+export async function publishTable(stem: string, table: string): Promise<void> {
+  // Shown through the filter in `vitest.config.perf.ts`.
+  // oxlint-disable-next-line no-console
+  console.log(`[performance] ${stem}\n\n${table}\n`);
+  await mkdir(RESULTS_DIR, { recursive: true });
+  await writeFile(
+    path.join(RESULTS_DIR, `${stem}.md`),
+    `### ${stem}\n\n${table}\n`,
   );
 }
 

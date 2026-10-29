@@ -11,6 +11,7 @@ import {
   summarize,
   sum,
   toMarkdown,
+  publishTable,
   writeReport,
 } from './utils.ts';
 import type { Stats } from './utils.ts';
@@ -162,7 +163,7 @@ describe('message delivery against kref count', () => {
         await writeReport(stem, report);
       }
 
-      console.log(`[performance] ${stem}\n\n${renderResults(results)}\n`);
+      await publishTable(stem, renderResults(results));
 
       expect(results).toHaveLength(MAX_EXPONENT);
     },

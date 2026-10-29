@@ -11,6 +11,7 @@ import {
   runClosedLoop,
   summarize,
   toMarkdown,
+  publishTable,
   writeReport,
 } from './utils.ts';
 import type { Stats } from './utils.ts';
@@ -142,7 +143,7 @@ describe('message delivery under concurrent load', () => {
         }
       }
 
-      console.log(`[performance] ${stem}\n\n${renderResults(results)}\n`);
+      await publishTable(stem, renderResults(results));
 
       expect(results).toHaveLength(2 * CONCURRENCIES.length);
     },
