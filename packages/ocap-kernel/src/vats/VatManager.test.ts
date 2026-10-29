@@ -14,7 +14,10 @@ import type { Mocked, MockInstance } from 'vitest';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import type { KernelQueue } from '../KernelQueue.ts';
-import { makeFatalKernelError } from '../liveslots/kernel-marshal.ts';
+import {
+  makeFatalKernelError,
+  makeKernelError,
+} from '../liveslots/kernel-marshal.ts';
 import type { KernelStore } from '../store/index.ts';
 import type { KRef, VatId, VatConfig, PlatformServices } from '../types.ts';
 import { VatHandle } from './VatHandle.ts';
@@ -115,6 +118,7 @@ describe('VatManager', () => {
       ),
       getVatIDs: vi.fn().mockReturnValue([]),
       getVatSubcluster: vi.fn().mockReturnValue('s1'),
+      getSubclusters: vi.fn().mockReturnValue([]),
       getVatConfig: vi.fn(() => ({ sourceSpec: 'test.js' })),
       isVatActive: vi.fn().mockReturnValue(true),
       isVatTerminated: vi.fn().mockReturnValue(false),
@@ -203,21 +207,136 @@ describe('VatManager', () => {
   );
 
   describe('initializeAllVats', () => {
-    it('starts the other vats when one will not start', async () => {
+    beforeEach(() => {
       mockKernelStore.getAllVatRecords.mockReturnValue(
         (function* () {
           yield { vatID: 'v1', vatConfig: createMockVatConfig('moved') };
           yield { vatID: 'v2', vatConfig: createMockVatConfig() };
         })() as ReturnType<KernelStore['getAllVatRecords']>,
       );
+      mockKernelStore.getSubclusters.mockReturnValue([
+        {
+          id: s1,
+          config: {
+            bootstrap: 'moved',
+            vats: {
+              moved: createMockVatConfig('moved'),
+              other: createMockVatConfig(),
+            },
+          },
+          vats: { moved: v1, other: asVatId('v2') },
+        },
+      ]);
+    });
+
+    it('terminates a vat whose worker will not start, and starts the others', async () => {
+      const logError = vi.spyOn(mockLogger, 'error').mockReturnValue();
+      mockKernelStore.getPromisesByDecider.mockReturnValueOnce(
+        yieldKRefs('kp1'),
+      );
+      const failure = new Error('bundle not found');
+      mockPlatformServices.launch.mockRejectedValueOnce(failure);
+      const message =
+        'Vat v1 of subcluster s1 was terminated after its worker would not start: bundle not found';
+
+      await vatManager.initializeAllVats();
+
+      expect({
+        running: vatManager.getVatIds(),
+        rejected: mockKernelQueue.resolvePromises.mock.calls,
+        terminated: mockKernelStore.markVatAsTerminated.mock.calls,
+        deleted: mockKernelStore.deleteVat.mock.calls,
+      }).toStrictEqual({
+        running: ['v2'],
+        rejected: [
+          ['v1', [['kp1', true, makeKernelError('VAT_TERMINATED', message)]]],
+        ],
+        terminated: [['v1']],
+        deleted: [['v1']],
+      });
+      expect(logError).toHaveBeenCalledWith(message, failure);
+    });
+
+    it.each([
+      {
+        stage: 'launch',
+        hang: (): void => {
+          mockPlatformServices.launch.mockReturnValueOnce(
+            new Promise(() => undefined),
+          );
+        },
+      },
+      {
+        stage: 'handshake',
+        hang: (): void => {
+          makeVatHandleMock.mockReturnValueOnce(new Promise(() => undefined));
+        },
+      },
+    ])(
+      'terminates a vat whose $stage does not finish in time',
+      async ({ hang }) => {
+        vatManager = new VatManager({
+          platformServices: mockPlatformServices,
+          kernelStore: mockKernelStore,
+          kernelQueue: mockKernelQueue,
+          logger: mockLogger,
+          vatRelaunchTimeoutMs: 1,
+        });
+        const logError = vi.spyOn(mockLogger, 'error').mockReturnValue();
+        hang();
+
+        await vatManager.initializeAllVats();
+
+        expect(vatManager.getVatIds()).toStrictEqual(['v2']);
+        expect(mockKernelStore.deleteVat).toHaveBeenCalledExactlyOnceWith('v1');
+        expect(logError).toHaveBeenCalledWith(
+          'Vat v1 of subcluster s1 was terminated after its worker would not start: Vat v1 did not start within 1 ms',
+          expect.any(Error),
+        );
+      },
+    );
+
+    it('names no subcluster for a vat in none', async () => {
+      mockKernelStore.getSubclusters.mockReturnValue([]);
       const logError = vi.spyOn(mockLogger, 'error').mockReturnValue();
       const failure = new Error('bundle not found');
       mockPlatformServices.launch.mockRejectedValueOnce(failure);
 
       await vatManager.initializeAllVats();
 
-      expect(vatManager.getVatIds()).toStrictEqual(['v2']);
-      expect(logError).toHaveBeenCalledWith('Failed to start vat v1:', failure);
+      expect(logError).toHaveBeenCalledWith(
+        'Vat v1 was terminated after its worker would not start: bundle not found',
+        failure,
+      );
+    });
+
+    it('rejects, once every start has settled, when a vat whose worker will not start cannot be terminated', async () => {
+      vi.spyOn(mockLogger, 'error').mockReturnValue();
+      mockPlatformServices.launch.mockRejectedValueOnce(
+        new Error('bundle not found'),
+      );
+      const { promise: launched, resolve: finishLaunch } =
+        makePromiseKit<DuplexStream<JsonRpcMessage, JsonRpcMessage>>();
+      mockPlatformServices.launch.mockReturnValueOnce(launched);
+      const storeFault = new Error('disk I/O error');
+      mockKernelStore.deleteVat.mockImplementationOnce(() => {
+        throw storeFault;
+      });
+      const settled = vi.fn();
+
+      const initializing = vatManager.initializeAllVats();
+      initializing.catch(settled);
+      await delay();
+      const settledBeforeTheLastStart = settled.mock.calls.length > 0;
+      finishLaunch({
+        end: vi.fn().mockResolvedValue(undefined),
+      } as unknown as DuplexStream<JsonRpcMessage, JsonRpcMessage>);
+
+      await expect(initializing).rejects.toBe(storeFault);
+      expect({
+        settledBeforeTheLastStart,
+        running: vatManager.getVatIds(),
+      }).toStrictEqual({ settledBeforeTheLastStart: false, running: ['v2'] });
     });
 
     it('initializes all vats from storage', async () => {

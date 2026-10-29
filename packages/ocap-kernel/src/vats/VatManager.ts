@@ -75,7 +75,7 @@ type Launch = {
   stream?: DuplexStream<JsonRpcMessage, JsonRpcMessage>;
 };
 
-/** How long a restart waits for the new worker before giving up on it. */
+/** How long a vat's start, at boot or on restart, waits for its worker. */
 export const DEFAULT_VAT_RELAUNCH_TIMEOUT_MS = 30_000;
 
 /** The longest delay `setTimeout` honours; it treats anything above as 1 ms. */
@@ -147,7 +147,8 @@ export class VatManager {
    * @param options.kernelQueue - The kernel's message queue for scheduling deliveries.
    * @param options.logger - Logger instance for debugging and diagnostics.
    * @param options.allowedGlobalNames - Optional list of allowed global names for vat endowments.
-   * @param options.vatRelaunchTimeoutMs - How long a restart waits for the new worker.
+   * @param options.vatRelaunchTimeoutMs - How long a vat's start, at boot or on
+   *   restart, waits for its worker.
    */
   constructor({
     platformServices,
@@ -179,25 +180,50 @@ export class VatManager {
   }
 
   /**
-   * Initialize all vats that were previously running.
-   * This should be called during kernel startup.
+   * Start every persisted vat, before the run loop starts. A vat whose worker
+   * will not start within `vatRelaunchTimeoutMs` is terminated, with its death
+   * written directly, as no crank is open.
    *
-   * @returns A promise that resolves when all vats are initialized.
+   * @returns A promise that resolves once every vat has started or been
+   *   terminated, and rejects if a termination fails.
    */
   async initializeAllVats(): Promise<void> {
     const starts: Promise<void>[] = [];
     for (const { vatID, vatConfig } of this.#kernelStore.getAllVatRecords()) {
       // Per vat, so one whose bundle has moved since it was launched costs the
-      // kernel that vat rather than its whole startup. It stays persisted with
-      // no handle: until it is restarted or terminated, messages to it are
-      // rejected and its notifies and GC actions skipped (#1151).
+      // kernel that vat rather than its whole startup. Not kept without a
+      // worker: its notifies and GC actions would be skipped and lost (#1151).
       starts.push(
-        this.runVat(vatID, vatConfig).catch((error: unknown) => {
-          this.#logger.error(`Failed to start vat ${vatID}:`, error);
-        }),
+        this.#relaunchVat(vatID, vatConfig).then(
+          () => undefined,
+          async (error: unknown) => {
+            const subclusterId = this.#kernelStore
+              .getSubclusters()
+              .find(({ vats }) => Object.values(vats).includes(vatID))?.id;
+            const where = subclusterId ? ` of subcluster ${subclusterId}` : '';
+            const failure = new Error(
+              `Vat ${vatID}${where} was terminated after its worker would not start: ${error instanceof Error ? error.message : String(error)}`,
+              { cause: error },
+            );
+            this.#logger.error(failure.message, error);
+            // What its `initVat` wrote stays: with no crank open, nothing can
+            // roll it back as a failed restart's crank does.
+            await this.#stopVat({
+              vatId: vatID,
+              terminating: true,
+              terminationError: failure,
+            });
+          },
+        ),
       );
     }
-    await Promise.all(starts);
+    // Settled before rethrowing, so no start goes on writing the store after
+    // `Kernel.make` rejects, when the embedder may boot another kernel over it.
+    for (const outcome of await Promise.allSettled(starts)) {
+      if (outcome.status === 'rejected') {
+        throw outcome.reason;
+      }
+    }
   }
 
   /**
@@ -375,8 +401,8 @@ export class VatManager {
       throw error;
     }
     if (launch?.abandoned) {
-      // The crank that gave up on this worker retires the vat, so a handle
-      // registered now would bring it back.
+      // The boot or crank that gave up on this worker retires the vat, so a
+      // handle registered now would bring it back.
       vat
         .terminate(true)
         .catch((error: unknown) =>
@@ -396,8 +422,9 @@ export class VatManager {
   }
 
   /**
-   * Start a restarted vat, giving up if its worker is not ready in time. The
-   * restart's crank waits on this, and so does the whole run loop.
+   * Start a vat at boot or on restart, giving up if its worker is not ready in
+   * time. `Kernel.make` waits on this, as do a restart's crank and the whole
+   * run loop.
    *
    * @param vatId - The ID of the vat to start.
    * @param vatConfig - Its configuration.
@@ -423,7 +450,7 @@ export class VatManager {
         launch.abandoned = true;
         starting.catch(() => undefined);
         // Closed so a handshake still under way fails rather than writing the
-        // vat's state after the crank has retired it.
+        // vat's state after the vat is retired.
         launch.stream
           ?.end(timeoutError)
           .catch((closeError: unknown) =>
@@ -1139,9 +1166,9 @@ export class VatManager {
    */
   async terminateAllVats(): Promise<void> {
     await this.#kernelQueue.waitForCrank();
-    // With the persisted vats that have no handle: one that failed to start,
-    // and one whose loss queued a termination not yet carried out, whose
-    // worker may still be running.
+    // With the persisted vats that have no handle, such as one whose loss
+    // queued a termination not yet carried out, whose worker may still be
+    // running.
     const ids = new Set([
       ...this.getVatIds(),
       ...this.#kernelStore.getVatIDs(),

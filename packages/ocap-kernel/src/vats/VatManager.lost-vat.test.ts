@@ -467,21 +467,40 @@ describe('a delivery a kernel stop cuts off', () => {
   });
 });
 
-describe('a vat that failed to start at boot', () => {
-  it('is terminated by terminateAllVats', async () => {
+describe('a vat whose worker will not start at boot', () => {
+  it('is terminated, and the others still take deliveries', async () => {
     const harness = await setUp({ onDisk: true });
     const next = await harness.reboot({
       failToStart: new Set([v1]),
     });
 
-    await next.vatManager.terminateAllVats();
+    await deliverEverythingQueued({ ...harness, ...next });
 
     expect({
       running: next.vatManager.getVatIds(),
       persisted: [...next.kernelStore.getAllVatRecords()].map(
         ({ vatID }) => vatID,
       ),
-    }).toStrictEqual({ running: [], persisted: [] });
+    }).toStrictEqual({ running: ['v2'], persisted: ['v2'] });
+  });
+
+  it('rejects the promises it decides', async () => {
+    const harness = await setUp({ onDisk: true });
+    harness.kernelQueue
+      .enqueueMessage(harness.doomedRoot, 'work', [])
+      .catch(() => undefined);
+    harness.run();
+    await deliverEverythingQueued(harness);
+    const [decided] = harness.kernelStore.getPromisesByDecider(v1);
+
+    const next = await harness.reboot({ failToStart: new Set([v1]) });
+
+    // Before the run loop's collection deletes it: nothing holds it now.
+    const { state, value } = next.kernelStore.getKernelPromise(decided as KRef);
+    expect({ state, body: value?.body }).toStrictEqual({
+      state: 'rejected',
+      body: expect.stringContaining('VAT_TERMINATED'),
+    });
   });
 });
 

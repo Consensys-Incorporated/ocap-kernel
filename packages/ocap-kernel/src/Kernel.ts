@@ -109,7 +109,7 @@ export class Kernel {
    * @param options.ioListenerFactory - Optional factory for creating IO listeners.
    * @param options.allowedGlobalNames - Optional list of allowed global names for vat endowments.
    * @param options.onRunLoopFailure - Optional handler called if the run loop dies.
-   * @param options.vatRelaunchTimeoutMs - How long a vat restart waits for the new worker before terminating the vat.
+   * @param options.vatRelaunchTimeoutMs - How long a persisted vat's start at boot, or a vat's restart, waits for its worker before terminating the vat.
    * @param options.auditRefCounts - If true, verify every kref's reference
    * counts against the references the kernel actually holds at the end of each
    * crank, and throw on any mismatch. Intended for tests and debugging; the
@@ -272,7 +272,7 @@ export class Kernel {
    * @param options.systemSubclusters - Optional array of system subcluster configurations.
    * @param options.allowedGlobalNames - Optional list of allowed global names for vat endowments. When set, only these names from the `VatSupervisor`'s configured endowments (see `createDefaultEndowments`) are available to vats.
    * @param options.onRunLoopFailure - Optional handler called if the run loop dies. The kernel must be restarted after that, so an embedder that outlives it (e.g. a daemon) should use this to terminate or restart.
-   * @param options.vatRelaunchTimeoutMs - How long a vat restart waits for the new worker before terminating the vat, in milliseconds: more than 0 and at most 2^31 - 1. Defaults to 30 seconds.
+   * @param options.vatRelaunchTimeoutMs - How long a persisted vat's start at boot, or a vat's restart, waits for its worker before terminating the vat, in milliseconds: more than 0 and at most 2^31 - 1. Defaults to 30 seconds.
    * @param options.auditRefCounts - If true, verify reference counts against
    * ground truth at the end of each crank and throw on any mismatch.
    * @param options.kernelServices - Kernel services to register before the run
@@ -349,6 +349,10 @@ export class Kernel {
     // Restore persisted system subclusters and delete ones that no
     // longer have a config, to ensure that orphaned vats aren't started
     this.#subclusterManager.initSystemSubclusters(configs);
+    // Before the vats start, for a bootstrap vat lost before this boot, so the
+    // other vats of its subcluster are not started only to be stopped; again
+    // below, for one whose worker this boot could not start.
+    await this.#subclusterManager.removeSystemSubclustersWithoutBootstrapVat();
 
     // Re-create IO channels for persisted subclusters whose configs
     // declare them. This must happen before `initializeAllVats` so
@@ -359,6 +363,7 @@ export class Kernel {
     // Start all vats that were previously running before starting the queue
     // This ensures that any messages in the queue have their target vats ready
     await this.#vatManager.initializeAllVats();
+    await this.#subclusterManager.removeSystemSubclustersWithoutBootstrapVat();
 
     // Start the kernel queue processing (non-blocking)
     // This runs for the entire lifetime of the kernel

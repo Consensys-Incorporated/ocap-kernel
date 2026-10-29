@@ -617,6 +617,44 @@ export class SubclusterManager {
   }
 
   /**
+   * Remove each system subcluster whose bootstrap vat is gone, terminating its
+   * other vats, so that `launchNewSystemSubclusters` launches it again from its
+   * config.
+   *
+   * Only before the run loop starts, since it writes each vat's death directly.
+   */
+  async removeSystemSubclustersWithoutBootstrapVat(): Promise<void> {
+    for (const [
+      name,
+      subclusterId,
+    ] of this.#kernelStore.getAllSystemSubclusterMappings()) {
+      const subcluster = this.#kernelStore.getSubcluster(subclusterId);
+      if (!subcluster || subcluster.vats[subcluster.config.bootstrap]) {
+        continue;
+      }
+      this.#logger.error(
+        `System subcluster "${name}" lost its bootstrap vat; launching it again from its config`,
+      );
+      for (const vatId of Object.values(subcluster.vats).reverse()) {
+        // `stopVat` throws for a vat with neither, which has nothing to retire.
+        if (
+          this.#vatManager.hasVat(vatId) ||
+          this.#kernelStore.isVatActive(vatId)
+        ) {
+          await this.#vatManager.stopVat(vatId, true);
+        }
+      }
+      try {
+        await this.#ioManager?.destroyChannels(subclusterId);
+      } catch (error) {
+        this.#logger.error('Error during IO cleanup on removal:', error);
+      }
+      this.#kernelStore.deleteSubcluster(subclusterId);
+      this.#dropSystemSubclusterMapping(subclusterId);
+    }
+  }
+
+  /**
    * Launch new system subclusters that aren't already in persistence.
    * This must be called after the kernel queue is running since launchSubcluster
    * sends bootstrap messages.
@@ -713,9 +751,8 @@ export class SubclusterManager {
 
       const bootstrapVatId = subcluster.vats[subcluster.config.bootstrap];
       if (!bootstrapVatId) {
-        throw new Error(
-          `System subcluster "${name}" has no bootstrap vat - database may be corrupted`,
-        );
+        // Left for `removeSystemSubclustersWithoutBootstrapVat`.
+        continue;
       }
 
       const rootKref = this.#kernelStore.getRootObject(bootstrapVatId);

@@ -47,6 +47,11 @@ describe('SubclusterManager', () => {
     },
   });
 
+  const makeMockIOManager = () => ({
+    createChannels: vi.fn().mockResolvedValue(undefined),
+    destroyChannels: vi.fn().mockResolvedValue(undefined),
+  });
+
   const createMockSubcluster = (
     id: SubclusterId,
     config: ClusterConfig,
@@ -98,6 +103,7 @@ describe('SubclusterManager', () => {
       }),
       collectGarbage: vi.fn(),
       terminateAllVats: vi.fn().mockResolvedValue(undefined),
+      stopVat: vi.fn().mockResolvedValue(undefined),
       hasVat: vi.fn((vatId: string) => vatsRunning && !retiredVats.has(vatId)),
       releaseVatRootPin: vi.fn(),
     } as unknown as Mocked<VatManager>;
@@ -1100,22 +1106,24 @@ describe('SubclusterManager', () => {
       ).toHaveBeenCalledWith('sys');
     });
 
-    it('throws when persisted system subcluster has no bootstrap vat', () => {
-      const config = createMockClusterConfig('sys');
-      // Subcluster with empty vats - no bootstrap vat
-      const subcluster: Subcluster = {
-        id: s1,
-        config,
-        vats: {},
-      };
+    it('restores no root for a system subcluster with no bootstrap vat', () => {
       mockKernelStore.getAllSystemSubclusterMappings.mockReturnValue(
         new Map([['sys', s1]]),
       );
-      mockKernelStore.getSubcluster.mockReturnValue(subcluster);
+      mockKernelStore.getSubcluster.mockReturnValue({
+        id: s1,
+        config: createMockClusterConfig('sys'),
+        vats: { vat2: asVatId('v2') },
+      });
 
-      expect(() =>
-        subclusterManager.initSystemSubclusters([makeSystemConfig('sys')]),
-      ).toThrow('has no bootstrap vat - database may be corrupted');
+      subclusterManager.initSystemSubclusters([makeSystemConfig('sys')]);
+
+      expect(() => subclusterManager.getSystemSubclusterRoot('sys')).toThrow(
+        'System subcluster "sys" not found',
+      );
+      expect(
+        mockKernelStore.deleteSystemSubclusterMapping,
+      ).not.toHaveBeenCalled();
     });
 
     it('throws when persisted system subcluster has no root object', () => {
@@ -1130,6 +1138,162 @@ describe('SubclusterManager', () => {
       expect(() =>
         subclusterManager.initSystemSubclusters([makeSystemConfig('sys')]),
       ).toThrow('has no root object - database may be corrupted');
+    });
+  });
+
+  describe('removeSystemSubclustersWithoutBootstrapVat', () => {
+    const config: ClusterConfig = {
+      bootstrap: 'boot',
+      vats: {
+        boot: { sourceSpec: 'boot.js' },
+        alice: { sourceSpec: 'alice.js' },
+        bob: { sourceSpec: 'bob.js' },
+      },
+    };
+
+    /**
+     * Make a manager with an IO manager, over system subclusters restored with
+     * their bootstrap vats, which the boot may then have lost.
+     *
+     * @param after - By system name, each subcluster's vats as the boot left
+     *   them. The first is `s1`, the second `s2`.
+     * @returns The manager and its IO manager.
+     */
+    const makeRestoredManager = (
+      after: Record<string, Record<string, VatId>>,
+    ) => {
+      const ioManager = makeMockIOManager();
+      const manager = new SubclusterManager({
+        kernelStore: mockKernelStore,
+        kernelQueue: mockKernelQueue,
+        vatManager: mockVatManager,
+        getKernelService: mockGetKernelService,
+        queueMessage: mockQueueMessage,
+        ioManager: ioManager as never,
+      });
+      const names = Object.keys(after);
+      const idOf = (name: string): SubclusterId =>
+        asSubclusterId(`s${names.indexOf(name) + 1}`);
+      mockKernelStore.getAllSystemSubclusterMappings.mockReturnValue(
+        new Map(names.map((name) => [name, idOf(name)])),
+      );
+      mockKernelStore.getSubcluster.mockImplementation((id) => ({
+        id,
+        config,
+        vats: { boot: asVatId('v1') },
+      }));
+      mockKernelStore.getRootObject.mockReturnValue(asKRef('ko1'));
+      manager.initSystemSubclusters(names.map((name) => ({ name, config })));
+      mockKernelStore.getSubcluster.mockImplementation((id) => {
+        const name = names.find((candidate) => idOf(candidate) === id);
+        return name === undefined
+          ? undefined
+          : { id, config, vats: after[name] ?? {} };
+      });
+      return { manager, ioManager };
+    };
+
+    it('removes a system subcluster whose bootstrap vat is gone, with its other vats', async () => {
+      const { manager, ioManager } = makeRestoredManager({
+        sys: { alice: asVatId('v2'), bob: asVatId('v3') },
+      });
+
+      await manager.removeSystemSubclustersWithoutBootstrapVat();
+
+      expect({
+        stopped: mockVatManager.stopVat.mock.calls,
+        channelsDestroyed: ioManager.destroyChannels.mock.calls,
+        recordDeleted: mockKernelStore.deleteSubcluster.mock.calls,
+        mappingDeleted:
+          mockKernelStore.deleteSystemSubclusterMapping.mock.calls,
+      }).toStrictEqual({
+        stopped: [
+          ['v3', true],
+          ['v2', true],
+        ],
+        channelsDestroyed: [['s1']],
+        recordDeleted: [['s1']],
+        mappingDeleted: [['sys']],
+      });
+      expect(() => manager.getSystemSubclusterRoot('sys')).toThrow(
+        'System subcluster "sys" not found',
+      );
+    });
+
+    it('leaves a system subcluster that has its bootstrap vat', async () => {
+      const { manager } = makeRestoredManager({
+        sys: { boot: asVatId('v1'), alice: asVatId('v2') },
+      });
+
+      await manager.removeSystemSubclustersWithoutBootstrapVat();
+
+      expect(mockVatManager.stopVat).not.toHaveBeenCalled();
+      expect(mockKernelStore.deleteSubcluster).not.toHaveBeenCalled();
+      expect(manager.getSystemSubclusterRoot('sys')).toBe('ko1');
+    });
+
+    it('goes on past a system subcluster that has its bootstrap vat', async () => {
+      const { manager } = makeRestoredManager({
+        kept: { boot: asVatId('v1') },
+        lost: { alice: asVatId('v2') },
+      });
+
+      await manager.removeSystemSubclustersWithoutBootstrapVat();
+
+      expect({
+        stopped: mockVatManager.stopVat.mock.calls,
+        recordDeleted: mockKernelStore.deleteSubcluster.mock.calls,
+        mappingDeleted:
+          mockKernelStore.deleteSystemSubclusterMapping.mock.calls,
+        keptRoot: manager.getSystemSubclusterRoot('kept'),
+      }).toStrictEqual({
+        stopped: [['v2', true]],
+        recordDeleted: [['s2']],
+        mappingDeleted: [['lost']],
+        keptRoot: 'ko1',
+      });
+    });
+
+    it('skips a member that has neither a handle nor a record', async () => {
+      const { manager } = makeRestoredManager({
+        sys: { alice: asVatId('v2'), bob: asVatId('v3') },
+      });
+      retiredVats.add('v3');
+
+      await manager.removeSystemSubclustersWithoutBootstrapVat();
+
+      expect(mockVatManager.stopVat.mock.calls).toStrictEqual([['v2', true]]);
+      expect(mockKernelStore.deleteSubcluster).toHaveBeenCalledWith('s1');
+    });
+
+    it('removes the record even when its IO channels will not close', async () => {
+      const { manager, ioManager } = makeRestoredManager({ sys: {} });
+      ioManager.destroyChannels.mockRejectedValueOnce(new Error('EBUSY'));
+
+      await manager.removeSystemSubclustersWithoutBootstrapVat();
+
+      expect({
+        recordDeleted: mockKernelStore.deleteSubcluster.mock.calls,
+        mappingDeleted:
+          mockKernelStore.deleteSystemSubclusterMapping.mock.calls,
+      }).toStrictEqual({ recordDeleted: [['s1']], mappingDeleted: [['sys']] });
+    });
+
+    it('keeps the record when a member cannot be terminated', async () => {
+      const { manager } = makeRestoredManager({
+        sys: { alice: asVatId('v2') },
+      });
+      const storeFault = new Error('disk I/O error');
+      mockVatManager.stopVat.mockRejectedValueOnce(storeFault);
+
+      await expect(
+        manager.removeSystemSubclustersWithoutBootstrapVat(),
+      ).rejects.toBe(storeFault);
+
+      expect(mockKernelStore.deleteSubcluster).not.toHaveBeenCalled();
+      expect(
+        mockKernelStore.deleteSystemSubclusterMapping,
+      ).not.toHaveBeenCalled();
     });
   });
 
@@ -1426,11 +1590,6 @@ describe('SubclusterManager', () => {
   });
 
   describe('restorePersistedIOChannels', () => {
-    const makeMockIOManager = () => ({
-      createChannels: vi.fn().mockResolvedValue(undefined),
-      destroyChannels: vi.fn().mockResolvedValue(undefined),
-    });
-
     const subclusterWithIO = (
       id: SubclusterId,
       io: Record<string, { type: 'socket'; path: string }>,

@@ -1416,39 +1416,78 @@ describe('Kernel', () => {
       ).toThrow('System subcluster "testSystemSubcluster" not found');
     });
 
-    it('throws if persisted system subcluster has no bootstrap vat', async () => {
-      const db = makeMapKernelDatabase();
-      const systemSubclusterConfig = {
-        name: 'testSystemSubcluster',
-        config: {
-          bootstrap: 'testSystemSubcluster',
-          vats: {
-            testSystemSubcluster: {
-              sourceSpec: 'system-vat.js',
+    it.each([
+      {
+        when: 'will not start',
+        launched: ['v1', 'v2', 'v3', 'v4'],
+        loseBootstrapVat: async (): Promise<void> => {
+          launchWorkerMock.mockImplementation(async (vatId: string) => {
+            if (vatId === 'v1') {
+              throw new Error('bundle not found');
+            }
+            return { end: vi.fn() };
+          });
+        },
+      },
+      {
+        // As a run, or a boot cut off before removing the subcluster, leaves it.
+        when: 'was terminated before the boot',
+        launched: ['v3', 'v4'],
+        loseBootstrapVat: async (kernel: Kernel): Promise<void> => {
+          await kernel.terminateVat(asVatId('v1'));
+        },
+      },
+    ])(
+      'launches a system subcluster again when its bootstrap vat $when',
+      async ({ launched, loseBootstrapVat }) => {
+        const db = makeMapKernelDatabase();
+        const systemSubclusterConfig = {
+          name: 'sys',
+          config: {
+            bootstrap: 'boot',
+            vats: {
+              boot: { sourceSpec: 'boot.js' },
+              helper: { sourceSpec: 'helper.js' },
             },
           },
-        },
-      };
-
-      // Create kernel with system subcluster
-      const kernel1 = await Kernel.make(mockPlatformServices, db, {
-        systemSubclusters: [systemSubclusterConfig],
-      });
-      await kernel1.stop();
-
-      // Corrupt database: remove vats from the subcluster
-      const subclustersJson = db.kernelKVStore.get('subclusters');
-      const subclusters = JSON.parse(subclustersJson ?? '[]');
-      subclusters[0].vats = {};
-      db.kernelKVStore.set('subclusters', JSON.stringify(subclusters));
-
-      // Restart kernel - should throw
-      await expect(
-        Kernel.make(mockPlatformServices, db, {
+        };
+        const kernel1 = await Kernel.make(mockPlatformServices, db, {
           systemSubclusters: [systemSubclusterConfig],
-        }),
-      ).rejects.toThrow('has no bootstrap vat - database may be corrupted');
-    });
+        });
+        await loseBootstrapVat(kernel1);
+        await kernel1.stop();
+        launchWorkerMock.mockClear();
+        terminateWorkerMock.mockClear();
+
+        const kernel2 = await Kernel.make(mockPlatformServices, db, {
+          systemSubclusters: [systemSubclusterConfig],
+        });
+
+        const helperStop = terminateWorkerMock.mock.calls.findIndex(
+          ([vatId]) => vatId === 'v2',
+        );
+        expect({
+          launched: launchWorkerMock.mock.calls.map(([vatId]) => vatId),
+          helperStoppedBeforeRunLoop:
+            (terminateWorkerMock.mock.invocationCallOrder[helperStop] ??
+              Infinity) <
+            (mocks.KernelQueue.lastInstance.run.mock.invocationCallOrder[0] ??
+              0),
+          vats: kernel2.getVatIds(),
+          subclusters: kernel2.getSubclusters().map(({ id, vats }) => ({
+            id,
+            vats,
+          })),
+          root: kernel2.getSystemSubclusterRoot('sys'),
+        }).toStrictEqual({
+          launched,
+          helperStoppedBeforeRunLoop: true,
+          vats: ['v3', 'v4'],
+          subclusters: [{ id: 's2', vats: { boot: 'v3', helper: 'v4' } }],
+          root: 'ko6',
+        });
+      },
+    );
 
     it('throws if persisted system subcluster has no root object', async () => {
       const db = makeMapKernelDatabase();
