@@ -366,8 +366,21 @@ export class Kernel {
 
     // Start all vats that were previously running before starting the queue
     // This ensures that any messages in the queue have their target vats ready
-    await this.#vatManager.initializeAllVats();
-    await this.#subclusterManager.removeSystemSubclustersWithoutBootstrapVat();
+    try {
+      await this.#vatManager.initializeAllVats();
+      await this.#subclusterManager.removeSystemSubclustersWithoutBootstrapVat();
+    } catch (error) {
+      this.#vatManager.expectWorkersToStop();
+      await this.#platformServices
+        .terminateAll()
+        .catch((stopError: unknown) =>
+          this.#logger.error(
+            'Failed to stop the vat workers of a kernel that did not start:',
+            stopError,
+          ),
+        );
+      throw error;
+    }
 
     // Start the kernel queue processing (non-blocking)
     // This runs for the entire lifetime of the kernel

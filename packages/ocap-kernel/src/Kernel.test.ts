@@ -398,6 +398,70 @@ describe('Kernel', () => {
       expect(makeVatHandleMock).toHaveBeenCalledOnce();
       expect(kernel2.getVatIds()).toStrictEqual(['v1']);
     });
+
+    it.each([
+      { outcome: 'succeeds', stopError: undefined },
+      { outcome: 'fails', stopError: new Error('worker would not stop') },
+    ])(
+      'stops the workers it started and rejects when a termination at boot fails and the stop $outcome',
+      async ({ stopError }) => {
+        const db = makeMapKernelDatabase();
+        const kernel1 = await Kernel.make(mockPlatformServices, db);
+        await kernel1.launchSubcluster({
+          bootstrap: 'broken',
+          vats: { broken: makeMockVatConfig(), other: makeMockVatConfig() },
+        });
+        await kernel1.stop();
+        vatHandles.length = 0;
+        launchWorkerMock.mockImplementation(async (vatId: string) => {
+          if (vatId === 'v1') {
+            throw new Error('bundle not found');
+          }
+          return { end: vi.fn() };
+        });
+        const refusal = new Error('disk full');
+        const set = db.kernelKVStore.set.bind(db.kernelKVStore);
+        vi.spyOn(db.kernelKVStore, 'set').mockImplementation((key, value) => {
+          if (key === 'vats.terminated') {
+            throw refusal;
+          }
+          set(key, value);
+        });
+        const terminateAll = vi.spyOn(mockPlatformServices, 'terminateAll');
+        if (stopError) {
+          terminateAll.mockRejectedValueOnce(stopError);
+        }
+        const logger = new Logger('test');
+        const logError = vi.spyOn(logger, 'error').mockReturnValue();
+        const stopFailure =
+          'Failed to stop the vat workers of a kernel that did not start:';
+
+        await expect(
+          Kernel.make(mockPlatformServices, db, { logger }),
+        ).rejects.toBe(refusal);
+
+        // Told first, or the stop would end its channel as a lost vat's and
+        // queue its termination for the next boot.
+        const [other] = vatHandles;
+        expect({
+          handles: vatHandles.length,
+          toldBeforeStop:
+            (other?.expectClose.mock.invocationCallOrder[0] ?? Infinity) <
+            (terminateAll.mock.invocationCallOrder[0] ?? 0),
+          terminateAll: terminateAll.mock.calls.length,
+          runLoopStarted: mocks.KernelQueue.lastInstance.run.mock.calls.length,
+          stopLogged: logError.mock.calls
+            .filter(([message]) => message === stopFailure)
+            .map(([, error]) => error),
+        }).toStrictEqual({
+          handles: 1,
+          toldBeforeStop: true,
+          terminateAll: 1,
+          runLoopStarted: 0,
+          stopLogged: stopError ? [stopError] : [],
+        });
+      },
+    );
   });
 
   describe('queueMessage()', () => {
