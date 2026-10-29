@@ -59,7 +59,7 @@
     "@lavamoat/allow-scripts": "^3.3.2",
     "@lavamoat/preinstall-always-fail": "^2.1.0",
     "@metamask/auto-changelog": "^7.0.1",
-    "@metamask/create-release-branch": "^4.2.2",
+    "@metamask/create-release-branch": "^4.2.3",
     "@metamask/kernel-cli": "workspace:^",
     "@ocap/lint-config": "workspace:^",
     "@types/lodash": "^4.17.16",
