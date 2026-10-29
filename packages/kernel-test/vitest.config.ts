@@ -24,6 +24,11 @@ export default defineConfig((args) => {
 
   if (args.mode !== 'development') {
     config.test.coverage.thresholds = true;
+    // Nothing in this run loads them, so they would count as uncovered.
+    config.test.coverage.exclude = [
+      ...(config.test.coverage.exclude ?? []),
+      '**/src/performance/**',
+    ];
   }
 
   return config;
