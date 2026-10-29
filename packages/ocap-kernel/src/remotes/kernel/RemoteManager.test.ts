@@ -518,7 +518,6 @@ describe('RemoteManager', () => {
       expect(await second).toBe(remote);
       expect(mockKernelQueue.writeOutsideCrank).toHaveBeenCalledWith(
         expect.any(Function),
-        { outlivesStop: true },
       );
       expect(mockRemoteComms.registerLocationHints).toHaveBeenCalledWith(
         'new-peer',
@@ -1480,8 +1479,8 @@ describe('RemoteManager', () => {
       expect(persistSpy).toHaveBeenCalledOnce();
     });
 
-    it('leaves a change queued before remote comms stopped for the next handshake', async () => {
-      const peerId = 'peer-restarted-during-stop';
+    it('leaves a change for the next handshake while remote comms are not up', async () => {
+      const peerId = 'peer-restarted-before-comms';
       const remote = remoteManager.establishRemote(peerId);
       const persistSpy = vi.spyOn(remote, 'persistPeerRestart');
       kernelStore.setPeerIncarnation(peerId, 'incarnation-A');

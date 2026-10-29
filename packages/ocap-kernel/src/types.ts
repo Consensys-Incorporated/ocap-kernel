@@ -441,8 +441,19 @@ export type PeerArrival =
   | RunQueueItemRemoteInbound
   | RunQueueItemPeerIncarnation;
 
+/**
+ * A host call the run loop carries out ahead of all other work, in a crank of
+ * its own.
+ */
+export type ControlOperation = 'clearStorage' | 'reset' | 'terminateAllVats';
+
+export type RunLoopItemControl = {
+  type: 'control';
+  operation: ControlOperation;
+};
+
 /** Everything the run loop takes a crank for. */
-export type RunLoopItem = RunQueueItem | PeerArrival;
+export type RunLoopItem = RunQueueItem | PeerArrival | RunLoopItemControl;
 
 /**
  * Assert that a value is a valid kernel message.
@@ -805,8 +816,9 @@ const RemoteCommsConnectedStruct = object({
 /**
  * Whether the kernel is capable of processing its run queue. `idle` means the
  * run loop was never started, not that it has nothing to do — a loop parked on
- * an empty queue reports `running`. `failed` means nothing will ever be
- * processed again and the kernel must be restarted.
+ * an empty queue reports `running`. `stopped` means `Kernel.stop` ended the
+ * loop. `failed` means nothing will ever be processed again and the kernel
+ * must be restarted.
  */
 // The arms are `type()`, not `object()`, so a client shipped against them
 // tolerates a newer kernel adding a field to an arm. Note the limit of that:
@@ -815,6 +827,7 @@ const RemoteCommsConnectedStruct = object({
 export const RunLoopStatusStruct = union([
   type({ state: literal('idle') }),
   type({ state: literal('running') }),
+  type({ state: literal('stopped') }),
   // Two strings because one cannot be both: `error` is the message, `detail` the
   // cause chain. When a crank dies and its rollback then fails, the message names
   // the rollback and only the chain names what killed the kernel.

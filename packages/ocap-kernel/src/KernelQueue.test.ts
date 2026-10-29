@@ -29,11 +29,11 @@ vi.mock('@endo/promise-kit', () => ({
 }));
 
 /**
- * Sentinel error used to stop the infinite run loop in tests.
+ * Sentinel error used to kill the run loop in tests.
  * Thrown by collectGarbage (which runs after each delivery) so the
  * test can assert on the side-effects of that delivery.
  */
-const STOP_RUN_LOOP = 'test: stop run loop';
+const KILL_RUN_LOOP = 'test: kill run loop';
 
 describe('KernelQueue', () => {
   let kernelStore: KernelStore;
@@ -125,12 +125,13 @@ describe('KernelQueue', () => {
   };
 
   /**
-   * Run one crank with `during` inside it, then stop the run loop in the next,
+   * Run one crank with `during` inside it, then kill the run loop in the next,
    * asserting what it died of.
    *
    * @param during - What happens while the crank is open.
    * @param options - Options bag.
-   * @param options.diesOf - What the run loop dies of instead of that stop.
+   * @param options.diesOf - What the run loop dies of instead of
+   * `KILL_RUN_LOOP`.
    */
   const runACrankWhile = async (
     during: () => void,
@@ -143,7 +144,7 @@ describe('KernelQueue', () => {
       target: 'ko123',
       message: {} as KernelMessage,
     });
-    const stop = new Error(STOP_RUN_LOOP);
+    const stop = new Error(KILL_RUN_LOOP);
     const deliver = vi
       .fn()
       .mockImplementationOnce(async () => {
@@ -197,9 +198,9 @@ describe('KernelQueue', () => {
       (
         kernelStore.collectGarbage as unknown as MockInstance
       ).mockImplementation(() => {
-        throw new Error(STOP_RUN_LOOP);
+        throw new Error(KILL_RUN_LOOP);
       });
-      await expect(kernelQueue.run(deliver)).rejects.toThrow(STOP_RUN_LOOP);
+      await expect(kernelQueue.run(deliver)).rejects.toThrow(KILL_RUN_LOOP);
       expect(kernelStore.startCrank).toHaveBeenCalled();
       expect(kernelStore.createCrankSavepoint).toHaveBeenCalledWith('crank');
       expect(kernelStore.createCrankSavepoint).toHaveBeenCalledWith('delivery');
@@ -229,11 +230,11 @@ describe('KernelQueue', () => {
       );
       const afterCommit = vi.fn(async () => {
         order.push('afterCommit');
-        throw new Error(STOP_RUN_LOOP);
+        throw new Error(KILL_RUN_LOOP);
       });
       const deliver = vi.fn().mockResolvedValue({ afterCommit });
 
-      await expect(kernelQueue.run(deliver)).rejects.toThrow(STOP_RUN_LOOP);
+      await expect(kernelQueue.run(deliver)).rejects.toThrow(KILL_RUN_LOOP);
 
       expect(order).toStrictEqual(['endCrank', 'afterCommit']);
     });
@@ -312,9 +313,9 @@ describe('KernelQueue', () => {
       (kernelStore.dequeueRun as unknown as MockInstance).mockReturnValue(
         mockItem,
       );
-      const deliver = vi.fn().mockRejectedValue(new Error(STOP_RUN_LOOP));
+      const deliver = vi.fn().mockRejectedValue(new Error(KILL_RUN_LOOP));
 
-      await expect(kernelQueue.run(deliver)).rejects.toThrow(STOP_RUN_LOOP);
+      await expect(kernelQueue.run(deliver)).rejects.toThrow(KILL_RUN_LOOP);
 
       expect(kernelStore.rollbackCrank).toHaveBeenCalledWith('delivery');
     });
@@ -333,13 +334,13 @@ describe('KernelQueue', () => {
       );
       (kernelStore.endCrank as unknown as MockInstance).mockImplementation(
         () => {
-          throw new Error(STOP_RUN_LOOP);
+          throw new Error(KILL_RUN_LOOP);
         },
       );
       const afterCommit = vi.fn();
       const deliver = vi.fn().mockResolvedValue({ afterCommit });
 
-      await expect(kernelQueue.run(deliver)).rejects.toThrow(STOP_RUN_LOOP);
+      await expect(kernelQueue.run(deliver)).rejects.toThrow(KILL_RUN_LOOP);
 
       // The commit is what `afterCommit` reports on, and it did not happen.
       expect(afterCommit).not.toHaveBeenCalled();
@@ -362,13 +363,13 @@ describe('KernelQueue', () => {
       const deliver = vi.fn(async () => {
         cranks += 1;
         if (cranks > 3) {
-          throw new Error(STOP_RUN_LOOP);
+          throw new Error(KILL_RUN_LOOP);
         }
         // Only the first crank has post-commit work.
         return cranks === 1 ? { afterCommit } : {};
       });
 
-      await expect(kernelQueue.run(deliver)).rejects.toThrow(STOP_RUN_LOOP);
+      await expect(kernelQueue.run(deliver)).rejects.toThrow(KILL_RUN_LOOP);
 
       expect(afterCommit).toHaveBeenCalledOnce();
     });
@@ -395,11 +396,11 @@ describe('KernelQueue', () => {
       );
       (kernelStore.endCrank as unknown as MockInstance).mockImplementation(
         () => {
-          throw new Error(STOP_RUN_LOOP);
+          throw new Error(KILL_RUN_LOOP);
         },
       );
 
-      await expect(kernelQueue.run(deliver)).rejects.toThrow(STOP_RUN_LOOP);
+      await expect(kernelQueue.run(deliver)).rejects.toThrow(KILL_RUN_LOOP);
 
       expect(afterCommit).not.toHaveBeenCalled();
     });
@@ -424,9 +425,9 @@ describe('KernelQueue', () => {
       (
         kernelStore.collectGarbage as unknown as MockInstance
       ).mockImplementation(() => {
-        throw new Error(STOP_RUN_LOOP);
+        throw new Error(KILL_RUN_LOOP);
       });
-      await expect(kernelQueue.run(deliver)).rejects.toThrow(STOP_RUN_LOOP);
+      await expect(kernelQueue.run(deliver)).rejects.toThrow(KILL_RUN_LOOP);
       expect(kernelStore.startCrank).toHaveBeenCalled();
       expect(deliver).toHaveBeenCalledWith(mockItem);
       expect(terminateVat).toHaveBeenCalledWith(
@@ -560,11 +561,11 @@ describe('KernelQueue', () => {
       (
         kernelStore.collectGarbage as unknown as MockInstance
       ).mockImplementation(() => {
-        throw new Error(STOP_RUN_LOOP);
+        throw new Error(KILL_RUN_LOOP);
       });
 
       // A second rollback would throw "no such savepoint" over this error.
-      await expect(kernelQueue.run(deliver)).rejects.toThrow(STOP_RUN_LOOP);
+      await expect(kernelQueue.run(deliver)).rejects.toThrow(KILL_RUN_LOOP);
       expect(kernelStore.rollbackCrank).toHaveBeenCalledOnce();
     });
 
@@ -1117,42 +1118,18 @@ describe('KernelQueue', () => {
       await expect(result).rejects.toBe(fault);
     });
 
-    it.each([false, true])(
-      'rejects a held write when held requests are discarded, outlivesStop: %s',
-      async (outlivesStop) => {
-        const write = vi.fn();
-        const discarded = new Error('discarded');
-        let result: Promise<unknown> | undefined;
-        await runACrankWhile(() => {
-          result = kernelQueue.writeOutsideCrank(write, { outlivesStop });
-          kernelQueue.discardHeldRequests(discarded);
-        });
+    it('rejects a held write when held requests are discarded', async () => {
+      const write = vi.fn();
+      const discarded = new Error('discarded');
+      let result: Promise<unknown> | undefined;
+      await runACrankWhile(() => {
+        result = kernelQueue.writeOutsideCrank(write);
+        kernelQueue.discardHeldRequests(discarded);
+      });
 
-        await expect(result).rejects.toBe(discarded);
-        expect(write).not.toHaveBeenCalled();
-      },
-    );
-
-    it.each([
-      { options: { outlivesStop: true }, settled: 'written' },
-      { options: { outlivesStop: false }, settled: 'stopped' },
-      { options: undefined, settled: 'stopped' },
-    ])(
-      'makes a write held through a stop only if it outlives one, given $options',
-      async ({ options, settled }) => {
-        let result: Promise<unknown> | undefined;
-        await runACrankWhile(() => {
-          result = kernelQueue.writeOutsideCrank(() => 'written', options);
-          kernelQueue.discardHeldRequests(new Error('stopped'), {
-            stopping: true,
-          });
-        });
-
-        expect(await result?.catch((error: Error) => error.message)).toBe(
-          settled,
-        );
-      },
-    );
+      await expect(result).rejects.toBe(discarded);
+      expect(write).not.toHaveBeenCalled();
+    });
   });
 
   describe('enqueueSend', () => {
@@ -1298,11 +1275,11 @@ describe('KernelQueue', () => {
       const deliver = vi.fn().mockImplementation(async (item: RunLoopItem) => {
         delivered.push(item);
         if (delivered.length === count) {
-          throw new Error(STOP_RUN_LOOP);
+          throw new Error(KILL_RUN_LOOP);
         }
         return {};
       });
-      await expect(kernelQueue.run(deliver)).rejects.toThrow(STOP_RUN_LOOP);
+      await expect(kernelQueue.run(deliver)).rejects.toThrow(KILL_RUN_LOOP);
       return delivered;
     };
 
@@ -1446,6 +1423,7 @@ describe('KernelQueue', () => {
       kernelQueue.discardArrivals();
       arrive({ seq: 2 });
 
+      expect(kernelQueue.waitingIncarnations('peer-r1')).toStrictEqual([]);
       expect(await deliverItems(1)).toStrictEqual([arrival(2)]);
     });
 
@@ -1467,13 +1445,13 @@ describe('KernelQueue', () => {
             // The loop found nothing and has armed its wake.
             accept();
           } else if (turns > 2) {
-            throw new Error(STOP_RUN_LOOP);
+            throw new Error(KILL_RUN_LOOP);
           }
         },
       );
       const deliver = vi.fn().mockResolvedValue({});
 
-      await expect(kernelQueue.run(deliver)).rejects.toThrow(STOP_RUN_LOOP);
+      await expect(kernelQueue.run(deliver)).rejects.toThrow(KILL_RUN_LOOP);
 
       expect(mockPromiseKit.resolve).toHaveBeenCalled();
       expect(deliver).toHaveBeenCalledOnce();
@@ -1510,7 +1488,7 @@ describe('KernelQueue', () => {
       const deliver = vi.fn(async (item: RunLoopItem) => {
         delivered.push(item);
         if (item.type !== 'remoteInbound' || delivered.length > 300) {
-          throw new Error(STOP_RUN_LOOP);
+          throw new Error(KILL_RUN_LOOP);
         }
         const next = item.seq + 1;
         if (!arrive({ seq: next, highestReceivedSeq: item.seq })) {
@@ -1519,7 +1497,7 @@ describe('KernelQueue', () => {
         return {};
       });
 
-      await expect(kernelQueue.run(deliver)).rejects.toThrow(STOP_RUN_LOOP);
+      await expect(kernelQueue.run(deliver)).rejects.toThrow(KILL_RUN_LOOP);
 
       expect({
         refused,
@@ -1668,7 +1646,7 @@ describe('KernelQueue', () => {
         target: 'ko123',
         message: {} as KernelMessage,
       });
-      const stop = new Error('test: stop run loop');
+      const stop = new Error('test: kill run loop');
       const deliver = vi
         .fn()
         .mockImplementationOnce(async () => {
@@ -1715,7 +1693,7 @@ describe('KernelQueue', () => {
           target: 'ko123',
           message: {} as KernelMessage,
         });
-        const stop = new Error('test: stop run loop');
+        const stop = new Error('test: kill run loop');
         const deliver = vi
           .fn()
           .mockImplementationOnce(async () => {
@@ -2059,9 +2037,9 @@ describe('KernelQueue', () => {
       (
         kernelStore.collectGarbage as unknown as MockInstance
       ).mockImplementation(() => {
-        throw new Error(STOP_RUN_LOOP);
+        throw new Error(KILL_RUN_LOOP);
       });
-      await expect(kernelQueue.run(deliver)).rejects.toThrow(STOP_RUN_LOOP);
+      await expect(kernelQueue.run(deliver)).rejects.toThrow(KILL_RUN_LOOP);
       expect(kernelStore.rollbackCrank).toHaveBeenCalledWith('delivery');
       expect(rejectSpy).toHaveBeenCalledWith(terminateInfo);
       expect(kernelQueue.subscriptions.has(asKRef('kp99'))).toBe(false);
@@ -2095,9 +2073,9 @@ describe('KernelQueue', () => {
       ).mockImplementation(() => {
         subscribedAfterAbort = kernelQueue.subscriptions.has(asKRef('kp99'));
         rejectedAfterAbort = rejectSpy.mock.calls.length > 0;
-        throw new Error(STOP_RUN_LOOP);
+        throw new Error(KILL_RUN_LOOP);
       });
-      await expect(kernelQueue.run(deliver)).rejects.toThrow(STOP_RUN_LOOP);
+      await expect(kernelQueue.run(deliver)).rejects.toThrow(KILL_RUN_LOOP);
       expect(kernelStore.rollbackCrank).toHaveBeenCalledWith('delivery');
       expect(rejectedAfterAbort).toBe(false);
       expect(resolveSpy).not.toHaveBeenCalled();
@@ -2125,11 +2103,11 @@ describe('KernelQueue', () => {
       (
         kernelStore.collectGarbage as unknown as MockInstance
       ).mockImplementation(() => {
-        throw new Error(STOP_RUN_LOOP);
+        throw new Error(KILL_RUN_LOOP);
       });
       await expect(
         kernelQueue.run(vi.fn().mockResolvedValue(crankResult)),
-      ).rejects.toThrow(STOP_RUN_LOOP);
+      ).rejects.toThrow(KILL_RUN_LOOP);
     }
 
     it('takes the delivery savepoint inside the crank savepoint', async () => {
@@ -2259,7 +2237,7 @@ describe('KernelQueue', () => {
 
   describe('audit ordering', () => {
     /**
-     * Deliver one item, then stop the loop from the second crank so the first
+     * Deliver one item, then kill the loop in the second crank so the first
      * runs all the way through its flush.
      *
      * @param crankResult - What the delivery reports.
@@ -2276,12 +2254,12 @@ describe('KernelQueue', () => {
       (kernelStore.startCrank as unknown as MockInstance)
         .mockImplementationOnce(() => undefined)
         .mockImplementation(() => {
-          throw new Error(STOP_RUN_LOOP);
+          throw new Error(KILL_RUN_LOOP);
         });
 
       await expect(
         kernelQueue.run(vi.fn().mockResolvedValue(crankResult)),
-      ).rejects.toThrow(STOP_RUN_LOOP);
+      ).rejects.toThrow(KILL_RUN_LOOP);
     }
 
     /**
@@ -2409,9 +2387,9 @@ describe('KernelQueue', () => {
       (kernelStore.startCrank as unknown as MockInstance)
         .mockImplementationOnce(() => undefined)
         .mockImplementation(() => {
-          throw new Error(STOP_RUN_LOOP);
+          throw new Error(KILL_RUN_LOOP);
         });
-      await expect(kernelQueue.run(deliver)).rejects.toThrow(STOP_RUN_LOOP);
+      await expect(kernelQueue.run(deliver)).rejects.toThrow(KILL_RUN_LOOP);
       expect(rejectSpy).toHaveBeenCalledWith(rejectedValue);
       expect(resolveSpy).not.toHaveBeenCalled();
     });
@@ -2450,9 +2428,9 @@ describe('KernelQueue', () => {
       (kernelStore.startCrank as unknown as MockInstance)
         .mockImplementationOnce(() => undefined)
         .mockImplementation(() => {
-          throw new Error(STOP_RUN_LOOP);
+          throw new Error(KILL_RUN_LOOP);
         });
-      await expect(kernelQueue.run(deliver)).rejects.toThrow(STOP_RUN_LOOP);
+      await expect(kernelQueue.run(deliver)).rejects.toThrow(KILL_RUN_LOOP);
       expect(resolveSpy).toHaveBeenCalledWith(fulfilledValue);
       expect(rejectSpy).not.toHaveBeenCalled();
     });
@@ -2499,12 +2477,28 @@ describe('KernelQueue', () => {
       (kernelStore.startCrank as unknown as MockInstance)
         .mockImplementationOnce(() => undefined)
         .mockImplementation(() => {
-          throw new Error(STOP_RUN_LOOP);
+          throw new Error(KILL_RUN_LOOP);
         });
 
-      await expect(kernelQueue.run(deliver)).rejects.toThrow(STOP_RUN_LOOP);
+      await expect(kernelQueue.run(deliver)).rejects.toThrow(KILL_RUN_LOOP);
 
       expect(resolveSpy).toHaveBeenCalledWith(fulfilledValue);
+    });
+  });
+
+  describe('abandoning subscriptions', () => {
+    it('tells a waiting caller its result is never coming', async () => {
+      const reject = vi.fn();
+      kernelQueue.subscriptions.set(asKRef('kp1'), {
+        resolve: vi.fn(),
+        reject,
+      });
+
+      const discarded = new Error('discarded');
+      kernelQueue.abandonSubscriptions(discarded);
+
+      expect(reject).toHaveBeenCalledWith(discarded);
+      expect(kernelQueue.subscriptions.size).toBe(0);
     });
   });
 
@@ -2513,12 +2507,12 @@ describe('KernelQueue', () => {
       const isOffline = vi.fn();
       (gc.processGCActionSet as unknown as MockInstance).mockImplementationOnce(
         () => {
-          throw new Error(STOP_RUN_LOOP);
+          throw new Error(KILL_RUN_LOOP);
         },
       );
 
       await expect(kernelQueue.run(vi.fn(), { isOffline })).rejects.toThrow(
-        STOP_RUN_LOOP,
+        KILL_RUN_LOOP,
       );
 
       expect(gc.processGCActionSet).toHaveBeenCalledWith(kernelStore, {
@@ -2539,7 +2533,7 @@ describe('KernelQueue', () => {
       (gc.processGCActionSet as unknown as MockInstance)
         .mockReturnValueOnce(null)
         .mockImplementationOnce(() => {
-          throw new Error(STOP_RUN_LOOP);
+          throw new Error(KILL_RUN_LOOP);
         });
 
       const running = kernelQueue.run(vi.fn());
@@ -2548,7 +2542,7 @@ describe('KernelQueue', () => {
       );
       kernelQueue.recheckGCActions();
 
-      await expect(running).rejects.toThrow(STOP_RUN_LOOP);
+      await expect(running).rejects.toThrow(KILL_RUN_LOOP);
       expect(gc.processGCActionSet).toHaveBeenCalledTimes(2);
     });
 
@@ -2567,7 +2561,7 @@ describe('KernelQueue', () => {
           krefs: ['ko1'],
         })
         .mockImplementationOnce(() => {
-          throw new Error(STOP_RUN_LOOP);
+          throw new Error(KILL_RUN_LOOP);
         });
 
       const running = kernelQueue.run(deliver);
@@ -2575,7 +2569,7 @@ describe('KernelQueue', () => {
       kernelQueue.recheckGCActions();
       finishDelivery();
 
-      await expect(running).rejects.toThrow(STOP_RUN_LOOP);
+      await expect(running).rejects.toThrow(KILL_RUN_LOOP);
       expect(gc.processGCActionSet).toHaveBeenCalledTimes(2);
     });
   });

@@ -115,7 +115,8 @@ export function getCrankMethods(ctx: StoreContext, kdb: KernelDatabase) {
   }
 
   /**
-   * Release all savepoints.
+   * Release all savepoints, committing the crank. Only `endCrank` calls it:
+   * mid-crank it would leave a rollback nothing to undo.
    */
   function releaseAllSavepoints(): void {
     const [outermost] = ctx.savepoints;
@@ -128,8 +129,7 @@ export function getCrankMethods(ctx: StoreContext, kdb: KernelDatabase) {
       // The store has discarded the crank's writes and its savepoints, unless
       // `t0` is nested in a savepoint taken outside the run loop. If the abort
       // doing that failed, this reload still sees those writes, and the store
-      // refuses every write until it is reopened. A `t0` left listed would make
-      // `reset` throw before restoring its keys.
+      // refuses every write until it is reopened.
       ctx.savepoints.length = 0;
       revertStateBeneathRollback(outermost, error);
       throw error;

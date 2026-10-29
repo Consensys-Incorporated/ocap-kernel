@@ -283,7 +283,6 @@ export function makeKernelStore(kdb: KernelDatabase, logger?: Logger) {
     }));
     kdb.clear();
     discardCachedState();
-    crank.releaseAllSavepoints();
     preservedState?.forEach(({ key, value }) => {
       if (value) {
         context.kv.set(key, value);
