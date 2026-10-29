@@ -10,6 +10,7 @@ import {
   mib,
   runClosedLoop,
   toMarkdown,
+  publishTable,
   writeReport,
 } from './utils.ts';
 import type { ProfileKernel } from './utils.ts';
@@ -257,7 +258,7 @@ describe('garbage collection under load', () => {
         await writeReport(stem, report);
       }
 
-      console.log(`[performance] ${stem}\n\n${renderResults(results)}\n`);
+      await publishTable(stem, renderResults(results));
 
       // Collection takes nothing still held.
       expect(await send(0, 'pingHeld', [perPair - 1])).toBe('pong');
