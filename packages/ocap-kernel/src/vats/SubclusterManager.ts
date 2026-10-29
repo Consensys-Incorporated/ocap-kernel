@@ -200,8 +200,6 @@ export class SubclusterManager {
   async #terminateMembers(
     subclusterId: SubclusterId,
   ): Promise<Map<VatId, unknown>> {
-    const isGone = (vatId: VatId): boolean =>
-      !this.#vatManager.hasVat(vatId) && !this.#kernelStore.isVatActive(vatId);
     const survivors = new Map<VatId, unknown>();
     let vatIds: VatId[];
     try {
@@ -215,7 +213,7 @@ export class SubclusterManager {
       throw error;
     }
     for (const vatId of vatIds.reverse()) {
-      if (isGone(vatId)) {
+      if (this.#isVatGone(vatId)) {
         continue;
       }
       let failure: unknown;
@@ -235,7 +233,7 @@ export class SubclusterManager {
       }
       // By what is left rather than what threw: a vat can be gone even though
       // something after its death failed.
-      if (!isGone(vatId)) {
+      if (!this.#isVatGone(vatId)) {
         survivors.set(
           vatId,
           failure ?? new Error(`Vat ${vatId} outlived its termination`),
@@ -243,6 +241,18 @@ export class SubclusterManager {
       }
     }
     return survivors;
+  }
+
+  /**
+   * Whether a vat has neither a handle nor a record, and so nothing to retire.
+   *
+   * @param vatId - The vat.
+   * @returns True if the vat is gone.
+   */
+  #isVatGone(vatId: VatId): boolean {
+    return (
+      !this.#vatManager.hasVat(vatId) && !this.#kernelStore.isVatActive(vatId)
+    );
   }
 
   /**
@@ -262,15 +272,14 @@ export class SubclusterManager {
 
     const survivors = await this.#terminateMembers(subclusterId);
     if (survivors.size > 0) {
-      // The survivors keep their IO channels, and the system name while its
-      // root lives: a kept record whose bootstrap vat is gone fails the next
-      // boot's restore. The record stays regardless: `deleteSubcluster` drops
-      // every member's vat-to-subcluster mapping, and `getVatSubcluster` is a
-      // `Fail`, so deleting it over a live member breaks `getStatus` for the
-      // whole kernel.
+      // The survivors keep their IO channels, and the system name, so the next
+      // boot removes a subcluster whose bootstrap vat is gone and launches it
+      // again; only a dead root is forgotten now. The record stays regardless:
+      // `deleteSubcluster` drops every member's vat-to-subcluster mapping, and
+      // `getVatSubcluster` is a `Fail`, so deleting it over a live member
+      // breaks `getStatus` for the whole kernel.
       if (!bootstrapVatId || !survivors.has(bootstrapVatId)) {
-        await this.#kernelQueue.waitForCrank();
-        this.#dropSystemSubclusterMapping(subclusterId);
+        this.#forgetSystemSubclusterRoot(subclusterId);
       }
       throw new AggregateError(
         [...survivors.values()],
@@ -294,6 +303,22 @@ export class SubclusterManager {
     await this.#kernelQueue.waitForCrank();
     this.#dropSystemSubclusterMapping(subclusterId);
     this.#kernelStore.deleteSubcluster(subclusterId);
+  }
+
+  /**
+   * Stop handing out the root of a system subcluster, keeping its name.
+   *
+   * @param subclusterId - The subcluster.
+   */
+  #forgetSystemSubclusterRoot(subclusterId: SubclusterId): void {
+    for (const [
+      name,
+      mappedSubclusterId,
+    ] of this.#kernelStore.getAllSystemSubclusterMappings()) {
+      if (mappedSubclusterId === subclusterId) {
+        this.#systemSubclusterRoots.delete(name);
+      }
+    }
   }
 
   /**
@@ -617,6 +642,39 @@ export class SubclusterManager {
   }
 
   /**
+   * Remove each system subcluster whose bootstrap vat is gone, terminating its
+   * other vats, so that `launchNewSystemSubclusters` launches it again from its
+   * config.
+   *
+   * Only before the run loop starts, since it writes each vat's death directly.
+   */
+  async removeSystemSubclustersWithoutBootstrapVat(): Promise<void> {
+    const mappings = this.#kernelStore.getAllSystemSubclusterMappings();
+    for (const [name, subclusterId] of mappings) {
+      const subcluster = this.#kernelStore.getSubcluster(subclusterId);
+      if (subcluster?.vats[subcluster.config.bootstrap]) {
+        continue;
+      }
+      this.#logger.error(
+        `System subcluster "${name}" lost its bootstrap vat; launching it again from its config`,
+      );
+      for (const vatId of Object.values(subcluster?.vats ?? {}).reverse()) {
+        // `stopVat` throws for a vat that is gone.
+        if (!this.#isVatGone(vatId)) {
+          await this.#vatManager.stopVat(vatId, true);
+        }
+      }
+      try {
+        await this.#ioManager?.destroyChannels(subclusterId);
+      } catch (error) {
+        this.#logger.error('Error during IO cleanup on removal:', error);
+      }
+      this.#kernelStore.deleteSubcluster(subclusterId);
+      this.#dropSystemSubclusterMapping(subclusterId);
+    }
+  }
+
+  /**
    * Launch new system subclusters that aren't already in persistence.
    * This must be called after the kernel queue is running since launchSubcluster
    * sends bootstrap messages.
@@ -713,9 +771,8 @@ export class SubclusterManager {
 
       const bootstrapVatId = subcluster.vats[subcluster.config.bootstrap];
       if (!bootstrapVatId) {
-        throw new Error(
-          `System subcluster "${name}" has no bootstrap vat - database may be corrupted`,
-        );
+        // Left for `removeSystemSubclustersWithoutBootstrapVat`.
+        continue;
       }
 
       const rootKref = this.#kernelStore.getRootObject(bootstrapVatId);
