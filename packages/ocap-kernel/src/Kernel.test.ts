@@ -1430,6 +1430,15 @@ describe('Kernel', () => {
         },
       },
       {
+        when: 'does not start in time',
+        launched: ['v1', 'v2', 'v3', 'v4'],
+        loseBootstrapVat: async (): Promise<void> => {
+          launchWorkerMock.mockImplementation(async (vatId: string) =>
+            vatId === 'v1' ? new Promise(() => undefined) : { end: vi.fn() },
+          );
+        },
+      },
+      {
         // As a run, or a boot cut off before removing the subcluster, leaves it.
         when: 'was terminated before the boot',
         launched: ['v3', 'v4'],
@@ -1461,6 +1470,7 @@ describe('Kernel', () => {
 
         const kernel2 = await Kernel.make(mockPlatformServices, db, {
           systemSubclusters: [systemSubclusterConfig],
+          vatRelaunchTimeoutMs: 1,
         });
 
         const helperStop = terminateWorkerMock.mock.calls.findIndex(

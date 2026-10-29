@@ -191,38 +191,51 @@ export class VatManager {
     const starts: Promise<void>[] = [];
     for (const { vatID, vatConfig } of this.#kernelStore.getAllVatRecords()) {
       // Per vat, so one whose bundle has moved since it was launched costs the
-      // kernel that vat rather than its whole startup. Not kept without a
-      // worker: its notifies and GC actions would be skipped and lost (#1151).
-      starts.push(
-        this.#relaunchVat(vatID, vatConfig).then(
-          () => undefined,
-          async (error: unknown) => {
-            const subclusterId = this.#kernelStore
-              .getSubclusters()
-              .find(({ vats }) => Object.values(vats).includes(vatID))?.id;
-            const where = subclusterId ? ` of subcluster ${subclusterId}` : '';
-            const failure = new Error(
-              `Vat ${vatID}${where} was terminated after its worker would not start: ${error instanceof Error ? error.message : String(error)}`,
-              { cause: error },
-            );
-            this.#logger.error(failure.message, error);
-            // What its `initVat` wrote stays: with no crank open, nothing can
-            // roll it back as a failed restart's crank does.
-            await this.#stopVat({
-              vatId: vatID,
-              terminating: true,
-              terminationError: failure,
-            });
-          },
-        ),
+      // kernel that vat rather than its whole startup.
+      starts.push(this.#startPersistedVat(vatID, vatConfig));
+    }
+    // Settled before rethrowing, so no start still under way writes the store
+    // after `Kernel.make` rejects, when the embedder may boot another kernel
+    // over it. One that timed out has had its channel closed.
+    const failures = (await Promise.allSettled(starts)).flatMap((outcome) =>
+      outcome.status === 'rejected' ? [outcome.reason] : [],
+    );
+    if (failures.length > 1) {
+      throw new AggregateError(
+        failures,
+        'Vats whose workers would not start could not be terminated',
       );
     }
-    // Settled before rethrowing, so no start goes on writing the store after
-    // `Kernel.make` rejects, when the embedder may boot another kernel over it.
-    for (const outcome of await Promise.allSettled(starts)) {
-      if (outcome.status === 'rejected') {
-        throw outcome.reason;
-      }
+    if (failures.length === 1) {
+      throw failures[0];
+    }
+  }
+
+  /**
+   * Start a persisted vat at boot, or terminate it if its worker will not
+   * start. Not kept without a worker: its notifies and GC actions would be
+   * skipped and lost (#1151).
+   *
+   * @param vatId - The ID of the vat.
+   * @param vatConfig - Its configuration.
+   */
+  async #startPersistedVat(vatId: VatId, vatConfig: VatConfig): Promise<void> {
+    try {
+      await this.#relaunchVat(vatId, vatConfig);
+    } catch (error) {
+      const subclusterId = this.#kernelStore
+        .getSubclusters()
+        .find(({ vats }) => Object.values(vats).includes(vatId))?.id;
+      const where = subclusterId ? ` of subcluster ${subclusterId}` : '';
+      const failure = new Error(
+        `Vat ${vatId}${where} was terminated after its worker would not start: ${error instanceof Error ? error.message : String(error)}`,
+        { cause: error },
+      );
+      this.#logger.error(failure.message, error);
+      // Not `#stopVat`: the failed start has already stopped its worker, and a
+      // platform stuck launching it may be stuck stopping it too. What its
+      // `initVat` wrote stays, as no crank is open to roll it back.
+      this.#retireVat(vatId, failure);
     }
   }
 

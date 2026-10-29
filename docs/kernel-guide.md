@@ -327,7 +327,7 @@ This is transparent to the vat — it just looks like a normal `E()` call.
 System subclusters are declared at kernel startup and have special properties:
 
 - They can access `systemOnly` services (like the kernel facet).
-- They persist across kernel restarts — the kernel restores them automatically.
+- They persist across kernel restarts — the kernel restores them automatically. One whose bootstrap vat is gone at boot, for instance because its worker will not start, is launched again from its config with fresh state.
 - They are identified by a unique name (not just a subcluster ID).
 - The host application can retrieve the bootstrap root kref via `kernel.getSystemSubclusterRoot(name)`.
 

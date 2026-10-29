@@ -296,6 +296,39 @@ describe('VatManager', () => {
       },
     );
 
+    it('names a start failure that is not an error', async () => {
+      const logError = vi.spyOn(mockLogger, 'error').mockReturnValue();
+      mockPlatformServices.launch.mockRejectedValueOnce('bundle not found');
+
+      await vatManager.initializeAllVats();
+
+      expect(logError).toHaveBeenCalledWith(
+        'Vat v1 of subcluster s1 was terminated after its worker would not start: bundle not found',
+        'bundle not found',
+      );
+    });
+
+    it('does not wait for the platform to stop a worker that timed out', async () => {
+      vatManager = new VatManager({
+        platformServices: mockPlatformServices,
+        kernelStore: mockKernelStore,
+        kernelQueue: mockKernelQueue,
+        logger: mockLogger,
+        vatRelaunchTimeoutMs: 1,
+      });
+      vi.spyOn(mockLogger, 'error').mockReturnValue();
+      mockPlatformServices.launch.mockReturnValueOnce(
+        new Promise(() => undefined),
+      );
+      mockPlatformServices.terminate.mockReturnValue(
+        new Promise(() => undefined),
+      );
+
+      await vatManager.initializeAllVats();
+
+      expect(mockKernelStore.deleteVat).toHaveBeenCalledExactlyOnceWith('v1');
+    });
+
     it('names no subcluster for a vat in none', async () => {
       mockKernelStore.getSubclusters.mockReturnValue([]);
       const logError = vi.spyOn(mockLogger, 'error').mockReturnValue();
@@ -339,17 +372,27 @@ describe('VatManager', () => {
       }).toStrictEqual({ settledBeforeTheLastStart: false, running: ['v2'] });
     });
 
-    it('initializes all vats from storage', async () => {
-      const vatRecords = [
-        { vatID: 'v1' as VatId, vatConfig: createMockVatConfig('vat1') },
-        { vatID: 'v2' as VatId, vatConfig: createMockVatConfig('vat2') },
-      ];
-
-      function* mockGenerator() {
-        yield* vatRecords;
+    it('rejects with every failed termination', async () => {
+      vi.spyOn(mockLogger, 'error').mockReturnValue();
+      mockPlatformServices.launch.mockRejectedValue(
+        new Error('bundle not found'),
+      );
+      const faults = [new Error('disk I/O error'), new Error('disk full')];
+      for (const fault of faults) {
+        mockKernelStore.deleteVat.mockImplementationOnce(() => {
+          throw fault;
+        });
       }
-      mockKernelStore.getAllVatRecords.mockReturnValue(mockGenerator());
 
+      const error = await vatManager
+        .initializeAllVats()
+        .catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(AggregateError);
+      expect((error as AggregateError).errors).toStrictEqual(faults);
+    });
+
+    it('initializes all vats from storage', async () => {
       await vatManager.initializeAllVats();
 
       expect(mockPlatformServices.launch).toHaveBeenCalledTimes(2);
