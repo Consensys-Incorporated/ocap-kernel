@@ -172,7 +172,8 @@ describe('VatManager queued termination', () => {
         const abandoned = new Error(
           'Kernel was reset; queued work was abandoned',
         );
-        kernelQueue.discardQueuedWork(abandoned);
+        kernelQueue.discardArrivals();
+        kernelQueue.abandonSubscriptions(abandoned);
         kernelQueue.discardHeldRequests(abandoned);
         vatManager.abandonQueuedWork(abandoned);
       });

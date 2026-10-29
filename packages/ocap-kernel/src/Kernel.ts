@@ -729,7 +729,8 @@ export class Kernel {
    * @param abandoned - What to tell them.
    */
   #abandonQueuedWork(abandoned: Error): void {
-    this.#kernelQueue.discardQueuedWork(abandoned);
+    this.#kernelQueue.discardArrivals();
+    this.#kernelQueue.abandonSubscriptions(abandoned);
     this.#remoteManager.releaseRestartHolds();
     this.#kernelQueue.discardHeldRequests(abandoned);
     this.#vatManager.abandonQueuedWork(abandoned);
@@ -965,7 +966,8 @@ export class Kernel {
       } catch (error) {
         this.#logger.error('could not record last active time', error);
       }
-      this.#kernelQueue.discardQueuedWork(
+      this.#kernelQueue.discardArrivals();
+      this.#kernelQueue.abandonSubscriptions(
         new Error(
           'Kernel was stopped before this message was answered; one still queued is delivered on its next start',
         ),

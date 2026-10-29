@@ -373,18 +373,15 @@ export class KernelQueue {
   }
 
   /**
-   * Reject every message-result subscription and drop the peers' arrivals, for
-   * a kernel wiping its store or stopping. Taken after a wipe, an arrival would
-   * write the old peer state back. Not for a kernel that keeps its peer state
-   * and runs on: a later commit would acknowledge the dropped arrivals, and the
-   * peer would never resend them. A remote held for a peer restart stays held
-   * until `RemoteManager.releaseRestartHolds`.
-   *
-   * @param error - What to tell the subscribers.
+   * Drop the peers' arrivals, for a kernel wiping its store or stopping. Taken
+   * after a wipe, an arrival would write the old peer state back. Not for a
+   * kernel that keeps its peer state and runs on: a later commit would
+   * acknowledge the dropped arrivals, and the peer would never resend them. A
+   * remote held for a peer restart stays held until
+   * `RemoteManager.releaseRestartHolds`.
    */
-  discardQueuedWork(error: Error): void {
+  discardArrivals(): void {
     this.#arrivedFromRemotes.length = 0;
-    this.#abandonSubscriptions(error);
   }
 
   /**
@@ -392,7 +389,7 @@ export class KernelQueue {
    *
    * @param error - What to tell them.
    */
-  #abandonSubscriptions(error: Error): void {
+  abandonSubscriptions(error: Error): void {
     const orphaned = [...this.subscriptions.values()];
     this.subscriptions.clear();
     this.#resolvedWithKernelSubscription = [];
@@ -437,9 +434,7 @@ export class KernelQueue {
         ? error
         : new Error(String(error), { cause: error });
     this.#runLoopState = { state: 'failed', error: failure };
-    this.#abandonSubscriptions(
-      this.#makeDeadRunLoopError(DEAD_RUN_LOOP_RESULT),
-    );
+    this.abandonSubscriptions(this.#makeDeadRunLoopError(DEAD_RUN_LOOP_RESULT));
 
     const held = this.#heldRequests;
     this.#heldRequests = [];

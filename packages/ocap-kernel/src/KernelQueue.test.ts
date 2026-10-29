@@ -1420,7 +1420,7 @@ describe('KernelQueue', () => {
       arrive({ seq: 1, remoteId: 'r2' });
       reportIncarnation('incarnation-B');
 
-      kernelQueue.discardQueuedWork(new Error('discarded'));
+      kernelQueue.discardArrivals();
       arrive({ seq: 2 });
 
       expect(kernelQueue.waitingIncarnations('peer-r1')).toStrictEqual([]);
@@ -2486,7 +2486,7 @@ describe('KernelQueue', () => {
     });
   });
 
-  describe('discarding the queue', () => {
+  describe('abandoning subscriptions', () => {
     it('tells a waiting caller its result is never coming', async () => {
       const reject = vi.fn();
       kernelQueue.subscriptions.set(asKRef('kp1'), {
@@ -2495,7 +2495,7 @@ describe('KernelQueue', () => {
       });
 
       const discarded = new Error('discarded');
-      kernelQueue.discardQueuedWork(discarded);
+      kernelQueue.abandonSubscriptions(discarded);
 
       expect(reject).toHaveBeenCalledWith(discarded);
       expect(kernelQueue.subscriptions.size).toBe(0);

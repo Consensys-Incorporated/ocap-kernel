@@ -126,7 +126,9 @@ const mocks = vi.hoisted(() => {
       }
     });
 
-    discardQueuedWork = vi.fn();
+    discardArrivals = vi.fn();
+
+    abandonSubscriptions = vi.fn();
 
     // A stand-in for the run loop: the item is delivered through the router,
     // on a later turn, exactly as a crank would deliver it.
@@ -1059,17 +1061,23 @@ describe('Kernel', () => {
         mockPlatformServices,
         mockKernelDatabase,
       );
-      const { endRunLoop, discardQueuedWork } = mocks.KernelQueue.lastInstance;
+      const { endRunLoop, discardArrivals, abandonSubscriptions } =
+        mocks.KernelQueue.lastInstance;
 
       await kernel.stop();
 
-      expect(discardQueuedWork).toHaveBeenCalledExactlyOnceWith(
+      expect(discardArrivals).toHaveBeenCalledOnce();
+      expect(abandonSubscriptions).toHaveBeenCalledExactlyOnceWith(
         new Error(
           'Kernel was stopped before this message was answered; one still queued is delivered on its next start',
         ),
       );
-      expect(endRunLoop.mock.invocationCallOrder[0] as number).toBeLessThan(
-        discardQueuedWork.mock.invocationCallOrder[0] as number,
+      const endedAt = endRunLoop.mock.invocationCallOrder[0] as number;
+      expect(endedAt).toBeLessThan(
+        discardArrivals.mock.invocationCallOrder[0] as number,
+      );
+      expect(endedAt).toBeLessThan(
+        abandonSubscriptions.mock.invocationCallOrder[0] as number,
       );
     });
 
@@ -1222,20 +1230,21 @@ describe('Kernel', () => {
           mockPlatformServices,
           makeMapKernelDatabase(),
         );
-        const { discardQueuedWork, discardHeldRequests } =
+        const { discardArrivals, abandonSubscriptions, discardHeldRequests } =
           mocks.KernelQueue.lastInstance;
         const { releaseRestartHolds } = mocks.RemoteManager.lastInstance;
 
         await kernel[method]();
 
-        expect(discardQueuedWork).toHaveBeenCalledExactlyOnceWith(
+        expect(discardArrivals).toHaveBeenCalledOnce();
+        expect(abandonSubscriptions).toHaveBeenCalledExactlyOnceWith(
           new Error(abandoned),
         );
         expect(discardHeldRequests).toHaveBeenCalledExactlyOnceWith(
           new Error(abandoned),
         );
         expect(
-          discardQueuedWork.mock.invocationCallOrder[0] as number,
+          discardArrivals.mock.invocationCallOrder[0] as number,
         ).toBeLessThan(
           releaseRestartHolds.mock.invocationCallOrder[0] as number,
         );
