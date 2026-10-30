@@ -368,8 +368,7 @@ export class RemoteManager {
 
   /**
    * Give every remote the store has a handle, for the kernel to call before its
-   * run loop starts. Each queues what is delivered to it until
-   * {@link initRemoteComms} attaches the transport.
+   * run loop starts.
    */
   restoreRemotes(): void {
     for (const {
