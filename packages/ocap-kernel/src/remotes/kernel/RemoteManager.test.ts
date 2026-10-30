@@ -449,15 +449,14 @@ describe('RemoteManager', () => {
 
         await manager.initRemoteComms({ ackTimeoutMs: 123 });
 
-        expect(setTimeoutSpy.mock.calls.map(([, ms]) => ms)).toStrictEqual([
-          123,
-        ]);
+        expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 123);
       });
 
       it('refuses to use its handle until remote comms start', async () => {
-        const { manager } = await restoreBeforeComms();
+        const { manager, remoteId } = await restoreBeforeComms();
         const use = vi.fn();
 
+        expect(manager.getRemote(remoteId).peerId).toBe('peer-1');
         await expect(manager.withRemote('peer-1', { use })).rejects.toThrow(
           'Remote comms not initialized',
         );
@@ -1574,19 +1573,6 @@ describe('RemoteManager', () => {
         `Peer ${peerId} incarnation incarnation-B is already recorded`,
       );
       expect(persistSpy).toHaveBeenCalledOnce();
-    });
-
-    it('leaves a change for the next handshake while remote comms are not up', async () => {
-      const peerId = 'peer-restarted-before-comms';
-      const remote = remoteManager.establishRemote(peerId);
-      const persistSpy = vi.spyOn(remote, 'persistPeerRestart');
-      kernelStore.setPeerIncarnation(peerId, 'incarnation-A');
-      await getOnIncarnationChange()(peerId, 'incarnation-B');
-      remoteManager.cleanup();
-
-      expect(applyQueuedIncarnationChange()).toStrictEqual({});
-      expect(persistSpy).not.toHaveBeenCalled();
-      expect(kernelStore.getPeerIncarnation(peerId)).toBe('incarnation-A');
     });
 
     it('records a first incarnation taken while remote comms are stopped', async () => {

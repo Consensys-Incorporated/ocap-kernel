@@ -557,87 +557,6 @@ describe('Remote Communications (Integration Tests)', () => {
     }
   });
 
-  it('still boots with a reap left queued for a remote', async () => {
-    // A reap against a remote waits in the persisted reap queue for the run
-    // loop's next crank. `scheduleReap` does not wake a parked run loop, so an
-    // idle kernel holds that reap indefinitely — and carries it into its next
-    // incarnation, which starts its run loop inside `Kernel.make`, before
-    // `initRemoteComms`.
-    //
-    // A peer's `bringOutYourDead` schedules one from inside a crank, so the
-    // loop spends it before parking.
-    const tempDir = await mkdtemp(join(tmpdir(), 'kernel-test-rc-reap-'));
-    const dbFile = join(tempDir, 'victim.db');
-    try {
-      // Only the victim needs to survive a restart, so only it needs a file.
-      await kernel1.stop();
-      const victimDatabase = await makeSQLKernelDatabase({
-        dbFilename: dbFile,
-      });
-      const victimStore = makeKernelStore(victimDatabase);
-      const readReapQueue = (database: KernelDatabase): unknown =>
-        JSON.parse(database.kernelKVStore.get('reapQueue') ?? '[]');
-      const victim = await makeTestKernel(
-        'victim',
-        victimDatabase,
-        directNetwork,
-        true,
-        'kernel1-peer',
-        '01',
-      );
-
-      // One exchange, so the victim holds a remote for the peer.
-      await runTestVats(victim, makeSenderSubclusterConfig('Sender'));
-      const receiver = (await runTestVats(
-        kernel2,
-        makeReceiverSubclusterConfig('Receiver'),
-      )) as BootstrapResult;
-      await victim.queueMessage(
-        victimStore.getRootObject('v1' as VatId) as KRef,
-        'sendMessage',
-        [receiver.ocapURL, 'hello', ['once']],
-      );
-
-      // Nothing touches the victim afterwards, so its loop stays parked and
-      // never delivers the reap.
-      victim.reapRemotes();
-      expect(readReapQueue(victimDatabase)).not.toStrictEqual([]);
-      await victim.stop();
-
-      // Asserted on disk, not assumed: if the victim had cranked it would have
-      // eaten its own reap while the remote still existed, and the rest would
-      // prove nothing.
-      const armed = await makeSQLKernelDatabase({ dbFilename: dbFile });
-      expect(readReapQueue(armed)).not.toStrictEqual([]);
-      armed.close();
-
-      // Twice, because without the fix the failure is unrecoverable rather
-      // than merely fatal: the crank that dies is rolled back, which puts the
-      // reap back on the queue for the boot after. With it, the first boot
-      // spends the reap and the second only shows nothing else was left.
-      const bootStates = [];
-      for (const boot of [1, 2]) {
-        const rebooted = await makeTestKernel(
-          `victim-boot${boot}`,
-          await makeSQLKernelDatabase({ dbFilename: dbFile }),
-          directNetwork,
-          false,
-          'kernel1-peer',
-          '01',
-        );
-        bootStates.push((await rebooted.getStatus()).runLoop);
-        await rebooted.stop();
-      }
-      // Asserted together rather than per boot, so a failure reports both.
-      expect(bootStates).toStrictEqual([
-        { state: 'running' },
-        { state: 'running' },
-      ]);
-    } finally {
-      await rm(tempDir, { recursive: true, force: true });
-    }
-  });
-
   it.each([
     [
       'notify',
@@ -653,6 +572,7 @@ describe('Remote Communications (Integration Tests)', () => {
           kpid: kpid as KRef,
         });
       },
+      'notify',
     ],
     [
       'message',
@@ -668,12 +588,21 @@ describe('Remote Communications (Integration Tests)', () => {
           message: { methargs: kser(['hello', ['again']]), result: null },
         });
       },
+      'message',
+    ],
+    [
+      'reap',
+      ({ store, remoteId }: QueueOptions) => {
+        store.scheduleReap(remoteId);
+      },
+      'bringOutYourDead',
     ],
   ])(
-    'takes a %s left queued for a remote at boot, before remote comms start',
-    async (method, enqueue) => {
+    'takes a %s left queued for a remote at boot, and sends it once remote comms start',
+    async (_what, enqueue, delivery) => {
       // A vat can send to a peer, or resolve a promise it subscribed to, and
-      // the kernel stop before the crank that delivers it.
+      // the kernel stop before the crank that delivers it. A reap can wait
+      // longer: scheduling one does not wake a parked run loop.
       const tempDir = await mkdtemp(join(tmpdir(), 'kernel-test-rc-boot-'));
       const dbFile = join(tempDir, 'victim.db');
       const { logger } = makeTestLogger();
@@ -708,6 +637,7 @@ describe('Remote Communications (Integration Tests)', () => {
         const armed = await makeSQLKernelDatabase({ dbFilename: dbFile });
         const armedStore = makeKernelStore(armed);
         const remoteId = getOnlyRemoteId(armedStore);
+        const { peerId: receiverPeerId } = armedStore.getRemoteInfo(remoteId);
         const queuedAt =
           (armedStore.getRemoteSeqState(remoteId)?.nextSendSeq ?? 0) + 1;
         // Nothing else waits, so the first boot's first crank takes the item.
@@ -731,6 +661,8 @@ describe('Remote Communications (Integration Tests)', () => {
             directNetwork.createPlatformServices('kernel1-peer'),
             '01',
           );
+          // So a throw in the crank's `afterCommit` has killed the loop by now.
+          await waitUntilQuiescent();
           const { runLoop } = await rebooted.getStatus();
           await rebooted.stop();
           const booted = await makeSQLKernelDatabase({ dbFilename: dbFile });
@@ -750,12 +682,38 @@ describe('Remote Communications (Integration Tests)', () => {
                 : JSON.parse(queuedMessage).params[0],
           });
         }
+        // A third boot that starts remote comms, recording what reaches the
+        // receiver's kernel.
+        const receiverHandler = directNetwork.peerRegistry.get(receiverPeerId);
+        expect(receiverHandler).toBeDefined();
+        const received: { seq?: number; params?: unknown[] }[] = [];
+        directNetwork.peerRegistry.set(
+          receiverPeerId,
+          async (from: string, message: string) => {
+            received.push(JSON.parse(message));
+            return (receiverHandler as RemoteMessageHandler)(from, message);
+          },
+        );
+        const withComms = await makeTestKernel(
+          'victim-boot3',
+          await makeSQLKernelDatabase({ dbFilename: dbFile }),
+          directNetwork,
+          false,
+          'kernel1-peer',
+          '01',
+        );
+        await waitUntilQuiescent();
+        await withComms.stop();
+
         const written = {
           runLoop: { state: 'running' },
           lastSeq: queuedAt,
-          queued: method,
+          queued: delivery,
         };
-        expect(boots).toStrictEqual([written, written]);
+        expect({
+          boots,
+          sent: received.find(({ seq }) => seq === queuedAt)?.params?.[0],
+        }).toStrictEqual({ boots: [written, written], sent: delivery });
       } finally {
         await rm(tempDir, { recursive: true, force: true });
       }

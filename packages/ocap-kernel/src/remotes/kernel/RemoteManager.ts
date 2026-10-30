@@ -300,16 +300,6 @@ export class RemoteManager {
     }
     const isRestart = stored !== undefined;
     const remote = isRestart ? this.#remotesByPeer.get(peerId) : undefined;
-    // With remote comms down, a peer with no handle may be one `cleanup` let go
-    // of, whose c-list still needs cleaning up. Recorded without that, the
-    // restart would be hidden from the next handshake, so it is left for that
-    // handshake to report again.
-    if (isRestart && !remote && !this.isRemoteCommsInitialized()) {
-      this.#logger?.log(
-        `Peer ${peerId.slice(0, 8)} restart to ${incarnation.slice(0, 8)} not recorded: remote comms are not initialized`,
-      );
-      return {};
-    }
 
     // Snapshot the decider list BEFORE any kv mutation so the c-list lookup
     // can still find the promises through the entries forgetEndpointImports
@@ -327,8 +317,8 @@ export class RemoteManager {
         remote.persistPeerRestart();
         this.#recordingRestart.add(peerId);
       } else {
-        // A peer that has only shaken hands has no remote and no c-list. Any
-        // other peer without a remote leaves its c-list behind.
+        // Every remote the store has holds a handle from boot, so this peer has
+        // only shaken hands, and has no c-list.
         this.#logger?.warn(
           `Peer ${peerId.slice(0, 8)} restart detected but no live RemoteHandle; advancing persisted incarnation without c-list cleanup`,
         );
