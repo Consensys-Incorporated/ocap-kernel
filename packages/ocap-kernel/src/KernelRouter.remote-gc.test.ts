@@ -4,23 +4,17 @@ import { describe, it, expect, vi } from 'vitest';
 
 import { KernelQueue } from './KernelQueue.ts';
 import { KernelRouter } from './KernelRouter.ts';
+import { RemoteHandle } from './remotes/kernel/RemoteHandle.ts';
 import { makeKernelStore } from './store/index.ts';
-import type { EndpointHandle, KernelMessage, RunLoopItem } from './types.ts';
-import { isRemoteId, makeGCAction } from './types.ts';
+import { makeGCAction } from './types.ts';
 import { asRRef, asRemoteId, asVatId } from '../test/branded.ts';
+import { createMockRemotesFactory } from '../test/remotes-mocks.ts';
 
 const v1 = asVatId('v1');
 const r1 = asRemoteId('r1');
 
-const STOP_RUN_LOOP = 'test: stop run loop';
-
-const message: KernelMessage = {
-  methargs: { body: '', slots: [] },
-  result: null,
-};
-
-describe('a GC action for a remote that is offline', () => {
-  it('waits while other work runs, and goes out once the remote is back', async () => {
+describe('a GC action for a remote restored at boot', () => {
+  it('joins its queue before remote comms start, and goes out once they do', async () => {
     const kernelStore = makeKernelStore(
       await makeSQLKernelDatabase({ dbFilename: ':memory:' }),
     );
@@ -30,60 +24,54 @@ describe('a GC action for a remote that is offline', () => {
     kernelStore.addCListEntry(r1, kref, asRRef('ro-1'));
     kernelStore.addGCActions([makeGCAction(r1, 'retireImport', kref)]);
 
-    let online = false;
-    const remote = {
-      deliverRetireImports: vi.fn().mockResolvedValue({ didDelivery: 'r1' }),
-    } as unknown as EndpointHandle;
     const kernelQueue = new KernelQueue(kernelStore, async () => undefined);
+    const remote = RemoteHandle.make({
+      remoteId: r1,
+      peerId: 'peer-1',
+      kernelStore,
+      kernelQueue,
+    });
     const kernelRouter = new KernelRouter({
       kernelStore,
       kernelQueue,
-      getEndpoint: (endpointId) => {
-        if (!online) {
-          throw new Error(`Remote not found: ${endpointId}`);
-        }
-        return remote;
-      },
+      getEndpoint: () => remote,
       invokeKernelService: () => undefined,
       restartVat: async () => undefined,
       terminateVat: async () => undefined,
       applyIncarnationChange: () => ({}),
       performControl: async () => undefined,
     });
+    const running = kernelQueue.run(kernelRouter.deliver.bind(kernelRouter));
+    await waitUntilQuiescent();
+    const beforeComms = {
+      gcActions: [...kernelStore.getGCActions()],
+      inCList: kernelStore.hasCListEntry(r1, kref),
+      queued: JSON.parse(kernelStore.getPendingMessage(r1, 1) ?? '{}').params,
+    };
 
-    let sends = 0;
-    const running = kernelQueue.run(
-      async (item: RunLoopItem) => {
-        if (item.type !== 'send') {
-          return kernelRouter.deliver(item);
-        }
-        sends += 1;
-        if (sends === 2) {
-          throw new Error(STOP_RUN_LOOP);
-        }
-        return undefined;
+    const remoteComms = createMockRemotesFactory().makeMockRemoteComms();
+    remote.attachTransport({ remoteComms });
+    await waitUntilQuiescent();
+    // Clears the ACK timer the send armed.
+    remote.cleanup();
+    await kernelQueue.endRunLoop();
+    await running;
+
+    expect({
+      beforeComms,
+      sent: vi
+        .mocked(remoteComms.sendRemoteMessage)
+        .mock.calls.map(([peerId, message]) => [
+          peerId,
+          JSON.parse(message).params,
+        ]),
+    }).toStrictEqual({
+      beforeComms: {
+        gcActions: [],
+        inCList: false,
+        queued: ['retireImports', ['ro+1']],
       },
-      { isOffline: (endpointId) => isRemoteId(endpointId) && !online },
-    );
-    kernelQueue.enqueueSend(kref, message);
-    await waitUntilQuiescent();
-
-    expect(sends).toBe(1);
-    expect(remote.deliverRetireImports).not.toHaveBeenCalled();
-    expect([...kernelStore.getGCActions()]).toStrictEqual([
-      makeGCAction(r1, 'retireImport', kref),
-    ]);
-    expect(kernelStore.hasCListEntry(r1, kref)).toBe(true);
-
-    online = true;
-    kernelQueue.recheckGCActions();
-    await waitUntilQuiescent();
-
-    expect(remote.deliverRetireImports).toHaveBeenCalledWith(['ro+1']);
-    expect([...kernelStore.getGCActions()]).toStrictEqual([]);
-    expect(kernelStore.hasCListEntry(r1, kref)).toBe(false);
-
-    kernelQueue.enqueueSend(kref, message);
-    await expect(running).rejects.toThrow(STOP_RUN_LOOP);
+      sent: [['peer-1', ['retireImports', ['ro+1']]]],
+    });
   });
 });
