@@ -313,9 +313,9 @@ describe('RemoteHandle across a crank boundary', () => {
       kernelStore.createCrankSavepoint('crank');
       kernelStore.createCrankSavepoint('delivery');
       for (let i = 0; i < CAPACITY; i += 1) {
-        await remote.deliverBringOutYourDead();
+        await remote.deliverNotify([]);
       }
-      await expect(remote.deliverBringOutYourDead()).rejects.toThrow(
+      await expect(remote.deliverNotify([])).rejects.toThrow(
         `pending queue at capacity (${CAPACITY})`,
       );
       kernelStore.rollbackCrank('delivery');

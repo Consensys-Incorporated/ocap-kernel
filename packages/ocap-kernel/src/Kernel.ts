@@ -350,6 +350,10 @@ export class Kernel {
       );
     }
 
+    // Before the vats start, so a throw leaves no worker running, and before
+    // the run loop, which may find a delivery to any remote already queued.
+    this.#remoteManager.restoreRemotes();
+
     // Restore persisted system subclusters and delete ones that no
     // longer have a config, to ensure that orphaned vats aren't started
     this.#subclusterManager.initSystemSubclusters(configs);
@@ -385,11 +389,7 @@ export class Kernel {
     // Start the kernel queue processing (non-blocking)
     // This runs for the entire lifetime of the kernel
     this.#kernelQueue
-      .run(this.#kernelRouter.deliver.bind(this.#kernelRouter), {
-        // Every remote, until `initRemoteComms` runs after this.
-        isOffline: (endpointId) =>
-          isRemoteId(endpointId) && !this.#remoteManager.hasRemote(endpointId),
-      })
+      .run(this.#kernelRouter.deliver.bind(this.#kernelRouter))
       .catch((error) => this.#handleRunLoopFailure(error));
 
     // Launch new system subclusters (requires queue to be running)
@@ -510,12 +510,7 @@ export class Kernel {
    * @returns A promise that resolves when initialization is complete.
    */
   async initRemoteComms(options?: RemoteCommsOptions): Promise<void> {
-    try {
-      await this.#remoteManager.initRemoteComms(options);
-    } finally {
-      // Also after a partial restore, for the remotes it did bring up.
-      this.#kernelQueue.recheckGCActions();
-    }
+    await this.#remoteManager.initRemoteComms(options);
   }
 
   /**

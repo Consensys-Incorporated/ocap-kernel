@@ -313,9 +313,9 @@ describe('RemoteHandle', () => {
   ] as const)('%s goes past the pending queue capacity', async (method) => {
     const remote = makeRemote();
     for (let i = 0; i < 200; i += 1) {
-      await remote.deliverBringOutYourDead();
+      await remote.deliverNotify([]);
     }
-    await expect(remote.deliverBringOutYourDead()).rejects.toThrow(
+    await expect(remote.deliverNotify([])).rejects.toThrow(
       'pending queue at capacity',
     );
 
@@ -347,6 +347,33 @@ describe('RemoteHandle', () => {
       expect(crankResult).toStrictEqual({
         didDelivery: remote.remoteId,
         afterCommit: expect.any(Function),
+      });
+    });
+
+    it('skips a BOYD when the pending queue is full', async () => {
+      mockKernelStore.setRemoteStartSeq(mockRemoteId, 1);
+      mockKernelStore.setRemoteNextSendSeq(mockRemoteId, 200);
+      for (let seq = 1; seq <= 200; seq += 1) {
+        mockKernelStore.setPendingMessage(mockRemoteId, seq, `message ${seq}`);
+      }
+      // No transport, so the inherited queue arms no real ACK timer.
+      const remote = RemoteHandle.make({
+        remoteId: mockRemoteId,
+        peerId: mockRemotePeerId,
+        kernelStore: mockKernelStore,
+        kernelQueue: mockKernelQueue,
+      });
+
+      const crankResult = await deliverAndCommit(
+        remote.deliverBringOutYourDead(),
+      );
+
+      expect({
+        crankResult,
+        written: mockKernelStore.getPendingMessage(mockRemoteId, 201),
+      }).toStrictEqual({
+        crankResult: { didDelivery: remote.remoteId },
+        written: undefined,
       });
     });
 
@@ -2124,6 +2151,91 @@ describe('RemoteHandle', () => {
       remote.finalizePeerRestart();
       await expect(redeem).rejects.toThrow('Remote peer restarted');
     });
+  });
+
+  describe('before a transport is attached', () => {
+    /**
+     * Make a handle the way the kernel restores one at boot, before remote
+     * comms start.
+     *
+     * @returns The handle.
+     */
+    function makeRestoredRemote(): RemoteHandle {
+      return RemoteHandle.make({
+        remoteId: mockRemoteId,
+        peerId: mockRemotePeerId,
+        kernelStore: mockKernelStore,
+        kernelQueue: mockKernelQueue,
+      });
+    }
+
+    /**
+     * Leave messages 2 and 3 in the store, as a kernel that stopped before
+     * the peer acknowledged them would.
+     */
+    function inheritQueue(): void {
+      mockKernelStore.setRemoteNextSendSeq(mockRemoteId, 3);
+      mockKernelStore.setRemoteStartSeq(mockRemoteId, 2);
+      mockKernelStore.setPendingMessage(mockRemoteId, 2, 'message 2');
+      mockKernelStore.setPendingMessage(mockRemoteId, 3, 'message 3');
+    }
+
+    it('writes a delivery down and sends it, after the inherited queue, once attached', async () => {
+      inheritQueue();
+      const remote = makeRestoredRemote();
+
+      await deliverAndCommit(remote.deliverBringOutYourDead());
+      const sentBefore = sentStrings();
+      const written = mockKernelStore.getPendingMessage(mockRemoteId, 4);
+      remote.attachTransport({ remoteComms: mockRemoteComms });
+      await drainSends();
+
+      expect({
+        sentBefore,
+        written: JSON.parse(written as string).params,
+        sent: sentStrings(),
+      }).toStrictEqual({
+        sentBefore: [],
+        written: ['bringOutYourDead'],
+        sent: ['message 2', 'message 3', written],
+      });
+    });
+
+    it.each([
+      ['its messages', inheritQueue],
+      [
+        'nothing stored at its numbers',
+        () => {
+          mockKernelStore.setRemoteNextSendSeq(mockRemoteId, 3);
+          mockKernelStore.setRemoteStartSeq(mockRemoteId, 2);
+        },
+      ],
+    ])(
+      'arms no ACK timer for an inherited queue holding %s until attached, then one of the length it is given',
+      (_queue, inherit) => {
+        inherit();
+        const setTimeoutSpy = vi
+          .spyOn(globalThis, 'setTimeout')
+          .mockReturnValue(1 as unknown as ReturnType<typeof setTimeout>);
+        try {
+          const remote = makeRestoredRemote();
+          const delaysBefore = setTimeoutSpy.mock.calls.map(
+            ([, delay]) => delay,
+          );
+          remote.attachTransport({
+            remoteComms: mockRemoteComms,
+            ackTimeoutMs: 100,
+          });
+
+          expect({
+            delaysBefore,
+            delays: setTimeoutSpy.mock.calls.map(([, delay]) => delay),
+          }).toStrictEqual({ delaysBefore: [], delays: [100] });
+        } finally {
+          setTimeoutSpy.mockRestore();
+        }
+      },
+    );
   });
 
   describe('restart hold', () => {

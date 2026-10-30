@@ -16,7 +16,6 @@ import type {
   PlatformServices,
   ClusterConfig,
   CrankResult,
-  EndpointId,
   RunLoopItem,
   RunQueueItem,
   SubclusterId,
@@ -52,21 +51,14 @@ const mocks = vi.hoisted(() => {
 
     // Like the real run loop, this settles only when the kernel dies or
     // `endRunLoop` ends it, and `getRunLoopStatus` reports which.
-    run = vi.fn(
-      async (
-        deliver: (item: RunLoopItem) => Promise<unknown>,
-        _options?: { isOffline?: (endpointId: EndpointId) => boolean },
-      ) => {
-        this.#deliver = deliver;
-        this.#running = true;
-        return new Promise<void>((resolve, reject) => {
-          this.#rejectRunLoop = reject;
-          this.#endRunLoop = resolve;
-        });
-      },
-    );
-
-    recheckGCActions = vi.fn();
+    run = vi.fn(async (deliver: (item: RunLoopItem) => Promise<unknown>) => {
+      this.#deliver = deliver;
+      this.#running = true;
+      return new Promise<void>((resolve, reject) => {
+        this.#rejectRunLoop = reject;
+        this.#endRunLoop = resolve;
+      });
+    });
 
     /**
      * Fail the run loop, in the order the real `KernelQueue.run` does: the
@@ -219,7 +211,7 @@ const mocks = vi.hoisted(() => {
 
     initRemoteComms = vi.fn().mockResolvedValue(undefined);
 
-    hasRemote = vi.fn().mockReturnValue(false);
+    restoreRemotes = vi.fn();
 
     closeConnection = vi.fn().mockResolvedValue(undefined);
 
@@ -1911,60 +1903,14 @@ describe('Kernel', () => {
       ).toHaveBeenCalledWith(change);
     });
 
-    it('holds GC actions back for a remote with no handle', async () => {
+    it('restores the remotes before the run loop starts', async () => {
       await Kernel.make(mockPlatformServices, mockKernelDatabase);
-      mocks.RemoteManager.lastInstance.hasRemote.mockImplementation(
-        (remoteId: string) => remoteId === 'r2',
-      );
-      const isOffline =
-        mocks.KernelQueue.lastInstance.run.mock.calls[0]?.[1]?.isOffline;
 
-      expect(
-        (['r1', 'r2', 'v1'] as EndpointId[]).map((endpointId) =>
-          isOffline?.(endpointId),
-        ),
-      ).toStrictEqual([true, false, false]);
-    });
-
-    describe('initRemoteComms()', () => {
-      it('wakes the run loop for GC actions once the remotes are up', async () => {
-        const kernel = await Kernel.make(
-          mockPlatformServices,
-          mockKernelDatabase,
-        );
-        let remotesUp = false;
-        mocks.RemoteManager.lastInstance.initRemoteComms.mockImplementationOnce(
-          async () => {
-            await Promise.resolve();
-            remotesUp = true;
-          },
-        );
-        const remotesUpAtRecheck: boolean[] = [];
-        mocks.KernelQueue.lastInstance.recheckGCActions.mockImplementationOnce(
-          () => remotesUpAtRecheck.push(remotesUp),
-        );
-
-        await kernel.initRemoteComms();
-
-        expect(remotesUpAtRecheck).toStrictEqual([true]);
-      });
-
-      it('wakes the run loop even when restoring the remotes fails', async () => {
-        const kernel = await Kernel.make(
-          mockPlatformServices,
-          mockKernelDatabase,
-        );
-        mocks.RemoteManager.lastInstance.initRemoteComms.mockRejectedValueOnce(
-          new Error('restore failed'),
-        );
-
-        await expect(kernel.initRemoteComms()).rejects.toThrow(
-          'restore failed',
-        );
-        expect(
-          mocks.KernelQueue.lastInstance.recheckGCActions,
-        ).toHaveBeenCalledOnce();
-      });
+      const [restored] =
+        mocks.RemoteManager.lastInstance.restoreRemotes.mock
+          .invocationCallOrder;
+      const [ran] = mocks.KernelQueue.lastInstance.run.mock.invocationCallOrder;
+      expect(restored).toBeLessThan(ran as number);
     });
 
     describe('closeConnection()', () => {

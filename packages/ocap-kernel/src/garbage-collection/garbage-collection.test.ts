@@ -1,13 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 
 import { processGCActionSet } from './garbage-collection.ts';
-import {
-  asERef,
-  asGCAction,
-  asRemoteId,
-  asVatId,
-  asVRef,
-} from '../../test/branded.ts';
+import { asGCAction, asVatId, asVRef } from '../../test/branded.ts';
 import { makeMapKernelDatabase } from '../../test/storage.ts';
 import { makeKernelStore } from '../store/index.ts';
 
@@ -19,68 +13,6 @@ describe('garbage-collection', () => {
 
     beforeEach(() => {
       kernelStore = makeKernelStore(makeMapKernelDatabase());
-    });
-
-    describe('an endpoint offline', () => {
-      function givenAnActionEach(): Record<string, string> {
-        const krefs: Record<string, string> = {};
-        for (const endpointId of [asRemoteId('r1'), v1]) {
-          const kref = kernelStore.initKernelObject(endpointId);
-          kernelStore.addCListEntry(endpointId, kref, asERef('o+1'));
-          kernelStore.setObjectRefCount(kref, {
-            reachable: 0,
-            recognizable: 1,
-          });
-          kernelStore.addGCActions([
-            asGCAction(`${endpointId} dropExport ${kref}`),
-          ]);
-          krefs[endpointId] = kref;
-        }
-        return krefs;
-      }
-
-      it('gives the work of the others instead', () => {
-        const krefs = givenAnActionEach();
-
-        const result = processGCActionSet(kernelStore, {
-          isOffline: (endpointId) => endpointId === 'r1',
-        });
-
-        expect(result).toStrictEqual({
-          type: 'dropExports',
-          endpointId: 'v1',
-          krefs: [krefs.v1],
-        });
-      });
-
-      it('leaves its actions in the durable set', () => {
-        const krefs = givenAnActionEach();
-        const isOffline = (endpointId: string): boolean => endpointId === 'r1';
-
-        // The first call takes `v1`'s action, leaving only the offline one.
-        processGCActionSet(kernelStore, { isOffline });
-        const result = processGCActionSet(kernelStore, { isOffline });
-
-        expect(result).toBeUndefined();
-        expect([...kernelStore.getGCActions()]).toStrictEqual([
-          `r1 dropExport ${krefs.r1}`,
-        ]);
-      });
-
-      it('gets its turn once it is back', () => {
-        const krefs = givenAnActionEach();
-
-        processGCActionSet(kernelStore, {
-          isOffline: (endpointId) => endpointId === 'r1',
-        });
-        const result = processGCActionSet(kernelStore);
-
-        expect(result).toStrictEqual({
-          type: 'dropExports',
-          endpointId: 'r1',
-          krefs: [krefs.r1],
-        });
-      });
     });
 
     it('processes dropExport actions', () => {

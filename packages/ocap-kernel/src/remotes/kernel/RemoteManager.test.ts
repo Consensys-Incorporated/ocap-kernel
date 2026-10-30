@@ -343,7 +343,7 @@ describe('RemoteManager', () => {
         logger,
       });
 
-      // Initialize - should restore the remotes
+      newRemoteManager.restoreRemotes();
       newRemoteManager.setMessageHandler(messageHandler);
       await newRemoteManager.initRemoteComms();
 
@@ -359,6 +359,93 @@ describe('RemoteManager', () => {
       // Verify remotes are also accessible by peer ID
       expect(await remoteFor(newRemoteManager, 'peer-1')).toBe(restoredRemote1);
       expect(await remoteFor(newRemoteManager, 'peer-2')).toBe(restoredRemote2);
+    });
+
+    describe('a remote restored before remote comms start', () => {
+      /**
+       * Store a remote, then make the manager a restarted kernel would, with
+       * its remotes restored and remote comms not yet up.
+       *
+       * @returns The new manager and the remote's ID.
+       */
+      async function restoreBeforeComms(): Promise<{
+        manager: RemoteManager;
+        remoteId: ReturnType<typeof asRemoteId>;
+      }> {
+        vi.mocked(remoteComms.initRemoteComms).mockResolvedValue(
+          mockRemoteComms,
+        );
+        remoteManager.setMessageHandler(vi.fn());
+        await remoteManager.initRemoteComms();
+        const { remoteId } = remoteManager.establishRemote('peer-1');
+        remoteManager.cleanup();
+
+        const manager = new RemoteManager({
+          platformServices: mockPlatformServices,
+          kernelStore,
+          kernelQueue: mockKernelQueue,
+          logger,
+        });
+        manager.setMessageHandler(vi.fn());
+        manager.restoreRemotes();
+        return { manager, remoteId };
+      }
+
+      it('takes a delivery, and sends it once remote comms start', async () => {
+        const { manager, remoteId } = await restoreBeforeComms();
+
+        const result = await manager.getRemote(remoteId).deliverNotify([]);
+        await result.afterCommit?.();
+        const sentBefore = vi.mocked(mockRemoteComms.sendRemoteMessage).mock
+          .calls.length;
+        await manager.initRemoteComms();
+        await delay(0);
+
+        expect({
+          sentBefore,
+          sent: vi
+            .mocked(mockRemoteComms.sendRemoteMessage)
+            .mock.calls.map(([peerId, message]) => [
+              peerId,
+              JSON.parse(message).params,
+            ]),
+        }).toStrictEqual({
+          sentBefore: 0,
+          sent: [['peer-1', ['notify', []]]],
+        });
+      });
+
+      it("records a peer's restart, discarding what was queued for the old incarnation", async () => {
+        const { manager, remoteId } = await restoreBeforeComms();
+        const delivered = await manager.getRemote(remoteId).deliverNotify([]);
+        await delivered.afterCommit?.();
+        kernelStore.setPeerIncarnation('peer-1', 'incarnation-A');
+
+        const restart = manager.applyIncarnationChange({
+          type: 'peerIncarnation',
+          peerId: 'peer-1',
+          incarnation: 'incarnation-B',
+          restart: true,
+        });
+        await restart.afterCommit?.();
+        await manager.initRemoteComms();
+        await delay(0);
+
+        expect({
+          incarnation: kernelStore.getPeerIncarnation('peer-1'),
+          sent: vi.mocked(mockRemoteComms.sendRemoteMessage).mock.calls,
+        }).toStrictEqual({ incarnation: 'incarnation-B', sent: [] });
+      });
+
+      it('refuses to use its handle until remote comms start', async () => {
+        const { manager } = await restoreBeforeComms();
+        const use = vi.fn();
+
+        await expect(manager.withRemote('peer-1', { use })).rejects.toThrow(
+          'Remote comms not initialized',
+        );
+        expect(use).not.toHaveBeenCalled();
+      });
     });
 
     it('handles empty kernel store during initialization', async () => {
@@ -708,14 +795,6 @@ describe('RemoteManager', () => {
       expect(retrieved).toBe(established);
     });
 
-    it('says whether a remote has a handle', () => {
-      const established = remoteManager.establishRemote('peer123');
-      expect([
-        remoteManager.hasRemote(established.remoteId),
-        remoteManager.hasRemote(asRemoteId('r999')),
-      ]).toStrictEqual([true, false]);
-    });
-
     it('throws error when getting non-existent remote by ID', () => {
       expect(() => remoteManager.getRemote(asRemoteId('r999'))).toThrow(
         'Remote not found: r999',
@@ -771,6 +850,7 @@ describe('RemoteManager', () => {
 
       const messageHandler = vi.fn();
       vi.mocked(remoteComms.initRemoteComms).mockResolvedValue(mockRemoteComms);
+      remoteManager.restoreRemotes();
       remoteManager.setMessageHandler(messageHandler);
       await remoteManager.initRemoteComms();
 

@@ -299,16 +299,16 @@ export class RemoteManager {
       );
     }
     const isRestart = stored !== undefined;
-    // Before `initRemoteComms` returns there is no remote handle to clean up.
+    const remote = isRestart ? this.#remotesByPeer.get(peerId) : undefined;
+    // Once `cleanup` has let go of the handles there is none to clean up.
     // Recorded without that cleanup, the restart would be hidden from the next
     // handshake, so it is left for that handshake to report again.
-    if (isRestart && !this.isRemoteCommsInitialized()) {
+    if (isRestart && !remote && !this.isRemoteCommsInitialized()) {
       this.#logger?.log(
         `Peer ${peerId.slice(0, 8)} restart to ${incarnation.slice(0, 8)} not recorded: remote comms are not initialized`,
       );
       return {};
     }
-    const remote = isRestart ? this.#remotesByPeer.get(peerId) : undefined;
 
     // Snapshot the decider list BEFORE any kv mutation so the c-list lookup
     // can still find the promises through the entries forgetEndpointImports
@@ -367,7 +367,22 @@ export class RemoteManager {
   }
 
   /**
-   * Initialize the remote comms object at kernel startup.
+   * Give every remote the store has a handle, for the kernel to call before its
+   * run loop starts. Each queues what is delivered to it until
+   * {@link initRemoteComms} attaches the transport.
+   */
+  restoreRemotes(): void {
+    for (const {
+      remoteId,
+      remoteInfo,
+    } of this.#kernelStore.getAllRemoteRecords()) {
+      this.#initializeRemote(remoteId, remoteInfo);
+    }
+  }
+
+  /**
+   * Initialize the remote comms object at kernel startup, and attach it to the
+   * remotes {@link restoreRemotes} restored.
    *
    * @param options - Options for remote communications initialization.
    * @returns a promise that resolves when initialization is complete.
@@ -400,12 +415,11 @@ export class RemoteManager {
     );
     this.#remoteIdentity = this.#remoteComms;
 
-    // Restore all remotes that were previously established
-    for (const {
-      remoteId,
-      remoteInfo,
-    } of this.#kernelStore.getAllRemoteRecords()) {
-      this.#initializeRemote(remoteId, remoteInfo);
+    for (const remote of this.#remotes.values()) {
+      remote.attachTransport({
+        remoteComms: this.#remoteComms,
+        ackTimeoutMs: this.#ackTimeoutMs,
+      });
     }
   }
 
@@ -488,7 +502,8 @@ export class RemoteManager {
   }
 
   /**
-   * Initializes a remote handle for communication with a remote kernel.
+   * Initializes a remote handle for communication with a remote kernel, with
+   * the transport if remote comms are up.
    *
    * @param remoteId - The unique identifier for the remote kernel.
    * @param info - Information about the remote including peer ID and connection hints.
@@ -496,14 +511,13 @@ export class RemoteManager {
    */
   #initializeRemote(remoteId: RemoteId, info: RemoteInfo): RemoteHandle {
     const { peerId, hints } = info;
-    const remoteComms = this.getRemoteComms();
 
     const remote = RemoteHandle.make({
       remoteId,
       peerId,
       kernelStore: this.#kernelStore,
       kernelQueue: this.#kernelQueue,
-      remoteComms,
+      remoteComms: this.#remoteComms,
       locationHints: hints,
       logger: this.#logger,
       onGiveUp: this.#handleRemoteGiveUp.bind(this),
@@ -544,6 +558,9 @@ export class RemoteManager {
       use: (remote: RemoteHandle) => Result | Promise<Result>;
     },
   ): Promise<Result> {
+    // A stored peer has a handle from boot, but until remote comms are up it
+    // could not acknowledge or answer a message, nor send a redemption.
+    this.getRemoteComms();
     if (this.#remotesByPeer.has(peerId)) {
       return use(this.#provideRemote(peerId, hints));
     }
@@ -580,16 +597,6 @@ export class RemoteManager {
       return existing;
     }
     return this.establishRemote(peerId, hints);
-  }
-
-  /**
-   * Whether a remote has a handle.
-   *
-   * @param remoteId - The ID of the remote.
-   * @returns True if `getRemote` would return one.
-   */
-  hasRemote(remoteId: RemoteId): boolean {
-    return this.#remotes.has(remoteId);
   }
 
   /**

@@ -4,7 +4,7 @@ import { NodejsPlatformServices } from '@metamask/kernel-node-runtime';
 import type { KernelDatabase } from '@metamask/kernel-store';
 import { makeSQLKernelDatabase } from '@metamask/kernel-store/sqlite/nodejs';
 import { fromHex, waitUntilQuiescent } from '@metamask/kernel-utils';
-import { makeKernelStore, kunser, Kernel } from '@metamask/ocap-kernel';
+import { makeKernelStore, kser, kunser, Kernel } from '@metamask/ocap-kernel';
 import type {
   ClusterConfig,
   KernelStore,
@@ -562,7 +562,7 @@ describe('Remote Communications (Integration Tests)', () => {
     // loop's next crank. `scheduleReap` does not wake a parked run loop, so an
     // idle kernel holds that reap indefinitely — and carries it into its next
     // incarnation, which starts its run loop inside `Kernel.make`, before
-    // `initRemoteComms` can restore any remote to deliver it to.
+    // `initRemoteComms`.
     //
     // A peer's `bringOutYourDead` schedules one from inside a crank, so the
     // loop spends it before parking.
@@ -637,6 +637,127 @@ describe('Remote Communications (Integration Tests)', () => {
       await rm(tempDir, { recursive: true, force: true });
     }
   });
+
+  it.each([
+    [
+      'notify',
+      (
+        store: KernelStore,
+        database: KernelDatabase,
+        remoteId: ReturnType<typeof getOnlyRemoteId>,
+      ) => {
+        const kpid = listPromiseCList(database, remoteId).find(
+          (kref) => store.getKernelPromise(kref).state !== 'unresolved',
+        );
+        expect(kpid).toBeDefined();
+        store.incrementRefCount(kpid as KRef, 'notify');
+        store.enqueueRun({
+          type: 'notify',
+          endpointId: remoteId,
+          kpid: kpid as KRef,
+        });
+      },
+    ],
+    [
+      'message',
+      (
+        store: KernelStore,
+        database: KernelDatabase,
+        remoteId: ReturnType<typeof getOnlyRemoteId>,
+      ) => {
+        const target = Object.keys(listObjectCList(database, remoteId)).find(
+          (kref) => store.getOwner(kref as KRef) === remoteId,
+        );
+        expect(target).toBeDefined();
+        store.incrementRefCount(target as KRef, 'queue|target');
+        store.enqueueRun({
+          type: 'send',
+          target: target as KRef,
+          message: { methargs: kser(['hello', ['again']]), result: null },
+        });
+      },
+    ],
+  ])(
+    'takes a %s left queued for a remote at boot, before remote comms start',
+    async (method, enqueue) => {
+      // A vat can send to a peer, or resolve a promise it subscribed to, and
+      // the kernel stop before the crank that delivers it. The next boot
+      // starts its run loop before `initRemoteComms`.
+      const tempDir = await mkdtemp(join(tmpdir(), 'kernel-test-rc-boot-'));
+      const dbFile = join(tempDir, 'victim.db');
+      const { logger } = makeTestLogger();
+      try {
+        await kernel1.stop();
+        const victimDatabase = await makeSQLKernelDatabase({
+          dbFilename: dbFile,
+        });
+        const victimStore = makeKernelStore(victimDatabase);
+        const victim = await makeTestKernel(
+          'victim',
+          victimDatabase,
+          directNetwork,
+          true,
+          'kernel1-peer',
+          '01',
+        );
+        // One exchange, so the victim holds a remote whose c-list has the
+        // receiver and a resolved promise: the answer to `hello`.
+        await runTestVats(victim, makeSenderSubclusterConfig('Sender'));
+        const receiver = (await runTestVats(
+          kernel2,
+          makeReceiverSubclusterConfig('Receiver'),
+        )) as BootstrapResult;
+        await victim.queueMessage(
+          victimStore.getRootObject('v1' as VatId) as KRef,
+          'sendMessage',
+          [receiver.ocapURL, 'hello', ['once']],
+        );
+        await victim.stop();
+
+        const armed = await makeSQLKernelDatabase({ dbFilename: dbFile });
+        const armedStore = makeKernelStore(armed);
+        const remoteId = getOnlyRemoteId(armedStore);
+        const queuedAt =
+          (armedStore.getRemoteSeqState(remoteId)?.nextSendSeq ?? 0) + 1;
+        enqueue(armedStore, armed, remoteId);
+        armed.close();
+
+        // No `initRemoteComms`, so what the first boot delivers stays in the
+        // remote's queue, and the second boot finds it there.
+        const boots = [];
+        for (const boot of [1, 2]) {
+          const rebooted = await makeKernel(
+            await makeSQLKernelDatabase({ dbFilename: dbFile }),
+            false,
+            logger.subLogger({ tags: [`victim-boot${boot}`] }),
+            undefined,
+            directNetwork.createPlatformServices('kernel1-peer'),
+            '01',
+          );
+          const { runLoop } = await rebooted.getStatus();
+          await rebooted.stop();
+          const booted = await makeSQLKernelDatabase({ dbFilename: dbFile });
+          const bootedStore = makeKernelStore(booted);
+          const lastSeq = bootedStore.getRemoteSeqState(remoteId)?.nextSendSeq;
+          const last = bootedStore.getPendingMessage(remoteId, queuedAt);
+          booted.close();
+          boots.push({
+            runLoop,
+            lastSeq,
+            queued: last === undefined ? last : JSON.parse(last).params[0],
+          });
+        }
+        const written = {
+          runLoop: { state: 'running' },
+          lastSeq: queuedAt,
+          queued: method,
+        };
+        expect(boots).toStrictEqual([written, written]);
+      } finally {
+        await rm(tempDir, { recursive: true, force: true });
+      }
+    },
+  );
 
   it('collects an object on both kernels once the importing kernel lets go', async () => {
     const kernelStore2 = makeKernelStore(kernelDatabase2);
@@ -802,6 +923,29 @@ function listObjectCList(
     }
   }
   return entries;
+}
+
+/**
+ * List the promises in a remote's c-list.
+ *
+ * @param kernelDatabase - The kernel's database.
+ * @param remoteId - The remote.
+ * @returns The krefs of the promises.
+ */
+function listPromiseCList(
+  kernelDatabase: KernelDatabase,
+  remoteId: string,
+): KRef[] {
+  const { kernelKVStore } = kernelDatabase;
+  const prefix = `${remoteId}.c.kp`;
+  const krefs: KRef[] = [];
+  let key = kernelKVStore.getNextKey(prefix);
+  // oxlint-disable-next-line no-unmodified-loop-condition -- the condition reads key, which the loop advances
+  while (key?.startsWith(prefix)) {
+    krefs.push(key.slice(`${remoteId}.c.`.length) as KRef);
+    key = kernelKVStore.getNextKey(key);
+  }
+  return krefs;
 }
 
 /**
