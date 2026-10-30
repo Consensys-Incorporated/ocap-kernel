@@ -1,7 +1,7 @@
 import '@metamask/kernel-shims/endoify-node';
 
-import { makeMockSample } from '@metamask/kernel-language-model-service/test-utils';
 import { makeTreeSitterWorkerParser } from '@ocap/kernel-agents-repl/parser/tree-sitter-worker';
+import { makeJsonSample } from '@ocap/kernel-test/agent-vat';
 import { afterAll, describe, expect, it } from 'vitest';
 
 import { runAgentVat } from './agent-vat.ts';
@@ -21,14 +21,9 @@ describe('runAgentVat', () => {
         intent: 'What is 1 plus 2?',
         capabilities: ['add'],
       },
-      chat: async () => {
-        throw new Error('chat not mocked');
-      },
-      // The JSON prompt ends with `{"messageType":"assistant","`, so an
-      // answer starts mid-object.
-      sample: makeMockSample([
-        'invoke":[{"name":"add","args":{"summands":[1,2]}}]}',
-        'invoke":[{"name":"end","args":{"final":"The sum is 3."}}]}',
+      sample: makeJsonSample([
+        '[{"name":"add","args":{"summands":[1,2]}}]',
+        '[{"name":"end","args":{"final":"The sum is 3."}}]',
       ]),
       parser,
     });

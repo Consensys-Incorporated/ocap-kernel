@@ -1,6 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
 
-import { makeChatClient, makeSampleClient } from './client.ts';
+import {
+  makeChatClient,
+  makeSampleClient,
+  makeSampleLanguageModel,
+} from './client.ts';
 import type { ChatResult, SampleResult } from './types.ts';
 
 const MODEL = 'glm-4.7-flash';
@@ -103,5 +107,51 @@ describe('makeSampleClient', () => {
     await expect(client.sample({ prompt: 'hi' })).rejects.toThrow(
       'model is required',
     );
+  });
+});
+
+describe('makeSampleLanguageModel', () => {
+  it('reports the model', async () => {
+    const lmsRef = { sample: vi.fn() };
+    const languageModel = makeSampleLanguageModel({ lmsRef, model: 'llama3' });
+
+    expect(await languageModel.getInfo()).toStrictEqual({
+      model: 'llama3',
+      options: {},
+    });
+  });
+
+  it('streams the sampled text as one chunk', async () => {
+    const lmsRef = { sample: vi.fn().mockResolvedValue(makeSampleResult()) };
+    const languageModel = makeSampleLanguageModel({
+      lmsRef,
+      model: 'llama3',
+      maxTokens: 7,
+    });
+
+    const { stream } = await languageModel.sample('Once upon');
+    const chunks = [];
+    for await (const chunk of stream) {
+      chunks.push(chunk);
+    }
+
+    expect(lmsRef.sample).toHaveBeenCalledWith({
+      model: 'llama3',
+      prompt: 'Once upon',
+      max_tokens: 7,
+    });
+    expect(chunks).toStrictEqual([{ response: 'hi there' }]);
+  });
+
+  it('omits an unset token cap', async () => {
+    const lmsRef = { sample: vi.fn().mockResolvedValue(makeSampleResult()) };
+    const languageModel = makeSampleLanguageModel({ lmsRef, model: 'llama3' });
+
+    await languageModel.sample('Once upon');
+
+    expect(lmsRef.sample).toHaveBeenCalledWith({
+      model: 'llama3',
+      prompt: 'Once upon',
+    });
   });
 });

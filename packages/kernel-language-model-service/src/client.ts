@@ -1,10 +1,12 @@
 import { E } from '@endo/eventual-send';
 import type { ERef } from '@endo/eventual-send';
+import { ifDefined } from '@metamask/kernel-utils';
 
 import type {
   ChatParams,
   ChatResult,
   ChatService,
+  LanguageModel,
   SampleParams,
   SampleResult,
   SampleService,
@@ -88,3 +90,46 @@ export const makeSampleClient = (
       return E(lmsRef).sample(harden({ ...params, model }));
     },
   });
+
+/**
+ * Wrap a remote service reference as a {@link LanguageModel} for a sampling
+ * agent strategy, which reads its answer as a stream. The service answers a
+ * sample in one piece, since a stream cannot be passed across the kernel
+ * marshal boundary, so the whole answer becomes the only chunk and the model
+ * runs until it stops on its own.
+ *
+ * @param args - The arguments.
+ * @param args.lmsRef - Reference to a service with a `sample` method.
+ * @param args.model - The model to sample from.
+ * @param args.maxTokens - A cap on tokens per sample, for a model that would
+ * otherwise continue past what the agent needed.
+ * @returns The language model.
+ */
+export const makeSampleLanguageModel = ({
+  lmsRef,
+  model,
+  maxTokens,
+}: {
+  lmsRef: ERef<SampleService>;
+  model: string;
+  maxTokens?: number;
+}): LanguageModel<unknown, { response: string }> => {
+  const client = makeSampleClient(lmsRef, model);
+  return harden({
+    getInfo: async () => ({ model, options: {} }),
+    load: async () => undefined,
+    unload: async () => undefined,
+    sample: async (prompt: string) => {
+      const { text } = await client.sample({
+        prompt,
+        ...ifDefined({ max_tokens: maxTokens }),
+      });
+      return {
+        stream: (async function* () {
+          yield { response: text };
+        })(),
+        abort: async () => undefined,
+      };
+    },
+  });
+};

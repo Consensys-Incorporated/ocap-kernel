@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Initial release as a published package (previously the private `@ocap/kernel-language-model-service`) ([#1215](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1215))
+- `makeSampleLanguageModel` wraps a sample service reference as a `LanguageModel` whose stream yields the whole answer as one chunk, for a sampling agent in a vat ([#1241](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1241))
+- `makeMockChat` in `test-utils` scripts a chat backend's assistant turns ([#1241](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1241))
 
 ### Security
 

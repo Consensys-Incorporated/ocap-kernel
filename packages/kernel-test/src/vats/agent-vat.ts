@@ -1,11 +1,10 @@
 import type { ERef } from '@endo/eventual-send';
 import {
   makeChatClient,
-  makeSampleClient,
+  makeSampleLanguageModel,
 } from '@metamask/kernel-language-model-service';
 import type {
   ChatService,
-  LanguageModel,
   SampleService,
 } from '@metamask/kernel-language-model-service';
 import { ifDefined } from '@metamask/kernel-utils';
@@ -85,64 +84,35 @@ export function buildRootObject(
     }),
   );
 
-  // The kernel service answers a sample in one piece, while the sampling
-  // strategies read a stream, so the whole answer becomes the only chunk.
-  const makeLanguageModel = (
-    service: ERef<SampleService>,
-  ): LanguageModel<unknown, { response: string }> => {
-    const client = makeSampleClient(service, model);
-    return {
-      getInfo: async () => ({ model, options: {} }),
-      load: async () => undefined,
-      unload: async () => undefined,
-      sample: async (prompt: string) => {
-        const { text } = await client.sample({
-          prompt,
-          ...ifDefined({ max_tokens: maxTokens }),
-        });
-        return {
-          stream: (async function* () {
-            yield { response: text };
-          })(),
-          abort: async () => undefined,
-        };
-      },
-    };
-  };
-
   const makeAgent = ({
     languageModelService,
     parserService,
   }: Services): Agent => {
+    const languageModel = makeSampleLanguageModel({
+      lmsRef: languageModelService,
+      model,
+      ...ifDefined({ maxTokens }),
+    });
     switch (strategy) {
       case 'json':
-        return makeJsonAgent({
-          languageModel: makeLanguageModel(languageModelService),
-          capabilities,
-          logger,
-        });
+        return makeJsonAgent({ languageModel, capabilities, logger });
       case 'repl': {
         if (!parserService) {
           throw new Error('The repl strategy needs the parser service.');
         }
         return makeReplAgent({
-          languageModel: makeLanguageModel(languageModelService),
+          languageModel,
           capabilities,
           logger,
           parser: makeParserClient(parserService),
         });
       }
-      case 'chat': {
-        const client = makeChatClient(languageModelService, model);
+      case 'chat':
         return makeChatAgent({
-          chat: async ({ messages, tools }) =>
-            client.chat.completions.create({
-              messages,
-              ...(tools && { tools }),
-            }),
+          chat: makeChatClient(languageModelService, model).chat.completions
+            .create,
           capabilities,
         });
-      }
       default:
         throw new Error(`Unknown strategy: ${String(strategy)}`);
     }
