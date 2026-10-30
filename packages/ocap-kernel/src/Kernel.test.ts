@@ -1903,14 +1903,27 @@ describe('Kernel', () => {
       ).toHaveBeenCalledWith(change);
     });
 
-    it('restores the remotes before the run loop starts', async () => {
-      await Kernel.make(mockPlatformServices, mockKernelDatabase);
+    it('restores the remotes before any vat starts or the run loop runs', async () => {
+      const db = makeMapKernelDatabase();
+      const kernel1 = await Kernel.make(mockPlatformServices, db);
+      await kernel1.launchSubcluster({
+        bootstrap: 'testVat',
+        vats: { testVat: makeMockVatConfig() },
+      });
+      await kernel1.stop();
+      launchWorkerMock.mockClear();
+
+      await Kernel.make(mockPlatformServices, db);
 
       const [restored] =
         mocks.RemoteManager.lastInstance.restoreRemotes.mock
           .invocationCallOrder;
+      const [launched] = launchWorkerMock.mock.invocationCallOrder;
       const [ran] = mocks.KernelQueue.lastInstance.run.mock.invocationCallOrder;
-      expect(restored).toBeLessThan(ran as number);
+      expect({
+        beforeVats: (restored ?? Infinity) < (launched ?? 0),
+        beforeRunLoop: (restored ?? Infinity) < (ran ?? 0),
+      }).toStrictEqual({ beforeVats: true, beforeRunLoop: true });
     });
 
     describe('closeConnection()', () => {

@@ -319,7 +319,8 @@ export class RemoteHandle implements RemoteEndpointHandle {
    * @param params.peerId - The libp2p peer ID for the remote end.
    * @param params.kernelStore - The kernel's persistent state store.
    * @param params.kernelQueue - The kernel's queue.
-   * @param params.remoteComms - Remote comms object to access the network.
+   * @param params.remoteComms - Remote comms object to access the network, if
+   * it is up yet.
    * @param params.logger - Optional logger for error and diagnostic output.
    * @param params.onGiveUp - Optional callback invoked when we give up on this remote.
    *
@@ -1177,7 +1178,8 @@ export class RemoteHandle implements RemoteEndpointHandle {
       return this.#myCrankResult;
     }
     // A reap is a hint, so a full queue skips it rather than refuse it, which
-    // would kill the run loop.
+    // would kill the run loop. Measured as `#persistRemoteCommand` measures.
+    this.#persistAcknowledged();
     if (countPending(this.#sendWindow) >= MAX_PENDING_MESSAGES) {
       this.#logger.log(
         `${this.#peerId.slice(0, 8)}:: bringOutYourDead skipped: pending queue at capacity`,

@@ -641,11 +641,7 @@ describe('Remote Communications (Integration Tests)', () => {
   it.each([
     [
       'notify',
-      (
-        store: KernelStore,
-        database: KernelDatabase,
-        remoteId: ReturnType<typeof getOnlyRemoteId>,
-      ) => {
+      ({ store, database, remoteId }: QueueOptions) => {
         const kpid = listPromiseCList(database, remoteId).find(
           (kref) => store.getKernelPromise(kref).state !== 'unresolved',
         );
@@ -660,11 +656,7 @@ describe('Remote Communications (Integration Tests)', () => {
     ],
     [
       'message',
-      (
-        store: KernelStore,
-        database: KernelDatabase,
-        remoteId: ReturnType<typeof getOnlyRemoteId>,
-      ) => {
+      ({ store, database, remoteId }: QueueOptions) => {
         const target = Object.keys(listObjectCList(database, remoteId)).find(
           (kref) => store.getOwner(kref as KRef) === remoteId,
         );
@@ -681,8 +673,7 @@ describe('Remote Communications (Integration Tests)', () => {
     'takes a %s left queued for a remote at boot, before remote comms start',
     async (method, enqueue) => {
       // A vat can send to a peer, or resolve a promise it subscribed to, and
-      // the kernel stop before the crank that delivers it. The next boot
-      // starts its run loop before `initRemoteComms`.
+      // the kernel stop before the crank that delivers it.
       const tempDir = await mkdtemp(join(tmpdir(), 'kernel-test-rc-boot-'));
       const dbFile = join(tempDir, 'victim.db');
       const { logger } = makeTestLogger();
@@ -719,7 +710,13 @@ describe('Remote Communications (Integration Tests)', () => {
         const remoteId = getOnlyRemoteId(armedStore);
         const queuedAt =
           (armedStore.getRemoteSeqState(remoteId)?.nextSendSeq ?? 0) + 1;
-        enqueue(armedStore, armed, remoteId);
+        // Nothing else waits, so the first boot's first crank takes the item.
+        expect({
+          runQueue: armedStore.runQueueLength(),
+          gcActions: armedStore.getGCActions().size,
+          reaps: JSON.parse(armed.kernelKVStore.get('reapQueue') ?? '[]'),
+        }).toStrictEqual({ runQueue: 0, gcActions: 0, reaps: [] });
+        enqueue({ store: armedStore, database: armed, remoteId });
         armed.close();
 
         // No `initRemoteComms`, so what the first boot delivers stays in the
@@ -739,12 +736,18 @@ describe('Remote Communications (Integration Tests)', () => {
           const booted = await makeSQLKernelDatabase({ dbFilename: dbFile });
           const bootedStore = makeKernelStore(booted);
           const lastSeq = bootedStore.getRemoteSeqState(remoteId)?.nextSendSeq;
-          const last = bootedStore.getPendingMessage(remoteId, queuedAt);
+          const queuedMessage = bootedStore.getPendingMessage(
+            remoteId,
+            queuedAt,
+          );
           booted.close();
           boots.push({
             runLoop,
             lastSeq,
-            queued: last === undefined ? last : JSON.parse(last).params[0],
+            queued:
+              queuedMessage === undefined
+                ? undefined
+                : JSON.parse(queuedMessage).params[0],
           });
         }
         const written = {
@@ -924,6 +927,12 @@ function listObjectCList(
   }
   return entries;
 }
+
+type QueueOptions = {
+  store: KernelStore;
+  database: KernelDatabase;
+  remoteId: ReturnType<typeof getOnlyRemoteId>;
+};
 
 /**
  * List the promises in a remote's c-list.

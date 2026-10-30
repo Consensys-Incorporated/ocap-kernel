@@ -1,6 +1,6 @@
 import { delay } from '@metamask/kernel-utils';
 import { Logger } from '@metamask/logger';
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, onTestFinished, vi } from 'vitest';
 
 import * as remoteComms from './remote-comms.ts';
 import { RemoteHandle } from './RemoteHandle.ts';
@@ -388,6 +388,8 @@ describe('RemoteManager', () => {
         });
         manager.setMessageHandler(vi.fn());
         manager.restoreRemotes();
+        // Clears the ACK timer a test that starts remote comms leaves armed.
+        onTestFinished(() => manager.cleanup());
         return { manager, remoteId };
       }
 
@@ -435,6 +437,21 @@ describe('RemoteManager', () => {
           incarnation: kernelStore.getPeerIncarnation('peer-1'),
           sent: vi.mocked(mockRemoteComms.sendRemoteMessage).mock.calls,
         }).toStrictEqual({ incarnation: 'incarnation-B', sent: [] });
+      });
+
+      it('gives its handle the ACK timeout remote comms start with', async () => {
+        const { manager, remoteId } = await restoreBeforeComms();
+        const result = await manager.getRemote(remoteId).deliverNotify([]);
+        await result.afterCommit?.();
+        const setTimeoutSpy = vi
+          .spyOn(globalThis, 'setTimeout')
+          .mockReturnValue(1 as unknown as ReturnType<typeof setTimeout>);
+
+        await manager.initRemoteComms({ ackTimeoutMs: 123 });
+
+        expect(setTimeoutSpy.mock.calls.map(([, ms]) => ms)).toStrictEqual([
+          123,
+        ]);
       });
 
       it('refuses to use its handle until remote comms start', async () => {

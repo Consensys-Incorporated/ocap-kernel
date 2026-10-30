@@ -300,9 +300,10 @@ export class RemoteManager {
     }
     const isRestart = stored !== undefined;
     const remote = isRestart ? this.#remotesByPeer.get(peerId) : undefined;
-    // Once `cleanup` has let go of the handles there is none to clean up.
-    // Recorded without that cleanup, the restart would be hidden from the next
-    // handshake, so it is left for that handshake to report again.
+    // With remote comms down, a peer with no handle may be one `cleanup` let go
+    // of, whose c-list still needs cleaning up. Recorded without that, the
+    // restart would be hidden from the next handshake, so it is left for that
+    // handshake to report again.
     if (isRestart && !remote && !this.isRemoteCommsInitialized()) {
       this.#logger?.log(
         `Peer ${peerId.slice(0, 8)} restart to ${incarnation.slice(0, 8)} not recorded: remote comms are not initialized`,
@@ -401,7 +402,7 @@ export class RemoteManager {
 
     this.#ackTimeoutMs = mergedOptions.ackTimeoutMs;
 
-    this.#remoteComms = await initRemoteComms(
+    const remoteComms = await initRemoteComms(
       this.#kernelStore,
       this.#platformServices,
       this.#messageHandler,
@@ -412,14 +413,15 @@ export class RemoteManager {
       this.#incarnationId,
       this.#handleIncarnationChange.bind(this),
     );
-    this.#remoteIdentity = this.#remoteComms;
-
     for (const remote of this.#remotes.values()) {
       remote.attachTransport({
-        remoteComms: this.#remoteComms,
+        remoteComms,
         ackTimeoutMs: this.#ackTimeoutMs,
       });
     }
+    // Last, since it opens `withRemote` to peers: every handle can send by now.
+    this.#remoteComms = remoteComms;
+    this.#remoteIdentity = remoteComms;
   }
 
   /**
