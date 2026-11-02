@@ -8,8 +8,9 @@ import { makePrepareAttempt } from './repl/prepare-attempt.ts';
 
 export type MakeReplAgentArgs = MakeAgentArgs & {
   /**
-   * The JavaScript parser that reads the agent's statements, e.g.
-   * `makeTreeSitterParser()` from `@ocap/kernel-agents-repl/parser/tree-sitter`.
+   * The JavaScript parser that reads the agent's statements. In the host, use
+   * `makeTreeSitterParser()` from `@ocap/kernel-agents-repl/parser/tree-sitter`;
+   * in a vat, `makeParserClient()` around the kernel's parser service.
    */
   parser: Parser;
 };
