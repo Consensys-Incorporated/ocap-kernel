@@ -187,7 +187,12 @@ export class Logger {
   #dispatch(options: LoggerOptions, level: LogLevel, ...args: LogArgs): void {
     const { transports, tags } = mergeOptions(this.#options, options);
     const [message, ...data] = args;
-    const entry: LogEntry = harden({ level, tags, message, data });
+    // Hardening must stop short of the caller's data: it would freeze whatever
+    // was logged, such as state the caller goes on to mutate.
+    const entry: LogEntry = Object.freeze({
+      ...harden({ level, tags, message }),
+      data,
+    });
     transports.forEach((transport) => transport(entry));
   }
 }
