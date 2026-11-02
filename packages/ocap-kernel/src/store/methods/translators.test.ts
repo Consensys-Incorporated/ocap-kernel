@@ -51,6 +51,18 @@ describe('getTranslators', () => {
     } as unknown as ReturnType<typeof vatModule.getVatMethods>);
   });
 
+  describe('translateRefEtoK', () => {
+    it('refuses a kref, which the c-list would read back as its other half', () => {
+      mockErefToKref.mockReturnValue('R o+1');
+      const { translateRefEtoK } = getTranslators(mockCtx);
+
+      expect(() =>
+        translateRefEtoK(asVatId('v1'), 'ko1' as unknown as VRef),
+      ).toThrow('not a valid ERef');
+      expect(mockErefToKref).not.toHaveBeenCalled();
+    });
+  });
+
   describe('translateRefKtoE', () => {
     it('returns existing eref when found', () => {
       const vatId = asVatId('v1');

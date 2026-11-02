@@ -4,6 +4,7 @@ import { makePromiseKit } from '@endo/promise-kit';
 import {
   isTerminalSendError,
   PeerRestartedError,
+  ResourceLimitError,
 } from '@metamask/kernel-errors';
 import { Logger } from '@metamask/logger';
 
@@ -850,7 +851,7 @@ export class RemoteHandle implements RemoteEndpointHandle {
       !exemptFromCapacityLimit &&
       countPending(window) >= MAX_PENDING_MESSAGES
     ) {
-      throw Error(
+      throw new ResourceLimitError(
         `Message rejected: pending queue at capacity (${MAX_PENDING_MESSAGES})`,
       );
     }

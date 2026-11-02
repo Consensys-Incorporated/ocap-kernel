@@ -8,8 +8,9 @@ import { TestDuplexStream } from '@ocap/repo-tools/test-utils/streams';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { MockInstance } from 'vitest';
 
-import { asSubclusterId, asVatId } from '../../test/branded.ts';
+import { asERef, asSubclusterId, asVatId } from '../../test/branded.ts';
 import type { KernelQueue } from '../KernelQueue.ts';
+import { makeFatalKernelError } from '../liveslots/kernel-marshal.ts';
 import { makeKernelStore } from '../store/index.ts';
 import type { KernelStore } from '../store/index.ts';
 import type {
@@ -332,6 +333,46 @@ describe('VatHandle', () => {
       });
 
       expect(await sendVatCommandPromise).toBe('test-response');
+    });
+
+    it('terminates a vat whose worker fails a delivery', async () => {
+      const { vat, stream } = await makeVat();
+      const delivering = vat.deliverMessage(asERef('o+0'), {
+        methargs: { body: '#["hello",[]]', slots: [] },
+        result: null,
+      });
+      await delay(10);
+
+      await stream.receiveInput({
+        id: 'v0:1',
+        error: { code: -32603, message: 'worker blew up' },
+        jsonrpc: '2.0',
+      });
+
+      expect(await delivering).toStrictEqual({
+        didDelivery: 'v0',
+        abort: true,
+        terminate: {
+          vatId: 'v0',
+          reject: true,
+          info: makeFatalKernelError(
+            'INTERNAL_ERROR',
+            'Vat worker failed the delivery: {"code":-32603,"message":"worker blew up"}',
+          ),
+        },
+      });
+    });
+
+    it('throws a delivery whose channel dies, for the router to tell apart', async () => {
+      const { vat, stream } = await makeVat();
+      const delivering = vat.deliverMessage(asERef('o+0'), {
+        methargs: { body: '#["hello",[]]', slots: [] },
+        result: null,
+      });
+
+      await stream.receiveInput(NaN);
+
+      await expect(delivering).rejects.toThrow('Unexpected stream read error.');
     });
   });
 

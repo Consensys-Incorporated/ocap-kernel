@@ -17,6 +17,7 @@ import {
   makeKernelError,
 } from '../liveslots/kernel-marshal.ts';
 import type { KernelStore } from '../store/index.ts';
+import { isStoreFault } from '../store/utils/store-fault.ts';
 import type {
   CrankResult,
   VatId,
@@ -223,6 +224,10 @@ export class VatManager {
     try {
       await this.#relaunchVat(vatId, vatConfig);
     } catch (error) {
+      // The kernel's fault, which fails the boot rather than cost the vat.
+      if (isStoreFault(error)) {
+        throw error;
+      }
       const subclusterId = this.#kernelStore
         .getSubclusters()
         .find(({ vats }) => Object.values(vats).includes(vatId))?.id;
@@ -541,6 +546,14 @@ export class VatManager {
     });
     this.terminateVat(vatId, makeLostVatReason(vatId, error)).catch(
       (failure: unknown) => {
+        // Unqueued, the vat would stay persisted with no worker.
+        if (isStoreFault(failure)) {
+          this.#kernelQueue.panic(
+            `queueing the termination of lost vat ${vatId} failed`,
+            failure,
+          );
+          return;
+        }
         // Retired by the crank of the delivery or restart it was lost in, or
         // never recorded, by a launch that then fails.
         if (!this.#kernelStore.isVatActive(vatId)) {
@@ -721,62 +734,47 @@ export class VatManager {
    * instruction, and one that outlived its process names a vat the boot has
    * just relaunched.
    *
+   * A failure to record the death is thrown, so the run loop rolls the crank
+   * back and dies, and the next start relaunches the vat and carries the
+   * termination out again. Callers are answered only once the crank commits;
+   * one that dies leaves them to `onRunLoopDeath`.
+   *
    * @param vatId - The ID of the vat.
    * @param reason - The reason for the termination, if any.
-   * @returns Irrevocable once `stopVat` has run, whether or not it threw;
-   *   `undefined` for a vat already gone.
+   * @returns The crank outcome, carrying the callers' answer.
    */
   async performVatTermination(
     vatId: VatId,
     reason?: CapData<KRef>,
-  ): Promise<CrankResult | undefined> {
+  ): Promise<CrankResult> {
     const taken = this.#takeWaiters(this.#terminationWaiters, vatId);
-    // Not before the teardown ends: a restart asked for during it must still
-    // wait for this crank, whose failure can leave the vat known.
-    const answerOnceCrankEnds = (failure?: Error): void => {
-      const pending = (this.#pendingTerminations.get(vatId) ?? 0) - 1;
-      if (pending > 0) {
-        this.#pendingTerminations.set(vatId, pending);
-      } else {
-        this.#pendingTerminations.delete(vatId);
-      }
-      const superseded = this.#takeWaiters(this.#supersededRestarts, vatId);
-      taken.answerOnceCrankEnds(failure);
-      superseded.answerOnceCrankEnds(
-        failure
-          ? new Error(
-              `Restart of vat ${vatId} was overtaken by a termination that failed`,
-              { cause: failure },
-            )
-          : new VatDeletedError(vatId),
-      );
-    };
+    const answer: CrankResult = harden({
+      afterCommit: async () => {
+        // Not before: a restart asked for during the teardown must still wait
+        // for this crank.
+        const pending = (this.#pendingTerminations.get(vatId) ?? 0) - 1;
+        if (pending > 0) {
+          this.#pendingTerminations.set(vatId, pending);
+        } else {
+          this.#pendingTerminations.delete(vatId);
+        }
+        const superseded = this.#takeWaiters(this.#supersededRestarts, vatId);
+        taken.answer(undefined);
+        superseded.answer(new VatDeletedError(vatId));
+      },
+    });
     if (!this.#isVatKnown(vatId)) {
       // Already dead: the in-crank termination path or `terminateAllVats` got
       // here first, and this vat is exactly what the caller asked for.
-      answerOnceCrankEnds();
-      return undefined;
+      return answer;
     }
     if (taken.count === 0) {
       this.#logger.debug(
         `Carrying out a termination of vat ${vatId} nobody is waiting for`,
       );
     }
-    try {
-      await this.stopVat(vatId, true, reason);
-    } catch (error) {
-      // Not thrown: the run loop's catch would roll the crank back, undoing
-      // whatever of the death did get written and restoring the request, so
-      // every later start would replay the same failing termination.
-      const failure = new Error(`Termination of vat ${vatId} failed`, {
-        cause: error,
-      });
-      this.#logger.error(failure.message, error);
-      answerOnceCrankEnds(failure);
-      return harden({ irrevocable: true });
-    }
-    answerOnceCrankEnds();
-    return harden({ irrevocable: true });
+    await this.stopVat(vatId, true, reason);
+    return answer;
   }
 
   /**
@@ -936,6 +934,9 @@ export class VatManager {
       }
       running = await this.#relaunchVat(vatId, config);
     } catch (error) {
+      if (isStoreFault(error)) {
+        throw error;
+      }
       // Unless retired meanwhile, as below, where an abort would undo that.
       if (this.#kernelStore.isVatActive(vatId)) {
         return this.#failRestart({ vatId, taken, error });

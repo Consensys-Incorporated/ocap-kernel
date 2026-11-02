@@ -756,7 +756,7 @@ describe('RemoteManager', () => {
       const remote = await remoteFor(remoteManager, 'new-peer');
       expect(remote).toBeDefined();
       await expect(remote.deliverInbound(message)).rejects.toThrow(
-        'ko1 is not an ERef',
+        'not a valid ERef',
       );
     });
 
@@ -1084,6 +1084,27 @@ describe('RemoteManager', () => {
       await runQueuedIncarnationChange();
       return verdict;
     }
+
+    it('panics, failing the handshake, when the store cannot read the peer', async () => {
+      const fault = new Error('SQLITE_IOERR');
+      const { kernelKVStore } = kernelDatabase;
+      const get = kernelKVStore.get.bind(kernelKVStore);
+      vi.spyOn(kernelKVStore, 'get').mockImplementation((key) => {
+        if (key === 'peerIncarnation.peer-1') {
+          throw fault;
+        }
+        return get(key);
+      });
+
+      await expect(
+        getOnIncarnationChange()('peer-1', 'incarnation-1'),
+      ).rejects.toThrow('Kernel panic: reading the incarnation of peer peer-1');
+      expect(mockKernelQueue.panic).toHaveBeenCalledWith(
+        'reading the incarnation of peer peer-1 failed',
+        fault,
+      );
+      expect(mockKernelQueue.acceptPeerIncarnation).not.toHaveBeenCalled();
+    });
 
     it('triggers persist + finalize peer restart when persisted incarnation differs from observed', async () => {
       const peerId = 'peer-that-restarted';

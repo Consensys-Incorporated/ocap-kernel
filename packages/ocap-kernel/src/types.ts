@@ -967,12 +967,6 @@ export type CrankResult = {
   abort?: boolean; // changes should be discarded, not committed
   terminate?: { vatId: VatId; reject: boolean; info: CapData<KRef> };
   /**
-   * The delivery has done work a caller will be told of, so a later failure in
-   * this crank, from collection or the audit, must not roll it back. Ignored
-   * alongside `abort`, which rolls back first.
-   */
-  irrevocable?: boolean;
-  /**
    * Work the run loop runs once the crank has committed, skipped if it aborts.
    * For what a rollback could not undo anyway, and what must not be observable
    * before the writes it reports on are durable: in-memory state, and sending

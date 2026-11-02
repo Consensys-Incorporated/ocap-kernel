@@ -1,5 +1,5 @@
 import type { CapData } from '@endo/marshal';
-import { VatNotFoundError } from '@metamask/kernel-errors';
+import { ResourceLimitError, VatNotFoundError } from '@metamask/kernel-errors';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Mock, MockInstance } from 'vitest';
 
@@ -26,6 +26,7 @@ import type {
   KRef,
 } from './types.ts';
 import { asKRef, asRemoteId, asVatId } from '../test/branded.ts';
+import { makeStoreFault } from '../test/storage.ts';
 
 const v1 = asVatId('v1');
 
@@ -528,15 +529,15 @@ describe('KernelRouter', () => {
         );
       });
 
-      it('rejects with DELIVERY_FAILED when endpoint.deliverMessage throws', async () => {
-        const endpointId = v1;
+      it('rejects with DELIVERY_FAILED when a remote refuses the message', async () => {
+        const endpointId = asRemoteId('r1');
         const target = asKRef('ko123');
         (kernelStore.getOwner as unknown as MockInstance).mockReturnValueOnce(
           endpointId,
         );
         (
           endpointHandle.deliverMessage as unknown as MockInstance
-        ).mockRejectedValueOnce(new Error('queue full'));
+        ).mockRejectedValueOnce(new ResourceLimitError('queue full'));
         const message: KernelMessage = {
           methargs: { body: 'method args', slots: [] },
           result: asKRef('kp1'),
@@ -561,6 +562,28 @@ describe('KernelRouter', () => {
             ]),
           ]),
         );
+      });
+
+      it('throws any other delivery failure, for the run loop to roll back', async () => {
+        (kernelStore.getOwner as unknown as MockInstance).mockReturnValueOnce(
+          v1,
+        );
+        const storeFault = new Error('database or disk is full');
+        (
+          endpointHandle.deliverMessage as unknown as MockInstance
+        ).mockRejectedValueOnce(storeFault);
+
+        await expect(
+          kernelRouter.deliver({
+            type: 'send',
+            target: asKRef('ko123'),
+            message: {
+              methargs: { body: 'method args', slots: [] },
+              result: asKRef('kp1'),
+            },
+          }),
+        ).rejects.toBe(storeFault);
+        expect(kernelQueue.resolvePromises).not.toHaveBeenCalled();
       });
     });
 
@@ -1010,6 +1033,14 @@ describe('KernelRouter', () => {
 
         expect(result).toStrictEqual({ didDelivery: remoteId, abort: true });
       });
+
+      it('throws a store fault, for the run loop to roll back', async () => {
+        const storeFault = makeStoreFault();
+        const deliverInbound = vi.fn().mockRejectedValue(storeFault);
+        routeToRemote({ deliverInbound });
+
+        await expect(kernelRouter.deliver(inbound())).rejects.toBe(storeFault);
+      });
     });
 
     /**
@@ -1335,6 +1366,24 @@ describe('KernelRouter', () => {
         ).toStrictEqual({ didDelivery: endpointId });
       });
 
+      it('throws a store fault even when the vat was lost during it', async () => {
+        const storeFault = makeStoreFault();
+        (
+          endpointHandle.deliverBringOutYourDead as unknown as MockInstance
+        ).mockImplementationOnce(async () => {
+          (getEndpoint as unknown as MockInstance).mockImplementation(
+            (requested: EndpointId) => {
+              throw new VatNotFoundError(requested as VatId);
+            },
+          );
+          throw storeFault;
+        });
+
+        await expect(
+          kernelRouter.deliver({ type: 'bringOutYourDead', endpointId }),
+        ).rejects.toBe(storeFault);
+      });
+
       it('still throws when the vat is running', async () => {
         (
           endpointHandle.deliverBringOutYourDead as unknown as MockInstance
@@ -1404,7 +1453,7 @@ describe('KernelRouter', () => {
     describe('terminateVat', () => {
       it('hands a queued termination request to the vat manager', async () => {
         const reason = kser('because');
-        const crankResult = { irrevocable: true };
+        const crankResult = { afterCommit: async () => undefined };
         mockTerminateVat.mockResolvedValueOnce(crankResult);
 
         const result = await kernelRouter.deliver({

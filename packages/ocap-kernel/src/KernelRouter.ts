@@ -1,6 +1,6 @@
 import type { VatOneResolution } from '@agoric/swingset-liveslots';
 import type { CapData } from '@endo/marshal';
-import { VatNotFoundError } from '@metamask/kernel-errors';
+import { ResourceLimitError, VatNotFoundError } from '@metamask/kernel-errors';
 import { Logger } from '@metamask/logger';
 
 import { KernelQueue } from './KernelQueue.ts';
@@ -9,6 +9,7 @@ import type { KernelStore } from './store/index.ts';
 import { extractSingleRef } from './store/utils/extract-ref.ts';
 import { parseRef } from './store/utils/parse-ref.ts';
 import { isPromiseRef } from './store/utils/promise-ref.ts';
+import { isStoreFault } from './store/utils/store-fault.ts';
 import type {
   ControlOperation,
   EndpointId,
@@ -408,19 +409,20 @@ export class KernelRouter {
             endpoint.deliverMessage(endpointTarget, endpointMessage),
           );
         } catch (error) {
-          // Delivery failed (e.g., remote queue full). Reject the kernel promise
-          // so the caller knows the message wasn't delivered.
+          // Only a remote whose queue is full refuses a message. Anything else
+          // is the kernel's own fault, such as a store write that failed, and
+          // kills the run loop rather than commit the crank without it.
+          if (!(error instanceof ResourceLimitError)) {
+            throw error;
+          }
           this.#logger?.error(`Delivery to ${endpointId} failed:`, error);
           if (message.result) {
-            const detail =
-              error instanceof Error ? error.message : String(error);
             this.#rejectResultIfPending(
               eid,
               message.result,
-              makeKernelError('DELIVERY_FAILED', detail),
+              makeKernelError('DELIVERY_FAILED', error.message),
             );
           }
-          // Continue processing other messages - don't let one failure crash the queue
         }
       } else if (isKernelServiceMessage) {
         crankResult = this.#deliverKernelServiceMessage(target, message);
@@ -669,9 +671,14 @@ export class KernelRouter {
     try {
       return await remote.deliverInbound(message);
     } catch (error) {
-      // What a peer sends can fail here: an unknown method, a reference that
-      // does not resolve, a reply to a redemption that has timed out. None of
-      // it is the kernel's to die of.
+      // A store fault kills the run loop, rather than be covered by the next
+      // message's acknowledgement. Anything else is taken for the peer's: what
+      // it sends can fail here, with an unknown method, a reference that does
+      // not resolve or a reply to a redemption that has timed out, and a peer
+      // must not be able to stop the kernel.
+      if (isStoreFault(error)) {
+        throw error;
+      }
       this.#logger?.error(
         `Discarded inbound message seq=${seq} from ${remoteId}, which could not be delivered:`,
         error,
@@ -726,8 +733,13 @@ export class KernelRouter {
     } catch (error) {
       // A vat whose channel dies mid-delivery has its pending commands
       // rejected and its handle taken in one step, so a vat with no handle by
-      // now is what tells that apart from a kernel fault.
-      if (!isVatId(endpointId) || this.#isVatRunning(endpointId)) {
+      // now is what tells that apart from a kernel fault, unless the channel
+      // died while the delivery was writing the vat's state.
+      if (
+        !isVatId(endpointId) ||
+        isStoreFault(error) ||
+        this.#isVatRunning(endpointId)
+      ) {
         throw error;
       }
       if (!this.#kernelStore.isVatActive(endpointId)) {

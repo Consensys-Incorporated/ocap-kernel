@@ -83,6 +83,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A kernel or store fault stops the kernel and rolls back the crank it happened in, instead of being blamed on a vat or a peer, or committed without the write that failed ([#PANIC](https://github.com/Consensys-Incorporated/ocap-kernel/pull/PANIC))
+  - A syscall that fails by the kernel's fault stops the kernel. One the vat had no right to make, such as resolving a promise it does not decide or naming an object the kernel has deleted, still terminates the vat
+  - A delivery that fails for any reason but a remote's full queue stops the kernel, instead of rejecting the message with `DELIVERY_FAILED`. A worker that answers a delivery with an error has its vat terminated
+  - A store fault while restarting a vat stops the kernel, and one while starting a persisted vat at boot fails `Kernel.make`, instead of terminating the vat
+  - A termination that fails partway is carried out again on the next start, instead of leaving the vat persisted with no worker
+  - A store fault during a peer's handshake, or while taking its message, stops the kernel instead of failing the handshake or losing the message
+  - A crank that throws after recording a vat's death rolls the death back with the rest, and a `terminateVat` caller is answered only once its crank commits
 - A `queueMessage` made while a crank is running is no longer lost if that crank aborts; its caller used to wait forever or get another promise's value ([#1204](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1204))
 - A `queueMessage` naming a kref the kernel does not have, as its target or in an argument, rejects with `OBJECT_DELETED` instead of an internal error that leaked its result promise and could leave its target uncollectable ([#1204](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1204))
 - A store write that fails while adding to or taking from a queue, such as the run queue, no longer breaks the queue for every later read, even after a restart ([#1204](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1204))
@@ -122,7 +129,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `cleanupTerminatedVat` discards the vat's `vatConfig` row, so a partly retired vat is not relaunched on the next boot ([#1093](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1093))
 - A kernel object whose owner retires or abandons it is now orphaned, so its owner and reference-count records no longer outlive the c-list entry they were reachable through; before, the next collection to visit such a kref read an entry that was gone and killed the run loop ([#1091](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1091))
 - A crank that aborts keeps the writes that follow the abort — the vat's death, the collection after it — instead of autocommitting them one statement at a time outside any transaction: the run loop takes a savepoint for the crank and one for the delivery, and only the delivery is rolled back ([#1090](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1090))
-- A vat that exits gracefully stays dead when the rest of its crank then throws; before, the run loop's catch rolled the death record back and would have relaunched a vat whose worker was gone and whose callers had been answered ([#1090](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1090))
 - A crank rollback reverts the in-memory caches built over the writes it discards, so an abandoned crank no longer leaves the kernel reading its own undone state: a vat it marked terminated, a GC action it queued, or a collection candidate whose promise the rollback deleted — the last of which killed the run loop on the next crank ([#1087](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1087))
 - `clearStorage` re-reads the caches it emptied the database under, so the next crank no longer dies dequeueing a run queue row that is gone ([#1087](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1087))
 - A delivery failure no longer re-rejects a result promise the endpoint had already settled, which threw from the delivery's own catch and killed the run loop ([#1084](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1084))

@@ -1,3 +1,4 @@
+import { ResourceLimitError } from '@metamask/kernel-errors';
 import { makeSQLKernelDatabase } from '@metamask/kernel-store/sqlite/nodejs';
 import type { Logger } from '@metamask/logger';
 import { describe, it, expect, vi } from 'vitest';
@@ -93,7 +94,7 @@ describe('a result promise whose delivery fails', () => {
   it('rejects it once the delivery reports failure', async () => {
     const { kernelStore, kernelQueue, runCrank } = await makeFixture(
       async () => {
-        throw new Error('stream closed');
+        throw new ResourceLimitError('queue full');
       },
     );
     const result = queueSendWithResult(kernelStore, kernelQueue);
@@ -115,7 +116,7 @@ describe('a result promise whose delivery fails', () => {
       const { kernelStore, kernelQueue, logger, runCrank } = await makeFixture(
         async () => {
           endpointDoes.settleTheResult();
-          throw new Error('stream closed');
+          throw new ResourceLimitError('queue full');
         },
       );
       const result = queueSendWithResult(kernelStore, kernelQueue);
