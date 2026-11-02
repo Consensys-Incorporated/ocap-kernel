@@ -3669,6 +3669,7 @@ __metadata:
   resolution: "@ocap/kernel-agents-repl@workspace:packages/kernel-agents-repl"
   dependencies:
     "@arethetypeswrong/cli": "npm:^0.18.5"
+    "@endo/eventual-send": "npm:^1.5.0"
     "@metamask/auto-changelog": "npm:^7.0.1"
     "@metamask/kernel-errors": "workspace:^"
     "@metamask/kernel-utils": "workspace:^"
