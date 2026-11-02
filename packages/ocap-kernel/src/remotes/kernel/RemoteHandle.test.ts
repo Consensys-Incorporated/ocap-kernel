@@ -39,6 +39,21 @@ export function makeRemote(logger?: Logger): RemoteHandle {
 }
 
 /**
+ * Make a handle the way the kernel restores one at boot, before remote comms
+ * start.
+ *
+ * @returns The handle.
+ */
+function makeRestoredRemote(): RemoteHandle {
+  return RemoteHandle.make({
+    remoteId: mockRemoteId,
+    peerId: mockRemotePeerId,
+    kernelStore: mockKernelStore,
+    kernelQueue: mockKernelQueue,
+  });
+}
+
+/**
  * Take a message off the wire and run the crank it queues, the way the kernel's
  * message handler and the run loop do between them. A message that queues
  * nothing — a standalone acknowledgement — is handled entirely by the first
@@ -313,9 +328,9 @@ describe('RemoteHandle', () => {
   ] as const)('%s goes past the pending queue capacity', async (method) => {
     const remote = makeRemote();
     for (let i = 0; i < 200; i += 1) {
-      await remote.deliverBringOutYourDead();
+      await remote.deliverNotify([]);
     }
-    await expect(remote.deliverBringOutYourDead()).rejects.toThrow(
+    await expect(remote.deliverNotify([])).rejects.toThrow(
       'pending queue at capacity',
     );
 
@@ -347,6 +362,49 @@ describe('RemoteHandle', () => {
       expect(crankResult).toStrictEqual({
         didDelivery: remote.remoteId,
         afterCommit: expect.any(Function),
+      });
+    });
+
+    // No transport, so a full queue arms no real ACK timer.
+    it.each([
+      [
+        'an inherited queue',
+        async () => {
+          mockKernelStore.setRemoteStartSeq(mockRemoteId, 1);
+          mockKernelStore.setRemoteNextSendSeq(mockRemoteId, 200);
+          for (let seq = 1; seq <= 200; seq += 1) {
+            mockKernelStore.setPendingMessage(
+              mockRemoteId,
+              seq,
+              `message ${seq}`,
+            );
+          }
+          return makeRestoredRemote();
+        },
+      ],
+      [
+        'deliveries made before a transport',
+        async () => {
+          const remote = makeRestoredRemote();
+          for (let i = 0; i < 200; i += 1) {
+            await deliverAndCommit(remote.deliverNotify([]));
+          }
+          return remote;
+        },
+      ],
+    ])('skips a BOYD when %s fills the pending queue', async (_fill, fill) => {
+      const remote = await fill();
+
+      const crankResult = await deliverAndCommit(
+        remote.deliverBringOutYourDead(),
+      );
+
+      expect({
+        crankResult,
+        written: mockKernelStore.getPendingMessage(mockRemoteId, 201),
+      }).toStrictEqual({
+        crankResult: { didDelivery: remote.remoteId },
+        written: undefined,
       });
     });
 
@@ -2123,6 +2181,88 @@ describe('RemoteHandle', () => {
 
       remote.finalizePeerRestart();
       await expect(redeem).rejects.toThrow('Remote peer restarted');
+    });
+  });
+
+  describe('before a transport is attached', () => {
+    /**
+     * Leave messages 2 and 3 in the store, as a kernel that stopped before
+     * the peer acknowledged them would.
+     */
+    function inheritQueue(): void {
+      mockKernelStore.setRemoteNextSendSeq(mockRemoteId, 3);
+      mockKernelStore.setRemoteStartSeq(mockRemoteId, 2);
+      mockKernelStore.setPendingMessage(mockRemoteId, 2, 'message 2');
+      mockKernelStore.setPendingMessage(mockRemoteId, 3, 'message 3');
+    }
+
+    it('writes a delivery down and sends it, after the inherited queue, once attached', async () => {
+      inheritQueue();
+      const remote = makeRestoredRemote();
+
+      await deliverAndCommit(remote.deliverBringOutYourDead());
+      const sentBefore = sentStrings();
+      const written = mockKernelStore.getPendingMessage(mockRemoteId, 4);
+      remote.attachTransport({ remoteComms: mockRemoteComms });
+      await drainSends();
+
+      expect({
+        sentBefore,
+        written: JSON.parse(written as string).params,
+        sent: sentStrings(),
+      }).toStrictEqual({
+        sentBefore: [],
+        written: ['bringOutYourDead'],
+        sent: ['message 2', 'message 3', written],
+      });
+    });
+
+    it.each([
+      ['its messages', inheritQueue],
+      [
+        'nothing stored at its numbers',
+        () => {
+          mockKernelStore.setRemoteNextSendSeq(mockRemoteId, 3);
+          mockKernelStore.setRemoteStartSeq(mockRemoteId, 2);
+        },
+      ],
+    ])(
+      'arms the ACK timer for an inherited queue holding %s only once attached',
+      (_queue, inherit) => {
+        inherit();
+        const setTimeoutSpy = vi
+          .spyOn(globalThis, 'setTimeout')
+          .mockReturnValue(1 as unknown as ReturnType<typeof setTimeout>);
+        const remote = makeRestoredRemote();
+        const delaysBefore = setTimeoutSpy.mock.calls.map(([, delay]) => delay);
+        remote.attachTransport({
+          remoteComms: mockRemoteComms,
+          ackTimeoutMs: 100,
+        });
+
+        expect({
+          delaysBefore,
+          delays: setTimeoutSpy.mock.calls.map(([, delay]) => delay),
+        }).toStrictEqual({ delaysBefore: [], delays: [100] });
+      },
+    );
+
+    it('sends nothing the ended incarnation was owed when attached while held for a restart', async () => {
+      inheritQueue();
+      const remote = makeRestoredRemote();
+      await deliverAndCommit(remote.deliverBringOutYourDead());
+      remote.holdForRestart();
+
+      remote.attachTransport({ remoteComms: mockRemoteComms });
+      await drainSends();
+      const sentWhileHeld = sentStrings();
+      remote.handlePeerRestart();
+      await deliverAndCommit(remote.deliverBringOutYourDead());
+
+      expect({
+        sentWhileHeld,
+        sent: sentStrings().map((sent) => JSON.parse(sent).seq),
+      }).toStrictEqual({ sentWhileHeld: [], sent: [1] });
     });
   });
 
