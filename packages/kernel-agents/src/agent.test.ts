@@ -61,6 +61,16 @@ describe.each([
       },
     );
 
+    it('runs without a clock', async () => {
+      const now = vi.spyOn(Date, 'now').mockImplementation(() => {
+        throw new Error('No clock in a vat');
+      });
+      const languageModel = mockLlm(...endStatement);
+      const agent = makeAgent({ languageModel, capabilities: {} });
+      expect(await agent.task('')).toBe('x');
+      now.mockRestore();
+    });
+
     it('throws if invocation budget is exceeded', async () => {
       const languageModel = mockLlm(...endStatement);
       const agent = makeAgent({ languageModel, capabilities: {} });
