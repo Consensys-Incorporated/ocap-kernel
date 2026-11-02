@@ -2152,6 +2152,16 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@metamask/byte-utils@npm:^0.1.0":
+  version: 0.1.0
+  resolution: "@metamask/byte-utils@npm:0.1.0"
+  dependencies:
+    "@metamask/type-utils": "npm:^0.1.0"
+    "@scure/base": "npm:^1.2.6"
+  checksum: 10/f1d68301efa701f72dca8856dd10066d53151c8e9187998d398b33265e963ef55b70443752282e2986c4389914bf94e7694fb2f657855198bf14be218f2c5292
+  languageName: node
+  linkType: hard
+
 "@metamask/controller-utils@npm:^12.0.0":
   version: 12.3.0
   resolution: "@metamask/controller-utils@npm:12.3.0"
@@ -2237,12 +2247,12 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@metamask/design-system-react@npm:^0.48.0":
-  version: 0.48.0
-  resolution: "@metamask/design-system-react@npm:0.48.0"
+"@metamask/design-system-react@npm:^0.49.0":
+  version: 0.49.0
+  resolution: "@metamask/design-system-react@npm:0.49.0"
   dependencies:
     "@floating-ui/react-dom": "npm:^2.1.2"
-    "@metamask/design-system-shared": "npm:^0.42.0"
+    "@metamask/design-system-shared": "npm:^0.43.0"
     "@metamask/jazzicon": "npm:^2.0.0"
     "@radix-ui/react-slot": "npm:^1.1.0"
     blo: "npm:^2.0.0"
@@ -2254,18 +2264,18 @@ __metadata:
     "@metamask/utils": ^11.12.1
     react: ^17.0.0 || ^18.0.0 || ^19.0.0
     react-dom: ^17.0.0 || ^18.0.0 || ^19.0.0
-  checksum: 10/ea248cc312fc81fb858a60f964d7870fe55f1fe900b42746088b8dac5fdc61e873748d3faf3babd81ebdec0dde5d993c31e19b568ba44c0b2d8fea1813ed0fa1
+  checksum: 10/8eea2680c96a924e373807794dddd2f7da98ef4940fb563f8ebd7074d5d7651c116bfa704fd36513a7750ad9db58feaf897035b139154a3ab691e70e650f47d7
   languageName: node
   linkType: hard
 
-"@metamask/design-system-shared@npm:^0.42.0":
-  version: 0.42.0
-  resolution: "@metamask/design-system-shared@npm:0.42.0"
+"@metamask/design-system-shared@npm:^0.43.0":
+  version: 0.43.0
+  resolution: "@metamask/design-system-shared@npm:0.43.0"
   dependencies:
     "@metamask/utils": "npm:^11.12.1"
   peerDependencies:
     react: ^17.0.0 || ^18.0.0 || ^19.0.0
-  checksum: 10/2a9cf710385f26c8795d48a57bbac26c07ef19184c33d42457c8b56c2396a6057c9396e9f59a2b72470329fd8c55b0e67cc7a4438bd7f61a41d925eb5a5c1c10
+  checksum: 10/071c6f24372b8330c59f7221bbd05d82835093fb42d895f68af92762794751fcdb5627de62a10a2268a58d7f040340f92d3ec3d40394e5056cf2b4f34f042b30
   languageName: node
   linkType: hard
 
@@ -2283,6 +2293,16 @@ __metadata:
   version: 12.0.0
   resolution: "@metamask/design-tokens@npm:12.0.0"
   checksum: 10/ef7e51c07ac952ca9280d40ea6b5a1407069d5adca74b8aaaefdeaa9281b9e38389ca396a7957fa79fac4cc2e225cd57939a9aed69e29348122edc981ee4ce43
+  languageName: node
+  linkType: hard
+
+"@metamask/error-utils@npm:^0.1.0":
+  version: 0.1.0
+  resolution: "@metamask/error-utils@npm:0.1.0"
+  dependencies:
+    "@metamask/type-utils": "npm:^0.1.0"
+    pony-cause: "npm:^2.1.11"
+  checksum: 10/b28bd00751714c8afab4b71d0fd94e96b476a2cea412434e4f7bd03882823d2aadcb822ff45fcaf7382d962b718034ff353f6237e30bf009fbfec81037d9f9db
   languageName: node
   linkType: hard
 
@@ -2403,7 +2423,7 @@ __metadata:
     "@metamask/snaps-utils": "npm:^12.6.1"
     "@metamask/streams": "workspace:^"
     "@metamask/superstruct": "npm:^3.4.1"
-    "@metamask/utils": "npm:^12.0.0"
+    "@metamask/utils": "npm:^12.0.1"
     "@ocap/repo-tools": "workspace:^"
     depcheck: "npm:^1.4.7"
     nanoid: "npm:^5.1.5"
@@ -2434,7 +2454,7 @@ __metadata:
     "@metamask/kernel-utils": "workspace:^"
     "@metamask/logger": "workspace:^"
     "@metamask/superstruct": "npm:^3.4.1"
-    "@metamask/utils": "npm:^12.0.0"
+    "@metamask/utils": "npm:^12.0.1"
     "@ocap/repo-tools": "workspace:^"
     "@types/node": "npm:^22.13.1"
     "@types/serve-handler": "npm:^6"
@@ -2467,7 +2487,7 @@ __metadata:
     "@libp2p/interface": "npm:3.3.0"
     "@metamask/auto-changelog": "npm:^7.0.1"
     "@metamask/superstruct": "npm:^3.4.1"
-    "@metamask/utils": "npm:^12.0.0"
+    "@metamask/utils": "npm:^12.0.1"
     "@ocap/repo-tools": "workspace:^"
     depcheck: "npm:^1.4.7"
     jsdom: "npm:^29.0.2"
@@ -2554,7 +2574,7 @@ __metadata:
     "@metamask/auto-changelog": "npm:^7.0.1"
     "@metamask/kernel-utils": "workspace:^"
     "@metamask/superstruct": "npm:^3.4.1"
-    "@metamask/utils": "npm:^12.0.0"
+    "@metamask/utils": "npm:^12.0.1"
     "@ocap/repo-tools": "workspace:^"
     "@types/node": "npm:^22.13.1"
     depcheck: "npm:^1.4.7"
@@ -2580,7 +2600,7 @@ __metadata:
     "@metamask/logger": "workspace:^"
     "@metamask/rpc-errors": "npm:^7.0.3"
     "@metamask/superstruct": "npm:^3.4.1"
-    "@metamask/utils": "npm:^12.0.0"
+    "@metamask/utils": "npm:^12.0.1"
     "@ocap/repo-tools": "workspace:^"
     depcheck: "npm:^1.4.7"
     oxfmt: "npm:0.74.0"
@@ -2645,7 +2665,7 @@ __metadata:
   dependencies:
     "@arethetypeswrong/cli": "npm:^0.18.5"
     "@metamask/auto-changelog": "npm:^7.0.1"
-    "@metamask/design-system-react": "npm:^0.48.0"
+    "@metamask/design-system-react": "npm:^0.49.0"
     "@metamask/design-system-tailwind-preset": "npm:^0.15.0"
     "@metamask/design-tokens": "npm:^12.0.0"
     "@metamask/kernel-browser-runtime": "workspace:^"
@@ -2653,7 +2673,7 @@ __metadata:
     "@metamask/kernel-utils": "workspace:^"
     "@metamask/logger": "workspace:^"
     "@metamask/ocap-kernel": "workspace:^"
-    "@metamask/utils": "npm:^12.0.0"
+    "@metamask/utils": "npm:^12.0.1"
     "@ocap/repo-tools": "workspace:^"
     "@testing-library/dom": "npm:^10.4.0"
     "@testing-library/jest-dom": "npm:^6.6.3"
@@ -2706,7 +2726,7 @@ __metadata:
     "@metamask/auto-changelog": "npm:^7.0.1"
     "@metamask/kernel-errors": "workspace:^"
     "@metamask/superstruct": "npm:^3.4.1"
-    "@metamask/utils": "npm:^12.0.0"
+    "@metamask/utils": "npm:^12.0.1"
     "@multiformats/multiaddr": "npm:^13.0.1"
     "@ocap/repo-tools": "workspace:^"
     "@types/setimmediate": "npm:^1.0.4"
@@ -2757,7 +2777,7 @@ __metadata:
     "@metamask/kernel-shims": "workspace:^"
     "@metamask/kernel-utils": "workspace:^"
     "@metamask/streams": "workspace:^"
-    "@metamask/utils": "npm:^12.0.0"
+    "@metamask/utils": "npm:^12.0.1"
     "@ocap/repo-tools": "workspace:^"
     depcheck: "npm:^1.4.7"
     oxfmt: "npm:0.74.0"
@@ -2804,6 +2824,17 @@ __metadata:
   peerDependencies:
     typescript: ">=5.0.0"
   checksum: 10/ea335702bc818f0ea42ca8af4dd7c5f77562e650b1b4de9df92614dacaae0c29d6956999ae3cc524038d9ffdcd866890b4dee141323fda5072ae70d3c7d05173
+  languageName: node
+  linkType: hard
+
+"@metamask/node-utils@npm:^0.1.0":
+  version: 0.1.0
+  resolution: "@metamask/node-utils@npm:0.1.0"
+  dependencies:
+    "@metamask/error-utils": "npm:^0.1.0"
+    "@metamask/type-utils": "npm:^0.1.0"
+    uuid: "npm:^11.1.1"
+  checksum: 10/b68ec02cb9f62b5c1db3a02a25f9eca9e233e4f7402cf2f2ccbfe1f14c648a93adc2c220cb201202f0d9f7216f93790b47ac6e7f37a8523d387da789c06165dc
   languageName: node
   linkType: hard
 
@@ -2858,10 +2889,10 @@ __metadata:
     "@metamask/kernel-utils": "workspace:^"
     "@metamask/logger": "workspace:^"
     "@metamask/rpc-errors": "npm:^7.0.3"
-    "@metamask/snaps-execution-environments": "npm:^11.3.2"
+    "@metamask/snaps-execution-environments": "npm:^11.3.3"
     "@metamask/streams": "workspace:^"
     "@metamask/superstruct": "npm:^3.4.1"
-    "@metamask/utils": "npm:^12.0.0"
+    "@metamask/utils": "npm:^12.0.1"
     "@multiformats/multiaddr": "npm:^13.0.1"
     "@ocap/repo-tools": "workspace:^"
     "@scure/bip39": "npm:^2.0.1"
@@ -3132,9 +3163,9 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@metamask/snaps-execution-environments@npm:^11.3.2":
-  version: 11.3.2
-  resolution: "@metamask/snaps-execution-environments@npm:11.3.2"
+"@metamask/snaps-execution-environments@npm:^11.3.3":
+  version: 11.3.3
+  resolution: "@metamask/snaps-execution-environments@npm:11.3.3"
   dependencies:
     "@metamask/json-rpc-engine": "npm:^10.5.0"
     "@metamask/object-multiplex": "npm:^2.1.0"
@@ -3146,7 +3177,7 @@ __metadata:
     "@metamask/superstruct": "npm:^3.4.1"
     "@metamask/utils": "npm:^12.0.0"
     readable-stream: "npm:^3.6.2"
-  checksum: 10/d668aa06c2e5463316539fd07e7f70b50329366aa5a889cf9831bf84a3bb2d6955969014b7c3b0645b5f97788f7246983775966d0c7c9b1ee1f4d9f5d6faedeb
+  checksum: 10/b4a5df9d03e90f50fddecb86a257c1d342ea7a522cf1b4c38ecf31bb6ef763a0c5347ddb49aeb9430890ead815cc4e4dbcd2c8f92e784945e874f733a76b69a2
   languageName: node
   linkType: hard
 
@@ -3219,7 +3250,7 @@ __metadata:
     "@metamask/kernel-errors": "workspace:^"
     "@metamask/kernel-utils": "workspace:^"
     "@metamask/superstruct": "npm:^3.4.1"
-    "@metamask/utils": "npm:^12.0.0"
+    "@metamask/utils": "npm:^12.0.1"
     "@ocap/repo-tools": "workspace:^"
     "@types/chrome": "npm:^0.0.313"
     "@vitest/browser-playwright": "npm:^4.1.3"
@@ -3244,6 +3275,13 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@metamask/type-utils@npm:^0.1.0":
+  version: 0.1.0
+  resolution: "@metamask/type-utils@npm:0.1.0"
+  checksum: 10/8aa4a4ff3ed253ad93e3733fa1704c5bc4fb43b0e49c84d5e825a90cafae4d65232637037db440f5b89e1348113ca7b1bba7a6ddf3c85da2ba962e6911c2b2d7
+  languageName: node
+  linkType: hard
+
 "@metamask/utils@npm:^11.0.1, @metamask/utils@npm:^11.1.0, @metamask/utils@npm:^11.11.0, @metamask/utils@npm:^11.12.0, @metamask/utils@npm:^11.12.1, @metamask/utils@npm:^11.4.0, @metamask/utils@npm:^11.9.0":
   version: 11.12.1
   resolution: "@metamask/utils@npm:11.12.1"
@@ -3264,23 +3302,24 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@metamask/utils@npm:^12.0.0":
-  version: 12.0.0
-  resolution: "@metamask/utils@npm:12.0.0"
+"@metamask/utils@npm:^12.0.0, @metamask/utils@npm:^12.0.1":
+  version: 12.0.1
+  resolution: "@metamask/utils@npm:12.0.1"
   dependencies:
     "@ethereumjs/tx": "npm:^5.4.0"
+    "@metamask/byte-utils": "npm:^0.1.0"
+    "@metamask/error-utils": "npm:^0.1.0"
+    "@metamask/node-utils": "npm:^0.1.0"
     "@metamask/scure-bip39": "npm:^2.1.1"
     "@metamask/superstruct": "npm:^3.4.1"
+    "@metamask/type-utils": "npm:^0.1.0"
     "@noble/hashes": "npm:^1.8.0"
-    "@scure/base": "npm:^1.2.6"
     "@types/debug": "npm:^4.1.7"
-    "@types/lodash": "npm:^4.17.20"
-    debug: "npm:^4.3.4"
-    lodash: "npm:^4.17.21"
-    pony-cause: "npm:^2.1.10"
-    semver: "npm:^7.6.3"
-    uuid: "npm:^9.0.1"
-  checksum: 10/3a2c592283b081ac627262d903bbac84d7ce81896c86e5839ffee4c5cbc48b161cc1599c4b57f74bcc576d8b27bb517ced4c9e4e7b31e69e3113873acfde5f03
+    "@types/lodash": "npm:^4.17.27"
+    debug: "npm:^4.4.3"
+    lodash: "npm:^4.18.1"
+    semver: "npm:^7.8.5"
+  checksum: 10/8ec32327f680b7d3354f1f854fa01731e5113b95695f4f5ada2bab9ec9d5424f9664e17e28328efa58f173d6d82002cc97f6cc8ad6f77c024908078fce42f9d2
   languageName: node
   linkType: hard
 
@@ -3564,7 +3603,7 @@ __metadata:
   dependencies:
     "@arethetypeswrong/cli": "npm:^0.18.5"
     "@metamask/auto-changelog": "npm:^7.0.1"
-    "@metamask/utils": "npm:^12.0.0"
+    "@metamask/utils": "npm:^12.0.1"
     "@ocap/repo-tools": "workspace:^"
     "@types/node": "npm:^22.13.1"
     "@types/yargs": "npm:^17.0.33"
@@ -3890,7 +3929,7 @@ __metadata:
     "@metamask/ocap-kernel": "workspace:^"
     "@metamask/streams": "workspace:^"
     "@metamask/superstruct": "npm:^3.4.1"
-    "@metamask/utils": "npm:^12.0.0"
+    "@metamask/utils": "npm:^12.0.1"
     "@ocap/repo-tools": "workspace:^"
     "@playwright/test": "npm:^1.59.1"
     "@testing-library/dom": "npm:^10.4.0"
@@ -5345,10 +5384,10 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@types/lodash@npm:^4.17.16, @types/lodash@npm:^4.17.20":
-  version: 4.17.20
-  resolution: "@types/lodash@npm:4.17.20"
-  checksum: 10/8cd8ad3bd78d2e06a93ae8d6c9907981d5673655fec7cb274a4d9a59549aab5bb5b3017361280773b8990ddfccf363e14d1b37c97af8a9fe363de677f9a61524
+"@types/lodash@npm:^4.17.16, @types/lodash@npm:^4.17.20, @types/lodash@npm:^4.17.27":
+  version: 4.17.27
+  resolution: "@types/lodash@npm:4.17.27"
+  checksum: 10/ae02ef86268664e5a024fd1a7d907b676fe7cd9b58b52bdddc7c42c7ffb3d05e869f6bd13e3e6cbb4001cac1d072f5e2a6e5deed2ef7dc62d7853fc735a077be
   languageName: node
   linkType: hard
 
@@ -6986,7 +7025,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"debug@npm:4, debug@npm:^4.1.0, debug@npm:^4.3.1, debug@npm:^4.3.4, debug@npm:^4.4.0, debug@npm:~4.4.1":
+"debug@npm:4, debug@npm:^4.1.0, debug@npm:^4.3.1, debug@npm:^4.3.4, debug@npm:^4.4.0, debug@npm:^4.4.3, debug@npm:~4.4.1":
   version: 4.4.3
   resolution: "debug@npm:4.4.3"
   dependencies:
@@ -9488,7 +9527,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"lodash@npm:^4.17.21":
+"lodash@npm:^4.17.21, lodash@npm:^4.18.1":
   version: 4.18.1
   resolution: "lodash@npm:4.18.1"
   checksum: 10/306fea53dfd39dad1f03d45ba654a2405aebd35797b673077f401edb7df2543623dc44b9effbb98f69b32152295fff725a4cec99c684098947430600c6af0c3f
@@ -10984,7 +11023,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"pony-cause@npm:^2.1.10, pony-cause@npm:^2.1.9":
+"pony-cause@npm:^2.1.10, pony-cause@npm:^2.1.11, pony-cause@npm:^2.1.9":
   version: 2.1.11
   resolution: "pony-cause@npm:2.1.11"
   checksum: 10/ed7d0bb6e3e69f753080bf736b71f40e6ae4c13ec0c8c473ff73345345c088819966fdd68a62ad7482d464bf41176cf9421f5f63715d1a4532005eedc099db55
@@ -11813,7 +11852,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"semver@npm:^7.1.1, semver@npm:^7.3.5, semver@npm:^7.5.3, semver@npm:^7.5.4, semver@npm:^7.6.3, semver@npm:^7.7.1, semver@npm:^7.8.5":
+"semver@npm:^7.1.1, semver@npm:^7.3.5, semver@npm:^7.5.3, semver@npm:^7.5.4, semver@npm:^7.7.1, semver@npm:^7.8.5":
   version: 7.8.5
   resolution: "semver@npm:7.8.5"
   bin:
