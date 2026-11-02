@@ -18,6 +18,7 @@
       "default": "./dist/index.js"
     },
     "./minimal-cluster": "./src/vats/default/minimal-cluster.json",
+    "./agent-vat": "./src/agent-vat.ts",
     "./package.json": "./package.json"
   },
   "files": [
@@ -55,6 +56,7 @@
     "@metamask/kernel-utils": "workspace:^",
     "@metamask/logger": "workspace:^",
     "@metamask/ocap-kernel": "workspace:^",
+    "@ocap/kernel-agents": "workspace:^",
     "@ocap/nodejs-test-workers": "workspace:^",
     "@ocap/remote-iterables": "workspace:^"
   },
