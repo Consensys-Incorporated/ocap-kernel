@@ -1,6 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
 
-import { makeChatClient, makeSampleClient } from './client.ts';
+import {
+  makeChatClient,
+  makeSampleClient,
+  makeSampleLanguageModel,
+} from './client.ts';
 import type { ChatResult, SampleResult } from './types.ts';
 
 const MODEL = 'glm-4.7-flash';
@@ -23,6 +27,16 @@ const makeChatResult = (): ChatResult => ({
 });
 
 const makeSampleResult = (): SampleResult => ({ text: 'hi there' });
+
+const readAll = async <Chunk>(
+  stream: AsyncIterable<Chunk>,
+): Promise<Chunk[]> => {
+  const chunks: Chunk[] = [];
+  for await (const chunk of stream) {
+    chunks.push(chunk);
+  }
+  return chunks;
+};
 
 describe('makeChatClient', () => {
   it('calls chat on the lmsRef with merged model', async () => {
@@ -103,5 +117,67 @@ describe('makeSampleClient', () => {
     await expect(client.sample({ prompt: 'hi' })).rejects.toThrow(
       'model is required',
     );
+  });
+});
+
+describe('makeSampleLanguageModel', () => {
+  it('reports the model', async () => {
+    const lmsRef = { sample: vi.fn() };
+    const languageModel = makeSampleLanguageModel({ lmsRef, model: 'llama3' });
+
+    expect(await languageModel.getInfo()).toStrictEqual({
+      model: 'llama3',
+      options: {},
+    });
+  });
+
+  it('streams the sampled text as one chunk', async () => {
+    const lmsRef = { sample: vi.fn().mockResolvedValue(makeSampleResult()) };
+    const languageModel = makeSampleLanguageModel({
+      lmsRef,
+      model: 'llama3',
+      maxTokens: 7,
+    });
+
+    const { stream } = await languageModel.sample('Once upon');
+    const chunks = await readAll(stream);
+
+    expect(lmsRef.sample).toHaveBeenCalledWith({
+      model: 'llama3',
+      prompt: 'Once upon',
+      max_tokens: 7,
+    });
+    expect(chunks).toStrictEqual([{ response: 'hi there' }]);
+  });
+
+  it('omits an unset token cap', async () => {
+    const lmsRef = { sample: vi.fn().mockResolvedValue(makeSampleResult()) };
+    const languageModel = makeSampleLanguageModel({ lmsRef, model: 'llama3' });
+
+    await languageModel.sample('Once upon');
+
+    // toHaveBeenCalledWith ignores keys whose value is undefined.
+    expect(lmsRef.sample.mock.calls).toStrictEqual([
+      [{ model: 'llama3', prompt: 'Once upon' }],
+    ]);
+  });
+
+  it('ends the stream without the answer when aborted', async () => {
+    const lmsRef = { sample: vi.fn().mockResolvedValue(makeSampleResult()) };
+    const languageModel = makeSampleLanguageModel({ lmsRef, model: 'llama3' });
+
+    const { stream, abort } = await languageModel.sample('Once upon');
+    await abort();
+
+    await expect(readAll(stream)).rejects.toThrow('Operation aborted.');
+  });
+
+  it('rejects the stream when the service rejects', async () => {
+    const lmsRef = { sample: vi.fn().mockRejectedValue(new Error('boom')) };
+    const languageModel = makeSampleLanguageModel({ lmsRef, model: 'llama3' });
+
+    const { stream } = await languageModel.sample('Once upon');
+
+    await expect(readAll(stream)).rejects.toThrow('boom');
   });
 });
