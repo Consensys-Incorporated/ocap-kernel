@@ -471,18 +471,15 @@ export class KernelRouter {
    *
    * An endpoint can be named by persisted state without being live. A
    * terminated vat's c-lists outlive it until `cleanupTerminatedVat` reaches
-   * them, one vat per crank, and a reap scheduled for it outlives even that. A
-   * remote's state outlives every disconnection, and at startup the run loop
-   * begins inside `Kernel.make`, before an embedder can call `initRemoteComms`
-   * to restore any remote at all. Throwing here escapes the crank and kills the
-   * run loop, and the rollback puts the item back, so the next boot dies on it
-   * too.
+   * them, one vat per crank, and a reap scheduled for it outlives even that.
+   * Throwing here escapes the crank and kills the run loop, and the rollback
+   * puts the item back, so the next boot dies on it too.
    *
    * @param endpointId - The endpoint the item is addressed to.
    * @param what - What was being delivered, for the log.
    * @param options - Options bag.
    * @param options.discardable - Whether the delivery loses nothing by being
-   * dropped, and so may skip a remote that is merely out of reach.
+   * dropped, and so may skip a remote with no handle.
    * @returns The endpoint's handle, or undefined if it is not running.
    */
   #lookupEndpoint(
@@ -498,8 +495,9 @@ export class KernelRouter {
       // ended, is waiting on the termination its channel's loss queued, or was
       // stranded by a retirement that did not complete.
       //
-      // A remote with no handle is only out of reach, so only a delivery with
-      // nothing to lose may skip one.
+      // Every remote the store has holds a handle from boot, so one without is
+      // missing its record, and only a delivery with nothing to lose may skip
+      // it.
       const skippable =
         error instanceof VatNotFoundError ||
         (discardable && isRemoteId(endpointId));
@@ -593,12 +591,11 @@ export class KernelRouter {
       `@@@@ deliver ${endpointId} ${type} ${JSON.stringify(krefs)}`,
     );
     const endpoint = this.#lookupEndpoint(endpointId, type);
-    // Only a skipped vat gets here without a handle: a remote's GC actions wait
-    // in the set until it has one. One the store does not call terminated has
-    // been cleaned up whole, possibly by `nextTerminatedVatCleanup` earlier in
-    // this crank, or is still persisted. That one keeps its c-list as the vat
-    // last saw it, since a restart would bring up an incarnation still holding
-    // those erefs.
+    // Only a skipped vat gets here without a handle. One the store does not
+    // call terminated has been cleaned up whole, possibly by
+    // `nextTerminatedVatCleanup` earlier in this crank, or is still persisted.
+    // That one keeps its c-list as the vat last saw it, since a restart would
+    // bring up an incarnation still holding those erefs.
     if (!endpoint && !this.#kernelStore.isVatTerminated(endpointId as VatId)) {
       return { didDelivery: endpointId };
     }
