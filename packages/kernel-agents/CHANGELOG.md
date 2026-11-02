@@ -19,5 +19,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `agent.task` no longer reads `Date.now()` for its default seed, which throws inside a vat. The default is now the task's index; a caller wanting unpredictable REPL delimiters passes `seed` ([#1254](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1254))
 - The chat agent sends a copy of its message history to `chat`, so a chat that hardens its arguments, as one across a kernel boundary does, no longer freezes the history the agent must keep appending to ([#1254](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1254))
+- The example `getMoonPhase` capability no longer calls `Math.random()`, which throws inside a vat; successive calls cycle through the phases ([#1254](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1254))
 
 [Unreleased]: https://github.com/Consensys-Incorporated/ocap-kernel/
