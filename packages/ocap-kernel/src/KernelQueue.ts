@@ -133,8 +133,6 @@ export class KernelQueue {
   /** Thunk to signal run queue transition from empty to non-empty */
   #wakeUpTheRunQueue: (() => void) | null;
 
-  #isOffline: (endpointId: EndpointId) => boolean = () => false;
-
   /**
    * Whether the run loop's catch may still roll this crank's delivery back.
    *
@@ -190,21 +188,12 @@ export class KernelQueue {
    * already started`, the kernel is dead — see {@link getRunLoopStatus}.
    *
    * @param deliver - A function that delivers an item to the kernel.
-   * @param options - Options bag.
-   * @param options.isOffline - Whether an endpoint cannot take a GC delivery
-   * now.
    * @returns A promise that resolves when `endRunLoop` ends the loop, or
    * rejects with the `Error` that killed it.
    */
-  async run(
-    deliver: Deliver,
-    {
-      isOffline = () => false,
-    }: { isOffline?: (endpointId: EndpointId) => boolean } = {},
-  ): Promise<void> {
+  async run(deliver: Deliver): Promise<void> {
     this.#runLoopState.state === 'idle' || Fail`run loop already started`;
     this.#runLoopState = { state: 'running' };
-    this.#isOffline = isOffline;
     try {
       return await this.#runLoop(deliver);
     } catch (error) {
@@ -535,9 +524,7 @@ export class KernelQueue {
       return { type: 'control', operation: control.operation };
     }
 
-    const gcAction = processGCActionSet(this.#kernelStore, {
-      isOffline: this.#isOffline,
-    });
+    const gcAction = processGCActionSet(this.#kernelStore);
     if (gcAction) {
       return gcAction;
     }
@@ -681,14 +668,6 @@ export class KernelQueue {
     if (!auditBeforeFlush) {
       this.#kernelStore.assertRefCountsIfAuditing();
     }
-  }
-
-  /**
-   * Wake a run loop parked on an empty queue, for GC actions it skipped while
-   * their endpoint was offline.
-   */
-  recheckGCActions(): void {
-    this.#wakeRunLoop();
   }
 
   /**
