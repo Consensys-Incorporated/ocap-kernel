@@ -14,6 +14,7 @@ import {
   ResultMessage,
 } from './messages.ts';
 import type { ReplTranscript, StatementMessage } from './messages.ts';
+import { toSExpression } from './parse/syntax-tree.ts';
 import { prepareEvaluation } from './prepare-evaluation.ts';
 import { ERROR, RETURN } from './symbols.ts';
 import type { EvaluatorState } from './types.ts';
@@ -39,7 +40,7 @@ const validateStatement = (
       [
         'Internal: Unknown statement',
         `statement: ${statement.messageBody.node.text}`,
-        `type: ${statement.messageBody.node.toString()}`,
+        `type: ${toSExpression(statement.messageBody.node)}`,
       ].join('\n'),
     );
   }

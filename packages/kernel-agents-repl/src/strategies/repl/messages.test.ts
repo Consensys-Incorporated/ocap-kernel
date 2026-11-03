@@ -1,6 +1,5 @@
 import 'ses';
 import '@ocap/repo-tools/test-utils/mock-endoify';
-import type { SyntaxNode } from 'tree-sitter';
 import { describe, it, expect } from 'vitest';
 
 import {
@@ -13,6 +12,7 @@ import {
   StatementMessage,
   observeJson,
 } from './messages.ts';
+import type { SyntaxTree } from './parse/syntax-tree.ts';
 import { ERROR, RETURN } from './symbols.ts';
 
 describe('observeJson', () => {
@@ -56,7 +56,7 @@ describe.each([
   ['EvaluationMessage', EvaluationMessage, '1 + 1;', 'evaluation'],
 ])('%s', (_, Class, code, type) => {
   it('creates message with optional node', () => {
-    const node = { type } as SyntaxNode;
+    const node = { type } as SyntaxTree;
     const message = new Class(code, node);
     expect(message.messageType).toBe(type);
     expect(message.messageBody.code).toBe(code);

@@ -1,13 +1,13 @@
-import Parser from 'tree-sitter';
-import JavaScript from 'tree-sitter-javascript';
+import type { SyntaxTree } from './syntax-tree.ts';
+import { fromSyntaxNode, makeNativeParser } from './tree-sitter.ts';
 
-const parser = new Parser();
-parser.setLanguage(JavaScript as Parser.Language);
+const parser = makeNativeParser();
 
 /**
- * Parse a JavaScript statement into a tree-sitter abstract syntax tree.
+ * Parse JavaScript into a syntax tree rooted at a `program` node.
  *
  * @param text - The text to parse.
- * @returns The parsed tree-sitter abstract syntax tree.
+ * @returns The tree.
  */
-export const parse = (text: string): Parser.Tree => parser.parse(text);
+export const parse = (text: string): SyntaxTree =>
+  fromSyntaxNode(parser.parse(text).rootNode);

@@ -1,8 +1,9 @@
 import { EvaluatorError } from '@metamask/kernel-errors';
 import type { Logger } from '@metamask/logger';
-import type { SyntaxNode } from 'tree-sitter';
 
 import { extractNamesFromDeclaration } from './parse/identifiers.ts';
+import { toSExpression } from './parse/syntax-tree.ts';
+import type { SyntaxTree } from './parse/syntax-tree.ts';
 import { ERROR, RETURN } from './symbols.ts';
 import type { EvaluatorState, VariableRecord } from './types.ts';
 
@@ -133,7 +134,7 @@ const makeCaptor = (
 
 export const prepareEvaluation = (
   state: EvaluatorState,
-  statement: SyntaxNode,
+  statement: SyntaxTree,
   options: { logger?: Logger } = {},
 ): Evaluable => {
   switch (statement.type) {
@@ -149,7 +150,7 @@ export const prepareEvaluation = (
             [
               `Unknown lexical_declaration.`,
               `statement: ${statement.text}`,
-              `type: ${statement.toString()}`,
+              `type: ${toSExpression(statement)}`,
             ].join('\n'),
           );
       }
@@ -186,7 +187,7 @@ export const prepareEvaluation = (
         [
           `Unknown statement type.`,
           `statement: ${statement.text}`,
-          `type: ${statement.toString()}`,
+          `type: ${toSExpression(statement)}`,
         ].join('\n'),
       );
   }
@@ -201,7 +202,7 @@ export const prepareEvaluation = (
  */
 function prepareDeclaration(
   state: EvaluatorState,
-  statement: SyntaxNode,
+  statement: SyntaxTree,
 ): Omit<Evaluable, 'commit'> & { captured: VariableRecord } {
   const { consts, lets } = state;
   const [captured, $capture] = makeCaptor(Object.keys(lets));
@@ -232,7 +233,7 @@ function prepareDeclaration(
  */
 function prepareMutableDeclaration(
   state: EvaluatorState,
-  statement: SyntaxNode,
+  statement: SyntaxTree,
   options: { logger?: Logger } = {},
 ): Evaluable {
   const { endowments, code, result, captured } = prepareDeclaration(
@@ -268,7 +269,7 @@ function prepareMutableDeclaration(
  */
 function prepareImmutableDeclaration(
   state: EvaluatorState,
-  statement: SyntaxNode,
+  statement: SyntaxTree,
   options: { logger?: Logger } = {},
 ): Evaluable {
   const { endowments, code, result, captured } = prepareDeclaration(
@@ -315,7 +316,7 @@ const stripTrailingSemicolons = (code: string): string =>
  */
 function prepareExpression(
   state: EvaluatorState,
-  statement: SyntaxNode,
+  statement: SyntaxTree,
   options: { logger?: Logger } = {},
 ): Evaluable {
   const { consts, lets } = state;
@@ -360,7 +361,7 @@ function prepareExpression(
  */
 function prepareStatement(
   state: EvaluatorState,
-  statement: SyntaxNode,
+  statement: SyntaxTree,
   options: { logger?: Logger } = {},
 ): Evaluable {
   const { consts, lets } = state;

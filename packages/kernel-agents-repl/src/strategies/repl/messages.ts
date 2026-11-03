@@ -1,10 +1,11 @@
 import { stringify } from '@metamask/kernel-utils';
 import { Message } from '@ocap/kernel-agents/types/messages';
 import type { Transcript } from '@ocap/kernel-agents/types/messages';
-import type { SyntaxNode } from 'tree-sitter';
 
 import { makeCompartment } from './compartment.ts';
 import { parse } from './parse/javascript.ts';
+import { firstStatement } from './parse/syntax-tree.ts';
+import type { SyntaxTree } from './parse/syntax-tree.ts';
 import { ERROR, RETURN } from './symbols.ts';
 
 export type StatementType = 'import' | 'evaluation' | 'comment';
@@ -40,7 +41,7 @@ export const observeJson = (value: JsonObservation): string =>
  */
 export abstract class ReplMessage<
   Type extends ReplMessageType,
-  Body extends Record<JsonKey, JsonObservation | SyntaxNode>,
+  Body extends Record<JsonKey, JsonObservation | SyntaxTree>,
 >
   extends Message<Type, Body>
   implements ReplObservable, JsonObservable
@@ -69,7 +70,7 @@ export abstract class ReplMessage<
  */
 export class StatementMessage<
   Type extends StatementType = StatementType,
-> extends ReplMessage<Type, { code: string; node: SyntaxNode }> {
+> extends ReplMessage<Type, { code: string; node: SyntaxTree }> {
   /**
    * Serializes the statement to a REPL-formatted string with prompt prefix.
    *
@@ -94,9 +95,8 @@ const parseStatement = (
   code: string,
   name?: string,
   bound?: StatementType[],
-): SyntaxNode => {
-  const { rootNode } = parse(code);
-  const [statement] = rootNode.children as [SyntaxNode];
+): SyntaxTree => {
+  const statement = firstStatement(parse(code));
   if (bound && !bound.includes(statement.type as StatementType)) {
     throw new Error(`"${code}" is not a valid ${name}.`);
   }
@@ -113,7 +113,7 @@ export class CommentMessage extends StatementMessage<'comment'> {
    * @param code - The comment code string.
    * @param statement - Optional pre-parsed syntax node; if not provided, the code will be parsed.
    */
-  constructor(code: string, statement?: SyntaxNode) {
+  constructor(code: string, statement?: SyntaxTree) {
     const node = statement ?? parseStatement(code, 'comment');
     super('comment', { code, node });
   }
@@ -129,7 +129,7 @@ export class ImportMessage extends StatementMessage<'import'> {
    * @param code - The import statement code string.
    * @param statement - Optional pre-parsed syntax node; if not provided, the code will be parsed.
    */
-  constructor(code: string, statement?: SyntaxNode) {
+  constructor(code: string, statement?: SyntaxTree) {
     const node = statement ?? parseStatement(code, 'import_statement');
     super('import', { code, node });
   }
@@ -156,7 +156,7 @@ export class EvaluationMessage extends StatementMessage<'evaluation'> {
    * @param code - The code to evaluate.
    * @param statement - Optional pre-parsed syntax node; if not provided, the code will be parsed.
    */
-  constructor(code: string, statement?: SyntaxNode) {
+  constructor(code: string, statement?: SyntaxTree) {
     const node = statement ?? parseStatement(code, 'expression_statement');
     super('evaluation', { code, node });
   }
@@ -169,8 +169,7 @@ export class EvaluationMessage extends StatementMessage<'evaluation'> {
  * @returns A statement message.
  */
 function statementMessageFromCode(code: string): StatementMessage {
-  const { rootNode } = parse(code);
-  const [statement] = rootNode.children as [SyntaxNode];
+  const statement = firstStatement(parse(code));
   switch (statement.type) {
     case 'comment':
       return new CommentMessage(code, statement);
