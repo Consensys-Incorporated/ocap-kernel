@@ -6,6 +6,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { makeEvaluator } from './evaluator.ts';
 import {
   CommentMessage,
+  EvaluationMessage,
   ImportMessage,
   ResultMessage,
   StatementMessage,
@@ -88,6 +89,13 @@ describe('evaluator', () => {
       const statement = StatementMessage.fromCode('var x = 1;');
       await expect(evaluator([], statement)).rejects.toThrow(
         'Variable declarations are not allowed',
+      );
+    });
+
+    it('rejects an evaluation that was never parsed', async () => {
+      const statement = new EvaluationMessage('1 + 1;');
+      await expect(evaluator([], statement)).rejects.toThrow(
+        'Internal: Unknown statement\nstatement: 1 + 1;\ntype: unparsed',
       );
     });
   });
