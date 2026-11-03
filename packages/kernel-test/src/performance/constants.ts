@@ -1,83 +1,84 @@
 /**
- * Settings for the performance profiles. Override any one for a run with an
+ * Settings for the performance profiles. Override one for a run with an
  * environment variable of the same name:
  * KREF_PERF_MAX_EXPONENT=4 yarn workspace @ocap/kernel-test test:perf kref-scaling
- *
- * A malformed value, or a `KREF_PERF_*` or `LOAD_PERF_*` variable that names
- * no setting, throws before any profile runs.
  */
-const DEFAULTS = {
-  // kref-scaling: live krefs grow to 1e<MAX_EXPONENT>, with SAMPLES sends timed
-  // at each power of ten, over each count of holder/minter pairs.
-  KREF_PERF_MAX_EXPONENT: 6,
-  KREF_PERF_SAMPLES: 50,
-  KREF_PERF_PAIRS: [1, 4, 16, 64],
-  // concurrent-load: KREFS live krefs over each count of pairs, MESSAGES per
-  // cell at each concurrency.
-  LOAD_PERF_KREFS: 100_000,
-  LOAD_PERF_PAIRS: [1, 8, 64],
-  LOAD_PERF_CONCURRENCY: [1, 4, 16, 64, 256],
-  LOAD_PERF_MESSAGES: 1000,
-};
-
-type Setting = keyof typeof DEFAULTS;
-type Env = Record<string, string | undefined>;
-
-const POSITIVE_INTEGER = /^[1-9]\d*$/u;
 
 /**
- * Throw if the environment names a setting that does not exist, as a
- * misspelled override would otherwise leave its setting at the default.
+ * Whether a string is a positive integer, written without sign, exponent or
+ * leading zeros.
  *
- * @param env - The environment.
+ * @param value - The string.
+ * @returns Whether it is one.
  */
-export function assertKnownSettings(env: Env): void {
-  for (const name of Object.keys(env)) {
-    if (/^(?:KREF|LOAD)_PERF_/u.test(name) && !Object.hasOwn(DEFAULTS, name)) {
-      throw new Error(
-        `Unknown performance setting ${name}. Expected one of: ${Object.keys(DEFAULTS).join(', ')}`,
-      );
-    }
+export const isNat = (value: string): boolean => /^[1-9]\d*$/u.test(value);
+
+/**
+ * Parse a positive integer.
+ *
+ * @param value - The string.
+ * @returns The number.
+ */
+export function coerceNat(value: string): number {
+  if (!isNat(value)) {
+    throw new Error(`expected a positive integer, got "${value}"`);
   }
+  return Number(value);
 }
 
 /**
- * Read a setting, overridden from the environment if set there.
+ * Parse a comma-separated list of positive integers.
  *
- * @param env - The environment.
- * @param name - The setting.
- * @returns Its value.
+ * @param value - The string.
+ * @returns The numbers.
  */
-export function readSetting<Name extends Setting>(
-  env: Env,
-  name: Name,
-): (typeof DEFAULTS)[Name] {
-  const fallback = DEFAULTS[name];
-  const value = env[name];
+export const coerceNats = (value: string): number[] =>
+  value.split(',').map(coerceNat);
+
+/**
+ * Read an environment variable, if set, so that a malformed value throws
+ * rather than leaving a profile to run on `NaN` or zero.
+ *
+ * @param name - The variable's name.
+ * @param coerce - Parses its value.
+ * @returns The parsed value, or `undefined` if it is unset.
+ */
+export function fromEnv<Value>(
+  name: string,
+  coerce: (value: string) => Value,
+): Value | undefined {
+  // oxlint-disable-next-line node/no-process-env
+  const value = process.env[name];
   if (value === undefined) {
-    return fallback;
+    return undefined;
   }
-  const isList = Array.isArray(fallback);
-  const items = isList ? value.split(',') : [value];
-  if (!items.every((item) => POSITIVE_INTEGER.test(item))) {
-    throw new Error(
-      `${name} must be ${isList ? 'a comma-separated list of positive integers' : 'a positive integer'}, got "${value}"`,
-    );
+  try {
+    return coerce(value);
+  } catch (error) {
+    throw new Error(`${name}="${value}": ${(error as Error).message}`, {
+      cause: error,
+    });
   }
-  const numbers = items.map(Number);
-  return (isList ? numbers : numbers[0]) as (typeof DEFAULTS)[Name];
 }
 
-const { env } = process;
-assertKnownSettings(env);
+// kref-scaling: live krefs grow to 1e<MAX_EXPONENT>, with SAMPLES sends timed
+// at each power of ten, over each count of holder/minter pairs.
+export const KREF_PERF_MAX_EXPONENT =
+  fromEnv('KREF_PERF_MAX_EXPONENT', coerceNat) ?? 6;
+export const KREF_PERF_SAMPLES = fromEnv('KREF_PERF_SAMPLES', coerceNat) ?? 50;
+export const KREF_PERF_PAIRS = fromEnv('KREF_PERF_PAIRS', coerceNats) ?? [
+  1, 4, 16, 64,
+];
 
-export const KREF_PERF_MAX_EXPONENT = readSetting(
-  env,
-  'KREF_PERF_MAX_EXPONENT',
-);
-export const KREF_PERF_SAMPLES = readSetting(env, 'KREF_PERF_SAMPLES');
-export const KREF_PERF_PAIRS = readSetting(env, 'KREF_PERF_PAIRS');
-export const LOAD_PERF_KREFS = readSetting(env, 'LOAD_PERF_KREFS');
-export const LOAD_PERF_PAIRS = readSetting(env, 'LOAD_PERF_PAIRS');
-export const LOAD_PERF_CONCURRENCY = readSetting(env, 'LOAD_PERF_CONCURRENCY');
-export const LOAD_PERF_MESSAGES = readSetting(env, 'LOAD_PERF_MESSAGES');
+// concurrent-load: KREFS live krefs over each count of pairs, MESSAGES per
+// cell at each concurrency.
+export const LOAD_PERF_KREFS = fromEnv('LOAD_PERF_KREFS', coerceNat) ?? 100_000;
+export const LOAD_PERF_PAIRS = fromEnv('LOAD_PERF_PAIRS', coerceNats) ?? [
+  1, 8, 64,
+];
+export const LOAD_PERF_CONCURRENCY = fromEnv(
+  'LOAD_PERF_CONCURRENCY',
+  coerceNats,
+) ?? [1, 4, 16, 64, 256];
+export const LOAD_PERF_MESSAGES =
+  fromEnv('LOAD_PERF_MESSAGES', coerceNat) ?? 1000;
