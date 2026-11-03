@@ -15,6 +15,68 @@ import { makeTrackedKernel } from '../utils.ts';
 // carries an unrealistic number of slots.
 const MINT_BATCH = 10_000;
 
+/**
+ * Whether a string is a positive integer, written without sign, exponent or
+ * leading zeros.
+ *
+ * @param value - The string.
+ * @returns Whether it is one.
+ */
+export const isNat = (value: string): boolean => /^[1-9]\d*$/u.test(value);
+
+/**
+ * Parse a positive integer.
+ *
+ * @param value - The string.
+ * @returns The number.
+ */
+export function coerceNat(value: string): number {
+  if (!isNat(value)) {
+    throw new Error(`expected a positive integer, got "${value}"`);
+  }
+  return Number(value);
+}
+
+/**
+ * Parse a comma-separated list of positive integers.
+ *
+ * @param value - The string.
+ * @returns The numbers.
+ */
+export function coerceNats(value: string): number[] {
+  const items = value.split(',');
+  if (!items.every(isNat)) {
+    throw new Error(
+      `expected a comma-separated list of positive integers, got "${value}"`,
+    );
+  }
+  return items.map(Number);
+}
+
+/**
+ * Read an environment variable, if set, so that a malformed value throws
+ * rather than leaving a profile to run on `NaN` or zero.
+ *
+ * @param name - The variable's name.
+ * @param coerce - Parses its value.
+ * @returns The parsed value, or `undefined` if it is unset.
+ */
+export function fromEnv<Value>(
+  name: string,
+  coerce: (value: string) => Value,
+): Value | undefined {
+  // oxlint-disable-next-line node/no-process-env
+  const value = process.env[name];
+  if (value === undefined) {
+    return undefined;
+  }
+  try {
+    return coerce(value);
+  } catch (error) {
+    throw new Error(`${name}: ${(error as Error).message}`, { cause: error });
+  }
+}
+
 export type Stats = {
   min: number;
   p50: number;

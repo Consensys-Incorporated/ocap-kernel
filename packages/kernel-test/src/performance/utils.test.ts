@@ -1,8 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { coerceNat, coerceNats, fromEnv, isNat } from './constants.ts';
+import { coerceNat, coerceNats, fromEnv, isNat } from './utils.ts';
 
-describe('performance constants', () => {
+describe('performance utils', () => {
   afterEach(() => {
     vi.unstubAllEnvs();
   });
@@ -30,17 +30,19 @@ describe('performance constants', () => {
   });
 
   it.each(['', '1,,4', '1,abc', '1,-2'])('rejects the list %j', (value) => {
-    expect(() => coerceNats(value)).toThrow('expected a positive integer');
+    expect(() => coerceNats(value)).toThrow(
+      `expected a comma-separated list of positive integers, got "${value}"`,
+    );
   });
 
   it('returns undefined for an unset variable', () => {
-    expect(fromEnv('PERF_CONSTANTS_TEST', coerceNat)).toBeUndefined();
+    expect(fromEnv('PERF_UTILS_TEST', coerceNat)).toBeUndefined();
   });
 
   it('names the variable when its value is malformed', () => {
-    vi.stubEnv('PERF_CONSTANTS_TEST', '1e6x');
-    expect(() => fromEnv('PERF_CONSTANTS_TEST', coerceNat)).toThrow(
-      'PERF_CONSTANTS_TEST="1e6x": expected a positive integer, got "1e6x"',
+    vi.stubEnv('PERF_UTILS_TEST', '1e6x');
+    expect(() => fromEnv('PERF_UTILS_TEST', coerceNat)).toThrow(
+      'PERF_UTILS_TEST: expected a positive integer, got "1e6x"',
     );
   });
 });
