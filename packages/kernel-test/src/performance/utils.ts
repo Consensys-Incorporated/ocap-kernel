@@ -24,51 +24,6 @@ export type Stats = {
   mean: number;
 };
 
-const POSITIVE_INTEGER = /^[1-9]\d*$/u;
-
-/**
- * Read a positive integer from the environment. A value that is set but
- * malformed throws, rather than leaving a profile to run on `NaN` or zero.
- *
- * @param name - The variable's name.
- * @param fallback - The value when it is unset.
- * @returns The number.
- */
-export function envNumber(name: string, fallback: number): number {
-  // oxlint-disable-next-line node/no-process-env
-  const value = process.env[name];
-  if (value === undefined) {
-    return fallback;
-  }
-  if (!POSITIVE_INTEGER.test(value)) {
-    throw new Error(`${name} must be a positive integer, got "${value}"`);
-  }
-  return Number(value);
-}
-
-/**
- * Read a comma-separated list of positive integers from the environment. A
- * value that is set but malformed throws.
- *
- * @param name - The variable's name.
- * @param fallback - The list when it is unset.
- * @returns The numbers.
- */
-export function envNumbers(name: string, fallback: number[]): number[] {
-  // oxlint-disable-next-line node/no-process-env
-  const value = process.env[name];
-  if (value === undefined) {
-    return fallback;
-  }
-  const items = value.split(',');
-  if (!items.every((item) => POSITIVE_INTEGER.test(item))) {
-    throw new Error(
-      `${name} must be a comma-separated list of positive integers, got "${value}"`,
-    );
-  }
-  return items.map(Number);
-}
-
 /**
  * Summarize a set of timings.
  *

@@ -63,6 +63,7 @@
     "@arethetypeswrong/cli": "^0.18.5",
     "@metamask/kernel-cli": "workspace:^",
     "@metamask/kernel-shims": "workspace:^",
+    "@metamask/superstruct": "^3.4.1",
     "@ocap/repo-tools": "workspace:^",
     "depcheck": "^1.4.7",
     "jsdom": "^29.0.2",
