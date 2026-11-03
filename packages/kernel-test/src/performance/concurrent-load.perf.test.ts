@@ -1,9 +1,13 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
+  LOAD_PERF_CONCURRENCY as CONCURRENCIES,
+  LOAD_PERF_KREFS as KREFS,
+  LOAD_PERF_MESSAGES as MESSAGES,
+  LOAD_PERF_PAIRS as PAIR_COUNTS,
+} from './constants.ts';
+import {
   countKeys,
-  envNumber,
-  envNumbers,
   makeProfileKernel,
   mib,
   ms,
@@ -15,12 +19,6 @@ import {
 } from './utils.ts';
 import type { Stats } from './utils.ts';
 
-const KREFS = envNumber('LOAD_PERF_KREFS', 100_000);
-// How many holder/minter pairs to spread the krefs and the load over, one
-// kernel each.
-const PAIR_COUNTS = envNumbers('LOAD_PERF_PAIRS', [1, 8, 64]);
-const CONCURRENCIES = envNumbers('LOAD_PERF_CONCURRENCY', [1, 4, 16, 64, 256]);
-const MESSAGES = envNumber('LOAD_PERF_MESSAGES', 1000);
 const WARMUP_MESSAGES = 20;
 
 type Route = 'kernel→vat' | 'vat→vat';
