@@ -15,13 +15,13 @@ import {
 import type { Stats } from './utils.ts';
 
 const {
-  krefs: KREFS,
+  LOAD_PERF_KREFS: KREFS,
   // How many holder/minter pairs to spread the krefs and the load over, one
   // kernel each.
-  pairs: PAIR_COUNTS,
-  concurrency: CONCURRENCIES,
-  messages: MESSAGES,
-} = perfConfig.concurrentLoad;
+  LOAD_PERF_PAIRS: PAIR_COUNTS,
+  LOAD_PERF_CONCURRENCY: CONCURRENCIES,
+  LOAD_PERF_MESSAGES: MESSAGES,
+} = perfConfig;
 const WARMUP_MESSAGES = 20;
 
 type Route = 'kernel→vat' | 'vat→vat';
