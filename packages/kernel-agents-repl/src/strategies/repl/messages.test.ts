@@ -38,14 +38,15 @@ describe('observeJson', () => {
 
 describe('StatementMessage', () => {
   it.each([
-    ['// comment', CommentMessage, 'comment'],
-    ['import { foo } from "bar";', ImportMessage, 'import'],
-    ['1 + 1;', EvaluationMessage, 'evaluation'],
-  ])('creates %s from code', (code, Class, type) => {
+    ['// comment', CommentMessage, 'comment', 'comment'],
+    ['import { foo } from "bar";', ImportMessage, 'import', 'import_statement'],
+    ['1 + 1;', EvaluationMessage, 'evaluation', 'expression_statement'],
+  ])('creates %s from code', (code, Class, type, nodeType) => {
     const message = StatementMessage.fromCode(code);
     expect(message).toBeInstanceOf(Class);
     expect(message.messageType).toBe(type);
     expect(message.messageBody.code).toBe(code);
+    expect(message.messageBody.node?.type).toBe(nodeType);
     expect(message.toReplString()).toBe(`> ${code}`);
   });
 });
@@ -55,13 +56,18 @@ describe.each([
   ['ImportMessage', ImportMessage, 'import { foo } from "bar";', 'import'],
   ['EvaluationMessage', EvaluationMessage, '1 + 1;', 'evaluation'],
 ])('%s', (_, Class, code, type) => {
-  it('creates message with optional node', () => {
+  it('creates message with node', () => {
     const node = { type } as SyntaxTree;
     const message = new Class(code, node);
     expect(message.messageType).toBe(type);
-    expect(message.messageBody.code).toBe(code);
-    expect(message.messageBody.node).toBe(node);
+    expect(message.messageBody).toStrictEqual({ code, node });
     expect(message.toReplString()).toBe(`> ${code}`);
+  });
+
+  it('creates message without node', () => {
+    const message = new Class(code);
+    expect(message.messageType).toBe(type);
+    expect(message.messageBody).toStrictEqual({ code });
   });
 });
 
