@@ -7,4 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `@ocap/kernel-agents-repl/parser/tree-sitter` exports `makeTreeSitterParser`, the native tree-sitter binding as a `Parser` for a realm that has not run lockdown ([#1255](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1255))
+
+### Changed
+
+- **BREAKING:** `makeReplAgent` requires a `parser`, and statements are parsed asynchronously in the reader rather than in message constructors. `StatementMessage.fromCode` takes the parser and returns a promise, and a statement constructed without a parsed node is a transcript-only message that the evaluator rejects ([#1255](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1255))
+- The REPL no longer loads `ses` itself; it uses the `Compartment` global of the realm that ran lockdown, so it can be bundled into a vat ([#1255](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1255))
+
 [Unreleased]: https://github.com/Consensys-Incorporated/ocap-kernel/

@@ -1,7 +1,8 @@
 /**
  * A concrete syntax tree as plain, passable data: the subset of a tree-sitter
  * `SyntaxNode` that the REPL reads. Being data rather than a live native
- * object, a tree can cross a kernel boundary.
+ * object, a tree can cross a kernel boundary, so the parser that produces it
+ * may live in another vat or in the host.
  */
 export type SyntaxTree = {
   /** The grammar node type, e.g. `lexical_declaration` or `identifier`. */
@@ -12,6 +13,20 @@ export type SyntaxTree = {
   isNamed: boolean;
   /** Child nodes in source order, including unnamed ones. */
   children: SyntaxTree[];
+};
+
+/**
+ * A JavaScript parser: the REPL's only requirement of its syntax backend.
+ * `parse` is asynchronous so that a parser can be a remote kernel service.
+ */
+export type Parser = {
+  /**
+   * Parse JavaScript source into a syntax tree rooted at a `program` node.
+   *
+   * @param code - The JavaScript source to parse.
+   * @returns The tree.
+   */
+  parse: (code: string) => Promise<SyntaxTree>;
 };
 
 /**

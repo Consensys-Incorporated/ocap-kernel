@@ -4,10 +4,12 @@
 import '@ocap/repo-tools/test-utils/mock-endoify';
 import { describe, it, expect } from 'vitest';
 
-import { parse } from './javascript.ts';
 import { firstStatement } from './syntax-tree.ts';
+import { makeTreeSitterParser } from './tree-sitter.ts';
 
-describe('javascript parser', () => {
+describe('makeTreeSitterParser', () => {
+  const parser = makeTreeSitterParser();
+
   it.each([
     // An array of expected proposals from the LLM and their AST types.
     ['const a = 1;', 'lexical_declaration'],
@@ -24,8 +26,8 @@ describe('javascript parser', () => {
     ['let length = 11, width = 47, height = 63;', 'lexical_declaration'],
     ['// This is a comment', 'comment'],
     ['import { foo } from "@ocap/abilities";', 'import_statement'],
-  ])('parses `%s` as %s', (expression: string, expectedType: string) => {
-    const program = parse(expression);
+  ])('parses `%s` as %s', async (expression: string, expectedType: string) => {
+    const program = await parser.parse(expression);
     expect(program.text).toStrictEqual(expression);
     expect(program.type).toBe('program');
     expect(program.children).toHaveLength(1);
@@ -34,8 +36,9 @@ describe('javascript parser', () => {
     expect(statement.type).toBe(expectedType);
   });
 
-  it('copies a node into plain data', () => {
-    expect(parse('x;')).toStrictEqual({
+  it('copies a node into plain data', async () => {
+    const program = await parser.parse('x;');
+    expect(program).toStrictEqual({
       type: 'program',
       text: 'x;',
       isNamed: true,

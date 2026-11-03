@@ -13,6 +13,7 @@ import {
   observeJson,
 } from './messages.ts';
 import type { SyntaxTree } from './parse/syntax-tree.ts';
+import { makeTreeSitterParser } from './parse/tree-sitter.ts';
 import { ERROR, RETURN } from './symbols.ts';
 
 describe('observeJson', () => {
@@ -37,12 +38,14 @@ describe('observeJson', () => {
 });
 
 describe('StatementMessage', () => {
+  const parser = makeTreeSitterParser();
+
   it.each([
     ['// comment', CommentMessage, 'comment', 'comment'],
     ['import { foo } from "bar";', ImportMessage, 'import', 'import_statement'],
     ['1 + 1;', EvaluationMessage, 'evaluation', 'expression_statement'],
-  ])('creates %s from code', (code, Class, type, nodeType) => {
-    const message = StatementMessage.fromCode(code);
+  ])('creates %s from code', async (code, Class, type, nodeType) => {
+    const message = await StatementMessage.fromCode(code, parser);
     expect(message).toBeInstanceOf(Class);
     expect(message.messageType).toBe(type);
     expect(message.messageBody.code).toBe(code);
