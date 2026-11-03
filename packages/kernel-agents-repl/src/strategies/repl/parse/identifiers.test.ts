@@ -1,10 +1,14 @@
 import '@ocap/repo-tools/test-utils/mock-endoify';
 
-import type { SyntaxNode } from 'tree-sitter';
 import { describe, it, expect } from 'vitest';
 
 import { extractNamesFromDeclaration } from './identifiers.ts';
 import { parse } from './javascript.ts';
+import { firstStatement } from './syntax-tree.ts';
+import type { SyntaxTree } from './syntax-tree.ts';
+
+const parseStatement = (code: string): SyntaxTree =>
+  firstStatement(parse(code));
 
 describe('extractNamesFromDeclaration', () => {
   it.each([
@@ -13,8 +17,7 @@ describe('extractNamesFromDeclaration', () => {
     ['async function x() { return 1; }', ['x']],
     ['async function* x() { yield 1; }', ['x']],
   ])('extracts declaration names from %s', (text, expected) => {
-    const { rootNode } = parse(text);
-    const [statement] = rootNode.children as [SyntaxNode];
+    const statement = parseStatement(text);
     expect(extractNamesFromDeclaration(statement)).toStrictEqual(expected);
   });
 
@@ -43,8 +46,7 @@ describe('extractNamesFromDeclaration', () => {
       [`${keyword} foo = ({x}) => x;`, ['foo']],
       [`${keyword} x = 1, y = 2, z = 3;`, ['x', 'y', 'z']],
     ])('extracts declaration names from %s', (text, expected) => {
-      const { rootNode } = parse(text);
-      const [statement] = rootNode.children as [SyntaxNode];
+      const statement = parseStatement(text);
       expect(extractNamesFromDeclaration(statement)).toStrictEqual(expected);
     });
   });
@@ -58,7 +60,7 @@ describe('extractNamesFromDeclaration', () => {
           { type: 'const', text: 'const' },
           { type: 'declarator', children: [] },
           { type: ';', text: ';' },
-        ] as unknown as [SyntaxNode, SyntaxNode, SyntaxNode],
+        ] as unknown as [SyntaxTree, SyntaxTree, SyntaxTree],
       }),
     ).toThrow('Internal: Declarator missing pattern');
   });
@@ -67,8 +69,7 @@ describe('extractNamesFromDeclaration', () => {
     ['expression_statement', '1 + 1'],
     ['for_statement', 'for (let i = 0; i < 10; i++) { console.log(i); }'],
   ])('throws for %s', (statementType, code) => {
-    const { rootNode } = parse(code);
-    const [statement] = rootNode.children as [SyntaxNode];
+    const statement = parseStatement(code);
     expect(() => extractNamesFromDeclaration(statement)).toThrow(
       `Unknown declaration type: ${statementType}`,
     );

@@ -2,10 +2,10 @@
  * This suite declares expected AST nodes for various JavaScript expressions.
  */
 import '@ocap/repo-tools/test-utils/mock-endoify';
-import type { SyntaxNode } from 'tree-sitter';
 import { describe, it, expect } from 'vitest';
 
 import { parse } from './javascript.ts';
+import { firstStatement } from './syntax-tree.ts';
 
 describe('javascript parser', () => {
   it.each([
@@ -25,13 +25,31 @@ describe('javascript parser', () => {
     ['// This is a comment', 'comment'],
     ['import { foo } from "@ocap/abilities";', 'import_statement'],
   ])('parses `%s` as %s', (expression: string, expectedType: string) => {
-    const tree = parse(expression);
-    const { rootNode } = tree;
-    expect(rootNode.text).toStrictEqual(expression);
-    expect(rootNode.type).toBe('program');
-    expect(rootNode.children).toHaveLength(1);
-    const [child] = rootNode.children as [SyntaxNode];
-    expect(child.text).toStrictEqual(expression);
-    expect(child.type).toBe(expectedType);
+    const program = parse(expression);
+    expect(program.text).toStrictEqual(expression);
+    expect(program.type).toBe('program');
+    expect(program.children).toHaveLength(1);
+    const statement = firstStatement(program);
+    expect(statement.text).toStrictEqual(expression);
+    expect(statement.type).toBe(expectedType);
+  });
+
+  it('copies a node into plain data', () => {
+    expect(parse('x;')).toStrictEqual({
+      type: 'program',
+      text: 'x;',
+      isNamed: true,
+      children: [
+        {
+          type: 'expression_statement',
+          text: 'x;',
+          isNamed: true,
+          children: [
+            { type: 'identifier', text: 'x', isNamed: true, children: [] },
+            { type: ';', text: ';', isNamed: false, children: [] },
+          ],
+        },
+      ],
+    });
   });
 });
