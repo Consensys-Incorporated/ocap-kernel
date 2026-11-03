@@ -7,13 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-
-- Stop freezing logged objects under lockdown; log entries carry a frozen copy of plain objects and arrays, and keep other objects by reference without hardening them ([#1262](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1262))
-
 ### Removed
 
 - **BREAKING:** Remove the CommonJS build; the package is ESM-only. Its entry points are `.js` and `.d.ts` files, formerly `.mjs`/`.cjs` and `.d.mts`/`.d.cts` ([#1186](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1186))
+
+### Fixed
+
+- Stop freezing logged objects under lockdown; log entries carry a frozen copy of plain objects and arrays, and keep other objects by reference without hardening them ([#1262](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1262))
 
 ## [0.7.0]
 
