@@ -25,12 +25,12 @@ from many clients at once, each sending its next message when its last is
 answered, recording throughput and latency. To run one profile, name it:
 `yarn workspace @ocap/kernel-test test:perf concurrent-load`.
 
-Both read their settings from
-[`src/performance/.env.perf`](./src/performance/.env.perf), which describes
-each one. An environment variable of the same name overrides it for a run,
+Their settings are in
+[`src/performance/constants.ts`](./src/performance/constants.ts), and an
+environment variable of the same name overrides any one of them for a run,
 for example `KREF_PERF_MAX_EXPONENT=4 yarn workspace @ocap/kernel-test
-test:perf kref-scaling`. A missing or malformed setting, or a `KREF_PERF_*` or
-`LOAD_PERF_*` variable that is not one, fails the run before it starts.
+test:perf kref-scaling`. A malformed value, or a `KREF_PERF_*` or
+`LOAD_PERF_*` variable that names no setting, fails the run before it starts.
 
 Past about 3e6 krefs a vat holding them exhausts V8's default 4 GB heap. Vat
 state lives in an in-memory map in the vat's worker, so virtual objects do not

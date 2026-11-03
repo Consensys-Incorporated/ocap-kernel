@@ -1,6 +1,11 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { perfConfig } from './config.ts';
+import {
+  LOAD_PERF_CONCURRENCY as CONCURRENCIES,
+  LOAD_PERF_KREFS as KREFS,
+  LOAD_PERF_MESSAGES as MESSAGES,
+  LOAD_PERF_PAIRS as PAIR_COUNTS,
+} from './constants.ts';
 import {
   countKeys,
   makeProfileKernel,
@@ -14,14 +19,6 @@ import {
 } from './utils.ts';
 import type { Stats } from './utils.ts';
 
-const {
-  LOAD_PERF_KREFS: KREFS,
-  // How many holder/minter pairs to spread the krefs and the load over, one
-  // kernel each.
-  LOAD_PERF_PAIRS: PAIR_COUNTS,
-  LOAD_PERF_CONCURRENCY: CONCURRENCIES,
-  LOAD_PERF_MESSAGES: MESSAGES,
-} = perfConfig;
 const WARMUP_MESSAGES = 20;
 
 type Route = 'kernel→vat' | 'vat→vat';

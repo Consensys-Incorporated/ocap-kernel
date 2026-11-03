@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { perfConfig } from './config.ts';
+import {
+  KREF_PERF_MAX_EXPONENT as MAX_EXPONENT,
+  KREF_PERF_PAIRS as PAIR_COUNTS,
+  KREF_PERF_SAMPLES as SAMPLES,
+} from './constants.ts';
 import {
   countKeys,
   makeProfileKernel,
@@ -14,12 +18,6 @@ import {
 } from './utils.ts';
 import type { Stats } from './utils.ts';
 
-const {
-  KREF_PERF_MAX_EXPONENT: MAX_EXPONENT,
-  KREF_PERF_SAMPLES: SAMPLES,
-  // How many holder/minter pairs to spread the krefs over, one kernel each.
-  KREF_PERF_PAIRS: PAIR_COUNTS,
-} = perfConfig;
 const WARMUP_SAMPLES = 5;
 
 type LevelResult = {
