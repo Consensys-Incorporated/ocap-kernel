@@ -3760,6 +3760,7 @@ __metadata:
     "@metamask/kernel-utils": "workspace:^"
     "@metamask/logger": "workspace:^"
     "@metamask/ocap-kernel": "workspace:^"
+    "@metamask/superstruct": "npm:^3.4.1"
     "@ocap/nodejs-test-workers": "workspace:^"
     "@ocap/remote-iterables": "workspace:^"
     "@ocap/repo-tools": "workspace:^"
