@@ -15,11 +15,11 @@ import {
 import type { Stats } from './utils.ts';
 
 const {
-  maxExponent: MAX_EXPONENT,
-  samples: SAMPLES,
+  KREF_PERF_MAX_EXPONENT: MAX_EXPONENT,
+  KREF_PERF_SAMPLES: SAMPLES,
   // How many holder/minter pairs to spread the krefs over, one kernel each.
-  pairs: PAIR_COUNTS,
-} = perfConfig.krefScaling;
+  KREF_PERF_PAIRS: PAIR_COUNTS,
+} = perfConfig;
 const WARMUP_SAMPLES = 5;
 
 type LevelResult = {

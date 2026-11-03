@@ -26,22 +26,11 @@ answered, recording throughput and latency. To run one profile, name it:
 `yarn workspace @ocap/kernel-test test:perf concurrent-load`.
 
 Both read their settings from
-[`src/performance/perf.config.json`](./src/performance/perf.config.json), and
-an environment variable overrides any one of them for a run:
-
-| Variable                 | Setting                      |
-| ------------------------ | ---------------------------- |
-| `KREF_PERF_MAX_EXPONENT` | `krefScaling.maxExponent`    |
-| `KREF_PERF_SAMPLES`      | `krefScaling.samples`        |
-| `KREF_PERF_PAIRS`        | `krefScaling.pairs`          |
-| `LOAD_PERF_KREFS`        | `concurrentLoad.krefs`       |
-| `LOAD_PERF_PAIRS`        | `concurrentLoad.pairs`       |
-| `LOAD_PERF_CONCURRENCY`  | `concurrentLoad.concurrency` |
-| `LOAD_PERF_MESSAGES`     | `concurrentLoad.messages`    |
-
-Lists are comma-separated. Every setting is a positive integer or a list of
-them. A malformed value, or a `KREF_PERF_*` or `LOAD_PERF_*` variable that
-is not in this table, fails the run before it starts.
+[`src/performance/.env.perf`](./src/performance/.env.perf), which describes
+each one. An environment variable of the same name overrides it for a run,
+for example `KREF_PERF_MAX_EXPONENT=4 yarn workspace @ocap/kernel-test
+test:perf kref-scaling`. A missing or malformed setting, or a `KREF_PERF_*` or
+`LOAD_PERF_*` variable that is not one, fails the run before it starts.
 
 Past about 3e6 krefs a vat holding them exhausts V8's default 4 GB heap. Vat
 state lives in an in-memory map in the vat's worker, so virtual objects do not
