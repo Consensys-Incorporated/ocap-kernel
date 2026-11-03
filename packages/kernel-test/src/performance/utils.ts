@@ -25,31 +25,6 @@ export type Stats = {
 };
 
 /**
- * Read a number from the environment.
- *
- * @param name - The variable's name.
- * @param fallback - The value when it is unset.
- * @returns The number.
- */
-export function envNumber(name: string, fallback: number): number {
-  // oxlint-disable-next-line node/no-process-env
-  return Number(process.env[name] ?? fallback);
-}
-
-/**
- * Read a comma-separated list of numbers from the environment.
- *
- * @param name - The variable's name.
- * @param fallback - The list when it is unset.
- * @returns The numbers.
- */
-export function envNumbers(name: string, fallback: number[]): number[] {
-  // oxlint-disable-next-line node/no-process-env
-  const value = process.env[name];
-  return value === undefined ? fallback : value.split(',').map(Number);
-}
-
-/**
  * Summarize a set of timings.
  *
  * @param samples - Timings in milliseconds.
