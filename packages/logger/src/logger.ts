@@ -50,6 +50,7 @@
 
 import type { DuplexStream } from '@metamask/streams';
 
+import { copyData } from './copy.ts';
 import { parseOptions, mergeOptions } from './options.ts';
 import { lunser } from './stream.ts';
 import type { LogMessage } from './stream.ts';
@@ -187,7 +188,21 @@ export class Logger {
   #dispatch(options: LoggerOptions, level: LogLevel, ...args: LogArgs): void {
     const { transports, tags } = mergeOptions(this.#options, options);
     const [message, ...data] = args;
-    const entry: LogEntry = harden({ level, tags, message, data });
+    let copied = { message, data };
+    try {
+      // Untyped callers, such as vat code using the logger as `console`, may
+      // pass an object as the message.
+      copied = copyData(copied) as typeof copied;
+    } catch {
+      // Copying can overflow the stack on deeply nested data; log it uncopied.
+    }
+    // Not `harden`: it would reach into the objects `copyData` keeps by
+    // reference, such as class instances, and freeze them for their owner.
+    const entry: LogEntry = Object.freeze({
+      level,
+      tags: harden(tags),
+      ...copied,
+    });
     transports.forEach((transport) => transport(entry));
   }
 }
