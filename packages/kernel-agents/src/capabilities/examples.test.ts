@@ -1,6 +1,6 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 
-import { exampleCapabilities } from './examples.ts';
+import { exampleCapabilities, getMoonPhase } from './examples.ts';
 
 describe('exampleCapabilities', () => {
   it('contains the correct capabilities', () => {
@@ -9,5 +9,17 @@ describe('exampleCapabilities', () => {
       'search',
       'getMoonPhase',
     ]);
+  });
+});
+
+describe('getMoonPhase', () => {
+  it('runs without entropy', async () => {
+    const random = vi.spyOn(Math, 'random').mockImplementation(() => {
+      throw new Error('No entropy in a vat');
+    });
+    expect(await getMoonPhase.func({} as never)).toStrictEqual(
+      expect.any(String),
+    );
+    random.mockRestore();
   });
 });
