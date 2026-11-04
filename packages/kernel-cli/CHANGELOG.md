@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `$OCAP_HOME` is created `0700` and the daemon socket `0600`, instead of inheriting the ambient umask. The directory mode is reapplied on every start, so an `$OCAP_HOME` created before this change is brought forward rather than keeping its old permissions ([#1034](https://github.com/MetaMask/ocap-kernel/pull/1034))
 - The daemon log filters entries below a minimum severity, defaulting to `info`, so high-volume `debug` output (refcount churn and similar) no longer dominates `daemon.log`; set `$OCAP_DAEMON_LOG_LEVEL` to `debug` to record everything again ([#1008](https://github.com/MetaMask/ocap-kernel/pull/1008))
 - Relay state files (`relay.pid`, `relay.addr`) now live in their own directory (default `~/.libp2p-relay`, overridable via `$LIBP2P_RELAY_HOME`) instead of under `$OCAP_HOME`, so one libp2p relay can serve daemons with different OCAP_HOMEs ([#952](https://github.com/MetaMask/ocap-kernel/pull/952))
+- Bump `glob` from `^11.0.0` to `^14.0.3` ([#1251](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1251))
 
 ### Fixed
 
