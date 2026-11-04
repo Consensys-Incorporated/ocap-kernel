@@ -21,6 +21,10 @@
       "types": "./dist/strategies/repl/parse/tree-sitter.d.ts",
       "default": "./dist/strategies/repl/parse/tree-sitter.js"
     },
+    "./parser/tree-sitter-worker": {
+      "types": "./dist/strategies/repl/parse/tree-sitter-worker-parser.d.ts",
+      "default": "./dist/strategies/repl/parse/tree-sitter-worker-parser.js"
+    },
     "./package.json": "./package.json"
   },
   "files": [
@@ -63,6 +67,7 @@
     "node": ">=22"
   },
   "dependencies": {
+    "@endo/eventual-send": "^1.5.0",
     "@metamask/kernel-errors": "workspace:^",
     "@metamask/kernel-utils": "workspace:^",
     "@metamask/logger": "workspace:^",

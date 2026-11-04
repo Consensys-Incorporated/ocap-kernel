@@ -3,6 +3,8 @@ import type { SyntaxNode } from 'tree-sitter';
 import JavaScript from 'tree-sitter-javascript';
 
 import type { Parser, SyntaxTree } from './syntax-tree.ts';
+// oxlint-disable-next-line no-unused-vars -- referenced by a JSDoc link
+import type { makeTreeSitterWorkerParser } from './tree-sitter-worker-parser.ts';
 
 /**
  * Copy a tree-sitter node into plain data.
@@ -32,7 +34,8 @@ export const makeNativeParser = (): TreeSitter => {
  * Make a JavaScript parser backed by the native tree-sitter binding in this
  * realm. Only for a realm that has not run lockdown: tree-sitter builds its
  * node classes with a direct `eval`, which a locked-down realm replaces with
- * a safe evaluator that cannot see the binding's module scope.
+ * a safe evaluator that cannot see the binding's module scope. A locked-down
+ * host uses {@link makeTreeSitterWorkerParser} instead.
  *
  * @returns The parser.
  */
