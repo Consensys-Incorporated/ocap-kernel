@@ -80,7 +80,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **BREAKING:** Remove the kernel store's `createSavepoint`, `releaseSavepoint`, `rollbackSavepoint` and `releaseAllSavepoints`; called from outside the run loop's own crank handling, they could commit or roll back part of a crank ([#1106](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1106))
 - **BREAKING:** Remove the CommonJS build; the package is ESM-only. Its entry points are `.js` and `.d.ts` files, formerly `.mjs`/`.cjs` and `.d.mts`/`.d.cts` ([#1186](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1186))
 - **BREAKING:** Remove `rpc.js`, the CommonJS mirror of the `./rpc` export for Browserify ([#1186](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1186))
-- Remove the unused `setimmediate` dependency ([#1268](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1268))
 
 ### Fixed
 
