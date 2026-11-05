@@ -30,7 +30,6 @@ const config: KnipConfig = {
     '@lavamoat/allow-scripts',
     '@lavamoat/preinstall-always-fail',
     '@metamask/create-release-branch',
-    'turbo',
 
     // Used by @metamask/kernel-node-runtime to build the sqlite3 bindings
     'node-gyp',
