@@ -1,6 +1,8 @@
-import type { KnipConfig } from 'knip';
+import { defineConfig } from 'knip/config';
 
-const config: KnipConfig = {
+const sourceFiles = ['**/*.{js,jsx,mjs,cjs,ts,tsx,mts,cts}'];
+
+export default defineConfig({
   include: [
     'dependencies',
     'unlisted',
@@ -20,7 +22,7 @@ const config: KnipConfig = {
     '@metamask/auto-changelog',
     'lint-staged',
 
-    // we explicitly require cookie ^0.7.0 to eliminate a security vulnerability
+    // We explicitly require cookie ^0.7.0 to eliminate a security vulnerability
     // https://github.com/advisories/GHSA-pxg6-pf52-xh8x
     'cookie',
 
@@ -38,10 +40,10 @@ const config: KnipConfig = {
     'packages/*': {
       // Vats, workers, and other files loaded by path are not reachable from
       // package entry points, so every source file counts as an entry.
-      entry: ['**/*.{js,jsx,mjs,cjs,ts,tsx,mts,cts}'],
+      entry: sourceFiles,
     },
     'packages/kernel-utils': {
-      entry: ['**/*.{js,jsx,mjs,cjs,ts,tsx,mts,cts}'],
+      entry: sourceFiles,
       // Optional peers of the `./vite-plugins` export
       ignoreDependencies: ['acorn', 'rolldown', 'vite'],
     },
@@ -50,6 +52,4 @@ const config: KnipConfig = {
       entry: ['**/*.ts'],
     },
   },
-};
-
-export default config;
+});
