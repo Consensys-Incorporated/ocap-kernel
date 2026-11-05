@@ -60,6 +60,12 @@
       "allowedVersions": "<=4.5.0"
     },
     {
+      "description": "12.0.1 ships declarations built without exactOptionalPropertyTypes, so JsonRpcRequestStruct no longer satisfies JsonRpcRequest under that flag (MetaMask/core#10185). Drop this rule once a fixed release ships.",
+      "matchManagers": ["npm"],
+      "matchPackageNames": ["@metamask/utils"],
+      "allowedVersions": "<=12.0.0 || >12.0.1"
+    },
+    {
       "description": "pass-style 2.0.1 and patterns 2.x republish the 1.x code, but Endo's own packages still depend on ^1, so adopting ^2 installs a second copy of each. Allow 2.x once @endo/exo and @endo/marshal depend on it.",
       "matchManagers": ["npm"],
       "matchPackageNames": ["@endo/pass-style", "@endo/patterns"],
