@@ -23,6 +23,8 @@ export default defineConfig((args) => {
       },
     }),
   );
-  config.test.coverage.enabled = false;
+  if (args.mode !== 'development') {
+    config.test.coverage.enabled = false;
+  }
   return config;
 });
