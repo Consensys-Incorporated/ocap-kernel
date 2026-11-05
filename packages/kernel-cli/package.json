@@ -53,7 +53,7 @@
     "@metamask/kernel-utils": "workspace:^",
     "@metamask/logger": "workspace:^",
     "@metamask/superstruct": "^3.4.1",
-    "@metamask/utils": "^12.0.0",
+    "@metamask/utils": "^12.0.1",
     "@types/node": "^22.13.1",
     "acorn": "^8.15.0",
     "chokidar": "^4.0.1",
