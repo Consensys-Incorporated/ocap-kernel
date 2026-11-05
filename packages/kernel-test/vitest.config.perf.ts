@@ -25,7 +25,9 @@ export default defineConfig((args) => {
       },
     }),
   );
-  config.test.coverage.enabled = false;
+  if (args.mode !== 'development') {
+    config.test.coverage.enabled = false;
+  }
   // Profiles print their results, but the kernel's own console output would
   // bury them.
   config.test.silent = false;

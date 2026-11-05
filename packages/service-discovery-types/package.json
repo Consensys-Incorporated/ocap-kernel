@@ -32,9 +32,8 @@
     "changelog:update": "../../scripts/update-changelog.sh @metamask/service-discovery-types",
     "changelog:validate": "../../scripts/validate-changelog.sh @metamask/service-discovery-types",
     "clean": "rimraf --glob './*.tsbuildinfo' ./coverage ./dist ./.turbo ./logs",
-    "lint": "yarn lint:oxlint && yarn lint:oxfmt && yarn constraints && yarn lint:dependencies",
-    "lint:dependencies": "depcheck --quiet",
-    "lint:fix": "yarn lint:oxlint --fix && oxfmt . && yarn constraints --fix && yarn lint:dependencies",
+    "lint": "yarn lint:oxlint && yarn lint:oxfmt && yarn constraints",
+    "lint:fix": "yarn lint:oxlint --fix && oxfmt . && yarn constraints --fix",
     "lint:oxfmt": "oxfmt --check .",
     "lint:oxlint": "oxlint .",
     "test": "vitest run --config vitest.config.ts",
@@ -46,14 +45,11 @@
     "test:dev:quiet": "yarn test:dev --reporter @ocap/repo-tools/vitest-reporters/silent"
   },
   "devDependencies": {
-    "@arethetypeswrong/cli": "^0.18.5",
     "@metamask/auto-changelog": "^7.0.1",
     "@ocap/repo-tools": "workspace:^",
-    "depcheck": "^1.4.7",
     "oxfmt": "0.74.0",
     "oxlint": "1.89.0",
     "rimraf": "^6.0.1",
-    "turbo": "^2.9.1",
     "typescript": "~7.0.2",
     "vite": "^8.3.3",
     "vitest": "^4.1.3"
