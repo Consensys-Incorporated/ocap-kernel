@@ -211,17 +211,14 @@ module.exports = defineConfig({
         expectWorkspaceField(
           workspace,
           'scripts.lint',
-          'yarn lint:oxlint && yarn lint:oxfmt && yarn constraints && yarn lint:dependencies',
+          'yarn lint:oxlint && yarn lint:oxfmt && yarn constraints',
         );
-        expectWorkspaceField(
-          workspace,
-          'scripts.lint:dependencies',
-          'depcheck --quiet',
-        );
+        // Dependencies are linted once from the root by knip.
+        workspace.unset('scripts.lint:dependencies');
         expectWorkspaceField(
           workspace,
           'scripts.lint:fix',
-          'yarn lint:oxlint --fix && oxfmt . && yarn constraints --fix && yarn lint:dependencies',
+          'yarn lint:oxlint --fix && oxfmt . && yarn constraints --fix',
         );
         expectWorkspaceField(
           workspace,
