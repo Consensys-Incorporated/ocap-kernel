@@ -24,7 +24,7 @@
     "dist/"
   ],
   "scripts": {
-    "build": "ocap bundle src/vats",
+    "build": "ocap bundle src/vats src/performance/vats",
     "clean": "rimraf --glob './*.tsbuildinfo' ./coverage ./dist ./.turbo './src/**/*.bundle' ./logs",
     "lint": "yarn lint:oxlint && yarn lint:oxfmt && yarn constraints && yarn lint:dependencies",
     "lint:dependencies": "depcheck --quiet",
