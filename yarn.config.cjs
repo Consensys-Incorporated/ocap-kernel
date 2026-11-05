@@ -152,6 +152,8 @@ module.exports = defineConfig({
             './dist/index.d.ts',
           );
 
+          await expectSubpathExportsMatchSourceModules(workspace);
+
           // Published packages must not have side effects.
           expectWorkspaceField(workspace, 'sideEffects', false);
 
@@ -476,6 +478,48 @@ async function workspaceFileExists(workspace, path) {
   }
 
   return true;
+}
+
+/**
+ * Expect each module subpath export of the workspace to point at the build
+ * output of an existing source module. Checks `src/` rather than `dist/` so
+ * that it works without a build.
+ *
+ * @param {Workspace} workspace - The workspace to check.
+ */
+async function expectSubpathExportsMatchSourceModules(workspace) {
+  for (const [subpath, target] of Object.entries(
+    workspace.manifest.exports ?? {},
+  )) {
+    if (
+      subpath === '.' ||
+      target === null ||
+      // Non-module assets, e.g. `./package.json` or a stylesheet
+      (typeof target === 'string' && !target.endsWith('.js'))
+    ) {
+      continue;
+    }
+
+    const stem = /^\.\/dist\/(.+)\.js$/u.exec(target.default ?? '')?.[1];
+    if (stem === undefined) {
+      workspace.error(
+        `Expected export "${subpath}" to have a "default" condition of the form "./dist/<path>.js".`,
+      );
+      continue;
+    }
+
+    expectWorkspaceField(
+      workspace,
+      `exports["${subpath}"].types`,
+      `./dist/${stem}.d.ts`,
+    );
+
+    if (!(await workspaceFileExists(workspace, `src/${stem}.ts`))) {
+      workspace.error(
+        `Expected export "${subpath}" to have a source module at "src/${stem}.ts".`,
+      );
+    }
+  }
 }
 
 /**
