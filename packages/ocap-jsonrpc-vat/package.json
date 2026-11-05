@@ -47,7 +47,6 @@
     "@metamask/ocap-kernel": "workspace:^"
   },
   "devDependencies": {
-    "@arethetypeswrong/cli": "^0.18.5",
     "@metamask/auto-changelog": "^7.0.1",
     "@ocap/repo-tools": "workspace:^",
     "oxfmt": "0.74.0",

@@ -27,25 +27,13 @@ const config: KnipConfig = {
 
     // miscellaneous
     '@agoric/internal',
-    '@arethetypeswrong/cli',
     '@lavamoat/allow-scripts',
     '@lavamoat/preinstall-always-fail',
     '@metamask/create-release-branch',
-    '@types/setimmediate',
-    'setimmediate',
     'turbo',
 
     // Used by @metamask/kernel-node-runtime to build the sqlite3 bindings
     'node-gyp',
-
-    // These are peer dependencies of various modules we actually do
-    // depend on, which have been elevated to full dependencies (even
-    // though we don't actually depend on them) in order to work around a
-    // bug in the bundler wherein it gets confused by absent peer
-    // dependencies.  These should be removed (both from here and from
-    // the declared dependencies in package.json) once KK fixes the
-    // bundler, which should be RSN.
-    '@types/webextension-polyfill',
   ],
   workspaces: {
     '.': {},

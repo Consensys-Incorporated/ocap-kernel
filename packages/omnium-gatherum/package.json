@@ -62,7 +62,6 @@
     "ses": "^2.3.0"
   },
   "devDependencies": {
-    "@arethetypeswrong/cli": "^0.18.5",
     "@metamask/auto-changelog": "^7.0.1",
     "@ocap/repo-tools": "workspace:^",
     "@playwright/test": "^1.59.1",
@@ -73,7 +72,6 @@
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
     "@types/semver": "^7.7.1",
-    "@types/webextension-polyfill": "^0",
     "@vitejs/plugin-react": "^5.1.2",
     "jsdom": "^29.0.2",
     "oxfmt": "0.74.0",

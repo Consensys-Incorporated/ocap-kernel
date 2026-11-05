@@ -100,7 +100,6 @@
     "setimmediate": "^1.0.5"
   },
   "devDependencies": {
-    "@arethetypeswrong/cli": "^0.18.5",
     "@metamask/auto-changelog": "^7.0.1",
     "@metamask/kernel-errors": "workspace:^",
     "@ocap/repo-tools": "workspace:^",
