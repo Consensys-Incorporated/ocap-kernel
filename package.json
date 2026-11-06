@@ -55,8 +55,8 @@
   },
   "devDependencies": {
     "@agoric/internal": "0.4.0",
-    "@lavamoat/allow-scripts": "^3.3.2",
-    "@lavamoat/preinstall-always-fail": "^2.1.0",
+    "@lavamoat/allow-scripts": "^5.1.0",
+    "@lavamoat/preinstall-always-fail": "^3.0.1",
     "@metamask/auto-changelog": "^7.0.1",
     "@metamask/create-release-branch": "^4.2.3",
     "@metamask/kernel-cli": "workspace:^",
@@ -89,24 +89,15 @@
   "lavamoat": {
     "allowScripts": {
       "$root$": true,
-      "@metamask/kernel-cli>@metamask/logger>@metamask/streams": true,
       "@lavamoat/preinstall-always-fail": false,
       "simple-git-hooks": false,
       "tsx>esbuild": false,
-      "vite>esbuild": false,
       "vite>sass>@parcel/watcher": false,
-      "vitest>@vitest/browser>webdriverio>@wdio/utils>edgedriver": false,
-      "vitest>@vitest/browser>webdriverio>@wdio/utils>geckodriver": false,
-      "vitest>@vitest/mocker>msw": false,
-      "@metamask/kernel-cli>@metamask/kernel-node-runtime>@libp2p/webrtc>node-datachannel": false,
       "@metamask/kernel-cli>@metamask/kernel-node-runtime>@metamask/kernel-store>better-sqlite3": false,
-      "@metamask/kernel-cli>@metamask/kernel-node-runtime>@metamask/streams": false,
       "@metamask/kernel-cli>@metamask/kernel-shims>@libp2p/webrtc>node-datachannel": false,
-      "@metamask/kernel-cli>@metamask/kernel-utils": false,
-      "vitest>jsdom>ws>bufferutil": false,
-      "vitest>jsdom>ws>utf-8-validate": false,
       "@vitest/coverage-v8>@vitest/browser>ws>bufferutil": false,
-      "@vitest/coverage-v8>@vitest/browser>ws>utf-8-validate": false
+      "@vitest/coverage-v8>@vitest/browser>ws>utf-8-validate": false,
+      "@metamask/kernel-cli>@metamask/logger>@metamask/streams#0.6.0": true
     }
   },
   "resolutions": {
