@@ -132,7 +132,8 @@ describe('Garbage Collection', () => {
       [objectId],
     );
     const createObjectRef = createObjectData.slots[0] as KRef;
-    // Held only by the resolved promise's value, which still carries the slot
+    // Held only by the pin taken for the caller of `queueMessage`
+    expect(kernelStore.getPinCount(createObjectRef)).toBe(1);
     expect(kernelStore.getObjectRefCount(createObjectRef)).toStrictEqual({
       reachable: 1,
       recognizable: 1,
@@ -147,13 +148,10 @@ describe('Garbage Collection', () => {
       createObjectRef,
     );
     expect(exporterReachable).toBe(true);
-    // Check that the object is reachable as a promise from the importer vat
-    const importerKref = kernelStore.erefToKref(
-      importerVatId,
-      'p-1' as ERef,
-    ) as KRef;
-    expect(kernelStore.hasCListEntry(importerVatId, importerKref)).toBe(true);
-    expect(kernelStore.getRefCount(importerKref)).toBe(1);
+    // The importer resolved `storeImport`'s result promise, so has retired it
+    expect(
+      kernelStore.erefToKref(importerVatId, 'p-1' as ERef),
+    ).toBeUndefined();
     // Use the object
     const useResult = await kernel.queueMessage(importerKRef, 'useImport', []);
     await waitUntilQuiescent();
@@ -304,8 +302,7 @@ describe('Garbage Collection', () => {
       expect(kernelStore.getImporters(sharedKRef)).toStrictEqual(
         [importerVatId, secondImporterVatId].sort(),
       );
-      // Two importers, plus the resolved createObject promise whose value
-      // still carries the slot
+      // Two importers, plus the pin taken for the caller of `createObject`
       expect(kernelStore.getObjectRefCount(sharedKRef)).toStrictEqual({
         reachable: 3,
         recognizable: 3,
@@ -367,7 +364,7 @@ describe('Garbage Collection', () => {
       });
 
       expect(kernelStore.getImporters(sharedKRef)).toStrictEqual([]);
-      // Only the createObject result's stored value still names it
+      // Only the pin taken for the caller of `createObject` still holds it
       expect(kernelStore.getObjectRefCount(sharedKRef)).toStrictEqual({
         reachable: 1,
         recognizable: 1,
