@@ -145,6 +145,18 @@ describe('makeChatAgent', () => {
     ).toBe(true);
   });
 
+  it('keeps its history when the chat freezes its arguments', async () => {
+    const mockChat = makeMockChat([[{ name: 'ping', args: {} }], 'done']);
+    const chat: BoundChat = async ({ messages }) => {
+      Object.freeze(messages);
+      return mockChat();
+    };
+
+    const agent = makeChatAgent({ chat, capabilities: { ping } });
+
+    expect(await agent.task('ping')).toBe('done');
+  });
+
   it('throws when invocation budget is exceeded', async () => {
     const chat = makeMockChat(
       Array.from({ length: 3 }, () => [{ name: 'ping', args: {} }]),
