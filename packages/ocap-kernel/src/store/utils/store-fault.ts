@@ -36,7 +36,8 @@ export function markStoreFaults(kv: KVStore): KVStore {
     // decides, is not taken for a store fault.
     getRequired: <Value extends string = string>(key: string) => {
       const value = marking(() => kv.get<Value>(key));
-      // Falsy, as the databases' own `getRequired` take an empty value.
+      // Falsy, not just missing: the databases' own `getRequired` refuse an
+      // empty value too.
       if (!value) {
         throw Error(`no record matching key '${key}'`);
       }

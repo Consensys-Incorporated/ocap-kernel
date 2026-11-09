@@ -372,7 +372,11 @@ export class Kernel {
     // This ensures that any messages in the queue have their target vats ready
     try {
       await this.#vatManager.initializeAllVats();
+      // A panic in a vat's start, as from a syscall's store fault, fails the
+      // boot before anything more is written outside a crank.
+      this.#kernelQueue.assertRunLoopAlive('start');
       await this.#subclusterManager.removeSystemSubclustersWithoutBootstrapVat();
+      this.#kernelQueue.assertRunLoopAlive('start');
     } catch (error) {
       this.#vatManager.expectWorkersToStop();
       await this.#platformServices
@@ -702,7 +706,7 @@ export class Kernel {
   /**
    * Restarts a vat. The run loop carries the restart out, so this waits behind
    * the run queue and rejects if the run loop dies. A vat whose relaunch fails
-   * is terminated.
+   * is terminated, unless a store fault failed it, which stops the kernel.
    *
    * @param vatId - The ID of the vat to restart.
    * @returns A promise for the restarted vat handle.

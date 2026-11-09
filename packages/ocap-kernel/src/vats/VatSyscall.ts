@@ -255,36 +255,26 @@ export class VatSyscall {
       }
       return harden(['ok', null]);
     } catch (error) {
+      // Returned, not thrown: this runs in the drain of the vat's channel,
+      // where a throw reads as the channel lost.
       if (isStoreFault(error)) {
-        return this.#panic(vso[0], error);
+        const panic = this.#kernelQueue.panic(
+          `syscall ${vso[0]} from vat ${this.vatId} failed`,
+          error,
+        );
+        this.#logger?.error(panic.message, error);
+        return harden(['error', panic.message]);
       }
       this.#logger?.error(`Fatal syscall error in vat ${this.vatId}`, error);
       this.#recordVatFatalSyscall(
         'ILLEGAL_SYSCALL',
-        'Syscall translation error: prepare to die',
+        'Syscall failed: prepare to die',
       );
       return harden([
         'error',
         error instanceof Error ? error.message : String(error),
       ]);
     }
-  }
-
-  /**
-   * Stop the kernel over a syscall the store failed. Not thrown: this runs in
-   * the drain of the vat's channel, where a throw reads as the channel lost.
-   *
-   * @param op - The syscall.
-   * @param error - What it failed with.
-   * @returns The result of the syscall.
-   */
-  #panic(op: string, error: unknown): VatSyscallResult {
-    const panic = this.#kernelQueue.panic(
-      `syscall ${op} from vat ${this.vatId} failed`,
-      error,
-    );
-    this.#logger?.error(panic.message, error);
-    return harden(['error', panic.message]);
   }
 
   /**

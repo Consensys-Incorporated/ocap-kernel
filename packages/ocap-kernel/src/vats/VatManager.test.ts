@@ -102,6 +102,24 @@ describe('VatManager', () => {
     await afterCommit?.();
   };
 
+  /**
+   * Have every caller that waits on the run loop register, as the queue does.
+   *
+   * @returns A function that kills the run loop, telling them all.
+   */
+  const captureRunLoopDeath = (): ((error: Error) => void) => {
+    const deathHandlers: ((error: Error) => void)[] = [];
+    mockKernelQueue.onRunLoopDeath.mockImplementation((reject) => {
+      deathHandlers.push(reject);
+      return () => undefined;
+    });
+    return (error) => {
+      for (const reject of deathHandlers) {
+        reject(error);
+      }
+    };
+  };
+
   beforeEach(() => {
     vatHandles = [];
 
@@ -257,6 +275,7 @@ describe('VatManager', () => {
 
     it('terminates a vat whose worker will not start, and starts the others', async () => {
       const logError = vi.spyOn(mockLogger, 'error').mockReturnValue();
+      const log = vi.spyOn(mockLogger, 'log').mockReturnValue();
       mockKernelStore.getPromisesByDecider.mockReturnValueOnce(
         yieldKRefs('kp1'),
       );
@@ -275,12 +294,22 @@ describe('VatManager', () => {
       }).toStrictEqual({
         running: ['v2'],
         rejected: [
-          ['v1', [['kp1', true, makeKernelError('VAT_TERMINATED', message)]]],
+          [
+            'v1',
+            [
+              [
+                'kp1',
+                true,
+                makeKernelError('VAT_TERMINATED', 'Vat v1 was terminated'),
+              ],
+            ],
+          ],
         ],
         terminated: [['v1']],
         deleted: [['v1']],
       });
       expect(logError).toHaveBeenCalledWith(message, failure);
+      expect(log).toHaveBeenCalledWith(`Vat v1 was terminated: ${message}`);
     });
 
     it.each([
@@ -630,9 +659,7 @@ describe('VatManager', () => {
           [
             'kp1',
             true,
-            expect.objectContaining({
-              body: expect.stringContaining('channel failed'),
-            }),
+            makeKernelError('VAT_TERMINATED', 'Vat v1 was terminated'),
           ],
         ]);
         expect(mockKernelStore.deleteVat).toHaveBeenCalledWith('v1');
@@ -1124,11 +1151,7 @@ describe('VatManager', () => {
     });
 
     it('rejects a superseded restart with the run loop death that drops its termination', async () => {
-      const deathHandlers: ((error: Error) => void)[] = [];
-      mockKernelQueue.onRunLoopDeath.mockImplementation((reject) => {
-        deathHandlers.push(reject);
-        return () => undefined;
-      });
+      const killRunLoop = captureRunLoopDeath();
       await vatManager.runVat(v1, createMockVatConfig());
       mockKernelQueue.enqueueRestartVat.mockImplementationOnce(() => undefined);
       const restarting = vatManager.restartVat(v1);
@@ -1140,9 +1163,7 @@ describe('VatManager', () => {
       await delay();
 
       const death = new Error('Kernel run loop died');
-      for (const reject of deathHandlers) {
-        reject(death);
-      }
+      killRunLoop(death);
 
       await expect(restarting).rejects.toBe(death);
       await expect(terminating).rejects.toBe(death);
@@ -1251,13 +1272,7 @@ describe('VatManager', () => {
         mockKernelQueue.enqueueTerminateVat.mockImplementationOnce(
           () => undefined,
         );
-        let killRunLoop = (_error: Error): void => undefined;
-        mockKernelQueue.onRunLoopDeath.mockImplementationOnce(
-          (reject: (error: Error) => void) => {
-            killRunLoop = reject;
-            return () => undefined;
-          },
-        );
+        const killRunLoop = captureRunLoopDeath();
         const terminating = vatManager.terminateVat(v1);
 
         // Its crank then dies, so `afterCommit` never runs.
@@ -1269,19 +1284,7 @@ describe('VatManager', () => {
       });
 
       describe('when the teardown fails', () => {
-        let killRunLoop: (error: Error) => void;
-
         beforeEach(async () => {
-          const deathHandlers: ((error: Error) => void)[] = [];
-          mockKernelQueue.onRunLoopDeath.mockImplementation((reject) => {
-            deathHandlers.push(reject);
-            return () => undefined;
-          });
-          killRunLoop = (error) => {
-            for (const reject of deathHandlers) {
-              reject(error);
-            }
-          };
           await vatManager.runVat(v1, createMockVatConfig());
           mockKernelStore.deleteVat.mockImplementationOnce(() => {
             throw new Error('deleteVat failed');
@@ -1289,6 +1292,7 @@ describe('VatManager', () => {
         });
 
         it('throws, and leaves its caller to the run loop it kills', async () => {
+          const killRunLoop = captureRunLoopDeath();
           mockKernelQueue.enqueueTerminateVat.mockImplementationOnce(
             () => undefined,
           );
@@ -1304,6 +1308,7 @@ describe('VatManager', () => {
         });
 
         it('leaves a restart asked for during it to the run loop it kills', async () => {
+          const killRunLoop = captureRunLoopDeath();
           mockKernelQueue.enqueueTerminateVat.mockImplementationOnce(
             () => undefined,
           );
@@ -1325,6 +1330,7 @@ describe('VatManager', () => {
         });
 
         it('leaves a restart it overtook to the run loop it kills', async () => {
+          const killRunLoop = captureRunLoopDeath();
           leaveRequestQueued();
           const restarting = vatManager.restartVat(v1);
           mockKernelQueue.enqueueTerminateVat.mockImplementationOnce(
@@ -1371,26 +1377,29 @@ describe('VatManager', () => {
         expect(mockKernelStore.deleteVat).toHaveBeenCalledWith('v1');
       });
 
-      it('rejects the promises it was deciding', async () => {
+      it('rejects the promises it was deciding with a fixed reason, and logs its own', async () => {
+        const log = vi.spyOn(mockLogger, 'log').mockReturnValue();
         mockKernelStore.getPromisesByDecider.mockImplementation(() =>
-          yieldKRefs('kp1'),
+          yieldKRefs('kp1', 'kp2'),
         );
         await givenAVatBetweenWorkers();
 
         await vatManager.terminateVat(v1, {
-          body: 'Custom reason',
+          body: 'x'.repeat(1_000),
           slots: [],
         });
 
-        expect(mockKernelQueue.resolvePromises).toHaveBeenCalledWith('v1', [
-          [
-            'kp1',
-            true,
-            expect.objectContaining({
-              body: expect.stringContaining('Custom reason'),
-            }),
-          ],
+        const failure = makeKernelError(
+          'VAT_TERMINATED',
+          'Vat v1 was terminated',
+        );
+        expect(mockKernelQueue.resolvePromises.mock.calls).toStrictEqual([
+          ['v1', [['kp1', true, failure]]],
+          ['v1', [['kp2', true, failure]]],
         ]);
+        expect(log).toHaveBeenCalledWith(
+          `Vat v1 was terminated: Vat termination: ${'x'.repeat(1_000)}`,
+        );
       });
 
       it('releases the pin its root was launched with', async () => {

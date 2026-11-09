@@ -222,6 +222,7 @@ export class KernelQueue {
       let heldFailure: { error: unknown } | undefined;
 
       this.#kernelStore.startCrank();
+      this.#crankDiscarded = false;
       try {
         // Two savepoints, because rolling back the outermost one discards the
         // enclosing transaction (see `rollbackSavepoint`) and an aborted
@@ -257,13 +258,7 @@ export class KernelQueue {
             wakeUpPromise = promise;
           }
         } catch (caught) {
-          // What a panic is followed by is likely its consequence.
-          const error =
-            this.#panic && caught !== this.#panic
-              ? new AggregateError([this.#panic, caught], this.#panic.message, {
-                  cause: this.#panic,
-                })
-              : caught;
+          const error = this.#ledByPanic(caught);
           // The whole crank, a vat's death recorded in it too: a throw here is
           // the kernel's own fault.
           if (!this.#crankDiscarded) {
@@ -273,9 +268,14 @@ export class KernelQueue {
               // The original failure stays the `cause`, since that is the root
               // cause an operator needs. `errors` keeps the rollback failure's
               // own chain, such as the write SQLite rolled the crank back on.
+              // A panic leads the message too: a full disk ends the transaction
+              // itself, so the rollback can only report it gone.
+              const died = this.#panic
+                ? `${this.#panic.message}, and its`
+                : 'Run loop died and its';
               throw new AggregateError(
                 [error, rollbackError],
-                `Run loop died and its crank could not be rolled back: ${String(rollbackError)}`,
+                `${died} crank could not be rolled back: ${String(rollbackError)}`,
                 { cause: error },
               );
             }
@@ -307,12 +307,14 @@ export class KernelQueue {
           await afterCommit();
         } catch (error) {
           if (!heldFailure) {
-            throw error;
+            throw this.#ledByPanic(error);
           }
-          throw new AggregateError(
-            [heldFailure.error, error],
-            `Run loop died writing a held request, and its crank's afterCommit failed: ${String(error)}`,
-            { cause: heldFailure.error },
+          throw this.#ledByPanic(
+            new AggregateError(
+              [heldFailure.error, error],
+              `Run loop died writing a held request, and its crank's afterCommit failed: ${String(error)}`,
+              { cause: heldFailure.error },
+            ),
           );
         }
       }
@@ -322,7 +324,7 @@ export class KernelQueue {
       // committed.
       control?.resolve();
       if (heldFailure) {
-        throw heldFailure.error;
+        throw this.#ledByPanic(heldFailure.error);
       }
     }
   }
@@ -334,8 +336,9 @@ export class KernelQueue {
    * @param operation - The operation.
    * @returns A promise that resolves once the operation's crank commits. It
    * rejects with what killed the run loop if that crank fails, with the
-   * dead-loop error if the loop dies before taking it, and at once if the loop
-   * has not started, has died or stopped, or is ending.
+   * dead-loop error if the loop dies before taking it, and at once if the
+   * kernel has panicked, or the loop has not started, has died or stopped, or
+   * is ending.
    */
   async enqueueControl(operation: ControlOperation): Promise<void> {
     this.#runLoopState.state === 'idle' && Fail`run loop has not started`;
@@ -473,8 +476,8 @@ export class KernelQueue {
   }
 
   /**
-   * Refuse work that would otherwise sit in a queue nobody drains: the run loop
-   * died, or `endRunLoop` ended it.
+   * Refuse work that would otherwise sit in a queue nobody drains: the kernel
+   * panicked, the run loop died, or `endRunLoop` ended it.
    *
    * For callers at an ingress boundary only. Teardown must not be refused even
    * though it also enqueues: `VatManager` and `RemoteManager` reject the
@@ -487,7 +490,7 @@ export class KernelQueue {
    * kernel, which in practice means a new process.
    *
    * @param what - What is being refused, completing "cannot ...".
-   * @throws If the run loop has died, stopped or panicked.
+   * @throws If the kernel has panicked, or the run loop has died or stopped.
    */
   assertRunLoopAlive(what: string): void {
     if (this.#runLoopState.state === 'failed') {
@@ -507,8 +510,9 @@ export class KernelQueue {
    * Stop the kernel over a fault of its own, such as a store write that
    * failed, caught where a throw would not reach the run loop. As SwingSet's
    * `kernelPanic`, the run loop throws it before the open crank commits, or on
-   * waking if no crank is open, so the crank rolls back and the loop dies.
-   * Ingress is refused from then on.
+   * waking if no crank is open. SwingSet's host then leaves its block
+   * uncommitted; with no block commit, ours rolls the crank back and the loop
+   * dies. Ingress is refused from then on.
    *
    * @param problem - What failed, completing "Kernel panic: ...".
    * @param cause - The error that was caught.
@@ -526,6 +530,7 @@ export class KernelQueue {
    * Whether the kernel has panicked or its run loop has died. Vats' syscalls,
    * and the state a vat reports after a delivery, are refused then: outside a
    * crank they would commit on their own, and nothing would roll them back.
+   * A remote's acknowledgements and give-up still write (#1152).
    *
    * @returns True if so.
    */
@@ -543,6 +548,20 @@ export class KernelQueue {
   }
 
   /**
+   * Lead what the run loop dies of with the panic recorded before it, if any.
+   *
+   * @param caught - What the run loop caught.
+   * @returns The error to die of.
+   */
+  #ledByPanic(caught: unknown): unknown {
+    return this.#panic && caught !== this.#panic
+      ? new AggregateError([this.#panic, caught], this.#panic.message, {
+          cause: this.#panic,
+        })
+      : caught;
+  }
+
+  /**
    * Report whether the kernel is able to process its run queue at all.
    *
    * @returns The current run loop status.
@@ -553,8 +572,9 @@ export class KernelQueue {
         ? {
             state: 'failed',
             error: this.#runLoopState.error.message,
-            // The message drops the cause chain, and in a double failure it names
-            // the failed rollback rather than what killed the kernel.
+            // The message drops the cause chain, and in a double failure with no
+            // panic it names the failed rollback rather than what killed the
+            // kernel.
             detail: stringify(this.#runLoopState.error, 0),
           }
         : { state: this.#runLoopState.state },
@@ -678,8 +698,6 @@ export class KernelQueue {
       // restart it and terminate the vat only after a certain number of failed
       // retries. This is probably where we should implement the vat restart logic.
     }
-    // Vat termination during delivery is triggered by an illegal syscall
-    // or by syscall.exit().
     if (crankResult?.terminate) {
       const { vatId, info } = crankResult.terminate;
       await this.#terminateVat(vatId, info);

@@ -2110,6 +2110,55 @@ describe('KernelQueue', () => {
       expect(kernelStore.collectGarbage).not.toHaveBeenCalled();
     });
 
+    it.each([
+      { when: 'after its delivery', terminate: false },
+      { when: 'during a termination in it', terminate: true },
+    ])(
+      'answers no caller out of a crank that panics $when',
+      async ({ terminate }) => {
+        queueOneItem();
+        const subscriber = { resolve: vi.fn(), reject: vi.fn() };
+        kernelQueue.subscriptions.set(asKRef('kp1'), subscriber);
+        (
+          kernelStore.getKernelPromise as unknown as MockInstance
+        ).mockReturnValue({
+          state: 'unresolved',
+          decider: 'v1',
+          subscribers: [],
+        });
+        terminateVat.mockImplementationOnce(async () => {
+          kernelQueue.panic('termination failed', cause);
+        });
+        const deliver = vi.fn(async () => {
+          kernelQueue.resolvePromises(
+            asVatId('v1'),
+            [[asKRef('kp1'), false, kser('done')]],
+            false,
+          );
+          if (terminate) {
+            return { terminate: { vatId: asVatId('v1'), info: kser('bye') } };
+          }
+          kernelQueue.panic('later syscall failed', cause);
+          return { didDelivery: asVatId('v1') };
+        });
+
+        await expect(kernelQueue.run(deliver as never)).rejects.toThrow(
+          'Kernel panic:',
+        );
+        expect({
+          resolved: subscriber.resolve.mock.calls.length,
+          rejected: subscriber.reject.mock.calls.map(
+            ([error]) => (error as Error).message,
+          ),
+        }).toStrictEqual({
+          resolved: 0,
+          rejected: [
+            'Kernel run loop died; this message result will never be delivered',
+          ],
+        });
+      },
+    );
+
     it('kills the run loop once a termination in the crank returns', async () => {
       queueOneItem();
       terminateVat.mockImplementationOnce(async () => {
@@ -2222,13 +2271,53 @@ describe('KernelQueue', () => {
         detail: expect.stringContaining('database or disk is full'),
       });
     });
+
+    it('leads with the panic when its crank cannot be rolled back', async () => {
+      queueOneItem();
+      const lost = new Error(
+        'SQLite already ended the transaction holding savepoint t0',
+      );
+      (
+        kernelStore.rollbackCrank as unknown as MockInstance
+      ).mockImplementationOnce(() => {
+        throw lost;
+      });
+      const deliver = vi.fn(async () => {
+        kernelQueue.panic('syscall failed', cause);
+        throw new Error('write refused');
+      });
+
+      await expect(kernelQueue.run(deliver)).rejects.toThrow(
+        `Kernel panic: syscall failed, and its crank could not be rolled back: ${String(lost)}`,
+      );
+    });
+
+    it('leads with a panic raised while afterCommit runs, when afterCommit then fails', async () => {
+      queueOneItem();
+      const afterCommitFault = new Error('transmit failed');
+      const deliver = vi.fn(async () => ({
+        afterCommit: async () => {
+          kernelQueue.panic('handshake failed', cause);
+          throw afterCommitFault;
+        },
+      }));
+
+      const failure = await kernelQueue.run(deliver).catch((error) => error);
+
+      expect(failure).toMatchObject({
+        message: 'Kernel panic: handshake failed',
+        errors: [
+          { message: 'Kernel panic: handshake failed' },
+          afterCommitFault,
+        ],
+      });
+    });
   });
 
   describe('crank savepoints', () => {
     /**
-     * Deliver one item and then die inside `collectGarbage`. The throw has to
-     * land there, after the crank result has been processed: a delivery that
-     * threw would never reach the rollback decision these tests are about.
+     * Deliver one item and then die inside `collectGarbage`, once the crank
+     * result, a vat death included, has been processed.
      *
      * @param crankResult - What the delivery reports.
      */

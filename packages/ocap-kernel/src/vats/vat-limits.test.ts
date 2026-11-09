@@ -4,6 +4,7 @@ import {
   MAX_VAT_MESSAGE_LENGTH,
   capReasonText,
   fitsVatMessageLimit,
+  fitsVatStateLimit,
 } from './vat-limits.ts';
 
 describe('capReasonText', () => {
@@ -14,9 +15,12 @@ describe('capReasonText', () => {
       text: 'x'.repeat(10_005),
       capped: `${'x'.repeat(10_000)}… (5 more characters)`,
     },
-  ])('cuts text of length $text.length to its limit', ({ text, capped }) => {
-    expect(capReasonText(text)).toBe(capped);
-  });
+  ])(
+    'keeps at most the limit of text of length $text.length',
+    ({ text, capped }) => {
+      expect(capReasonText(text)).toBe(capped);
+    },
+  );
 });
 
 describe('fitsVatMessageLimit', () => {
@@ -30,5 +34,36 @@ describe('fitsVatMessageLimit', () => {
     { what: 'a message JSON cannot measure', message: { n: 1n }, fits: false },
   ])('takes $what as fitting: $fits', ({ message, fits }) => {
     expect(fitsVatMessageLimit(message)).toBe(fits);
+  });
+});
+
+describe('fitsVatStateLimit', () => {
+  const half = 'x'.repeat(MAX_VAT_MESSAGE_LENGTH / 2);
+
+  it.each([
+    {
+      what: 'entries over the limit only in all',
+      sets: [
+        ['a', half],
+        ['b', half],
+        ['c', half],
+      ] as [string, string][],
+      deletes: [],
+      fits: true,
+    },
+    {
+      what: 'an entry over the limit',
+      sets: [['key', 'x'.repeat(MAX_VAT_MESSAGE_LENGTH)]] as [string, string][],
+      deletes: [],
+      fits: false,
+    },
+    {
+      what: 'a deleted key over the limit',
+      sets: [],
+      deletes: ['x'.repeat(MAX_VAT_MESSAGE_LENGTH + 1)],
+      fits: false,
+    },
+  ])('takes $what as fitting: $fits', ({ sets, deletes, fits }) => {
+    expect(fitsVatStateLimit([sets, deletes])).toBe(fits);
   });
 });

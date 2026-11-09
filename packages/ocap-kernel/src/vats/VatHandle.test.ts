@@ -154,7 +154,7 @@ describe('VatHandle', () => {
       );
     });
 
-    it('loses a vat that sends a message over the size limit', async () => {
+    it('loses a vat that sends a syscall over the size limit', async () => {
       const onStreamFailure = vi.fn();
       const { stream } = await makeVat({ onStreamFailure });
 
@@ -172,7 +172,7 @@ describe('VatHandle', () => {
       expect(onStreamFailure).toHaveBeenCalledWith(
         expect.objectContaining({
           cause: expect.objectContaining({
-            message: `Vat v0 sent a message over ${MAX_VAT_MESSAGE_LENGTH} characters`,
+            message: `Vat v0 sent a syscall over ${MAX_VAT_MESSAGE_LENGTH} characters`,
           }),
         }),
       );
@@ -604,6 +604,188 @@ describe('VatHandle', () => {
       await delay(10);
 
       expect(settled).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('delivery failures', () => {
+    it('throws a store fault from writing the vat state, rather than blame the vat', async () => {
+      const fault = new Error('database or disk is full');
+      const kernelStore = makeKernelStore({
+        ...makeMapKernelDatabase(),
+        makeVatStore: () => ({
+          getKVData: () => [],
+          updateKVData: () => {
+            throw fault;
+          },
+        }),
+      });
+      const { vat, stream } = await makeVat({ kernelStore });
+      const delivering = vat.deliverMessage(asERef('o+0'), {
+        methargs: { body: '#["hello",[]]', slots: [] },
+        result: null,
+      });
+      await delay(10);
+
+      await stream.receiveInput({
+        id: 'v0:1',
+        result: [[[['key', 'value']], []], null],
+        jsonrpc: '2.0',
+      });
+
+      await expect(delivering).rejects.toBe(fault);
+    });
+
+    it('terminates a vat that writes a state entry over the size limit, writing none of it', async () => {
+      const onStreamFailure = vi.fn();
+      const { kernelStore, written } = makeRecordingKernelStore();
+      const { vat, stream } = await makeVat({ onStreamFailure, kernelStore });
+      const delivering = vat.deliverMessage(asERef('o+0'), {
+        methargs: { body: '#["hello",[]]', slots: [] },
+        result: null,
+      });
+      await delay(10);
+
+      await stream.receiveInput({
+        id: 'v0:1',
+        result: [
+          [
+            [
+              ['small', 'value'],
+              ['big', 'x'.repeat(MAX_VAT_MESSAGE_LENGTH)],
+            ],
+            [],
+          ],
+          null,
+        ],
+        jsonrpc: '2.0',
+      });
+
+      expect({
+        crank: await delivering,
+        written,
+        lost: onStreamFailure.mock.calls.length,
+      }).toStrictEqual({
+        crank: {
+          didDelivery: 'v0',
+          abort: true,
+          terminate: {
+            vatId: 'v0',
+            reject: true,
+            info: makeFatalKernelError(
+              'INTERNAL_ERROR',
+              `Vat v0 wrote a state entry over ${MAX_VAT_MESSAGE_LENGTH} characters`,
+            ),
+          },
+        },
+        written: [],
+        lost: 0,
+      });
+    });
+
+    it('writes a delivery whose state change is over the size limit in all but not in any entry', async () => {
+      const { kernelStore, written } = makeRecordingKernelStore();
+      const { vat, stream } = await makeVat({ kernelStore });
+      const delivering = vat.deliverMessage(asERef('o+0'), {
+        methargs: { body: '#["hello",[]]', slots: [] },
+        result: null,
+      });
+      await delay(10);
+      const half = 'x'.repeat(MAX_VAT_MESSAGE_LENGTH / 2);
+
+      await stream.receiveInput({
+        id: 'v0:1',
+        result: [
+          [
+            [
+              ['a', half],
+              ['b', half],
+              ['c', half],
+            ],
+            [],
+          ],
+          null,
+        ],
+        jsonrpc: '2.0',
+      });
+
+      expect({
+        crank: await delivering,
+        written: written.map(([key]) => key),
+      }).toStrictEqual({
+        crank: { didDelivery: 'v0' },
+        written: ['a', 'b', 'c'],
+      });
+    });
+
+    it('fails to start a vat whose initVat writes a state entry over the size limit', async () => {
+      sendVatCommandMock.mockRestore();
+      const { kernelStore, written } = makeRecordingKernelStore();
+      const vatStream = await TestDuplexStream.make<
+        JsonRpcMessage,
+        JsonRpcMessage
+      >(() => undefined, { validateInput: isJsonRpcMessage });
+      const making = VatHandle.make({
+        kernelQueue: { isHalted: () => false } as unknown as KernelQueue,
+        kernelStore,
+        vatId: asVatId('v0'),
+        vatConfig: { sourceSpec: 'not-really-there.js' },
+        vatStream,
+        onStreamFailure: () => undefined,
+      });
+      making.catch(() => undefined);
+      await delay(10);
+
+      await vatStream.receiveInput({
+        id: 'v0:1',
+        result: [[[['big', 'x'.repeat(MAX_VAT_MESSAGE_LENGTH)]], []], null],
+        jsonrpc: '2.0',
+      });
+
+      await expect(making).rejects.toThrow(
+        `Failed to initialize vat v0: Vat v0 wrote a state entry over ${MAX_VAT_MESSAGE_LENGTH} characters`,
+      );
+      expect(written).toStrictEqual([]);
+    });
+
+    it('logs a delivery its worker fails', async () => {
+      const logger = {
+        error: vi.fn(),
+        subLogger: vi.fn().mockReturnThis(),
+      } as unknown as Logger;
+      const { vat, stream } = await makeVat({ logger });
+      const delivering = vat.deliverMessage(asERef('o+0'), {
+        methargs: { body: '#["hello",[]]', slots: [] },
+        result: null,
+      });
+      await delay(10);
+
+      await stream.receiveInput({
+        id: 'v0:1',
+        error: { code: -32603, message: 'worker blew up' },
+        jsonrpc: '2.0',
+      });
+      await delivering;
+
+      expect(logger.error).toHaveBeenCalledWith(
+        "Vat v0's worker failed a delivery:",
+        expect.objectContaining({ message: 'worker blew up' }),
+      );
+    });
+
+    it('rejects a ping the worker answers with an error', async () => {
+      const { vat, stream } = await makeVat();
+      const pinging = vat.ping();
+      await delay(10);
+
+      await stream.receiveInput({
+        id: 'v0:1',
+        error: { code: -32603, message: 'worker blew up' },
+        jsonrpc: '2.0',
+      });
+
+      await expect(pinging).rejects.toMatchObject({
+        message: 'worker blew up',
+      });
     });
   });
 });

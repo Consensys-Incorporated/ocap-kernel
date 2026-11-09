@@ -35,6 +35,7 @@ import {
   MAX_VAT_MESSAGE_LENGTH,
   capReasonText,
   fitsVatMessageLimit,
+  fitsVatStateLimit,
 } from './vat-limits.ts';
 import { VatSyscall } from './VatSyscall.ts';
 
@@ -245,16 +246,18 @@ export class VatHandle implements EndpointHandle {
    * @param message.payload - The payload (i.e., the message itself) to handle.
    */
   async #handleMessage(message: JsonRpcMessage): Promise<void> {
-    // Refused as a malformed message is: the drain ends, which reads as the
-    // channel lost, and the vat is terminated.
-    if (!fitsVatMessageLimit(message)) {
-      throw new Error(
-        `Vat ${this.vatId} sent a message over ${MAX_VAT_MESSAGE_LENGTH} characters`,
-      );
-    }
     if (isJsonRpcResponse(message)) {
+      // Not measured whole: a delivery's reply carries all its state changes,
+      // which `sendVatCommand` checks entry by entry.
       this.#rpcClient.handleResponse(message.id as string, message);
     } else if (isJsonRpcNotification(message)) {
+      // Refused as a malformed message is: the drain ends, which reads as the
+      // channel lost, and the vat is terminated.
+      if (!fitsVatMessageLimit(message)) {
+        throw new Error(
+          `Vat ${this.vatId} sent a syscall over ${MAX_VAT_MESSAGE_LENGTH} characters`,
+        );
+      }
       this.#rpcService.assertHasMethod(message.method);
       await this.#rpcService.execute(message.method, message.params);
     } else {
@@ -383,9 +386,10 @@ export class VatHandle implements EndpointHandle {
    * @param payload - The payload of the command.
    * @param payload.method - The method to call.
    * @param payload.params - The parameters to pass to the method.
-   * @returns A promise that resolves the response to the command. A delivery
-   * the worker fails, by an error reply or one that does not fit, resolves
-   * with that as its `deliveryError`.
+   * @returns A promise for the response to the command. A delivery the worker
+   * fails, by an error reply, a malformed result or a write the channel
+   * refuses, resolves with that as its `deliveryError`, as does a delivery or
+   * `initVat` that writes a state entry over the size limit.
    */
   async sendVatCommand<Method extends VatMethod>({
     method,
@@ -395,14 +399,12 @@ export class VatHandle implements EndpointHandle {
     params: ExtractParams<Method, typeof vatMethodSpecs>;
   }): Promise<ExtractResult<Method, typeof vatMethodSpecs>> {
     let result: unknown;
-    let workerFailure: string | undefined;
+    let refusal: string | undefined;
     try {
       result = await this.#rpcClient.call(method, params);
     } catch (error) {
       // A channel that failed or is closing is thrown, for `KernelRouter` to
-      // tell apart by the handle the vat no longer has. Anything else, an error
-      // reply, one that does not fit or a write the channel refused, is the
-      // vat's.
+      // tell apart by the handle the vat no longer has.
       if (
         method !== 'deliver' ||
         this.#closing ||
@@ -410,16 +412,28 @@ export class VatHandle implements EndpointHandle {
       ) {
         throw error;
       }
+      this.#logger?.error(
+        `Vat ${this.vatId}'s worker failed a delivery:`,
+        error,
+      );
       const detail =
         error instanceof Error ? error.message : stringify(error, 0);
-      workerFailure = `Vat worker failed the delivery: ${capReasonText(detail)}`;
-      result = [[[], []], workerFailure] satisfies VatDeliveryResult;
+      refusal = `Vat worker failed the delivery: ${capReasonText(detail)}`;
     }
     if (method === 'initVat' || method === 'deliver') {
+      if (
+        refusal === undefined &&
+        !fitsVatStateLimit((result as VatDeliveryResult)[0])
+      ) {
+        refusal = `Vat ${this.vatId} wrote a state entry over ${MAX_VAT_MESSAGE_LENGTH} characters`;
+        this.#logger?.error(refusal);
+      }
+      if (refusal !== undefined) {
+        result = harden([[[], []], refusal] satisfies VatDeliveryResult);
+      }
       const [[sets, deletes], deliveryError] = result as VatDeliveryResult;
       this.#vatSyscall.deliveryError =
-        workerFailure ??
-        (deliveryError ? capReasonText(deliveryError) : undefined);
+        refusal ?? (deliveryError ? capReasonText(deliveryError) : undefined);
       const noErrors = !deliveryError && !this.#vatSyscall.illegalSyscall;
       // On errors, we neither update this vat's KV data nor rollback previous changes.
       // This is safe because vats are always terminated when errors occur

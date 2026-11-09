@@ -187,7 +187,8 @@ export class VatManager {
    * written directly, as no crank is open.
    *
    * @returns A promise that resolves once every vat has started or been
-   *   terminated, and rejects if a termination fails.
+   *   terminated, and rejects on a store fault, a panic or a failed
+   *   termination.
    */
   async initializeAllVats(): Promise<void> {
     const starts: Promise<void>[] = [];
@@ -205,7 +206,7 @@ export class VatManager {
     if (failures.length > 1) {
       throw new AggregateError(
         failures,
-        'Vats whose workers would not start could not be terminated',
+        'Vats could not be started or terminated',
       );
     }
     if (failures.length === 1) {
@@ -229,6 +230,8 @@ export class VatManager {
       if (isStoreFault(error)) {
         throw error;
       }
+      // After a panic nothing is written outside a crank.
+      this.#kernelQueue.assertRunLoopAlive('retire a vat that would not start');
       const subclusterId = this.#kernelStore
         .getSubclusters()
         .find(({ vats }) => Object.values(vats).includes(vatId))?.id;
@@ -284,6 +287,9 @@ export class VatManager {
           );
         throw running.lost;
       }
+      // A panic during the start leaves the vat unrecorded, as a crash would:
+      // outside a crank, nothing would roll its records back.
+      this.#kernelQueue.assertRunLoopAlive('record a launched vat');
     } catch (error) {
       // Attribute the failure to the specific vat by kernel id and name.
       throw new Error(`Failed to launch vat ${vatId} (${vatName})`, {
@@ -547,8 +553,9 @@ export class VatManager {
     });
     this.terminateVat(vatId, makeLostVatReason(vatId, error)).catch(
       (failure: unknown) => {
-        // Refused, or dropped by the run loop's death: what killed the kernel
-        // has been reported, and a queued termination runs on the next start.
+        // Refused, or dropped with the run loop: what killed the kernel has
+        // been reported, and the next start relaunches the vat, or terminates
+        // it if the request was written.
         if (this.#kernelQueue.isHalted()) {
           return;
         }
@@ -684,7 +691,13 @@ export class VatManager {
   #retireVat(vatId: VatId, error: Error): void {
     this.#vats.delete(vatId);
     if (!this.#kernelStore.isVatTerminated(vatId)) {
-      const failure = makeKernelError('VAT_TERMINATED', error.message);
+      this.#logger.log(`Vat ${vatId} was terminated: ${error.message}`);
+      // A fixed reason, as SwingSet gives: each promise stores its own copy,
+      // so the vat's text would let it fill the disk.
+      const failure = makeKernelError(
+        'VAT_TERMINATED',
+        `Vat ${vatId} was terminated`,
+      );
       for (const kpid of this.#kernelStore.getPromisesByDecider(vatId)) {
         this.#kernelQueue.resolvePromises(vatId, [[kpid, true, failure]]);
       }
@@ -904,7 +917,8 @@ export class VatManager {
 
   /**
    * Replace a vat's worker. Called by the run loop, for a queued restart
-   * request.
+   * request. A store fault in the relaunch is thrown, for the run loop to roll
+   * back.
    *
    * @param vatId - The ID of the vat.
    * @returns The crank outcome: an abort and a termination if the relaunch

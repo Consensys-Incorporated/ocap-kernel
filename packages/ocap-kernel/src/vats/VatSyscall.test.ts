@@ -366,7 +366,7 @@ describe('VatSyscall', () => {
           vatId: 'v1',
           info: makeFatalKernelError(
             'ILLEGAL_SYSCALL',
-            'Syscall translation error: prepare to die',
+            'Syscall failed: prepare to die',
           ),
         },
         panic: [],

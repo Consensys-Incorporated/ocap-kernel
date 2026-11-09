@@ -1,5 +1,7 @@
 import { makePromiseKit } from '@endo/promise-kit';
 import { StreamReadError } from '@metamask/kernel-errors';
+import type { VatStore } from '@metamask/kernel-store';
+import { delay } from '@metamask/kernel-utils';
 import { makeSQLKernelDatabase } from '@metamask/kernel-store/sqlite/nodejs';
 import { isJsonRpcMessage } from '@metamask/kernel-utils';
 import type { JsonRpcMessage } from '@metamask/kernel-utils';
@@ -26,6 +28,7 @@ import { makeGCAction } from '../types.ts';
 import { VatHandle } from './VatHandle.ts';
 import { VatManager } from './VatManager.ts';
 import { asVatId, asVRef } from '../../test/branded.ts';
+import { watch } from '../../test/real-kernel.ts';
 
 const v1 = asVatId('v1');
 
@@ -232,6 +235,13 @@ async function setUp({ onDisk = false }: { onDisk?: boolean } = {}) {
     dbFilename = join(dir, 'store.db');
   }
   const kdb = await makeSQLKernelDatabase({ dbFilename });
+  const vatStores = new Map<string, VatStore>();
+  const makeVatStore = kdb.makeVatStore.bind(kdb);
+  vi.spyOn(kdb, 'makeVatStore').mockImplementation((vatId: string) => {
+    const store = makeVatStore(vatId);
+    vatStores.set(vatId, store);
+    return store;
+  });
   const kernel = boot(kdb);
   const { vatManager, kernelStore } = kernel;
   const doomedRoot = await vatManager.launchVat(config, 'doomed');
@@ -239,6 +249,8 @@ async function setUp({ onDisk = false }: { onDisk?: boolean } = {}) {
   const survivorERef = kernelStore.translateRefKtoE(v1, survivorRoot, true);
   return {
     ...kernel,
+    kdb,
+    vatStores,
     doomedRoot,
     survivorRoot,
     survivorERef,
@@ -754,4 +766,207 @@ describe('a vat that loses its channel as it launches', () => {
       });
     },
   );
+});
+
+describe('a store fault', () => {
+  const DEAD_RESULT =
+    'Kernel run loop died; this message result will never be delivered';
+  const DEAD_WORK = 'Kernel run loop died before this work was done';
+
+  const queued = (kdb: KernelDatabase): number =>
+    Number(kdb.kernelKVStore.get('queue.run.head')) -
+    Number(kdb.kernelKVStore.get('queue.run.tail'));
+
+  it("stops the kernel when writing a vat's state fails, without blaming the vat", async () => {
+    const harness = await setUp();
+    const { kdb, vatStores, kernelQueue, doomedRoot } = harness;
+    const fault = new Error('database or disk is full');
+    vi.spyOn(vatStores.get(v1) as VatStore, 'updateKVData').mockImplementation(
+      () => {
+        throw fault;
+      },
+    );
+    const caller = watch(kernelQueue.enqueueMessage(doomedRoot, 'work', []));
+    harness.run();
+
+    await vi.waitFor(() =>
+      expect({
+        runLoop: kernelQueue.getRunLoopStatus().state,
+        persisted: [...harness.kernelStore.getAllVatRecords()].map(
+          ({ vatID }) => vatID,
+        ),
+      }).toStrictEqual({ runLoop: 'failed', persisted: ['v1', 'v2'] }),
+    );
+    await delay(0);
+
+    expect({
+      error: kernelQueue.getRunLoopStatus(),
+      caller: caller(),
+      queued: queued(kdb),
+    }).toStrictEqual({
+      error: {
+        state: 'failed',
+        error: fault.message,
+        detail: expect.any(String),
+      },
+      caller: DEAD_RESULT,
+      queued: 1,
+    });
+  });
+
+  it('stops the kernel on a store fault in a syscall, without blaming the vat', async () => {
+    const harness = await setUp();
+    const { kdb, kernelQueue, workers, survivorERef, doomedRoot } = harness;
+    const fault = new Error('database or disk is full');
+    const set = kdb.kernelKVStore.set.bind(kdb.kernelKVStore);
+    vi.spyOn(kdb.kernelKVStore, 'set').mockImplementation((key, value) => {
+      if (key === `${v1}.c.p+5`) {
+        throw fault;
+      }
+      set(key, value);
+    });
+    workers.onDeliver(v1, async ({ syscall }) => {
+      await syscall([
+        'send',
+        survivorERef,
+        { methargs: kser(['fromDoomed', []]), result: 'p+5' },
+      ]);
+      return 'answer';
+    });
+    const caller = watch(kernelQueue.enqueueMessage(doomedRoot, 'work', []));
+    harness.run();
+
+    await vi.waitFor(() =>
+      expect({
+        runLoop: kernelQueue.getRunLoopStatus().state,
+        persisted: [...harness.kernelStore.getAllVatRecords()].map(
+          ({ vatID }) => vatID,
+        ),
+      }).toStrictEqual({ runLoop: 'failed', persisted: ['v1', 'v2'] }),
+    );
+    await delay(0);
+
+    expect({
+      runLoop: kernelQueue.getRunLoopStatus(),
+      caller: caller(),
+      queued: queued(kdb),
+      survivorGot: workers.methodsDelivered(asVatId('v2')),
+      running: harness.vatManager.getVatIds(),
+    }).toStrictEqual({
+      runLoop: {
+        state: 'failed',
+        error: 'Kernel panic: syscall send from vat v1 failed',
+        detail: expect.stringContaining(fault.message),
+      },
+      caller: DEAD_RESULT,
+      queued: 1,
+      survivorGot: [],
+      running: ['v1', 'v2'],
+    });
+  });
+
+  it('stops the kernel when a restart cannot read the vat state, without terminating the vat', async () => {
+    const harness = await setUp();
+    const { kdb, kernelQueue, vatManager } = harness;
+    const fault = new Error('disk I/O error');
+    harness.run();
+    vi.mocked(kdb.makeVatStore).mockImplementation(() => ({
+      getKVData: () => {
+        throw fault;
+      },
+      updateKVData: () => undefined,
+    }));
+    const restart = watch(vatManager.restartVat(v1));
+
+    await vi.waitFor(() =>
+      expect({
+        runLoop: kernelQueue.getRunLoopStatus().state,
+        persisted: [...harness.kernelStore.getAllVatRecords()].map(
+          ({ vatID }) => vatID,
+        ),
+      }).toStrictEqual({ runLoop: 'failed', persisted: ['v1', 'v2'] }),
+    );
+    await delay(0);
+
+    expect({
+      runLoop: kernelQueue.getRunLoopStatus(),
+      restart: restart(),
+      queued: queued(kdb),
+    }).toStrictEqual({
+      runLoop: {
+        state: 'failed',
+        error: fault.message,
+        detail: expect.any(String),
+      },
+      restart: DEAD_WORK,
+      queued: 1,
+    });
+  });
+
+  it('carries a termination a store fault stopped out on the next start', async () => {
+    const harness = await setUp({ onDisk: true });
+    const { kdb, kernelQueue, vatManager } = harness;
+    harness.run();
+    const set = kdb.kernelKVStore.set.bind(kdb.kernelKVStore);
+    vi.spyOn(kdb.kernelKVStore, 'set').mockImplementation((key, value) => {
+      if (key === 'vats.terminated') {
+        throw new Error('database or disk is full');
+      }
+      set(key, value);
+    });
+    vatManager.terminateVat(v1).catch(() => undefined);
+    await vi.waitFor(() =>
+      expect(kernelQueue.getRunLoopStatus().state).toBe('failed'),
+    );
+
+    const next = await harness.reboot();
+    await deliverEverythingQueued({ ...harness, ...next });
+
+    expect({
+      running: next.vatManager.getVatIds(),
+      persisted: [...next.kernelStore.getAllVatRecords()].map(
+        ({ vatID }) => vatID,
+      ),
+    }).toStrictEqual({ running: ['v2'], persisted: ['v2'] });
+  });
+  it('takes no syscall from a vat still running once the run loop has died', async () => {
+    const harness = await setUp();
+    const { kdb, vatStores, kernelQueue, workers, survivorERef, doomedRoot } =
+      harness;
+    let doomedWorker: Worker | undefined;
+    workers.onDeliver(v1, async (worker) => {
+      doomedWorker = worker;
+      return 'answer';
+    });
+    vi.spyOn(vatStores.get(v1) as VatStore, 'updateKVData').mockImplementation(
+      () => {
+        throw new Error('database or disk is full');
+      },
+    );
+    kernelQueue.enqueueMessage(doomedRoot, 'work', []).catch(() => undefined);
+    harness.run();
+    await vi.waitFor(() =>
+      expect(kernelQueue.getRunLoopStatus().state).toBe('failed'),
+    );
+    const before = queued(kdb);
+
+    await doomedWorker?.syscall([
+      'send',
+      survivorERef,
+      { methargs: kser(['late', []]), result: 'p+6' },
+    ]);
+    await delay(10);
+
+    expect({
+      added: queued(kdb) - before,
+      resultImported: kdb.kernelKVStore.get(`${v1}.c.p+6`),
+      persisted: [...harness.kernelStore.getAllVatRecords()].map(
+        ({ vatID }) => vatID,
+      ),
+    }).toStrictEqual({
+      added: 0,
+      resultImported: undefined,
+      persisted: ['v1', 'v2'],
+    });
+  });
 });

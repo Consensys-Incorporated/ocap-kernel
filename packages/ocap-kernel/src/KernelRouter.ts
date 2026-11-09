@@ -282,9 +282,9 @@ export class KernelRouter {
   /**
    * Reject a message's result promise, unless it is already settled.
    *
-   * A failed delivery may have settled the result first. Resolving a settled
-   * promise is a `Fail`, thrown from inside the catch that is handling the
-   * failure.
+   * Defensive: only a remote's full queue reaches here, refused before it
+   * settles anything, but resolving a settled promise is a `Fail`, thrown from
+   * inside the catch that is handling the failure.
    *
    * @param endpointId - The endpoint that was to have decided it.
    * @param kpid - The result promise.
