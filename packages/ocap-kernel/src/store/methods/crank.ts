@@ -14,11 +14,14 @@ import type { CrankBufferItem, Savepoint, StoreContext } from '../types.ts';
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 export function getCrankMethods(ctx: StoreContext, kdb: KernelDatabase) {
   /**
-   * Start a crank.
+   * Start a crank, giving it the next crank number.
    */
   function startCrank(): void {
     !ctx.inCrank || Fail`startCrank while already in a crank`;
     ctx.inCrank = true;
+    // Written before the crank's savepoints exist, so a crank that rolls back
+    // still used up its number.
+    ctx.crankNumber.set(`${getCrankNumber() + 1}`);
     const { promise, resolve } = makePromiseKit<void>();
     ctx.crankSettled = promise;
     ctx.resolveCrank = resolve;
@@ -184,6 +187,17 @@ export function getCrankMethods(ctx: StoreContext, kdb: KernelDatabase) {
   }
 
   /**
+   * Get the number of the current crank, or of the most recent one if none is
+   * in progress. Cranks are numbered from 1 across the life of the kernel,
+   * restarts included; 0 means no crank has ever run.
+   *
+   * @returns The crank number.
+   */
+  function getCrankNumber(): number {
+    return Number(ctx.crankNumber.get());
+  }
+
+  /**
    * Check whether the kernel is currently inside a crank.
    *
    * @returns True if a crank is in progress.
@@ -201,6 +215,7 @@ export function getCrankMethods(ctx: StoreContext, kdb: KernelDatabase) {
     waitForCrank,
     bufferCrankOutput,
     flushCrankBuffer,
+    getCrankNumber,
     isInCrank,
   };
 }

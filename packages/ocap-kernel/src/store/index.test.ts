@@ -91,6 +91,7 @@ describe('kernel store', () => {
         'getAllSystemSubclusterMappings',
         'getAllVatRecords',
         'getAnonymousKernelObjects',
+        'getCrankNumber',
         'getGCActions',
         'getImporters',
         'getKernelPromise',
@@ -200,6 +201,32 @@ describe('kernel store', () => {
         'unpinObject',
         'waitForCrank',
       ]);
+    });
+  });
+
+  describe('crank numbering', () => {
+    it('continues from where a previous store over the same database left off', () => {
+      const first = makeKernelStore(mockKernelDatabase);
+      first.startCrank();
+      first.endCrank();
+      first.startCrank();
+      first.endCrank();
+      expect(first.getCrankNumber()).toBe(2);
+
+      const second = makeKernelStore(mockKernelDatabase);
+      expect(second.getCrankNumber()).toBe(2);
+      second.startCrank();
+      expect(second.getCrankNumber()).toBe(3);
+    });
+
+    it('starts over after a reset', () => {
+      const ks = makeKernelStore(mockKernelDatabase);
+      ks.startCrank();
+      ks.endCrank();
+      ks.reset();
+      expect(ks.getCrankNumber()).toBe(0);
+      ks.startCrank();
+      expect(ks.getCrankNumber()).toBe(1);
     });
   });
 

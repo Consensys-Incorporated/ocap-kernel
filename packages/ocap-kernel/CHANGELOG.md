@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Number cranks, from 1, with a counter that persists across restarts. `KernelStore.getCrankNumber()` reports the current crank's number, or the last one's between cranks, and the `@@@@ deliver` log lines carry it
 - Add a `vatRelaunchTimeoutMs` option to `Kernel.make`: how long a vat restart waits for the new worker before giving up, 30 seconds by default ([#1096](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1096))
 - A `CrankResult` may carry `afterCommit`, work the run loop runs once the crank has committed and skips if it aborts, for what a rollback could not undo anyway: in-memory state, and sending a message the crank has already written down. While it runs it may not write the kernel store, since by then there is no transaction to write into ([#1101](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1101))
 - Add `orphanKernelObject` to the kernel store, which gives up the kernel's record of who owns an object ([#1091](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1091))
