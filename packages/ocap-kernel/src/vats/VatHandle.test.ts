@@ -363,6 +363,34 @@ describe('VatHandle', () => {
       });
     });
 
+    it('cuts a long delivery error short in the termination reason', async () => {
+      const { vat, stream } = await makeVat();
+      const delivering = vat.deliverMessage(asERef('o+0'), {
+        methargs: { body: '#["hello",[]]', slots: [] },
+        result: null,
+      });
+      await delay(10);
+
+      await stream.receiveInput({
+        id: 'v0:1',
+        result: [[[], []], 'x'.repeat(10_005)],
+        jsonrpc: '2.0',
+      });
+
+      expect(await delivering).toStrictEqual({
+        didDelivery: 'v0',
+        abort: true,
+        terminate: {
+          vatId: 'v0',
+          reject: true,
+          info: makeFatalKernelError(
+            'INTERNAL_ERROR',
+            `${'x'.repeat(10_000)}… (5 more characters)`,
+          ),
+        },
+      });
+    });
+
     it('throws a delivery whose channel dies, for the router to tell apart', async () => {
       const { vat, stream } = await makeVat();
       const delivering = vat.deliverMessage(asERef('o+0'), {

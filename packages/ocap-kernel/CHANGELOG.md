@@ -83,9 +83,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- A kernel or store fault stops the kernel and rolls back the crank it happened in, instead of being blamed on a vat or a peer, or committed without the write that failed ([#PANIC](https://github.com/Consensys-Incorporated/ocap-kernel/pull/PANIC))
-  - A syscall that fails by the kernel's fault stops the kernel. One the vat had no right to make, such as resolving a promise it does not decide or naming an object the kernel has deleted, still terminates the vat
-  - A delivery that fails for any reason but a remote's full queue stops the kernel, instead of rejecting the message with `DELIVERY_FAILED`. A worker that answers a delivery with an error has its vat terminated
+- A store fault stops the kernel and rolls back the crank it happened in, instead of being blamed on a vat or a peer, or committed without the write that failed ([#PANIC](https://github.com/Consensys-Incorporated/ocap-kernel/pull/PANIC))
+  - A store fault during a syscall stops the kernel instead of terminating the vat
+  - A delivery that fails for any reason but a remote's full queue stops the kernel, instead of rejecting the message with `DELIVERY_FAILED`. A worker that answers a delivery with an error has its vat terminated, with the error cut to 10,000 characters
   - A store fault while restarting a vat stops the kernel, and one while starting a persisted vat at boot fails `Kernel.make`, instead of terminating the vat
   - A termination that fails partway is carried out again on the next start, instead of leaving the vat persisted with no worker
   - A store fault during a peer's handshake, or while taking its message, stops the kernel instead of failing the handshake or losing the message

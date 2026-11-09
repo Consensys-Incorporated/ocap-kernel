@@ -30,17 +30,12 @@ describe('VatSyscall', () => {
     } as unknown as KernelQueue;
     kernelStore = {
       translateSyscallVtoK: vi.fn((_: string, vso: VatSyscallObject) => vso),
-      getKernelPromise: vi.fn(() => ({
-        state: 'unresolved',
-        decider: 'v1',
-        subscribers: [],
-      })),
+      getKernelPromise: vi.fn(),
       addPromiseSubscriber: vi.fn(),
       clearReachableFlag: vi.fn(),
       getReachableFlag: vi.fn(),
       forgetKref: vi.fn(),
       getOwner: vi.fn(() => 'v1'),
-      kernelRefExists: vi.fn(() => true),
       orphanKernelObject: vi.fn(),
       // The identity mock for `translateSyscallVtoK` leaves the vref in place,
       // so the c-list round-trip is the identity too.
@@ -79,11 +74,7 @@ describe('VatSyscall', () => {
   });
 
   it('calls resolvePromises for resolve syscall', async () => {
-    const resolution = [
-      'kp1',
-      false,
-      { body: '#null', slots: [] },
-    ] as VatOneResolution;
+    const resolution = ['kp1', false, {}] as VatOneResolution;
     const vso = ['resolve', [resolution]] as VatSyscallObject;
     vatSys.handleSyscall(vso);
     expect(kernelQueue.resolvePromises).toHaveBeenCalledWith(
@@ -106,11 +97,7 @@ describe('VatSyscall', () => {
 
   it('resolves promises immediately when outside a crank', () => {
     (kernelStore.isInCrank as unknown as MockInstance).mockReturnValue(false);
-    const resolution = [
-      'kp1',
-      false,
-      { body: '#null', slots: [] },
-    ] as VatOneResolution;
+    const resolution = ['kp1', false, {}] as VatOneResolution;
     const vso = ['resolve', [resolution]] as VatSyscallObject;
     vatSys.handleSyscall(vso);
     expect(kernelQueue.resolvePromises).toHaveBeenCalledWith(
@@ -313,145 +300,64 @@ describe('VatSyscall', () => {
       );
     });
 
-    it('panics on a store fault during translation, without blaming the vat', () => {
-      const storeFault = makeStoreFault();
+    it.each([
+      {
+        where: 'during translation',
+        fail: (fault: Error) =>
+          (
+            kernelStore.translateSyscallVtoK as unknown as MockInstance
+          ).mockImplementationOnce(() => {
+            throw fault;
+          }),
+      },
+      {
+        where: 'after translation',
+        fail: (fault: Error) =>
+          (
+            kernelQueue.enqueueSend as unknown as MockInstance
+          ).mockImplementationOnce(() => {
+            throw fault;
+          }),
+      },
+    ])(
+      'stops the kernel on a store fault $where, without blaming the vat',
+      ({ fail }) => {
+        const storeFault = makeStoreFault();
+        fail(storeFault);
+
+        const result = vatSys.handleSyscall([
+          'send',
+          'ko1',
+          { methargs: { body: '#null', slots: [] }, result: null },
+        ] as VatSyscallObject);
+
+        expect({
+          result,
+          panic: (kernelQueue.panic as unknown as MockInstance).mock.calls,
+          illegalSyscall: vatSys.illegalSyscall,
+        }).toStrictEqual({
+          result: ['error', 'Kernel panic: syscall send from vat v1 failed'],
+          panic: [['syscall send from vat v1 failed', storeFault]],
+          illegalSyscall: undefined,
+        });
+      },
+    );
+
+    it('terminates the vat on any other failure after translation', () => {
       (
-        kernelStore.translateSyscallVtoK as unknown as MockInstance
+        kernelQueue.enqueueSend as unknown as MockInstance
       ).mockImplementationOnce(() => {
-        throw storeFault;
+        throw new Error('kernel bug');
       });
-
-      const result = vatSys.handleSyscall([
-        'send',
-        'o+1',
-        { methargs: { body: '', slots: [] }, result: null },
-      ] as VatSyscallObject);
-
-      expect({
-        result,
-        panic: (kernelQueue.panic as unknown as MockInstance).mock.calls,
-        illegalSyscall: vatSys.illegalSyscall,
-      }).toStrictEqual({
-        result: ['error', 'Kernel panic: syscall send from vat v1 failed'],
-        panic: [['syscall send from vat v1 failed', storeFault]],
-        illegalSyscall: undefined,
-      });
-    });
-
-    it('panics on a fault after translation, without blaming the vat', () => {
-      const storeFault = new Error('database or disk is full');
-      (kernelQueue.enqueueSend as unknown as MockInstance).mockImplementation(
-        () => {
-          throw storeFault;
-        },
-      );
 
       const result = vatSys.handleSyscall([
         'send',
         'ko1',
-        { methargs: { body: '', slots: [] }, result: null },
+        { methargs: { body: '#null', slots: [] }, result: null },
       ] as VatSyscallObject);
 
-      expect({
-        result,
-        panic: (kernelQueue.panic as unknown as MockInstance).mock.calls,
-        illegalSyscall: vatSys.illegalSyscall,
-      }).toStrictEqual({
-        result: ['error', 'Kernel panic: syscall send from vat v1 failed'],
-        panic: [['syscall send from vat v1 failed', storeFault]],
-        illegalSyscall: undefined,
-      });
-    });
-
-    it.each([
-      {
-        what: 'one it does not decide',
-        promise: { state: 'unresolved', decider: 'v2', subscribers: [] },
-        resolutions: [['kp1', false, { body: '#null', slots: [] }]],
-        error: 'vat v1 resolved kp1, whose decider is v2',
-      },
-      {
-        what: 'one already resolved',
-        promise: { state: 'fulfilled', value: {} },
-        resolutions: [['kp1', false, { body: '#null', slots: [] }]],
-        error: 'vat v1 resolved kp1, already fulfilled',
-      },
-      {
-        what: 'one twice',
-        resolutions: [
-          ['kp1', false, { body: '#null', slots: [] }],
-          ['kp1', true, { body: '#null', slots: [] }],
-        ],
-        error: 'vat v1 resolved a promise twice in one syscall',
-      },
-      {
-        what: 'an object',
-        resolutions: [['ko1', false, { body: '#null', slots: [] }]],
-        error: 'vat v1 resolved ko1, not a promise',
-      },
-    ])(
-      'terminates a vat that resolves $what',
-      ({ promise, resolutions, error }) => {
-        if (promise) {
-          (
-            kernelStore.getKernelPromise as unknown as MockInstance
-          ).mockReturnValueOnce(promise);
-        }
-
-        const result = vatSys.handleSyscall([
-          'resolve',
-          resolutions,
-        ] as VatSyscallObject);
-
-        expect(result).toStrictEqual(['error', error]);
-        expect(vatSys.illegalSyscall).toBeDefined();
-        expect(kernelQueue.resolvePromises).not.toHaveBeenCalled();
-        expect(kernelQueue.panic).not.toHaveBeenCalled();
-      },
-    );
-
-    it.each([
-      {
-        what: 'subscribes to an object',
-        vso: ['subscribe', 'ko1'],
-        error: 'vat v1 subscribed to ko1, not a promise',
-      },
-      {
-        what: 'sends to an object the kernel has deleted',
-        vso: [
-          'send',
-          'ko9',
-          { methargs: { body: '#null', slots: [] }, result: null },
-        ],
-        error: 'vat v1 named ko9, which the kernel has deleted',
-      },
-      {
-        what: 'resolves to an object the kernel has deleted',
-        vso: ['resolve', [['kp1', false, { body: '#null', slots: ['ko9'] }]]],
-        error: 'vat v1 named ko9, which the kernel has deleted',
-      },
-      {
-        what: 'retires an import twice',
-        vso: ['retireImports', ['o-1', 'o-1']],
-        error: 'endpoint v1 issued retireImports naming a kref twice',
-      },
-      {
-        what: 'abandons an export twice',
-        vso: ['abandonExports', ['o+1', 'o+1']],
-        error: 'endpoint v1 issued abandonExports naming a kref twice',
-      },
-    ])('terminates a vat that $what', ({ vso, error }) => {
-      (
-        kernelStore.kernelRefExists as unknown as MockInstance
-      ).mockImplementation((kref: string) => kref !== 'ko9');
-
-      const result = vatSys.handleSyscall(vso as VatSyscallObject);
-
-      expect(result).toStrictEqual(['error', error]);
+      expect(result).toStrictEqual(['error', 'kernel bug']);
       expect(vatSys.illegalSyscall).toBeDefined();
-      expect(kernelStore.forgetKref).not.toHaveBeenCalled();
-      expect(kernelQueue.enqueueSend).not.toHaveBeenCalled();
-      expect(kernelQueue.resolvePromises).not.toHaveBeenCalled();
       expect(kernelQueue.panic).not.toHaveBeenCalled();
     });
   });

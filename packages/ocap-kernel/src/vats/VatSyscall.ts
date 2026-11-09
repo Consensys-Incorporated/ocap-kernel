@@ -7,8 +7,6 @@ import type { FatalKernelErrorCode } from '@metamask/kernel-errors';
 import { Logger } from '@metamask/logger';
 
 import {
-  checkExportCleanup,
-  checkRetireImports,
   performDropImports,
   performRetireImports,
   performExportCleanup,
@@ -16,7 +14,6 @@ import {
 import type { KernelQueue } from '../KernelQueue.ts';
 import { makeFatalKernelError } from '../liveslots/kernel-marshal.ts';
 import type { KernelStore } from '../store/index.ts';
-import { isPromiseRef } from '../store/utils/promise-ref.ts';
 import { isStoreFault } from '../store/utils/store-fault.ts';
 import type {
   KernelSyscallObject,
@@ -156,87 +153,19 @@ export class VatSyscall {
   }
 
   /**
-   * Check what translation leaves to the handlers: a syscall that passes is
-   * one they can carry out, so whatever they throw is the kernel's fault.
-   *
-   * @param kso - The translated syscall.
-   */
-  #checkSyscall(kso: KernelSyscallObject): void {
-    const { vatId } = this;
-    const insistExists = (krefs: (KRef | null)[]): void => {
-      for (const kref of krefs) {
-        if (kref !== null && !this.#kernelStore.kernelRefExists(kref)) {
-          throw Error(
-            `vat ${vatId} named ${kref}, which the kernel has deleted`,
-          );
-        }
-      }
-    };
-    switch (kso[0]) {
-      case 'send': {
-        const [, target, { result, methargs }] = kso;
-        insistExists([target, result ?? null, ...methargs.slots]);
-        break;
-      }
-      case 'subscribe': {
-        const [, kpid] = kso;
-        if (!isPromiseRef(kpid)) {
-          throw Error(`vat ${vatId} subscribed to ${kpid}, not a promise`);
-        }
-        break;
-      }
-      case 'resolve': {
-        const kpids = kso[1].map(([kpid]) => kpid);
-        if (new Set(kpids).size !== kpids.length) {
-          throw Error(`vat ${vatId} resolved a promise twice in one syscall`);
-        }
-        for (const kpid of kpids) {
-          if (!isPromiseRef(kpid)) {
-            throw Error(`vat ${vatId} resolved ${kpid}, not a promise`);
-          }
-          const { state, decider } = this.#kernelStore.getKernelPromise(kpid);
-          if (state !== 'unresolved') {
-            throw Error(`vat ${vatId} resolved ${kpid}, already ${state}`);
-          }
-          if (decider !== vatId) {
-            throw Error(
-              `vat ${vatId} resolved ${kpid}, whose decider is ${decider ?? 'nobody'}`,
-            );
-          }
-        }
-        insistExists(kso[1].flatMap(([, , data]) => data.slots));
-        break;
-      }
-      case 'retireImports':
-        checkRetireImports(kso[1], vatId, this.#kernelStore);
-        break;
-      case 'retireExports':
-      case 'abandonExports':
-        checkExportCleanup(
-          kso[1],
-          kso[0] === 'retireExports',
-          vatId,
-          this.#kernelStore,
-        );
-        break;
-      default:
-        break;
-    }
-  }
-
-  /**
-   * Handle a syscall from the vat. As in SwingSet's `vatSyscallHandler`, a
-   * syscall that fails translation or its checks is the vat's fault, and one
-   * that fails after them is the kernel's, which panics.
+   * Handle a syscall from the vat. A store fault stops the kernel, and anything
+   * else is the vat's fault. SwingSet stops the kernel on any failure past
+   * translation, but our translation checks less than SwingSet's, so a vat's
+   * own mistake can get that far.
    *
    * @param vso - The syscall that was received.
    * @returns The result of the syscall.
    */
   handleSyscall(vso: VatSyscallObject): VatSyscallResult {
-    this.illegalSyscall = undefined;
-    this.vatRequestedTermination = undefined;
-    let kso: KernelSyscallObject;
     try {
+      this.illegalSyscall = undefined;
+      this.vatRequestedTermination = undefined;
+
       // This is a safety check - this case should never happen
       if (!this.#kernelStore.isVatActive(this.vatId)) {
         this.#recordVatFatalSyscall(
@@ -245,26 +174,13 @@ export class VatSyscall {
         );
         return harden(['error', 'vat not found']);
       }
-      kso = this.#kernelStore.translateSyscallVtoK(this.vatId, vso);
-      this.#checkSyscall(kso);
-    } catch (error) {
-      // Translation writes too, for a ref the vat names for the first time.
-      if (isStoreFault(error)) {
-        return this.#panic(vso[0], error);
-      }
-      this.#logger?.error(`Fatal syscall error in vat ${this.vatId}`, error);
-      this.#recordVatFatalSyscall(
-        'ILLEGAL_SYSCALL',
-        'Syscall translation error: prepare to die',
+
+      const kso: KernelSyscallObject = this.#kernelStore.translateSyscallVtoK(
+        this.vatId,
+        vso,
       );
-      return harden([
-        'error',
-        error instanceof Error ? error.message : String(error),
-      ]);
-    }
-    const [op] = kso;
-    const { vatId } = this;
-    try {
+      const [op] = kso;
+      const { vatId } = this;
       switch (op) {
         case 'send': {
           const [, target, message] = kso;
@@ -336,14 +252,24 @@ export class VatSyscall {
       }
       return harden(['ok', null]);
     } catch (error) {
-      return this.#panic(op, error);
+      if (isStoreFault(error)) {
+        return this.#panic(vso[0], error);
+      }
+      this.#logger?.error(`Fatal syscall error in vat ${this.vatId}`, error);
+      this.#recordVatFatalSyscall(
+        'ILLEGAL_SYSCALL',
+        'Syscall translation error: prepare to die',
+      );
+      return harden([
+        'error',
+        error instanceof Error ? error.message : String(error),
+      ]);
     }
   }
 
   /**
-   * Stop the kernel over a syscall that failed by the kernel's own fault. Not
-   * thrown: this runs in the drain of the vat's channel, where a throw reads
-   * as the channel lost.
+   * Stop the kernel over a syscall the store failed. Not thrown: this runs in
+   * the drain of the vat's channel, where a throw reads as the channel lost.
    *
    * @param op - The syscall.
    * @param error - What it failed with.

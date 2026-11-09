@@ -33,6 +33,26 @@ import type {
 import type { AllowedGlobalName } from './endowments.ts';
 import { VatSyscall } from './VatSyscall.ts';
 
+/**
+ * How much of a worker's delivery error a termination reason keeps. Building
+ * the reason from a string near the engine's length limit throws, which would
+ * stop the kernel over the vat's own failure.
+ */
+const MAX_DELIVERY_ERROR_LENGTH = 10_000;
+
+/**
+ * Cut a worker's delivery error to {@link MAX_DELIVERY_ERROR_LENGTH}.
+ *
+ * @param deliveryError - What the worker reported.
+ * @returns The error, cut short if it is longer.
+ */
+function capDeliveryError(deliveryError: string): string {
+  const over = deliveryError.length - MAX_DELIVERY_ERROR_LENGTH;
+  return over > 0
+    ? `${deliveryError.slice(0, MAX_DELIVERY_ERROR_LENGTH)}… (${over} more characters)`
+    : deliveryError;
+}
+
 type MessageFromVat = JsonRpcResponse | JsonRpcNotification;
 
 type VatStream = DuplexStream<MessageFromVat, JsonRpcMessage>;
@@ -403,7 +423,9 @@ export class VatHandle implements EndpointHandle {
     }
     if (method === 'initVat' || method === 'deliver') {
       const [[sets, deletes], deliveryError] = result as VatDeliveryResult;
-      this.#vatSyscall.deliveryError = deliveryError ?? undefined;
+      this.#vatSyscall.deliveryError = deliveryError
+        ? capDeliveryError(deliveryError)
+        : undefined;
       const noErrors = !deliveryError && !this.#vatSyscall.illegalSyscall;
       // On errors, we neither update this vat's KV data nor rollback previous changes.
       // This is safe because vats are always terminated when errors occur
