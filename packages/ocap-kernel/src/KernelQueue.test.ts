@@ -606,11 +606,8 @@ describe('KernelQueue', () => {
       });
     });
 
-    // A failed rollback discards every savepoint, so a second attempt could
-    // only report a missing one. Without the flag the abort path sets, the
-    // catch asks again, and "no such savepoint" becomes the reason the kernel
-    // reports for its own death — the database error reaching nobody, since
-    // only `error.message` crosses the wire.
+    // Only `error.message` crosses the wire, so it has to name the database
+    // error rather than a missing savepoint.
     it('reports the database failure when an aborted crank cannot roll back', async () => {
       (kernelStore.runQueueLength as unknown as MockInstance)
         .mockReturnValueOnce(1)
@@ -2086,9 +2083,6 @@ describe('KernelQueue', () => {
   describe('panic', () => {
     const cause = new Error('database or disk is full');
 
-    /**
-     * Queue one item for the run loop to take.
-     */
     const queueOneItem = (): void => {
       (kernelStore.runQueueLength as unknown as MockInstance)
         .mockReturnValueOnce(1)
@@ -2267,8 +2261,6 @@ describe('KernelQueue', () => {
     });
 
     it('rolls back a vat death recorded without an abort', async () => {
-      // `vatPowers.exitVat` terminates gracefully, so only the throw from
-      // `collectGarbage` rolls anything back.
       await deliverThenDie({ terminate: { vatId: 'v1', info: {} } });
 
       expect(

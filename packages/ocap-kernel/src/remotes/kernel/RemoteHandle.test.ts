@@ -331,7 +331,6 @@ describe('RemoteHandle', () => {
     for (let i = 0; i < 200; i += 1) {
       await remote.deliverNotify([]);
     }
-    // `KernelRouter.#deliverSend` spares a full queue by this type alone.
     await expect(remote.deliverNotify([])).rejects.toThrow(ResourceLimitError);
 
     expect(await remote[method]([asRRef('ro+4')])).toStrictEqual({

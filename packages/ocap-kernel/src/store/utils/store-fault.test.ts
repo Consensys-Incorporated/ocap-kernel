@@ -1,4 +1,4 @@
-import type { KVStore, VatStore } from '@metamask/kernel-store';
+import type { VatStore } from '@metamask/kernel-store';
 import { describe, it, expect, vi } from 'vitest';
 
 import {
@@ -6,37 +6,19 @@ import {
   markStoreFaults,
   markVatStoreFaults,
 } from './store-fault.ts';
-
-/**
- * A KV store over a map.
- *
- * @returns The store.
- */
-function makeKV(): KVStore {
-  const map = new Map<string, string>();
-  return {
-    get: (key) => map.get(key) as never,
-    getRequired: (key) => map.get(key) as never,
-    getNextKey: () => undefined,
-    set: (key, value) => {
-      map.set(key, value);
-    },
-    delete: (key) => {
-      map.delete(key);
-    },
-  };
-}
+import { makeMapKVStore, makeStoreFault } from '../../../test/storage.ts';
 
 describe('markStoreFaults', () => {
   it.each(['get', 'getRequired', 'getNextKey', 'set', 'delete'] as const)(
     'marks what %s throws',
     (method) => {
-      const kv = makeKV();
+      const kv = makeMapKVStore();
       const fault = new Error('disk I/O error');
       const throwFault = (): never => {
         throw fault;
       };
       vi.spyOn(kv, method).mockImplementation(throwFault);
+      // The wrapper's `getRequired` goes by way of `get`.
       vi.spyOn(kv, 'get').mockImplementation(throwFault);
 
       const call = markStoreFaults(kv)[method] as (
@@ -49,7 +31,7 @@ describe('markStoreFaults', () => {
   );
 
   it('passes calls through', () => {
-    const marked = markStoreFaults(makeKV());
+    const marked = markStoreFaults(makeMapKVStore());
 
     marked.set('key', 'value');
 
@@ -59,7 +41,7 @@ describe('markStoreFaults', () => {
   it('does not mark a missing key', () => {
     let missing: unknown;
     try {
-      markStoreFaults(makeKV()).getRequired('key');
+      markStoreFaults(makeMapKVStore()).getRequired('key');
     } catch (error) {
       missing = error;
     }
@@ -94,12 +76,7 @@ describe('markVatStoreFaults', () => {
 
 describe('isStoreFault', () => {
   it('finds a store fault among the causes', () => {
-    const kv = makeKV();
-    const fault = new Error('database or disk is full');
-    vi.spyOn(kv, 'set').mockImplementation(() => {
-      throw fault;
-    });
-    expect(() => markStoreFaults(kv).set('key', 'value')).toThrow(fault);
+    const fault = makeStoreFault();
 
     expect(isStoreFault(new Error('wrapped', { cause: fault }))).toBe(true);
   });

@@ -52,8 +52,7 @@ describe('getTranslators', () => {
   });
 
   describe('translateRefEtoK', () => {
-    it('refuses a kref, which the c-list would read back as its other half', () => {
-      mockErefToKref.mockReturnValue('R o+1');
+    it('refuses a kref', () => {
       const { translateRefEtoK } = getTranslators(mockCtx);
 
       expect(() =>

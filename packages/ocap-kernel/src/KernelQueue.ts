@@ -490,13 +490,13 @@ export class KernelQueue {
    * @throws If the run loop has died, stopped or panicked.
    */
   assertRunLoopAlive(what: string): void {
-    if (this.#panic && this.#runLoopState.state !== 'failed') {
+    if (this.#runLoopState.state === 'failed') {
+      throw this.#makeDeadRunLoopError(`Kernel run loop died; cannot ${what}`);
+    }
+    if (this.#panic) {
       throw new Error(`Kernel panicked; cannot ${what}`, {
         cause: this.#panic,
       });
-    }
-    if (this.#runLoopState.state === 'failed') {
-      throw this.#makeDeadRunLoopError(`Kernel run loop died; cannot ${what}`);
     }
     if (this.#runLoopState.state === 'stopped') {
       throw Error(`Kernel run loop is stopped; cannot ${what}`);
@@ -523,9 +523,9 @@ export class KernelQueue {
   }
 
   /**
-   * Whether the kernel has panicked or its run loop has died. Nothing may be
-   * written then: outside a crank, a write commits on its own and nothing will
-   * roll it back.
+   * Whether the kernel has panicked or its run loop has died. Vats' syscalls,
+   * and the state a vat reports after a delivery, are refused then: outside a
+   * crank they would commit on their own, and nothing would roll them back.
    *
    * @returns True if so.
    */

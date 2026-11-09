@@ -31,27 +31,12 @@ import type {
   EndpointHandle,
 } from '../types.ts';
 import type { AllowedGlobalName } from './endowments.ts';
+import {
+  MAX_VAT_MESSAGE_LENGTH,
+  capReasonText,
+  fitsVatMessageLimit,
+} from './vat-limits.ts';
 import { VatSyscall } from './VatSyscall.ts';
-
-/**
- * How much of a worker's delivery error a termination reason keeps. Building
- * the reason from a string near the engine's length limit throws, which would
- * stop the kernel over the vat's own failure.
- */
-const MAX_DELIVERY_ERROR_LENGTH = 10_000;
-
-/**
- * Cut a worker's delivery error to {@link MAX_DELIVERY_ERROR_LENGTH}.
- *
- * @param deliveryError - What the worker reported.
- * @returns The error, cut short if it is longer.
- */
-function capDeliveryError(deliveryError: string): string {
-  const over = deliveryError.length - MAX_DELIVERY_ERROR_LENGTH;
-  return over > 0
-    ? `${deliveryError.slice(0, MAX_DELIVERY_ERROR_LENGTH)}… (${over} more characters)`
-    : deliveryError;
-}
 
 type MessageFromVat = JsonRpcResponse | JsonRpcNotification;
 
@@ -177,7 +162,7 @@ export class VatHandle implements EndpointHandle {
     const [, deliveryError] = await vat.#init();
     if (deliveryError) {
       throw new Error(
-        `Failed to initialize vat ${vat.vatId}: ${capDeliveryError(deliveryError)}`,
+        `Failed to initialize vat ${vat.vatId}: ${capReasonText(deliveryError)}`,
       );
     }
     return vat;
@@ -260,6 +245,13 @@ export class VatHandle implements EndpointHandle {
    * @param message.payload - The payload (i.e., the message itself) to handle.
    */
   async #handleMessage(message: JsonRpcMessage): Promise<void> {
+    // Refused as a malformed message is: the drain ends, which reads as the
+    // channel lost, and the vat is terminated.
+    if (!fitsVatMessageLimit(message)) {
+      throw new Error(
+        `Vat ${this.vatId} sent a message over ${MAX_VAT_MESSAGE_LENGTH} characters`,
+      );
+    }
     if (isJsonRpcResponse(message)) {
       this.#rpcClient.handleResponse(message.id as string, message);
     } else if (isJsonRpcNotification(message)) {
@@ -403,6 +395,7 @@ export class VatHandle implements EndpointHandle {
     params: ExtractParams<Method, typeof vatMethodSpecs>;
   }): Promise<ExtractResult<Method, typeof vatMethodSpecs>> {
     let result: unknown;
+    let workerFailure: string | undefined;
     try {
       result = await this.#rpcClient.call(method, params);
     } catch (error) {
@@ -419,25 +412,20 @@ export class VatHandle implements EndpointHandle {
       }
       const detail =
         error instanceof Error ? error.message : stringify(error, 0);
-      result = [
-        [[], []],
-        `Vat worker failed the delivery: ${capDeliveryError(detail)}`,
-      ] satisfies VatDeliveryResult;
+      workerFailure = `Vat worker failed the delivery: ${capReasonText(detail)}`;
+      result = [[[], []], workerFailure] satisfies VatDeliveryResult;
     }
     if (method === 'initVat' || method === 'deliver') {
       const [[sets, deletes], deliveryError] = result as VatDeliveryResult;
-      this.#vatSyscall.deliveryError = deliveryError
-        ? capDeliveryError(deliveryError)
-        : undefined;
-      const noErrors =
-        !deliveryError &&
-        !this.#vatSyscall.illegalSyscall &&
-        !this.#kernelQueue.isHalted();
+      this.#vatSyscall.deliveryError =
+        workerFailure ??
+        (deliveryError ? capReasonText(deliveryError) : undefined);
+      const noErrors = !deliveryError && !this.#vatSyscall.illegalSyscall;
       // On errors, we neither update this vat's KV data nor rollback previous changes.
       // This is safe because vats are always terminated when errors occur
       // and they have their own databases, which are deleted when the vat is terminated.
       // The main kernel database will be rolled back.
-      if (noErrors) {
+      if (noErrors && !this.#kernelQueue.isHalted()) {
         this.#vatStore.updateKVData(sets, deletes);
       }
     }

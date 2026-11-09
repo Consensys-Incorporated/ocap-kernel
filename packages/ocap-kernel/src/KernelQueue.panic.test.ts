@@ -4,11 +4,7 @@ import { describe, it, expect, vi } from 'vitest';
 
 import { setUpRealKernel, watch } from '../test/real-kernel.ts';
 
-/*
- * Whole cranks: a fault that is the kernel's own, here a store write that
- * fails, stops the kernel and rolls back the crank it happened in, rather than
- * be blamed on a vat or committed without the write.
- */
+// Whole cranks: a store fault stops the kernel and rolls its crank back.
 
 const DEAD_RESULT =
   'Kernel run loop died; this message result will never be delivered';
@@ -37,23 +33,11 @@ function failWrites(
   return fault;
 }
 
-/**
- * Count the items on the store's run queue.
- *
- * @param kernelDatabase - The kernel's database.
- * @returns How many there are.
- */
 function runQueueLength(kernelDatabase: KernelDatabase): number {
   const { get } = kernelDatabase.kernelKVStore;
   return Number(get('queue.run.head')) - Number(get('queue.run.tail'));
 }
 
-/**
- * Wait for the run loop to die.
- *
- * @param kernel - The kernel.
- * @param kernel.getStatus - How to ask it.
- */
 async function waitForDeath(kernel: {
   getStatus: () => Promise<{ runLoop: { state: string } }>;
 }): Promise<void> {
@@ -65,7 +49,7 @@ async function waitForDeath(kernel: {
 }
 
 describe('a store fault', () => {
-  it("in a syscall's write stops the kernel and leaves the vat as it was (#1166)", async () => {
+  it("in a syscall's write stops the kernel and leaves the vat as it was", async () => {
     const { kernel, kernelDatabase, doomedRoot, terminated } =
       await setUpRealKernel();
     const fault = failWrites(
@@ -93,7 +77,7 @@ describe('a store fault', () => {
     });
   });
 
-  it("writing a vat's state stops the kernel rather than fail the message (#1167)", async () => {
+  it("writing a vat's state stops the kernel rather than fail the message", async () => {
     const { kernel, kernelDatabase, waiterRoot, terminated } =
       await setUpRealKernel();
     const fault = new Error('database or disk is full');
@@ -124,7 +108,7 @@ describe('a store fault', () => {
     });
   });
 
-  it('in a termination stops the kernel and leaves the termination queued (#1172)', async () => {
+  it('in a termination stops the kernel and leaves the termination queued', async () => {
     const { kernel, kernelDatabase, doomedId, terminated } =
       await setUpRealKernel();
     const fault = failWrites(

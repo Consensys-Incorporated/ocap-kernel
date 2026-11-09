@@ -19,6 +19,7 @@ import type {
   EndpointMessage,
   VatDeliveryResult,
 } from '../types.ts';
+import { MAX_VAT_MESSAGE_LENGTH } from './vat-limits.ts';
 import { VatHandle } from './VatHandle.ts';
 import { makeMapKernelDatabase } from '../../test/storage.ts';
 
@@ -32,16 +33,37 @@ vi.mock('@endo/eventual-send', () => ({
 
 let mockKernelStore: KernelStore;
 
+// The map database hands out a new, empty vat store on every call, so what a
+// handle writes is caught here rather than read back.
+const makeRecordingKernelStore = (): {
+  kernelStore: KernelStore;
+  written: [string, string][];
+} => {
+  const written: [string, string][] = [];
+  const kernelStore = makeKernelStore({
+    ...makeMapKernelDatabase(),
+    makeVatStore: () => ({
+      getKVData: () => [],
+      updateKVData: (sets: [string, string][]) => {
+        written.push(...sets);
+      },
+    }),
+  });
+  return { kernelStore, written };
+};
+
 const makeVat = async ({
   logger,
   dispatch,
   onStreamFailure = () => undefined,
   halted = false,
+  kernelStore = mockKernelStore,
 }: {
   logger?: Logger;
   dispatch?: (input: unknown) => void | Promise<void>;
   onStreamFailure?: (error: Error) => void;
   halted?: boolean;
+  kernelStore?: KernelStore;
 } = {}): Promise<{
   vat: VatHandle;
   stream: TestDuplexStream<JsonRpcMessage, JsonRpcMessage>;
@@ -55,7 +77,7 @@ const makeVat = async ({
   return {
     vat: await VatHandle.make({
       kernelQueue: { isHalted: () => halted } as unknown as KernelQueue,
-      kernelStore: mockKernelStore,
+      kernelStore,
       vatId: asVatId('v0'),
       vatConfig: { sourceSpec: 'not-really-there.js' },
       vatStream,
@@ -128,6 +150,30 @@ describe('VatHandle', () => {
         expect.objectContaining({
           message: 'Unexpected stream read error.',
           cause: expect.objectContaining({ message: 'vat channel closed' }),
+        }),
+      );
+    });
+
+    it('loses a vat that sends a message over the size limit', async () => {
+      const onStreamFailure = vi.fn();
+      const { stream } = await makeVat({ onStreamFailure });
+
+      await stream.receiveInput({
+        jsonrpc: '2.0',
+        method: 'syscall',
+        params: [
+          'exit',
+          false,
+          { body: 'x'.repeat(MAX_VAT_MESSAGE_LENGTH), slots: [] },
+        ],
+      });
+      await delay(10);
+
+      expect(onStreamFailure).toHaveBeenCalledWith(
+        expect.objectContaining({
+          cause: expect.objectContaining({
+            message: `Vat v0 sent a message over ${MAX_VAT_MESSAGE_LENGTH} characters`,
+          }),
         }),
       );
     });
@@ -337,61 +383,67 @@ describe('VatHandle', () => {
       expect(await sendVatCommandPromise).toBe('test-response');
     });
 
-    it('terminates a vat whose worker fails a delivery', async () => {
-      const { vat, stream } = await makeVat();
-      const delivering = vat.deliverMessage(asERef('o+0'), {
-        methargs: { body: '#["hello",[]]', slots: [] },
-        result: null,
-      });
-      await delay(10);
-
-      await stream.receiveInput({
-        id: 'v0:1',
-        error: { code: -32603, message: 'worker blew up' },
-        jsonrpc: '2.0',
-      });
-
-      expect(await delivering).toStrictEqual({
-        didDelivery: 'v0',
-        abort: true,
-        terminate: {
-          vatId: 'v0',
-          reject: true,
-          info: makeFatalKernelError(
-            'INTERNAL_ERROR',
-            'Vat worker failed the delivery: {"code":-32603,"message":"worker blew up"}',
-          ),
-        },
-      });
+    const longErrorReply = JSON.stringify({
+      code: -32603,
+      message: 'x'.repeat(10_005),
     });
 
-    it('terminates a vat whose worker answers a delivery with a result that does not fit', async () => {
-      const { vat, stream } = await makeVat();
-      const delivering = vat.deliverMessage(asERef('o+0'), {
-        methargs: { body: '#["hello",[]]', slots: [] },
-        result: null,
-      });
-      await delay(10);
-
-      await stream.receiveInput({
-        id: 'v0:1',
-        result: 'garbage',
-        jsonrpc: '2.0',
-      });
-
-      expect(await delivering).toStrictEqual({
-        didDelivery: 'v0',
-        abort: true,
-        terminate: {
-          vatId: 'v0',
-          reject: true,
-          info: {
-            body: expect.stringContaining('Vat worker failed the delivery: '),
-            slots: [],
-          },
+    it.each([
+      {
+        what: 'an error',
+        reply: { error: { code: -32603, message: 'worker blew up' } },
+        info: makeFatalKernelError(
+          'INTERNAL_ERROR',
+          'Vat worker failed the delivery: {"code":-32603,"message":"worker blew up"}',
+        ),
+      },
+      {
+        what: 'a long error',
+        reply: { error: { code: -32603, message: 'x'.repeat(10_005) } },
+        info: makeFatalKernelError(
+          'INTERNAL_ERROR',
+          `Vat worker failed the delivery: ${longErrorReply.slice(0, 10_000)}… (${longErrorReply.length - 10_000} more characters)`,
+        ),
+      },
+      {
+        what: 'a result that does not fit',
+        reply: { result: 'garbage' },
+        info: {
+          body: expect.stringContaining('Vat worker failed the delivery: '),
+          slots: [],
         },
-      });
-    });
+      },
+      {
+        what: 'a long delivery error',
+        reply: { result: [[[], []], 'x'.repeat(10_005)] },
+        info: makeFatalKernelError(
+          'INTERNAL_ERROR',
+          `${'x'.repeat(10_000)}… (5 more characters)`,
+        ),
+      },
+    ])(
+      'terminates a vat whose worker answers a delivery with $what',
+      async ({ reply, info }) => {
+        const { vat, stream } = await makeVat();
+        const delivering = vat.deliverMessage(asERef('o+0'), {
+          methargs: { body: '#["hello",[]]', slots: [] },
+          result: null,
+        });
+        await delay(10);
+
+        await stream.receiveInput({
+          id: 'v0:1',
+          jsonrpc: '2.0',
+          ...reply,
+        } as JsonRpcMessage);
+
+        expect(await delivering).toStrictEqual({
+          didDelivery: 'v0',
+          abort: true,
+          terminate: { vatId: 'v0', reject: true, info },
+        });
+      },
+    );
 
     it.each([
       { halted: false, stored: [['key', 'value']] },
@@ -399,19 +451,8 @@ describe('VatHandle', () => {
     ])(
       "writes the vat's state after a delivery unless the kernel has halted (halted: $halted)",
       async ({ halted, stored }) => {
-        // The map database hands out a new, empty vat store on every call, so
-        // what the handle writes is caught here rather than read back.
-        const written: [string, string][] = [];
-        mockKernelStore = makeKernelStore({
-          ...makeMapKernelDatabase(),
-          makeVatStore: () => ({
-            getKVData: () => [],
-            updateKVData: (sets: [string, string][]) => {
-              written.push(...sets);
-            },
-          }),
-        });
-        const { vat, stream } = await makeVat({ halted });
+        const { kernelStore, written } = makeRecordingKernelStore();
+        const { vat, stream } = await makeVat({ halted, kernelStore });
         const delivering = vat.deliverMessage(asERef('o+0'), {
           methargs: { body: '#["hello",[]]', slots: [] },
           result: null,
@@ -429,31 +470,48 @@ describe('VatHandle', () => {
       },
     );
 
-    it('cuts a long delivery error short in the termination reason', async () => {
-      const { vat, stream } = await makeVat();
-      const delivering = vat.deliverMessage(asERef('o+0'), {
-        methargs: { body: '#["hello",[]]', slots: [] },
-        result: null,
-      });
-      await delay(10);
+    it.each([
+      { halted: false, stored: [['key', 'value']] },
+      { halted: true, stored: [] },
+    ])(
+      "writes the vat's state after initVat unless the kernel has halted (halted: $halted)",
+      async ({ halted, stored }) => {
+        sendVatCommandMock.mockRestore();
+        const { kernelStore, written } = makeRecordingKernelStore();
+        const vatStream = await TestDuplexStream.make<
+          JsonRpcMessage,
+          JsonRpcMessage
+        >(() => undefined, { validateInput: isJsonRpcMessage });
+        const making = VatHandle.make({
+          kernelQueue: { isHalted: () => halted } as unknown as KernelQueue,
+          kernelStore,
+          vatId: asVatId('v0'),
+          vatConfig: { sourceSpec: 'not-really-there.js' },
+          vatStream,
+          onStreamFailure: () => undefined,
+        });
+        await delay(10);
 
-      await stream.receiveInput({
-        id: 'v0:1',
-        result: [[[], []], 'x'.repeat(10_005)],
-        jsonrpc: '2.0',
-      });
+        await vatStream.receiveInput({
+          id: 'v0:1',
+          result: [[[['key', 'value']], []], null],
+          jsonrpc: '2.0',
+        });
+        await making;
 
-      expect(await delivering).toStrictEqual({
-        didDelivery: 'v0',
-        abort: true,
-        terminate: {
-          vatId: 'v0',
-          reject: true,
-          info: makeFatalKernelError(
-            'INTERNAL_ERROR',
-            `${'x'.repeat(10_000)}… (5 more characters)`,
-          ),
-        },
+        expect(written).toStrictEqual(stored);
+      },
+    );
+
+    it('cuts a long initVat error short', async () => {
+      sendVatCommandMock.mockReset();
+      sendVatCommandMock.mockResolvedValueOnce([
+        [[], []],
+        'x'.repeat(10_005),
+      ] as VatDeliveryResult);
+
+      await expect(makeVat()).rejects.toMatchObject({
+        message: `Failed to initialize vat v0: ${'x'.repeat(10_000)}… (5 more characters)`,
       });
     });
 

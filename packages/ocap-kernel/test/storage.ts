@@ -146,11 +146,10 @@ export function makeMapKernelDatabase(): KernelDatabase {
 /**
  * Make an error the kernel takes for a store fault, as if its store threw it.
  *
- * @param message - The error's message.
  * @returns The error.
  */
-export function makeStoreFault(message = 'database or disk is full'): Error {
-  const fault = new Error(message);
+export function makeStoreFault(): Error {
+  const fault = new Error('database or disk is full');
   const kv = markStoreFaults({
     set: () => {
       throw fault;

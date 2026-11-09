@@ -273,6 +273,12 @@ describe('VatSyscall', () => {
   });
 
   describe('error handling', () => {
+    const sendToKo1 = [
+      'send',
+      'ko1',
+      { methargs: { body: '#null', slots: [] }, result: null },
+    ] as VatSyscallObject;
+
     it('handles vat not found error', async () => {
       (kernelStore.isVatActive as unknown as MockInstance).mockReturnValueOnce(
         false,
@@ -327,11 +333,7 @@ describe('VatSyscall', () => {
         const storeFault = makeStoreFault();
         fail(storeFault);
 
-        const result = vatSys.handleSyscall([
-          'send',
-          'ko1',
-          { methargs: { body: '#null', slots: [] }, result: null },
-        ] as VatSyscallObject);
+        const result = vatSys.handleSyscall(sendToKo1);
 
         expect({
           result,
@@ -352,11 +354,7 @@ describe('VatSyscall', () => {
         throw new Error('kernel bug');
       });
 
-      const result = vatSys.handleSyscall([
-        'send',
-        'ko1',
-        { methargs: { body: '#null', slots: [] }, result: null },
-      ] as VatSyscallObject);
+      const result = vatSys.handleSyscall(sendToKo1);
 
       expect({
         result,
@@ -378,11 +376,7 @@ describe('VatSyscall', () => {
     it('refuses a syscall once the kernel has halted, without blaming the vat', () => {
       (kernelQueue.isHalted as unknown as MockInstance).mockReturnValue(true);
 
-      const result = vatSys.handleSyscall([
-        'send',
-        'ko1',
-        { methargs: { body: '#null', slots: [] }, result: null },
-      ] as VatSyscallObject);
+      const result = vatSys.handleSyscall(sendToKo1);
 
       expect({
         result,

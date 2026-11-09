@@ -109,15 +109,6 @@ export async function setUpRealKernel({
               'resolve',
               [[message.result, false, kser(method)]],
             ]);
-            // As `VatHandle` reports an illegal syscall once the delivery returns.
-            if (vatSyscall.illegalSyscall) {
-              const { info } = vatSyscall.illegalSyscall;
-              return {
-                didDelivery: vatId,
-                abort: true,
-                terminate: { vatId, reject: true, info },
-              };
-            }
           }
           if (method === 'remember') {
             // As `VatHandle` writes the vat's state once a delivery returns.

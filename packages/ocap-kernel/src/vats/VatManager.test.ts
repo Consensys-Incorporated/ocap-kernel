@@ -173,6 +173,7 @@ describe('VatManager', () => {
         (problem: string, cause: unknown) =>
           new Error(`Kernel panic: ${problem}`, { cause }),
       ),
+      isHalted: vi.fn(() => false),
       discardHeldRequests: vi.fn(),
     } as unknown as Mocked<KernelQueue>;
 
@@ -745,6 +746,7 @@ describe('VatManager', () => {
 
       it('panics when its termination cannot be queued', async () => {
         await vatManager.runVat(v1, createMockVatConfig());
+        const logError = vi.spyOn(mockLogger, 'error').mockReturnValue();
         const storeFault = makeStoreFault();
         mockKernelQueue.enqueueTerminateVat.mockImplementationOnce(() => {
           throw storeFault;
@@ -757,6 +759,25 @@ describe('VatManager', () => {
           'queueing the termination of lost vat v1 failed',
           storeFault,
         );
+        expect(logError).toHaveBeenCalledWith(
+          'Kernel panic: queueing the termination of lost vat v1 failed',
+          storeFault,
+        );
+      });
+
+      it('leaves a lost vat to the next start once the kernel has halted', async () => {
+        await vatManager.runVat(v1, createMockVatConfig());
+        mockKernelQueue.isHalted.mockReturnValue(true);
+        mockKernelQueue.enqueueTerminateVat.mockImplementationOnce(() => {
+          throw new Error('Kernel panicked; cannot terminate a vat', {
+            cause: makeStoreFault(),
+          });
+        });
+
+        reportStreamFailure(new Error('channel failed'));
+        await delay(10);
+
+        expect(mockKernelQueue.panic).not.toHaveBeenCalled();
       });
 
       it('throws a retirement that fails, for the run loop to roll back', async () => {
@@ -1073,6 +1094,22 @@ describe('VatManager', () => {
       expect(mockPlatformServices.terminate).toHaveBeenCalledWith(
         'v1',
         expect.objectContaining({ message: 'Vat termination: Custom reason' }),
+      );
+    });
+
+    it('cuts a long reason short', async () => {
+      await vatManager.runVat(v1, createMockVatConfig());
+
+      await vatManager.terminateVat(v1, {
+        body: 'x'.repeat(10_005),
+        slots: [],
+      });
+
+      expect(mockPlatformServices.terminate).toHaveBeenCalledWith(
+        'v1',
+        expect.objectContaining({
+          message: `Vat termination: ${'x'.repeat(10_000)}… (5 more characters)`,
+        }),
       );
     });
 

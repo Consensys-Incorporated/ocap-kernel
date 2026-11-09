@@ -29,6 +29,7 @@ import type {
 import { ROOT_OBJECT_VREF } from '../types.ts';
 import type { AllowedGlobalName } from './endowments.ts';
 import { makeLostVatReason } from './lost-vat-reason.ts';
+import { capReasonText } from './vat-limits.ts';
 import { VatHandle } from './VatHandle.ts';
 import type { PingVatResult } from '../rpc/index.ts';
 
@@ -546,6 +547,11 @@ export class VatManager {
     });
     this.terminateVat(vatId, makeLostVatReason(vatId, error)).catch(
       (failure: unknown) => {
+        // Refused, or dropped by the run loop's death: what killed the kernel
+        // has been reported, and a queued termination runs on the next start.
+        if (this.#kernelQueue.isHalted()) {
+          return;
+        }
         // Unqueued, the vat would stay persisted with no worker.
         if (isStoreFault(failure)) {
           const panic = this.#kernelQueue.panic(
@@ -604,7 +610,7 @@ export class VatManager {
             vatId,
             terminating: true,
             terminationError: reason
-              ? new Error(`Vat termination: ${reason.body}`)
+              ? new Error(`Vat termination: ${capReasonText(reason.body)}`)
               : new VatDeletedError(vatId),
           }
         : { vatId, terminating: false },
@@ -749,7 +755,7 @@ export class VatManager {
     reason?: CapData<KRef>,
   ): Promise<CrankResult> {
     const taken = this.#takeWaiters(this.#terminationWaiters, vatId);
-    const answer: CrankResult = harden({
+    const crankResult: CrankResult = harden({
       afterCommit: async () => {
         // Not before: a restart asked for during the teardown must still wait
         // for this crank.
@@ -767,7 +773,7 @@ export class VatManager {
     if (!this.#isVatKnown(vatId)) {
       // Already dead: the in-crank termination path or `terminateAllVats` got
       // here first, and this vat is exactly what the caller asked for.
-      return answer;
+      return crankResult;
     }
     if (taken.count === 0) {
       this.#logger.debug(
@@ -775,7 +781,7 @@ export class VatManager {
       );
     }
     await this.stopVat(vatId, true, reason);
-    return answer;
+    return crankResult;
   }
 
   /**
