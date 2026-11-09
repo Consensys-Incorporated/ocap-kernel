@@ -302,17 +302,13 @@ describe.sequential('Remote Communications E2E', () => {
     it(
       'handles connection failure and recovery',
       async () => {
-        const reconnectOptions = {
-          ...testBackoffOptions,
-          maxConnectionAttemptsPerMinute: 500,
-        };
         const { bobURL, aliceRef } = await setupAliceAndBob(
           kernel1,
           kernel2,
           kernelStore1,
           kernelStore2,
           testRelays,
-          reconnectOptions,
+          testBackoffOptions,
         );
 
         // Verify initial connectivity
@@ -342,7 +338,7 @@ describe.sequential('Remote Communications E2E', () => {
           false,
           testRelays,
           bobConfig,
-          reconnectOptions,
+          testBackoffOptions,
         );
         kernel2 = restartResult.kernel;
 
@@ -578,15 +574,12 @@ describe.sequential('Remote Communications E2E', () => {
     it(
       'rejects new messages when queue reaches MAX_QUEUE limit',
       async () => {
-        // Use high rate limits to avoid rate limiting interference with queue limit test.
-        // maxConnectionAttemptsPerMinute is needed because async kernel service invocations
-        // can cause multiple concurrent connection attempts when processing many messages.
+        // A high message rate limit keeps rate limiting out of the queue limit test.
         // ackTimeoutMs must be long enough for kernel2 to restart + reconnect before
         // the RemoteHandle gives up (give-up fires after ackTimeoutMs × (MAX_RETRIES + 1)).
         const queueTestOptions = {
           ...testBackoffOptions,
           maxMessagesPerSecond: 500,
-          maxConnectionAttemptsPerMinute: 500,
           ackTimeoutMs: 5_000,
         };
 
