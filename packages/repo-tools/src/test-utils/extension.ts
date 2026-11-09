@@ -43,6 +43,31 @@ type Options = {
 };
 
 /**
+ * Turn on Developer Mode, without which Chrome disables unpacked extensions
+ * when they reload (e.g. via `chrome.runtime.reload()`). Chrome resets this
+ * setting if it is written to the profile's `Preferences` file directly.
+ *
+ * @param browserContext - The browser context to configure.
+ */
+const enableDeveloperMode = async (
+  browserContext: BrowserContext,
+): Promise<void> => {
+  const page = await browserContext.newPage();
+  await page.goto('chrome://extensions');
+  await page.evaluate(
+    async () =>
+      new Promise<void>((resolve) => {
+        // @ts-expect-error developerPrivate is only exposed on chrome://extensions
+        chrome.developerPrivate.updateProfileConfiguration(
+          { inDeveloperMode: true },
+          resolve,
+        );
+      }),
+  );
+  await page.close();
+};
+
+/**
  * Creates an extension context, extension ID, and popup page.
  *
  * @param options - Options for the extension
@@ -121,7 +146,6 @@ export const makeLoadExtension = async ({
   };
 
   const browserArgs = [
-    `--disable-features=ExtensionDisableUnsupportedDeveloper`,
     `--disable-extensions-except=${extensionPath}`,
     `--load-extension=${extensionPath}`,
     '--lang=en-US',
@@ -137,6 +161,7 @@ export const makeLoadExtension = async ({
     headless: false,
     args: browserArgs,
   });
+  await enableDeveloperMode(browserContext);
 
   // Capture background service worker console logs
   browserContext.on('serviceworker', (worker) => {
