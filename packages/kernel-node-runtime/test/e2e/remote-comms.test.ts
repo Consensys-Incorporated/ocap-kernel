@@ -896,7 +896,7 @@ describe.sequential('Remote Communications E2E', () => {
           kernelStore1,
           kernelStore2,
           testRelays,
-          { ...testBackoffOptions, maxConnectionAttemptsPerMinute: 500 },
+          testBackoffOptions,
         );
 
         const initialMessage = await sendRemoteMessage(
