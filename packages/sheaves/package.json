@@ -55,7 +55,7 @@
     "@metamask/kernel-utils": "workspace:^"
   },
   "devDependencies": {
-    "@metamask/auto-changelog": "^7.0.1",
+    "@metamask/auto-changelog": "^7.1.0",
     "@metamask/kernel-shims": "workspace:^",
     "@ocap/repo-tools": "workspace:^",
     "oxfmt": "0.74.0",

@@ -63,7 +63,7 @@
     "ses": "^2.3.0"
   },
   "devDependencies": {
-    "@metamask/auto-changelog": "^7.0.1",
+    "@metamask/auto-changelog": "^7.1.0",
     "@ocap/repo-tools": "workspace:^",
     "@types/better-sqlite3": "^7.6.12",
     "oxfmt": "0.74.0",

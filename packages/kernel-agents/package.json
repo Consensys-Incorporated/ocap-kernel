@@ -84,7 +84,7 @@
     "test:dev:quiet": "yarn test:dev --reporter @ocap/repo-tools/vitest-reporters/silent"
   },
   "devDependencies": {
-    "@metamask/auto-changelog": "^7.0.1",
+    "@metamask/auto-changelog": "^7.1.0",
     "@ocap/repo-tools": "workspace:^",
     "@types/node": "^22.13.1",
     "oxfmt": "0.74.0",

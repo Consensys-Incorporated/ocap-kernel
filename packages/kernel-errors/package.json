@@ -54,7 +54,7 @@
     "@metamask/utils": "^12.0.0"
   },
   "devDependencies": {
-    "@metamask/auto-changelog": "^7.0.1",
+    "@metamask/auto-changelog": "^7.1.0",
     "@ocap/repo-tools": "workspace:^",
     "jsdom": "^29.0.2",
     "oxfmt": "0.74.0",

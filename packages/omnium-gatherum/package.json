@@ -62,7 +62,7 @@
     "ses": "^2.3.0"
   },
   "devDependencies": {
-    "@metamask/auto-changelog": "^7.0.1",
+    "@metamask/auto-changelog": "^7.1.0",
     "@ocap/repo-tools": "workspace:^",
     "@playwright/test": "^1.59.1",
     "@testing-library/dom": "^10.4.0",

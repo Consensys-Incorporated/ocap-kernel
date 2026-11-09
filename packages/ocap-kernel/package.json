@@ -79,7 +79,7 @@
     "@metamask/kernel-utils": "workspace:^",
     "@metamask/logger": "workspace:^",
     "@metamask/rpc-errors": "^7.0.3",
-    "@metamask/snaps-execution-environments": "^11.3.2",
+    "@metamask/snaps-execution-environments": "^11.3.3",
     "@metamask/streams": "workspace:^",
     "@metamask/superstruct": "^3.4.1",
     "@metamask/utils": "^12.0.0",
@@ -91,7 +91,7 @@
     "uint8arrays": "^5.1.0"
   },
   "devDependencies": {
-    "@metamask/auto-changelog": "^7.0.1",
+    "@metamask/auto-changelog": "^7.1.0",
     "@ocap/repo-tools": "workspace:^",
     "oxfmt": "0.74.0",
     "oxlint": "1.89.0",
