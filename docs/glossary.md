@@ -80,7 +80,7 @@ A single execution cycle in the kernel's [run queue](#run-queue). Each crank pro
 item from the run queue, delivering a single message or notification to [a vat](#vat). The
 "message or notification" is whatever item is taken of the run queue. Cranks can be
 aborted and rolled back if errors occur. Cranks are numbered from 1 by a counter kept in
-the kernel store, so the numbering continues across kernel restarts; a crank that rolls
+the [kernel store](../packages/ocap-kernel/src/store/index.ts), so the numbering continues across kernel restarts; a crank that rolls
 back still used up its number. See the
 [KernelQueue](../packages/ocap-kernel/src/KernelQueue.ts) for the [run loop](#run-loop)
 implementation.

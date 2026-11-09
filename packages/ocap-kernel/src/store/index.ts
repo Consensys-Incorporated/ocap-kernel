@@ -150,7 +150,7 @@ export function makeKernelStore(kdb: KernelDatabase, logger?: Logger) {
     nextVatId: ['nextVatId', '1'],
     /** Counter for allocating RemoteIDs */
     nextRemoteId: ['nextRemoteId', '1'],
-    /** Number of the most recently started crank; cranks count from 1 */
+    /** Number of the most recently started crank */
     crankNumber: ['crankNumber', '0'],
     // Garbage collection
     gcActions: ['gcActions', '[]'],

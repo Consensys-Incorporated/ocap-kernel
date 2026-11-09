@@ -69,6 +69,7 @@ describe('KernelRouter', () => {
       erefToKref: vi.fn() as unknown as MockInstance,
       krefToEref: vi.fn() as unknown as MockInstance,
       getKpidsToRetire: vi.fn().mockReturnValue([]),
+      getCrankNumber: vi.fn().mockReturnValue(1),
       translateCapDataKtoE: vi.fn(),
       krefsToErefs: vi.fn((_endpointId: string, krefs: string[]) =>
         krefs.map((kref: string) => `translated-${kref}`),

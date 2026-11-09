@@ -18,10 +18,11 @@ export function getCrankMethods(ctx: StoreContext, kdb: KernelDatabase) {
    */
   function startCrank(): void {
     !ctx.inCrank || Fail`startCrank while already in a crank`;
-    ctx.inCrank = true;
     // Written before the crank's savepoints exist, so a crank that rolls back
-    // still used up its number.
+    // still used up its number. Written before `inCrank` is set, so a failed
+    // write does not leave the store believing a crank is open.
     ctx.crankNumber.set(`${getCrankNumber() + 1}`);
+    ctx.inCrank = true;
     const { promise, resolve } = makePromiseKit<void>();
     ctx.crankSettled = promise;
     ctx.resolveCrank = resolve;

@@ -64,19 +64,14 @@ describe('crank methods', () => {
       );
     });
 
-    it('numbers cranks from 1', () => {
+    it('numbers cranks from 1, keeping the last number between cranks', () => {
       expect(crankMethods.getCrankNumber()).toBe(0);
       crankMethods.startCrank();
       expect(crankMethods.getCrankNumber()).toBe(1);
       crankMethods.endCrank();
+      expect(crankMethods.getCrankNumber()).toBe(1);
       crankMethods.startCrank();
       expect(crankMethods.getCrankNumber()).toBe(2);
-    });
-
-    it('keeps the number of the last crank once it ends', () => {
-      crankMethods.startCrank();
-      crankMethods.endCrank();
-      expect(crankMethods.getCrankNumber()).toBe(1);
     });
   });
 
