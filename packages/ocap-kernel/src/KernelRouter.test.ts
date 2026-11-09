@@ -1219,7 +1219,7 @@ describe('KernelRouter', () => {
       });
     });
 
-    describe('a remote that is only out of reach', () => {
+    describe('a remote with no handle', () => {
       const remoteId = 'r1' as EndpointId;
 
       beforeEach(() => {

@@ -44,7 +44,7 @@ type RemoteHandleConstructorProps = {
   peerId: string;
   kernelStore: KernelStore;
   kernelQueue: KernelQueue;
-  remoteComms: RemoteComms;
+  remoteComms?: RemoteComms | undefined;
   locationHints?: string[] | undefined;
   logger?: Logger | undefined;
   onGiveUp?: ((peerId: string) => void) | undefined;
@@ -162,8 +162,12 @@ export class RemoteHandle implements RemoteEndpointHandle {
   /** The kernel's queue */
   readonly #kernelQueue: KernelQueue;
 
-  /** Connectivity to the network. */
-  readonly #remoteComms: RemoteComms;
+  /**
+   * Connectivity to the network. A handle restored at boot has none until
+   * {@link attachTransport}, and until then sends nothing and arms no ACK
+   * timer, so it never gives up on the peer.
+   */
+  #remoteComms: RemoteComms | undefined;
 
   /** Possible contact points for reaching the remote peer. */
   readonly #locationHints: string[];
@@ -267,7 +271,7 @@ export class RemoteHandle implements RemoteEndpointHandle {
   readonly #onGiveUp: ((peerId: string) => void) | undefined;
 
   /** How long to wait for ACK before retransmitting (ms). Defaults to ACK_TIMEOUT_MS. */
-  readonly #ackTimeoutMs: number;
+  #ackTimeoutMs: number;
 
   /**
    * Construct a new RemoteHandle instance.
@@ -277,7 +281,8 @@ export class RemoteHandle implements RemoteEndpointHandle {
    * @param params.peerId - The libp2p peer ID for the remote end.
    * @param params.kernelStore - The kernel's persistent state store.
    * @param params.kernelQueue - The kernel's queue.
-   * @param params.remoteComms - Remote comms object to access the network.
+   * @param params.remoteComms - Remote comms object to access the network, if
+   * it is up yet.
    * @param params.locationHints - Possible contact points to reach the other end.
    * @param params.logger - Optional logger for diagnostic output.
    * @param params.onGiveUp - Optional callback when we give up on this remote.
@@ -315,7 +320,8 @@ export class RemoteHandle implements RemoteEndpointHandle {
    * @param params.peerId - The libp2p peer ID for the remote end.
    * @param params.kernelStore - The kernel's persistent state store.
    * @param params.kernelQueue - The kernel's queue.
-   * @param params.remoteComms - Remote comms object to access the network.
+   * @param params.remoteComms - Remote comms object to access the network, if
+   * it is up yet.
    * @param params.logger - Optional logger for error and diagnostic output.
    * @param params.onGiveUp - Optional callback invoked when we give up on this remote.
    *
@@ -334,6 +340,40 @@ export class RemoteHandle implements RemoteEndpointHandle {
    */
   get peerId(): string {
     return this.#peerId;
+  }
+
+  /**
+   * The transport, for the paths that only run once there is one.
+   *
+   * @returns The remote comms object.
+   */
+  get #transport(): RemoteComms {
+    if (this.#remoteComms === undefined) {
+      throw Error(`${this.remoteId} has no transport`);
+    }
+    return this.#remoteComms;
+  }
+
+  /**
+   * Give a handle restored at boot the transport `initRemoteComms` brought up,
+   * and send what has been queued for the peer.
+   *
+   * @param options - Options bag.
+   * @param options.remoteComms - Remote comms object to access the network.
+   * @param options.ackTimeoutMs - Optional ACK timeout in ms. Defaults to
+   * ACK_TIMEOUT_MS.
+   */
+  attachTransport({
+    remoteComms,
+    ackTimeoutMs,
+  }: {
+    remoteComms: RemoteComms;
+    ackTimeoutMs?: number | undefined;
+  }): void {
+    this.#remoteComms = remoteComms;
+    this.#ackTimeoutMs = ackTimeoutMs ?? ACK_TIMEOUT_MS;
+    this.#startAckTimeout();
+    this.#flushTransmitQueue();
   }
 
   /**
@@ -528,12 +568,13 @@ export class RemoteHandle implements RemoteEndpointHandle {
   }
 
   /**
-   * Start or restart the ACK timeout. If there are pending messages,
-   * starts a timer. If the queue is empty, clears any existing timer.
+   * Start or restart the ACK timeout. If there are pending messages and a
+   * transport to send them on, starts a timer. Otherwise clears any existing
+   * timer.
    */
   #startAckTimeout(): void {
     this.#clearAckTimeout();
-    if (this.#hasPendingMessages()) {
+    if (this.#hasPendingMessages() && this.#remoteComms !== undefined) {
       this.#ackTimeoutHandle = setTimeout(() => {
         this.#handleAckTimeout();
       }, this.#ackTimeoutMs);
@@ -662,7 +703,7 @@ export class RemoteHandle implements RemoteEndpointHandle {
         );
         return undefined;
       }
-      return this.#remoteComms.sendRemoteMessage(this.#peerId, messageString);
+      return this.#transport.sendRemoteMessage(this.#peerId, messageString);
     });
     // The chain keeps going whatever this send does, or one failure would
     // strand every message behind it. Each caller answers for its own.
@@ -746,18 +787,21 @@ export class RemoteHandle implements RemoteEndpointHandle {
    */
   #sendStandaloneAck(): void {
     const ackValue = this.#getAckValue();
-    if (ackValue === undefined || this.#heldForRestart) {
+    const remoteComms = this.#remoteComms;
+    if (
+      ackValue === undefined ||
+      this.#heldForRestart ||
+      remoteComms === undefined
+    ) {
       return;
     }
     const ackMessage = JSON.stringify({ ack: ackValue });
     this.#logger.log(
       `${this.#peerId.slice(0, 8)}:: sending standalone ACK ${ackValue}`,
     );
-    this.#remoteComms
-      .sendRemoteMessage(this.#peerId, ackMessage)
-      .catch((error) => {
-        this.#logger.error('Error sending standalone ACK:', error);
-      });
+    remoteComms.sendRemoteMessage(this.#peerId, ackMessage).catch((error) => {
+      this.#logger.error('Error sending standalone ACK:', error);
+    });
   }
 
   // --- Message sending ---
@@ -916,6 +960,9 @@ export class RemoteHandle implements RemoteEndpointHandle {
    * behind whatever the kernel sends first.
    */
   #flushTransmitQueue(): void {
+    if (this.#remoteComms === undefined) {
+      return;
+    }
     for (;;) {
       const next = this.#lastTransmittedSeq + 1;
 
@@ -1006,7 +1053,7 @@ export class RemoteHandle implements RemoteEndpointHandle {
       //
       // Fire-and-forget: Don't await this call to avoid RPC deadlock when
       // this method is called inside an RPC handler (e.g., during remoteDeliver).
-      this.#remoteComms
+      this.#transport
         .registerLocationHints(this.#peerId, this.#locationHints)
         .catch((error) => {
           this.#logger.error('Error registering location hints:', error);
@@ -1129,6 +1176,15 @@ export class RemoteHandle implements RemoteEndpointHandle {
   async deliverBringOutYourDead(): Promise<CrankResult> {
     if (this.#remoteGcRequested) {
       this.#remoteGcRequested = false;
+      return this.#myCrankResult;
+    }
+    // A reap is a hint, so a full queue skips it rather than refuse it, which
+    // would kill the run loop. Measured as `#persistRemoteCommand` measures.
+    this.#persistAcknowledged();
+    if (countPending(this.#sendWindow) >= MAX_PENDING_MESSAGES) {
+      this.#logger.log(
+        `${this.#peerId.slice(0, 8)}:: bringOutYourDead skipped: pending queue at capacity`,
+      );
       return this.#myCrankResult;
     }
     return this.#deliverToPeer({
@@ -1300,7 +1356,7 @@ export class RemoteHandle implements RemoteEndpointHandle {
     assert.typeof(replyKey, 'string');
     let kref: KRef;
     try {
-      kref = await this.#remoteComms.redeemLocalOcapURL(url);
+      kref = await this.#transport.redeemLocalOcapURL(url);
     } catch (error) {
       return {
         type: 'redeemURL',
