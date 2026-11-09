@@ -1,7 +1,11 @@
-import type { KVStore } from '@metamask/kernel-store';
+import type { KVStore, VatStore } from '@metamask/kernel-store';
 import { describe, it, expect, vi } from 'vitest';
 
-import { isStoreFault, markStoreFaults } from './store-fault.ts';
+import {
+  isStoreFault,
+  markStoreFaults,
+  markVatStoreFaults,
+} from './store-fault.ts';
 
 /**
  * A KV store over a map.
@@ -63,6 +67,29 @@ describe('markStoreFaults', () => {
     expect(missing).toStrictEqual(Error("no record matching key 'key'"));
     expect(isStoreFault(missing)).toBe(false);
   });
+});
+
+describe('markVatStoreFaults', () => {
+  it.each(['getKVData', 'updateKVData'] as const)(
+    'marks what %s throws',
+    (method) => {
+      const vatStore: VatStore = {
+        getKVData: () => [],
+        updateKVData: () => undefined,
+      };
+      const fault = new Error('disk I/O error');
+      vi.spyOn(vatStore, method).mockImplementation(() => {
+        throw fault;
+      });
+
+      const call = markVatStoreFaults(vatStore)[method] as (
+        ...args: unknown[]
+      ) => unknown;
+
+      expect(() => call([], [])).toThrow(fault);
+      expect(isStoreFault(fault)).toBe(true);
+    },
+  );
 });
 
 describe('isStoreFault', () => {

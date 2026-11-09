@@ -1,4 +1,5 @@
 import type { VatOneResolution } from '@agoric/swingset-liveslots';
+import { ResourceLimitError } from '@metamask/kernel-errors';
 import { Logger } from '@metamask/logger';
 import { makeAbortSignalMock } from '@ocap/repo-tools/test-utils';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -330,9 +331,8 @@ describe('RemoteHandle', () => {
     for (let i = 0; i < 200; i += 1) {
       await remote.deliverNotify([]);
     }
-    await expect(remote.deliverNotify([])).rejects.toThrow(
-      'pending queue at capacity',
-    );
+    // `KernelRouter.#deliverSend` spares a full queue by this type alone.
+    await expect(remote.deliverNotify([])).rejects.toThrow(ResourceLimitError);
 
     expect(await remote[method]([asRRef('ro+4')])).toStrictEqual({
       didDelivery: remote.remoteId,

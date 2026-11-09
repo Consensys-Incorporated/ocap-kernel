@@ -98,7 +98,7 @@ describe('a crank whose transaction SQLite rolls back mid-delivery', () => {
         message: { methargs: { body: '', slots: [] }, result: null },
       } as unknown as RunQueueItem);
 
-      // As `VatSyscall` does: a failed syscall is logged and the delivery carries on.
+      // A failed write the caller swallows.
       const syscall = (write: () => void): void => {
         try {
           write();
@@ -155,7 +155,7 @@ describe('a crank whose transaction SQLite rolls back mid-delivery', () => {
       try {
         kernelStore.setKernelServiceKref('big', 'x'.repeat(100_000) as KRef);
       } catch {
-        // Swallowed, as `VatSyscall` does.
+        // Swallowed.
       }
       kdb.executeQuery('PRAGMA max_page_count = 1073741823');
       // A read that finds the write SQLite undid.

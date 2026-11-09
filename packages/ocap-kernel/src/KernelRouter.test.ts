@@ -568,10 +568,10 @@ describe('KernelRouter', () => {
         (kernelStore.getOwner as unknown as MockInstance).mockReturnValueOnce(
           v1,
         );
-        const storeFault = new Error('database or disk is full');
+        const failure = new Error('kernel bug');
         (
           endpointHandle.deliverMessage as unknown as MockInstance
-        ).mockRejectedValueOnce(storeFault);
+        ).mockRejectedValueOnce(failure);
 
         await expect(
           kernelRouter.deliver({
@@ -582,7 +582,7 @@ describe('KernelRouter', () => {
               result: asKRef('kp1'),
             },
           }),
-        ).rejects.toBe(storeFault);
+        ).rejects.toBe(failure);
         expect(kernelQueue.resolvePromises).not.toHaveBeenCalled();
       });
     });

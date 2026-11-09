@@ -7,6 +7,7 @@ import type { MockInstance } from 'vitest';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import type { KernelQueue } from '../KernelQueue.ts';
+import { makeFatalKernelError } from '../liveslots/kernel-marshal.ts';
 import type { KernelStore } from '../store/index.ts';
 import type { KernelMessage, VatId } from '../types.ts';
 import { VatSyscall } from './VatSyscall.ts';
@@ -23,6 +24,7 @@ describe('VatSyscall', () => {
       enqueueSend: vi.fn(),
       resolvePromises: vi.fn(),
       enqueueNotify: vi.fn(),
+      isHalted: vi.fn(() => false),
       panic: vi.fn(
         (problem: string, cause: unknown) =>
           new Error(`Kernel panic: ${problem}`, { cause }),
@@ -356,9 +358,41 @@ describe('VatSyscall', () => {
         { methargs: { body: '#null', slots: [] }, result: null },
       ] as VatSyscallObject);
 
-      expect(result).toStrictEqual(['error', 'kernel bug']);
-      expect(vatSys.illegalSyscall).toBeDefined();
-      expect(kernelQueue.panic).not.toHaveBeenCalled();
+      expect({
+        result,
+        illegalSyscall: vatSys.illegalSyscall,
+        panic: (kernelQueue.panic as unknown as MockInstance).mock.calls,
+      }).toStrictEqual({
+        result: ['error', 'kernel bug'],
+        illegalSyscall: {
+          vatId: 'v1',
+          info: makeFatalKernelError(
+            'ILLEGAL_SYSCALL',
+            'Syscall translation error: prepare to die',
+          ),
+        },
+        panic: [],
+      });
+    });
+
+    it('refuses a syscall once the kernel has halted, without blaming the vat', () => {
+      (kernelQueue.isHalted as unknown as MockInstance).mockReturnValue(true);
+
+      const result = vatSys.handleSyscall([
+        'send',
+        'ko1',
+        { methargs: { body: '#null', slots: [] }, result: null },
+      ] as VatSyscallObject);
+
+      expect({
+        result,
+        sent: (kernelQueue.enqueueSend as unknown as MockInstance).mock.calls,
+        illegalSyscall: vatSys.illegalSyscall,
+      }).toStrictEqual({
+        result: ['error', 'Kernel has halted'],
+        sent: [],
+        illegalSyscall: undefined,
+      });
     });
   });
 

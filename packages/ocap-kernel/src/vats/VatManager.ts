@@ -548,10 +548,11 @@ export class VatManager {
       (failure: unknown) => {
         // Unqueued, the vat would stay persisted with no worker.
         if (isStoreFault(failure)) {
-          this.#kernelQueue.panic(
+          const panic = this.#kernelQueue.panic(
             `queueing the termination of lost vat ${vatId} failed`,
             failure,
           );
+          this.#logger.error(panic.message, failure);
           return;
         }
         // Retired by the crank of the delivery or restart it was lost in, or

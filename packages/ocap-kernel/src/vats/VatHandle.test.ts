@@ -36,10 +36,12 @@ const makeVat = async ({
   logger,
   dispatch,
   onStreamFailure = () => undefined,
+  halted = false,
 }: {
   logger?: Logger;
   dispatch?: (input: unknown) => void | Promise<void>;
   onStreamFailure?: (error: Error) => void;
+  halted?: boolean;
 } = {}): Promise<{
   vat: VatHandle;
   stream: TestDuplexStream<JsonRpcMessage, JsonRpcMessage>;
@@ -52,7 +54,7 @@ const makeVat = async ({
   );
   return {
     vat: await VatHandle.make({
-      kernelQueue: null as unknown as KernelQueue,
+      kernelQueue: { isHalted: () => halted } as unknown as KernelQueue,
       kernelStore: mockKernelStore,
       vatId: asVatId('v0'),
       vatConfig: { sourceSpec: 'not-really-there.js' },
@@ -363,6 +365,70 @@ describe('VatHandle', () => {
       });
     });
 
+    it('terminates a vat whose worker answers a delivery with a result that does not fit', async () => {
+      const { vat, stream } = await makeVat();
+      const delivering = vat.deliverMessage(asERef('o+0'), {
+        methargs: { body: '#["hello",[]]', slots: [] },
+        result: null,
+      });
+      await delay(10);
+
+      await stream.receiveInput({
+        id: 'v0:1',
+        result: 'garbage',
+        jsonrpc: '2.0',
+      });
+
+      expect(await delivering).toStrictEqual({
+        didDelivery: 'v0',
+        abort: true,
+        terminate: {
+          vatId: 'v0',
+          reject: true,
+          info: {
+            body: expect.stringContaining('Vat worker failed the delivery: '),
+            slots: [],
+          },
+        },
+      });
+    });
+
+    it.each([
+      { halted: false, stored: [['key', 'value']] },
+      { halted: true, stored: [] },
+    ])(
+      "writes the vat's state after a delivery unless the kernel has halted (halted: $halted)",
+      async ({ halted, stored }) => {
+        // The map database hands out a new, empty vat store on every call, so
+        // what the handle writes is caught here rather than read back.
+        const written: [string, string][] = [];
+        mockKernelStore = makeKernelStore({
+          ...makeMapKernelDatabase(),
+          makeVatStore: () => ({
+            getKVData: () => [],
+            updateKVData: (sets: [string, string][]) => {
+              written.push(...sets);
+            },
+          }),
+        });
+        const { vat, stream } = await makeVat({ halted });
+        const delivering = vat.deliverMessage(asERef('o+0'), {
+          methargs: { body: '#["hello",[]]', slots: [] },
+          result: null,
+        });
+        await delay(10);
+
+        await stream.receiveInput({
+          id: 'v0:1',
+          result: [[[['key', 'value']], []], null],
+          jsonrpc: '2.0',
+        });
+        await delivering;
+
+        expect(written).toStrictEqual(stored);
+      },
+    );
+
     it('cuts a long delivery error short in the termination reason', async () => {
       const { vat, stream } = await makeVat();
       const delivering = vat.deliverMessage(asERef('o+0'), {
@@ -442,7 +508,7 @@ describe('VatHandle', () => {
         releaseEnd = resolve;
       });
       const vat = await VatHandle.make({
-        kernelQueue: null as unknown as KernelQueue,
+        kernelQueue: { isHalted: () => false } as unknown as KernelQueue,
         kernelStore: mockKernelStore,
         vatId: asVatId('v0'),
         vatConfig: { sourceSpec: 'not-really-there.js' },

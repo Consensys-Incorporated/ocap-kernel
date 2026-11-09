@@ -100,6 +100,8 @@ export class VatHandle implements EndpointHandle {
   /** Whether the kernel is closing the channel itself */
   #closing: boolean = false;
 
+  readonly #kernelQueue: KernelQueue;
+
   readonly #rpcClient: RpcClient<typeof vatMethodSpecs>;
 
   readonly #rpcService: RpcService<typeof vatSyscallHandlers>;
@@ -135,6 +137,7 @@ export class VatHandle implements EndpointHandle {
     this.#allowedGlobalNames = allowedGlobalNames;
     this.#vatStream = vatStream;
     this.#onStreamFailure = onStreamFailure;
+    this.#kernelQueue = kernelQueue;
     this.#vatStore = kernelStore.makeVatStore(vatId);
     this.#vatSyscall = new VatSyscall({
       vatId,
@@ -174,7 +177,7 @@ export class VatHandle implements EndpointHandle {
     const [, deliveryError] = await vat.#init();
     if (deliveryError) {
       throw new Error(
-        `Failed to initialize vat ${vat.vatId}: ${deliveryError}`,
+        `Failed to initialize vat ${vat.vatId}: ${capDeliveryError(deliveryError)}`,
       );
     }
     return vat;
@@ -418,7 +421,7 @@ export class VatHandle implements EndpointHandle {
         error instanceof Error ? error.message : stringify(error, 0);
       result = [
         [[], []],
-        `Vat worker failed the delivery: ${detail}`,
+        `Vat worker failed the delivery: ${capDeliveryError(detail)}`,
       ] satisfies VatDeliveryResult;
     }
     if (method === 'initVat' || method === 'deliver') {
@@ -426,7 +429,10 @@ export class VatHandle implements EndpointHandle {
       this.#vatSyscall.deliveryError = deliveryError
         ? capDeliveryError(deliveryError)
         : undefined;
-      const noErrors = !deliveryError && !this.#vatSyscall.illegalSyscall;
+      const noErrors =
+        !deliveryError &&
+        !this.#vatSyscall.illegalSyscall &&
+        !this.#kernelQueue.isHalted();
       // On errors, we neither update this vat's KV data nor rollback previous changes.
       // This is safe because vats are always terminated when errors occur
       // and they have their own databases, which are deleted when the vat is terminated.

@@ -107,7 +107,7 @@ describe('a restartVat or terminateVat caller the run loop has not reached', () 
     [
       'the run loop dies in a crank',
       explodeStalledCrank,
-      'Kernel run loop died; this work will never be carried out',
+      'Kernel run loop died before this work was done',
     ],
     [
       'the kernel is reset',

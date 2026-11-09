@@ -1482,14 +1482,17 @@ describe('VatManager', () => {
   });
 
   describe('performVatRestart', () => {
-    it('throws a store fault rather than terminate the vat', async () => {
+    it('throws a store fault rather than terminate the vat, leaving its caller to the run loop', async () => {
       await vatManager.runVat(v1, createMockVatConfig());
       leaveRequestQueued();
-      vatManager.restartVat(v1).catch(() => undefined);
+      const rejected = vi.fn();
+      vatManager.restartVat(v1).catch(rejected);
       const storeFault = makeStoreFault();
       makeVatHandleMock.mockRejectedValueOnce(storeFault);
 
       await expect(vatManager.performVatRestart(v1)).rejects.toBe(storeFault);
+      await new Promise((resolve) => setImmediate(resolve));
+      expect(rejected).not.toHaveBeenCalled();
     });
 
     it('drops a request nobody is waiting for', async () => {

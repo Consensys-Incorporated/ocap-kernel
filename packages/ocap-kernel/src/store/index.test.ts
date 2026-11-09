@@ -2,6 +2,7 @@ import type { KernelDatabase } from '@metamask/kernel-store';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 import { makeKernelStore } from './index.ts';
+import { isStoreFault } from './utils/store-fault.ts';
 import {
   asKRef,
   asRemoteId,
@@ -34,6 +35,22 @@ describe('kernel store', () => {
   });
 
   describe('initialization', () => {
+    it('marks what a vat store throws as a store fault', () => {
+      const fault = new Error('disk I/O error');
+      const vatStore = makeKernelStore({
+        ...mockKernelDatabase,
+        makeVatStore: () => ({
+          getKVData: () => {
+            throw fault;
+          },
+          updateKVData: () => undefined,
+        }),
+      }).makeVatStore('v1');
+
+      expect(() => vatStore.getKVData()).toThrow(fault);
+      expect(isStoreFault(fault)).toBe(true);
+    });
+
     it('has a working KV store', () => {
       makeKernelStore(mockKernelDatabase);
       const kv = mockKernelDatabase.kernelKVStore;

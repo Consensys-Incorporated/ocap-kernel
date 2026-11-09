@@ -12,7 +12,7 @@ import { setUpRealKernel, watch } from '../test/real-kernel.ts';
 
 const DEAD_RESULT =
   'Kernel run loop died; this message result will never be delivered';
-const DEAD_WORK = 'Kernel run loop died; this work will never be carried out';
+const DEAD_WORK = 'Kernel run loop died before this work was done';
 
 /**
  * Fail the kernel's writes that `matches` picks, as a full disk does.

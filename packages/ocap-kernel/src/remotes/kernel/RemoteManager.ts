@@ -242,10 +242,12 @@ export class RemoteManager {
     } catch (error) {
       // The kernel's fault, not the peer's. Thrown too, so the transport fails
       // the handshake rather than answer it from nothing.
-      throw this.#kernelQueue.panic(
+      const panic = this.#kernelQueue.panic(
         `reading the incarnation of peer ${peerId} failed`,
         error,
       );
+      this.#logger?.error(panic.message, error);
+      throw panic;
     }
     const waiting = this.#kernelQueue.waitingIncarnations(peerId);
     const known = stored === undefined ? waiting : [stored, ...waiting];

@@ -73,8 +73,7 @@ type Deliver = (item: RunLoopItem) => Promise<CrankResult | undefined>;
 type NotThenable<Value> = Value extends { then: unknown } ? never : Value;
 
 /** What a caller awaiting queued work is told when the run loop dies. */
-const DEAD_RUN_LOOP_WORK =
-  'Kernel run loop died; this work will never be carried out';
+const DEAD_RUN_LOOP_WORK = 'Kernel run loop died before this work was done';
 
 const DEAD_RUN_LOOP_RESULT =
   'Kernel run loop died; this message result will never be delivered';
@@ -521,6 +520,17 @@ export class KernelQueue {
     this.#panic ??= error;
     this.#wakeRunLoop();
     return error;
+  }
+
+  /**
+   * Whether the kernel has panicked or its run loop has died. Nothing may be
+   * written then: outside a crank, a write commits on its own and nothing will
+   * roll it back.
+   *
+   * @returns True if so.
+   */
+  isHalted(): boolean {
+    return this.#panic !== undefined || this.#runLoopState.state === 'failed';
   }
 
   /**

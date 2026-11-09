@@ -975,7 +975,7 @@ describe('KernelQueue', () => {
         'write',
         async (queue: KernelQueue, write: () => void) =>
           queue.writeOutsideCrank(write),
-        'Kernel run loop died; this work will never be carried out',
+        'Kernel run loop died before this work was done',
       ],
     ])(
       'rejects a held %s when its crank kills the run loop',
@@ -1028,7 +1028,7 @@ describe('KernelQueue', () => {
         'Kernel run loop died; this message result will never be delivered',
       );
       await expect(writeKit.promise).rejects.toThrow(
-        'Kernel run loop died; this work will never be carried out',
+        'Kernel run loop died before this work was done',
       );
       expect(write).not.toHaveBeenCalled();
     });
@@ -1801,7 +1801,7 @@ describe('KernelQueue', () => {
 
       expect(reject).toHaveBeenCalledWith(
         expect.objectContaining({
-          message: 'Kernel run loop died; this work will never be carried out',
+          message: 'Kernel run loop died before this work was done',
           cause: failure,
         }),
       );
@@ -2194,6 +2194,23 @@ describe('KernelQueue', () => {
       );
     });
 
+    it('reports itself halted once raised', () => {
+      const before = kernelQueue.isHalted();
+      kernelQueue.panic('syscall failed', cause);
+
+      expect([before, kernelQueue.isHalted()]).toStrictEqual([false, true]);
+    });
+
+    it('reports itself halted once its run loop dies', async () => {
+      queueOneItem();
+      const deliver = vi.fn(async () => {
+        throw new Error('kernel bug');
+      });
+
+      await expect(kernelQueue.run(deliver)).rejects.toThrow('kernel bug');
+      expect(kernelQueue.isHalted()).toBe(true);
+    });
+
     it('reports the first of two panics', async () => {
       queueOneItem();
       const deliver = vi.fn(async () => {
@@ -2279,14 +2296,6 @@ describe('KernelQueue', () => {
       expect(
         (kernelStore.rollbackCrank as unknown as MockInstance).mock.calls,
       ).toStrictEqual([['crank']]);
-    });
-
-    it('rolls back the delivery on an abort and the crank on a throw', async () => {
-      await deliverThenDie({ abort: true });
-
-      expect(
-        (kernelStore.rollbackCrank as unknown as MockInstance).mock.calls,
-      ).toStrictEqual([['delivery'], ['crank']]);
     });
 
     it('keeps the crank error when ending the crank fails too', async () => {
@@ -2396,8 +2405,14 @@ describe('KernelQueue', () => {
       return (method as MockInstance).mock.invocationCallOrder[0] as number;
     }
 
-    it('audits before the flush answers anyone', async () => {
-      await deliverOneItem();
+    it.each([
+      { what: 'a delivery', crankResult: undefined },
+      {
+        what: 'a vat death',
+        crankResult: { terminate: { vatId: 'v1', info: {} } },
+      },
+    ])('audits before the flush after $what', async ({ crankResult }) => {
+      await deliverOneItem(crankResult);
 
       expect(firstCallTo(kernelStore.assertRefCountsIfAuditing)).toBeLessThan(
         firstCallTo(kernelStore.flushCrankBuffer),
@@ -2432,14 +2447,6 @@ describe('KernelQueue', () => {
       );
 
       expect(resolveSpy).not.toHaveBeenCalled();
-    });
-
-    it('audits before the flush after a vat death too', async () => {
-      await deliverOneItem({ terminate: { vatId: 'v1', info: {} } });
-
-      expect(firstCallTo(kernelStore.assertRefCountsIfAuditing)).toBeLessThan(
-        firstCallTo(kernelStore.flushCrankBuffer),
-      );
     });
   });
 

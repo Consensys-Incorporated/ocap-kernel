@@ -275,8 +275,8 @@ describe('a control operation', () => {
     }).toStrictEqual({
       taken: ['send'],
       outcomes: [
-        'Kernel run loop died; this work will never be carried out',
-        'Kernel run loop died; this work will never be carried out',
+        'Kernel run loop died before this work was done',
+        'Kernel run loop died before this work was done',
       ],
     });
   });

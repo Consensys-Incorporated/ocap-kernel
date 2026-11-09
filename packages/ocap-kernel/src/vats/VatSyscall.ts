@@ -162,6 +162,9 @@ export class VatSyscall {
    * @returns The result of the syscall.
    */
   handleSyscall(vso: VatSyscallObject): VatSyscallResult {
+    if (this.#kernelQueue.isHalted()) {
+      return harden(['error', 'Kernel has halted']);
+    }
     try {
       this.illegalSyscall = undefined;
       this.vatRequestedTermination = undefined;
