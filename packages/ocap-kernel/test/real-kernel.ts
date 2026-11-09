@@ -12,6 +12,7 @@ import type {
   EndpointMessage,
   KRef,
   PlatformServices,
+  SystemSubclusterConfig,
   VatId,
 } from '../src/types.ts';
 import { VatHandle } from '../src/vats/VatHandle.ts';
@@ -64,11 +65,16 @@ export function watch(promise: Promise<unknown>): () => string {
  *
  * @param options - Options bag.
  * @param options.dbFilename - Where the store lives.
+ * @param options.systemSubclusters - System subclusters for its boot.
  * @returns The kernel and what a test drives or watches it through.
  */
 export async function setUpRealKernel({
   dbFilename = ':memory:',
-}: { dbFilename?: string } = {}) {
+  systemSubclusters,
+}: {
+  dbFilename?: string;
+  systemSubclusters?: SystemSubclusterConfig[];
+} = {}) {
   const received: string[] = [];
   const terminated: string[] = [];
   let onTerminate: ((vatId: VatId) => void) | undefined;
@@ -141,6 +147,7 @@ export async function setUpRealKernel({
   const kernel = await Kernel.make(platformServices, kernelDatabase, {
     logger,
     onRunLoopFailure,
+    ...(systemSubclusters && { systemSubclusters }),
   });
   const launch = async (): Promise<Record<string, KRef>> => {
     const { vatRootKrefs } = await kernel.launchSubcluster({

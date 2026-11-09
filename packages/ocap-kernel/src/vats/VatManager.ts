@@ -187,8 +187,8 @@ export class VatManager {
    * written directly, as no crank is open.
    *
    * @returns A promise that resolves once every vat has started or been
-   *   terminated, and rejects on a store fault, a panic or a failed
-   *   termination.
+   *   terminated, and rejects on a store fault, a failed termination, or a
+   *   vat that would not start after a panic.
    */
   async initializeAllVats(): Promise<void> {
     const starts: Promise<void>[] = [];
@@ -230,14 +230,20 @@ export class VatManager {
       if (isStoreFault(error)) {
         throw error;
       }
-      // After a panic nothing is written outside a crank.
-      this.#kernelQueue.assertRunLoopAlive('retire a vat that would not start');
+      // After a panic nothing is written outside a crank: the vat is left for
+      // the next start to try again.
+      if (this.#kernelQueue.isHalted()) {
+        this.#logger.error(`Vat ${vatId} would not start:`, error);
+        this.#kernelQueue.assertRunLoopAlive(
+          `retire vat ${vatId}, which would not start`,
+        );
+      }
       const subclusterId = this.#kernelStore
         .getSubclusters()
         .find(({ vats }) => Object.values(vats).includes(vatId))?.id;
       const where = subclusterId ? ` of subcluster ${subclusterId}` : '';
       const failure = new Error(
-        `Vat ${vatId}${where} was terminated after its worker would not start: ${error instanceof Error ? error.message : String(error)}`,
+        `Vat ${vatId}${where} was terminated after its worker would not start: ${capReasonText(error instanceof Error ? error.message : String(error))}`,
         { cause: error },
       );
       this.#logger.error(failure.message, error);
@@ -288,8 +294,19 @@ export class VatManager {
         throw running.lost;
       }
       // A panic during the start leaves the vat unrecorded, as a crash would:
-      // outside a crank, nothing would roll its records back.
-      this.#kernelQueue.assertRunLoopAlive('record a launched vat');
+      // outside a crank, nothing would roll its records back. Its worker is
+      // stopped here, since a `stop` may have stopped the others already.
+      if (this.#kernelQueue.isHalted()) {
+        await this.#platformServices
+          .terminate(vatId)
+          .catch((stopError: unknown) =>
+            this.#logger.error(
+              `Failed to stop the worker for vat ${vatId} after the kernel halted:`,
+              stopError,
+            ),
+          );
+        this.#kernelQueue.assertRunLoopAlive('record a launched vat');
+      }
     } catch (error) {
       // Attribute the failure to the specific vat by kernel id and name.
       throw new Error(`Failed to launch vat ${vatId} (${vatName})`, {
@@ -690,8 +707,8 @@ export class VatManager {
    */
   #retireVat(vatId: VatId, error: Error): void {
     this.#vats.delete(vatId);
-    if (!this.#kernelStore.isVatTerminated(vatId)) {
-      this.#logger.log(`Vat ${vatId} was terminated: ${error.message}`);
+    const recording = !this.#kernelStore.isVatTerminated(vatId);
+    if (recording) {
       // A fixed reason, as SwingSet gives: each promise stores its own copy,
       // so the vat's text would let it fill the disk.
       const failure = makeKernelError(
@@ -705,6 +722,9 @@ export class VatManager {
       this.#kernelStore.markVatAsTerminated(vatId);
     }
     this.#kernelStore.deleteVat(vatId);
+    if (recording) {
+      this.#logger.log(`Vat ${vatId} was terminated: ${error.message}`);
+    }
   }
 
   /**
@@ -1016,7 +1036,7 @@ export class VatManager {
     const lost = error instanceof StreamReadError;
     const reason = lost && error.cause instanceof Error ? error.cause : error;
     const failure = new Error(
-      `Vat ${vatId} was terminated after its restart failed: ${reason instanceof Error ? reason.message : String(reason)}`,
+      `Vat ${vatId} was terminated after its restart failed: ${capReasonText(reason instanceof Error ? reason.message : String(reason))}`,
       { cause: error },
     );
     this.#logger.error(failure.message, error);

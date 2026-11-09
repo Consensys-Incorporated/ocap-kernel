@@ -814,7 +814,7 @@ describe('a store fault', () => {
     });
   });
 
-  it('stops the kernel on a store fault in a syscall, without blaming the vat', async () => {
+  it("stops the kernel when a syscall's write fails, without blaming the vat", async () => {
     const harness = await setUp();
     const { kdb, kernelQueue, workers, survivorERef, doomedRoot } = harness;
     const fault = new Error('database or disk is full');
@@ -903,7 +903,7 @@ describe('a store fault', () => {
     });
   });
 
-  it('carries a termination a store fault stopped out on the next start', async () => {
+  it('lets the next start carry out a termination it stopped', async () => {
     const harness = await setUp({ onDisk: true });
     const { kdb, kernelQueue, vatManager } = harness;
     harness.run();
@@ -929,6 +929,7 @@ describe('a store fault', () => {
       ),
     }).toStrictEqual({ running: ['v2'], persisted: ['v2'] });
   });
+
   it('takes no syscall from a vat still running once the run loop has died', async () => {
     const harness = await setUp();
     const { kdb, vatStores, kernelQueue, workers, survivorERef, doomedRoot } =

@@ -103,7 +103,7 @@ describe('VatManager', () => {
   };
 
   /**
-   * Have every caller that waits on the run loop register, as the queue does.
+   * Record every `onRunLoopDeath` registration, as the queue does.
    *
    * @returns A function that kills the run loop, telling them all.
    */
@@ -312,6 +312,19 @@ describe('VatManager', () => {
       expect(log).toHaveBeenCalledWith(`Vat v1 was terminated: ${message}`);
     });
 
+    it('cuts a long start failure short', async () => {
+      const logError = vi.spyOn(mockLogger, 'error').mockReturnValue();
+      const failure = new Error('x'.repeat(10_005));
+      mockPlatformServices.launch.mockRejectedValueOnce(failure);
+
+      await vatManager.initializeAllVats();
+
+      expect(logError).toHaveBeenCalledWith(
+        `Vat v1 of subcluster s1 was terminated after its worker would not start: ${'x'.repeat(10_000)}… (5 more characters)`,
+        failure,
+      );
+    });
+
     it.each([
       {
         stage: 'launch',
@@ -469,6 +482,44 @@ describe('VatManager', () => {
   });
 
   describe('launchVat', () => {
+    it('records nothing and stops the worker of a vat whose start the kernel halted during', async () => {
+      makeVatHandleMock.mockImplementationOnce(async ({ vatId, vatConfig }) => {
+        mockKernelQueue.isHalted.mockReturnValue(true);
+        mockKernelQueue.assertRunLoopAlive.mockImplementation((what) => {
+          throw new Error(`Kernel panicked; cannot ${what}`);
+        });
+        return createMockVatHandle(vatId, vatConfig);
+      });
+
+      const failure = await vatManager
+        .launchVat(createMockVatConfig(), 'test')
+        .catch((error: Error) => error);
+
+      expect({
+        failure: (failure as Error).message,
+        cause: ((failure as Error).cause as Error).message,
+        stopped: mockPlatformServices.terminate.mock.calls.map(
+          ([vatId]) => vatId,
+        ),
+        recorded: mockKernelStore.setVatConfig.mock.calls,
+      }).toStrictEqual({
+        failure: 'Failed to launch vat v1 (test)',
+        cause: 'Kernel panicked; cannot record a launched vat',
+        stopped: ['v1'],
+        recorded: [],
+      });
+    });
+
+    it('records a launched vat when the run loop has only stopped meanwhile', async () => {
+      mockKernelQueue.assertRunLoopAlive.mockImplementation((what) => {
+        throw new Error(`Kernel run loop is stopped; cannot ${what}`);
+      });
+
+      await vatManager.launchVat(createMockVatConfig(), 'test');
+
+      expect(mockKernelStore.setVatConfig).toHaveBeenCalledOnce();
+    });
+
     it('launches a new vat without subcluster', async () => {
       const config = createMockVatConfig();
       const kref = await vatManager.launchVat(config, 'test');
@@ -974,6 +1025,21 @@ describe('VatManager', () => {
 
       await expect(vatManager.stopVat(v1, true)).rejects.toThrow(
         'deleteVat failed',
+      );
+    });
+
+    it('logs no termination whose records could not be written', async () => {
+      const log = vi.spyOn(mockLogger, 'log').mockReturnValue();
+      await vatManager.runVat(v1, createMockVatConfig());
+      mockKernelStore.deleteVat.mockImplementationOnce(() => {
+        throw new Error('deleteVat failed');
+      });
+
+      await expect(vatManager.stopVat(v1, true)).rejects.toThrow(
+        'deleteVat failed',
+      );
+      expect(log).not.toHaveBeenCalledWith(
+        expect.stringContaining('was terminated'),
       );
     });
 
@@ -1651,6 +1717,27 @@ describe('VatManager', () => {
       await expect(restarting).rejects.toThrow(
         expect.objectContaining({ message, cause: launchError }),
       );
+    });
+
+    it('cuts a long relaunch failure short', async () => {
+      await vatManager.runVat(v1, createMockVatConfig());
+      leaveRequestQueued();
+      vatManager.restartVat(v1).catch(() => undefined);
+      mockPlatformServices.launch.mockRejectedValueOnce(
+        new Error('x'.repeat(10_005)),
+      );
+
+      expect(await vatManager.performVatRestart(v1)).toStrictEqual({
+        abort: true,
+        terminate: {
+          vatId: 'v1',
+          reject: true,
+          info: makeFatalKernelError(
+            'INTERNAL_ERROR',
+            `Vat v1 was terminated after its restart failed: ${'x'.repeat(10_000)}… (5 more characters)`,
+          ),
+        },
+      });
     });
 
     it('relaunches even when the old channel never finishes closing', async () => {

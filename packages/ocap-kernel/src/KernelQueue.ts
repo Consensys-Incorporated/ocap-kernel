@@ -136,7 +136,7 @@ export class KernelQueue {
    * Whether the store has discarded the open crank's transaction, as a failed
    * rollback does, taking every savepoint with it. The run loop's catch then
    * has nothing to roll back, and asking could only report "no such savepoint"
-   * over the real error. Set only in a crank that goes on to kill the loop.
+   * over the real error.
    */
   #crankDiscarded: boolean = false;
 
@@ -266,16 +266,15 @@ export class KernelQueue {
               this.#kernelStore.rollbackCrank('crank');
             } catch (rollbackError) {
               // The original failure stays the `cause`, since that is the root
-              // cause an operator needs. `errors` keeps the rollback failure's
-              // own chain, such as the write SQLite rolled the crank back on.
-              // A panic leads the message too: a full disk ends the transaction
-              // itself, so the rollback can only report it gone.
-              const died = this.#panic
-                ? `${this.#panic.message}, and its`
-                : 'Run loop died and its';
+              // cause an operator needs, and leads the message, as a full disk
+              // ends the transaction itself and the rollback can only report it
+              // gone. `errors` keeps the rollback failure's own chain, such as
+              // the write SQLite rolled the crank back on.
+              const failure =
+                error instanceof Error ? error.message : String(error);
               throw new AggregateError(
                 [error, rollbackError],
-                `${died} crank could not be rolled back: ${String(rollbackError)}`,
+                `${failure}; the crank could not be rolled back: ${String(rollbackError)}`,
                 { cause: error },
               );
             }
@@ -548,7 +547,8 @@ export class KernelQueue {
   }
 
   /**
-   * Lead what the run loop dies of with the panic recorded before it, if any.
+   * Lead what the run loop dies of with the panic recorded before it, if any:
+   * what follows a panic is likely its consequence.
    *
    * @param caught - What the run loop caught.
    * @returns The error to die of.
@@ -572,9 +572,7 @@ export class KernelQueue {
         ? {
             state: 'failed',
             error: this.#runLoopState.error.message,
-            // The message drops the cause chain, and in a double failure with no
-            // panic it names the failed rollback rather than what killed the
-            // kernel.
+            // The message drops the cause chain.
             detail: stringify(this.#runLoopState.error, 0),
           }
         : { state: this.#runLoopState.state },

@@ -225,15 +225,15 @@ queued work, control operations included, are then rejected.
 An error the kernel's database throws on a read or write, as when the disk is full. It is
 the kernel's own fault, not the [vat](#vat)'s or peer's it was serving, so the kernel stops
 rather than terminate the vat or drop the message: by a [kernel panic](#kernel-panic) where
-it is caught outside the [run loop](#run-loop), otherwise by a throw out of the
-[crank](#crank), which rolls the crank back. The kernel's stores mark what they throw, so
+a throw would not reach the [run loop](#run-loop), otherwise by a throw out of the
+[crank](#crank), which rolls the crank back. The kernel marks what its stores throw, so
 [`isStoreFault`](../packages/ocap-kernel/src/store/utils/store-fault.ts) can tell a store
 fault from a failed check of the kernel's own.
 
 ### kernel panic
 
-A fault recorded where a throw would not reach the [run loop](#run-loop), such as a
-[store fault](#store-fault) in a [syscall](#syscall), after SwingSet's `kernelPanic`. The
+After SwingSet's `kernelPanic`: a fault recorded where a throw would not reach the
+[run loop](#run-loop), such as a [store fault](#store-fault) in a [syscall](#syscall). The
 run loop throws it before the open [crank](#crank) commits, so the crank rolls back and the
 loop dies. From then on the kernel takes no more work and no syscalls. See `panic` in
 [KernelQueue](../packages/ocap-kernel/src/KernelQueue.ts).

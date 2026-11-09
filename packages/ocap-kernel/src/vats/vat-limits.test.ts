@@ -16,7 +16,7 @@ describe('capReasonText', () => {
       capped: `${'x'.repeat(10_000)}… (5 more characters)`,
     },
   ])(
-    'keeps at most the limit of text of length $text.length',
+    'keeps at most 10,000 characters of a text $text.length long',
     ({ text, capped }) => {
       expect(capReasonText(text)).toBe(capped);
     },
@@ -42,7 +42,7 @@ describe('fitsVatStateLimit', () => {
 
   it.each([
     {
-      what: 'entries over the limit only in all',
+      what: 'entries over the limit only together',
       sets: [
         ['a', half],
         ['b', half],

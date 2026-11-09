@@ -588,20 +588,16 @@ describe('KernelQueue', () => {
       const crankError = new Error('crank exploded');
       const deliver = vi.fn().mockRejectedValue(crankError);
 
-      // The rollback failure names itself; the original stays the `cause`, since
-      // that is the root cause an operator needs.
+      const message =
+        'crank exploded; the crank could not be rolled back: Error: database is gone';
       await expect(kernelQueue.run(deliver)).rejects.toMatchObject({
-        message:
-          'Run loop died and its crank could not be rolled back: Error: database is gone',
+        message,
         cause: crankError,
         errors: [crankError, rollbackError],
       });
       expect(kernelQueue.getRunLoopStatus()).toStrictEqual({
         state: 'failed',
-        error:
-          'Run loop died and its crank could not be rolled back: Error: database is gone',
-        // The headline names the rollback, so only `detail` can carry the error
-        // that actually killed the kernel to the one consumer that reports it.
+        error: message,
         detail: expect.stringContaining('crank exploded'),
       });
     });
@@ -2288,9 +2284,56 @@ describe('KernelQueue', () => {
       });
 
       await expect(kernelQueue.run(deliver)).rejects.toThrow(
-        `Kernel panic: syscall failed, and its crank could not be rolled back: ${String(lost)}`,
+        `Kernel panic: syscall failed; the crank could not be rolled back: ${String(lost)}`,
       );
     });
+
+    it.each([
+      {
+        what: 'succeeds',
+        afterCommitFails: false,
+        then: { message: 'SQLITE_FULL' },
+      },
+      {
+        what: 'fails too',
+        afterCommitFails: true,
+        then: {
+          message:
+            "Run loop died writing a held request, and its crank's afterCommit failed: Error: transmit failed",
+        },
+      },
+    ])(
+      'leads with a panic raised while afterCommit runs, after a held request failed to be written, when afterCommit $what',
+      async ({ afterCommitFails, then }) => {
+        (kernelStore.isInCrank as unknown as MockInstance).mockReturnValue(
+          true,
+        );
+        queueOneItem();
+        (
+          kernelStore.enqueueRun as unknown as MockInstance
+        ).mockImplementationOnce(() => {
+          throw new Error('SQLITE_FULL');
+        });
+        const deliver = vi.fn(async () => {
+          kernelQueue.enqueueRestartVat(v1);
+          return {
+            afterCommit: async () => {
+              kernelQueue.panic('handshake failed', cause);
+              if (afterCommitFails) {
+                throw new Error('transmit failed');
+              }
+            },
+          };
+        });
+
+        const failure = await kernelQueue.run(deliver).catch((error) => error);
+
+        expect(failure).toMatchObject({
+          message: 'Kernel panic: handshake failed',
+          errors: [{ message: 'Kernel panic: handshake failed' }, then],
+        });
+      },
+    );
 
     it('leads with a panic raised while afterCommit runs, when afterCommit then fails', async () => {
       queueOneItem();

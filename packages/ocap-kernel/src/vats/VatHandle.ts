@@ -412,13 +412,13 @@ export class VatHandle implements EndpointHandle {
       ) {
         throw error;
       }
-      this.#logger?.error(
-        `Vat ${this.vatId}'s worker failed a delivery:`,
-        error,
+      const detail = capReasonText(
+        error instanceof Error ? error.message : stringify(error, 0),
       );
-      const detail =
-        error instanceof Error ? error.message : stringify(error, 0);
-      refusal = `Vat worker failed the delivery: ${capReasonText(detail)}`;
+      this.#logger?.error(
+        `Vat ${this.vatId}'s worker failed a delivery: ${detail}`,
+      );
+      refusal = `Vat worker failed the delivery: ${detail}`;
     }
     if (method === 'initVat' || method === 'deliver') {
       if (

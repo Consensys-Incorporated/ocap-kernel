@@ -159,7 +159,7 @@ describe('a store fault', () => {
     },
     {
       other: 'fails to start',
-      refusal: 'Kernel panicked; cannot retire a vat that would not start',
+      refusal: 'Kernel panicked; cannot retire vat v2, which would not start',
     },
   ])(
     'in a syscall while a vat starts at boot fails Kernel.make, writing nothing after it, when the other vat $other',
@@ -206,8 +206,12 @@ describe('a store fault', () => {
         stopRemoteComms: vi.fn().mockResolvedValue(undefined),
       } as unknown as PlatformServices;
 
+      const logger = new Logger({ transports: [] });
+      vi.spyOn(logger, 'subLogger').mockReturnValue(logger);
+      const logError = vi.spyOn(logger, 'error');
+
       const failure = await Kernel.make(platformServices, kernelDatabase, {
-        logger: new Logger({ transports: [] }),
+        logger,
       }).catch((error: Error) => error);
 
       expect({
@@ -216,17 +220,130 @@ describe('a store fault', () => {
         workersStopped: vi.mocked(platformServices.terminateAll).mock.calls
           .length,
         terminated: kernelDatabase.kernelKVStore.get('vats.terminated'),
+        startFailureLogged: logError.mock.calls.some(
+          ([message]) => message === 'Vat v2 would not start:',
+        ),
       }).toStrictEqual({
         failure: refusal,
         cause: 'Kernel panic: syscall send from vat v1 failed',
         workersStopped: 1,
         terminated: '[]',
+        startFailureLogged: other === 'fails to start',
       });
     },
   );
 
-  it('in a syscall while a vat launches leaves that vat unrecorded', async () => {
-    const { kernel, kernelDatabase, launch } = await setUpRealKernel();
+  it.each([
+    {
+      when: 'while the vats start',
+      panicsOn: 'start',
+      refusal: 'Kernel panicked; cannot start',
+      // Retired by its failed start, before the panic.
+      terminated: ['boot'],
+    },
+    {
+      when: 'while a subcluster that lost its bootstrap vat is removed',
+      panicsOn: 'removal',
+      refusal: 'Kernel panicked; cannot remove a system subcluster',
+      // `other` is retired before its worker is stopped, where the panic is.
+      terminated: ['boot', 'other'],
+    },
+  ])(
+    'in a syscall $when at boot fails Kernel.make',
+    async ({ panicsOn, refusal, terminated }) => {
+      const dir = await mkdtemp(join(tmpdir(), 'panic-boot-'));
+      onTestFinished(async () => rm(dir, { recursive: true, force: true }));
+      const dbFilename = join(dir, 'store.db');
+      const systemSubclusters = [
+        {
+          name: 'sys',
+          config: {
+            bootstrap: 'boot',
+            vats: {
+              boot: { sourceSpec: 'boot.js' },
+              other: { sourceSpec: 'other.js' },
+            },
+          },
+        },
+      ];
+      const first = await setUpRealKernel({ dbFilename, systemSubclusters });
+      const vats: Record<string, string> = {};
+      for (const subcluster of first.kernel.getSubclusters()) {
+        Object.assign(vats, subcluster.vats);
+      }
+      await first.kernel.stop();
+      vi.restoreAllMocks();
+
+      const kernelDatabase = await makeSQLKernelDatabase({ dbFilename });
+      failWrites(kernelDatabase, (key) =>
+        key.startsWith(`${vats.waiter}.c.p+`),
+      );
+      let panicFromWaiter = (): void => undefined;
+      vi.spyOn(VatHandle, 'make').mockImplementation(
+        async ({ vatId, vatConfig, kernelQueue, kernelStore }) => {
+          if (vatId === vats.boot) {
+            throw new Error('bundle not found');
+          }
+          if (vatId === vats.waiter) {
+            panicFromWaiter = () => {
+              new VatSyscall({ vatId, kernelQueue, kernelStore }).handleSyscall(
+                [
+                  'send',
+                  'o+0',
+                  { methargs: kser(['late', []]), result: 'p+5' },
+                ],
+              );
+            };
+            if (panicsOn === 'start') {
+              await delay(0);
+              panicFromWaiter();
+            }
+          }
+          return {
+            vatId,
+            config: vatConfig,
+            terminate: async () => undefined,
+            expectClose: () => undefined,
+          } as unknown as VatHandle;
+        },
+      );
+      const platformServices = {
+        launch: vi.fn(async () =>
+          TestDuplexStream.make<JsonRpcMessage, JsonRpcMessage>(
+            () => undefined,
+          ),
+        ),
+        terminate: vi.fn(async (vatId: string) => {
+          if (panicsOn === 'removal' && vatId === vats.other) {
+            panicFromWaiter();
+          }
+        }),
+        terminateAll: vi.fn().mockResolvedValue(undefined),
+        stopRemoteComms: vi.fn().mockResolvedValue(undefined),
+      } as unknown as PlatformServices;
+
+      const failure = await Kernel.make(platformServices, kernelDatabase, {
+        logger: new Logger({ transports: [] }),
+        systemSubclusters,
+      }).catch((error: Error) => error);
+
+      expect({
+        failure: (failure as Error).message,
+        cause: ((failure as Error).cause as Error | undefined)?.message,
+        terminated: JSON.parse(
+          kernelDatabase.kernelKVStore.get('vats.terminated') ?? '[]',
+        ),
+      }).toStrictEqual({
+        failure: refusal,
+        cause: `Kernel panic: syscall send from vat ${vats.waiter} failed`,
+        terminated: terminated.map((name) => vats[name]),
+      });
+    },
+  );
+
+  it('in a syscall while a subcluster launches leaves its vats unrecorded, their workers stopped', async () => {
+    const { kernel, kernelDatabase, launch, platformServices } =
+      await setUpRealKernel();
     failWrites(kernelDatabase, (key) => key.startsWith('v1.c.p+'));
     const makeHandle = vi.mocked(VatHandle.make);
     const makeFakeHandle = makeHandle.getMockImplementation();
@@ -255,14 +372,21 @@ describe('a store fault', () => {
 
     expect({
       runLoop: (await kernel.getStatus()).runLoop,
-      recorded: kernelDatabase.kernelKVStore.get('vatConfig.v3'),
+      recorded: ['v3', 'v4'].map((vatId) =>
+        kernelDatabase.kernelKVStore.get(`vatConfig.${vatId}`),
+      ),
+      stopped: vi
+        .mocked(platformServices.terminate)
+        .mock.calls.map(([vatId]) => vatId)
+        .sort(),
     }).toStrictEqual({
       runLoop: {
         state: 'failed',
         error: 'Kernel panic: syscall send from vat v1 failed',
         detail: expect.any(String),
       },
-      recorded: undefined,
+      recorded: [undefined, undefined],
+      stopped: ['v3', 'v4'],
     });
   });
 });

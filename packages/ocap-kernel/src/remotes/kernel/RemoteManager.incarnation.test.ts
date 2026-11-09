@@ -529,7 +529,7 @@ describe('a store fault in remote comms', () => {
     expect(kernelQueue.waitingIncarnations(PEER_ID)).toStrictEqual([]);
   });
 
-  it('stops the kernel on a store fault while taking a peer message, which stays unacknowledged', async () => {
+  it('stops the kernel while taking a peer message, which stays unacknowledged', async () => {
     const harness = await setUp();
     const {
       kernelDatabase,

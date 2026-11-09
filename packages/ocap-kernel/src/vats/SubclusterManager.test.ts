@@ -92,6 +92,7 @@ describe('SubclusterManager', () => {
       waitForCrank: vi.fn().mockResolvedValue(undefined),
       resolvePromises: vi.fn(),
       assertRunLoopAlive: vi.fn(),
+      isHalted: vi.fn().mockReturnValue(false),
       writeOutsideCrank: vi.fn<KernelQueue['writeOutsideCrank']>(
         async (write) => write(),
       ),
@@ -305,6 +306,27 @@ describe('SubclusterManager', () => {
       expect(mockVatManager.terminateVat).toHaveBeenCalledWith('v1');
       expect(mockVatManager.collectGarbage).toHaveBeenCalled();
       expect(mockKernelStore.deleteSubcluster).toHaveBeenCalledWith('s1');
+    });
+
+    it('collects no garbage after a failed launch once the kernel has halted', async () => {
+      mockVatManager.launchVat
+        .mockResolvedValueOnce('ko1' as KRef)
+        .mockRejectedValueOnce(new Error('bob exploded'));
+      mockKernelStore.getSubclusterVats.mockReturnValue(['v1' as VatId]);
+      vatsRunning = true;
+      mockKernelQueue.isHalted.mockReturnValue(true);
+
+      await expect(
+        subclusterManager.launchSubcluster({
+          bootstrap: 'alice',
+          vats: {
+            alice: { sourceSpec: 'alice.js' },
+            bob: { sourceSpec: 'bob.js' },
+          },
+        }),
+      ).rejects.toThrow('bob exploded');
+
+      expect(mockVatManager.collectGarbage).not.toHaveBeenCalled();
     });
 
     it("keeps a failed launch's record when its teardown cannot finish", async () => {
@@ -1240,6 +1262,29 @@ describe('SubclusterManager', () => {
       expect(logger.error).toHaveBeenCalledWith(
         'System subcluster "sys" lost its bootstrap vat; launching it again from its config',
       );
+    });
+
+    it('stops removing once a panic comes in while a vat stops', async () => {
+      const { manager } = makeRestoredManager({
+        sys: { alice: asVatId('v2'), bob: asVatId('v3') },
+      });
+      mockVatManager.stopVat.mockImplementationOnce(async () => {
+        mockKernelQueue.assertRunLoopAlive.mockImplementation(() => {
+          throw new Error('Kernel panicked; cannot remove a system subcluster');
+        });
+      });
+
+      await expect(
+        manager.removeSystemSubclustersWithoutBootstrapVat(),
+      ).rejects.toThrow('Kernel panicked; cannot remove a system subcluster');
+
+      expect({
+        stopped: mockVatManager.stopVat.mock.calls,
+        recordDeleted: mockKernelStore.deleteSubcluster.mock.calls,
+      }).toStrictEqual({
+        stopped: [['v3', true]],
+        recordDeleted: [],
+      });
     });
 
     it('removes every system subcluster that lost its bootstrap vat', async () => {

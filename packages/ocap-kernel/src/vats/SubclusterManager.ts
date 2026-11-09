@@ -223,13 +223,16 @@ export class SubclusterManager {
         failure = error;
         this.#logger.error(`Error terminating vat ${vatId}:`, error);
       }
-      try {
-        this.#vatManager.collectGarbage();
-      } catch (error) {
-        this.#logger.error(
-          `Error collecting garbage after vat ${vatId}:`,
-          error,
-        );
+      // Not after a panic: outside a crank, nothing would roll it back.
+      if (!this.#kernelQueue.isHalted()) {
+        try {
+          this.#vatManager.collectGarbage();
+        } catch (error) {
+          this.#logger.error(
+            `Error collecting garbage after vat ${vatId}:`,
+            error,
+          );
+        }
       }
       // By what is left rather than what threw: a vat can be gone even though
       // something after its death failed.
@@ -661,6 +664,9 @@ export class SubclusterManager {
       for (const vatId of Object.values(subcluster?.vats ?? {}).reverse()) {
         // `stopVat` throws for a vat that is gone.
         if (!this.#isVatGone(vatId)) {
+          // After a panic in an await before it, nothing is written outside a
+          // crank.
+          this.#kernelQueue.assertRunLoopAlive('remove a system subcluster');
           await this.#vatManager.stopVat(vatId, true);
         }
       }
@@ -669,6 +675,7 @@ export class SubclusterManager {
       } catch (error) {
         this.#logger.error('Error during IO cleanup on removal:', error);
       }
+      this.#kernelQueue.assertRunLoopAlive('remove a system subcluster');
       this.#kernelStore.deleteSubcluster(subclusterId);
       this.#dropSystemSubclusterMapping(subclusterId);
     }

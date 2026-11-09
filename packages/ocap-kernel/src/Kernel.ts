@@ -376,7 +376,6 @@ export class Kernel {
       // boot before anything more is written outside a crank.
       this.#kernelQueue.assertRunLoopAlive('start');
       await this.#subclusterManager.removeSystemSubclustersWithoutBootstrapVat();
-      this.#kernelQueue.assertRunLoopAlive('start');
     } catch (error) {
       this.#vatManager.expectWorkersToStop();
       await this.#platformServices

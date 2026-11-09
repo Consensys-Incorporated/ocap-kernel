@@ -682,7 +682,7 @@ describe('VatHandle', () => {
       });
     });
 
-    it('writes a delivery whose state change is over the size limit in all but not in any entry', async () => {
+    it('writes a state change over the size limit in total but in no entry', async () => {
       const { kernelStore, written } = makeRecordingKernelStore();
       const { vat, stream } = await makeVat({ kernelStore });
       const delivering = vat.deliverMessage(asERef('o+0'), {
@@ -767,8 +767,31 @@ describe('VatHandle', () => {
       await delivering;
 
       expect(logger.error).toHaveBeenCalledWith(
-        "Vat v0's worker failed a delivery:",
-        expect.objectContaining({ message: 'worker blew up' }),
+        `Vat v0's worker failed a delivery: {"code":-32603,"message":"worker blew up"}`,
+      );
+    });
+
+    it('logs a state entry over the size limit', async () => {
+      const logger = {
+        error: vi.fn(),
+        subLogger: vi.fn().mockReturnThis(),
+      } as unknown as Logger;
+      const { vat, stream } = await makeVat({ logger });
+      const delivering = vat.deliverMessage(asERef('o+0'), {
+        methargs: { body: '#["hello",[]]', slots: [] },
+        result: null,
+      });
+      await delay(10);
+
+      await stream.receiveInput({
+        id: 'v0:1',
+        result: [[[['big', 'x'.repeat(MAX_VAT_MESSAGE_LENGTH)]], []], null],
+        jsonrpc: '2.0',
+      });
+      await delivering;
+
+      expect(logger.error).toHaveBeenCalledWith(
+        `Vat v0 wrote a state entry over ${MAX_VAT_MESSAGE_LENGTH} characters`,
       );
     });
 

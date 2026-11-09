@@ -171,6 +171,8 @@ const mocks = vi.hoisted(() => {
 
     readonly #runLoopDeathWaiters = new Set<(error: Error) => void>();
 
+    isHalted = vi.fn(() => this.#runLoopFailure !== undefined);
+
     assertRunLoopAlive = vi.fn((what: string) => {
       if (this.#runLoopFailure) {
         throw new Error(`Kernel run loop died; cannot ${what}`, {
