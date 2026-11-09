@@ -282,10 +282,6 @@ export class KernelRouter {
   /**
    * Reject a message's result promise, unless it is already settled.
    *
-   * Defensive: only a remote's full queue reaches here, refused before it
-   * settles anything, but resolving a settled promise is a `Fail`, thrown from
-   * inside the catch that is handling the failure.
-   *
    * @param endpointId - The endpoint that was to have decided it.
    * @param kpid - The result promise.
    * @param failure - Why the message could not be delivered.
@@ -409,9 +405,8 @@ export class KernelRouter {
             endpoint.deliverMessage(endpointTarget, endpointMessage),
           );
         } catch (error) {
-          // Only a remote whose queue is full refuses a message. Anything else
-          // is the kernel's own fault, such as a store write that failed, and
-          // kills the run loop rather than commit the crank without it.
+          // Only a remote whose queue is full refuses a message; anything else
+          // is the kernel's own fault.
           if (!(error instanceof ResourceLimitError)) {
             throw error;
           }
@@ -668,11 +663,8 @@ export class KernelRouter {
     try {
       return await remote.deliverInbound(message);
     } catch (error) {
-      // A store fault kills the run loop, rather than be covered by the next
-      // message's acknowledgement. Anything else is taken for the peer's: what
-      // it sends can fail here, with an unknown method, a reference that does
-      // not resolve or a reply to a redemption that has timed out, and a peer
-      // must not be able to stop the kernel.
+      // Anything but a store fault is taken for the peer's, and a peer must
+      // not be able to stop the kernel.
       if (isStoreFault(error)) {
         throw error;
       }
@@ -730,8 +722,7 @@ export class KernelRouter {
     } catch (error) {
       // A vat whose channel dies mid-delivery has its pending commands
       // rejected and its handle taken in one step, so a vat with no handle by
-      // now is what tells that apart from a kernel fault, unless the channel
-      // died while the delivery was writing the vat's state.
+      // now is what tells that apart from a kernel fault.
       if (
         !isVatId(endpointId) ||
         isStoreFault(error) ||

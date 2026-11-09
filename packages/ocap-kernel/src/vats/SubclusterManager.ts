@@ -223,7 +223,6 @@ export class SubclusterManager {
         failure = error;
         this.#logger.error(`Error terminating vat ${vatId}:`, error);
       }
-      // Not after a panic: outside a crank, nothing would roll it back.
       if (!this.#kernelQueue.isHalted()) {
         try {
           this.#vatManager.collectGarbage();
@@ -664,8 +663,6 @@ export class SubclusterManager {
       for (const vatId of Object.values(subcluster?.vats ?? {}).reverse()) {
         // `stopVat` throws for a vat that is gone.
         if (!this.#isVatGone(vatId)) {
-          // After a panic in an await before it, nothing is written outside a
-          // crank.
           this.#kernelQueue.assertRunLoopAlive('remove a system subcluster');
           await this.#vatManager.stopVat(vatId, true);
         }

@@ -117,7 +117,6 @@ export async function setUpRealKernel({
             ]);
           }
           if (method === 'remember') {
-            // As `VatHandle` writes the vat's state once a delivery returns.
             kernelStore
               .makeVatStore(vatId)
               .updateKVData([['remembered', 'yes']], []);

@@ -226,12 +226,9 @@ export class VatManager {
     try {
       await this.#relaunchVat(vatId, vatConfig);
     } catch (error) {
-      // The kernel's fault, which fails the boot rather than cost the vat.
       if (isStoreFault(error)) {
         throw error;
       }
-      // After a panic nothing is written outside a crank: the vat is left for
-      // the next start to try again.
       if (this.#kernelQueue.isHalted()) {
         this.#logger.error(`Vat ${vatId} would not start:`, error);
         this.#kernelQueue.assertRunLoopAlive(
@@ -293,9 +290,8 @@ export class VatManager {
           );
         throw running.lost;
       }
-      // A panic during the start leaves the vat unrecorded, as a crash would:
-      // outside a crank, nothing would roll its records back. Its worker is
-      // stopped here, since a `stop` may have stopped the others already.
+      // Its worker is stopped here, since a `stop` may have stopped the others
+      // already.
       if (this.#kernelQueue.isHalted()) {
         await this.#platformServices
           .terminate(vatId)
@@ -570,13 +566,9 @@ export class VatManager {
     });
     this.terminateVat(vatId, makeLostVatReason(vatId, error)).catch(
       (failure: unknown) => {
-        // Refused, or dropped with the run loop: what killed the kernel has
-        // been reported, and the next start relaunches the vat, or terminates
-        // it if the request was written.
         if (this.#kernelQueue.isHalted()) {
           return;
         }
-        // Unqueued, the vat would stay persisted with no worker.
         if (isStoreFault(failure)) {
           const panic = this.#kernelQueue.panic(
             `queueing the termination of lost vat ${vatId} failed`,
@@ -774,10 +766,7 @@ export class VatManager {
    * instruction, and one that outlived its process names a vat the boot has
    * just relaunched.
    *
-   * A failure to record the death is thrown, so the run loop rolls the crank
-   * back and dies, and the next start relaunches the vat and carries the
-   * termination out again. Callers are answered only once the crank commits;
-   * one that dies leaves them to `onRunLoopDeath`.
+   * A failure to record the death is thrown, for the run loop to roll back.
    *
    * @param vatId - The ID of the vat.
    * @param reason - The reason for the termination, if any.

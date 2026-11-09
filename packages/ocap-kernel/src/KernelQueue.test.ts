@@ -602,8 +602,6 @@ describe('KernelQueue', () => {
       });
     });
 
-    // Only `error.message` crosses the wire, so it has to name the database
-    // error rather than a missing savepoint.
     it('reports the database failure when an aborted crank cannot roll back', async () => {
       (kernelStore.runQueueLength as unknown as MockInstance)
         .mockReturnValueOnce(1)

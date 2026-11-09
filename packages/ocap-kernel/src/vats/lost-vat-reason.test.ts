@@ -7,7 +7,6 @@ import { kunser } from '../liveslots/kernel-marshal.ts';
 
 describe('makeLostVatReason', () => {
   it('cuts what the channel ended with to the reason limit', () => {
-    // As a stream reports a frame that fails validation: the frame itself.
     const frame = new Error('x'.repeat(10_005));
 
     const reason = makeLostVatReason(

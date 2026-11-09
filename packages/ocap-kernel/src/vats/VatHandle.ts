@@ -251,8 +251,6 @@ export class VatHandle implements EndpointHandle {
       // which `sendVatCommand` checks entry by entry.
       this.#rpcClient.handleResponse(message.id as string, message);
     } else if (isJsonRpcNotification(message)) {
-      // Refused as a malformed message is: the drain ends, which reads as the
-      // channel lost, and the vat is terminated.
       if (!fitsVatMessageLimit(message)) {
         throw new Error(
           `Vat ${this.vatId} sent a syscall over ${MAX_VAT_MESSAGE_LENGTH} characters`,
@@ -403,8 +401,6 @@ export class VatHandle implements EndpointHandle {
     try {
       result = await this.#rpcClient.call(method, params);
     } catch (error) {
-      // A channel that failed or is closing is thrown, for `KernelRouter` to
-      // tell apart by the handle the vat no longer has.
       if (
         method !== 'deliver' ||
         this.#closing ||

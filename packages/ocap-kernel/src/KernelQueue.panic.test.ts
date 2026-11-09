@@ -17,8 +17,6 @@ import { VatSyscall } from './vats/VatSyscall.ts';
 import { asVatId } from '../test/branded.ts';
 import { setUpRealKernel, watch } from '../test/real-kernel.ts';
 
-// Whole cranks: a store fault stops the kernel and rolls its crank back.
-
 const DEAD_RESULT =
   'Kernel run loop died; this message result will never be delivered';
 const DEAD_WORK = 'Kernel run loop died before this work was done';
@@ -57,7 +55,6 @@ async function waitForDeath(kernel: {
   await vi.waitFor(async () =>
     expect((await kernel.getStatus()).runLoop.state).toBe('failed'),
   );
-  // Flushes the callers' settlements; not a timeout.
   await delay(0);
 }
 
@@ -135,7 +132,6 @@ describe('a store fault', () => {
     expect({
       runLoop: (await kernel.getStatus()).runLoop,
       settlement: settlement(),
-      // Stopped before the failure is rethrown; the next start relaunches it.
       terminated,
       recorded: kernelDatabase.kernelKVStore.get('vats.terminated'),
       queued: runQueueLength(kernelDatabase),
@@ -176,8 +172,6 @@ describe('a store fault', () => {
       vi.spyOn(VatHandle, 'make').mockImplementation(
         async ({ vatId, vatConfig, kernelQueue, kernelStore }) => {
           if (vatId === 'v1') {
-            // As its `initVat` sending a message, which a worker does not
-            // wait on.
             new VatSyscall({ vatId, kernelQueue, kernelStore }).handleSyscall([
               'send',
               'o+0',
@@ -238,14 +232,12 @@ describe('a store fault', () => {
       when: 'while the vats start',
       panicsOn: 'start',
       refusal: 'Kernel panicked; cannot start',
-      // Retired by its failed start, before the panic.
       terminated: ['boot'],
     },
     {
       when: 'while a subcluster that lost its bootstrap vat is removed',
       panicsOn: 'removal',
       refusal: 'Kernel panicked; cannot remove a system subcluster',
-      // `other` is retired before its worker is stopped, where the panic is.
       terminated: ['boot', 'other'],
     },
   ])(
@@ -352,7 +344,6 @@ describe('a store fault', () => {
     }
     makeHandle.mockImplementation(async (params) => {
       if (params.vatId === 'v3') {
-        // As v1 making a syscall outside any delivery while v3 starts.
         new VatSyscall({
           vatId: asVatId('v1'),
           kernelQueue: params.kernelQueue,

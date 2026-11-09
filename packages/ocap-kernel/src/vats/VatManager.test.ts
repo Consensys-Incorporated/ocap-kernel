@@ -1341,7 +1341,6 @@ describe('VatManager', () => {
         const killRunLoop = captureRunLoopDeath();
         const terminating = vatManager.terminateVat(v1);
 
-        // Its crank then dies, so `afterCommit` never runs.
         await vatManager.performVatTermination(v1);
         const death = new Error('run loop died');
         killRunLoop(death);

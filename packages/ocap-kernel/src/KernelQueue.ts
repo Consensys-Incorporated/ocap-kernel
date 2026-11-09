@@ -134,13 +134,10 @@ export class KernelQueue {
 
   /**
    * Whether the store has discarded the open crank's transaction, as a failed
-   * rollback does, taking every savepoint with it. The run loop's catch then
-   * has nothing to roll back, and asking could only report "no such savepoint"
-   * over the real error.
+   * rollback does, taking every savepoint with it.
    */
   #crankDiscarded: boolean = false;
 
-  /** The fault {@link panic} recorded, for the run loop to throw. */
   #panic: Error | undefined;
 
   /**
@@ -259,17 +256,10 @@ export class KernelQueue {
           }
         } catch (caught) {
           const error = this.#ledByPanic(caught);
-          // The whole crank, a vat's death recorded in it too: a throw here is
-          // the kernel's own fault.
           if (!this.#crankDiscarded) {
             try {
               this.#kernelStore.rollbackCrank('crank');
             } catch (rollbackError) {
-              // The original failure stays the `cause`, since that is the root
-              // cause an operator needs, and leads the message, as a full disk
-              // ends the transaction itself and the rollback can only report it
-              // gone. `errors` keeps the rollback failure's own chain, such as
-              // the write SQLite rolled the crank back on.
               const failure =
                 error instanceof Error ? error.message : String(error);
               throw new AggregateError(
@@ -509,9 +499,7 @@ export class KernelQueue {
    * Stop the kernel over a fault of its own, such as a store write that
    * failed, caught where a throw would not reach the run loop. As SwingSet's
    * `kernelPanic`, the run loop throws it before the open crank commits, or on
-   * waking if no crank is open. SwingSet's host then leaves its block
-   * uncommitted; with no block commit, ours rolls the crank back and the loop
-   * dies. Ingress is refused from then on.
+   * waking if no crank is open. Ingress is refused from then on.
    *
    * @param problem - What failed, completing "Kernel panic: ...".
    * @param cause - The error that was caught.
@@ -519,17 +507,13 @@ export class KernelQueue {
    */
   panic(problem: string, cause: unknown): Error {
     const error = new Error(`Kernel panic: ${problem}`, { cause });
-    // The first is kept: a later one is likely its consequence.
     this.#panic ??= error;
     this.#wakeRunLoop();
     return error;
   }
 
   /**
-   * Whether the kernel has panicked or its run loop has died. Vats' syscalls,
-   * and the state a vat reports after a delivery, are refused then: outside a
-   * crank they would commit on their own, and nothing would roll them back.
-   * A remote's acknowledgements and give-up still write (#1152).
+   * Whether the kernel has panicked or its run loop has died.
    *
    * @returns True if so.
    */
@@ -547,8 +531,7 @@ export class KernelQueue {
   }
 
   /**
-   * Lead what the run loop dies of with the panic recorded before it, if any:
-   * what follows a panic is likely its consequence.
+   * Lead what the run loop dies of with the panic recorded before it, if any.
    *
    * @param caught - What the run loop caught.
    * @returns The error to die of.
@@ -572,7 +555,6 @@ export class KernelQueue {
         ? {
             state: 'failed',
             error: this.#runLoopState.error.message,
-            // The message drops the cause chain.
             detail: stringify(this.#runLoopState.error, 0),
           }
         : { state: this.#runLoopState.state },
@@ -705,8 +687,7 @@ export class KernelQueue {
     this.#kernelStore.collectGarbage();
     // The audit goes first, so the flush does not settle the promise
     // `enqueueMessage` gave an external caller out of state a violation is
-    // about to roll back. It can see the buffered items at all because
-    // `computeExpectedRefCounts` credits the crank buffer.
+    // about to roll back.
     this.#kernelStore.assertRefCountsIfAuditing();
     if (!crankResult?.abort) {
       this.#flushCrankBuffer();
