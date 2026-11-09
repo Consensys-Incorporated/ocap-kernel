@@ -161,7 +161,6 @@ export const makeLoadExtension = async ({
     headless: false,
     args: browserArgs,
   });
-  await enableDeveloperMode(browserContext);
 
   // Capture background service worker console logs
   browserContext.on('serviceworker', (worker) => {
@@ -193,6 +192,8 @@ export const makeLoadExtension = async ({
       (error) => console.warn('Failed to set up CDP for iframe logs:', error),
     );
   });
+
+  await enableDeveloperMode(browserContext);
 
   // Wait for the extension to be loaded
   await new Promise((resolve) => setTimeout(resolve, 1000));
