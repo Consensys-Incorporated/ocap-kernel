@@ -506,6 +506,14 @@ export async function initTransport(
         try {
           readBuf = await channel.msgStream.read();
         } catch (problem) {
+          // A channel the peer's state no longer holds, because a newer one
+          // replaced it or `closeConnection` dropped it, ends quietly. Taken for
+          // the live channel's loss, its end would drop that channel and
+          // redial, and the peer would then close the old one's successor too.
+          if (peerStateManager.getState(channel.peerId).channel !== channel) {
+            logger.log(`${channel.peerId}:: replaced channel closed`);
+            return;
+          }
           if (
             problem instanceof InvalidDataLengthError ||
             problem instanceof InvalidDataLengthLengthError

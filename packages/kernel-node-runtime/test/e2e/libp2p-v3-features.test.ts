@@ -101,19 +101,13 @@ describe.sequential('libp2p v3 Features E2E', () => {
     it(
       'recovers queued message after peer:disconnect triggers reconnection',
       async () => {
-        // The fast test backoff spends the default 10 connection attempts a
-        // minute while kernel2 is down, and every send after that fails.
-        const reconnectOptions = {
-          ...testBackoffOptions,
-          maxConnectionAttemptsPerMinute: 500,
-        };
         const { aliceRef, bobURL } = await setupAliceAndBob(
           kernel1,
           kernel2,
           kernelStore1,
           kernelStore2,
           testRelays,
-          reconnectOptions,
+          testBackoffOptions,
         );
 
         // Establish initial communication
@@ -145,7 +139,7 @@ describe.sequential('libp2p v3 Features E2E', () => {
           false,
           testRelays,
           bobConfig,
-          reconnectOptions,
+          testBackoffOptions,
         );
         kernel2 = restartResult.kernel;
 
