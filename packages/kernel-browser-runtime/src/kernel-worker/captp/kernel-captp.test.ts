@@ -20,6 +20,7 @@ describe('makeKernelCapTP', () => {
     pingVat: vi.fn(),
     queueMessage: vi.fn(),
     registerKernelServiceObject: vi.fn(),
+    releaseResult: vi.fn(),
     reset: vi.fn(),
     terminateSubcluster: vi.fn(),
     provideFacet: vi.fn(),

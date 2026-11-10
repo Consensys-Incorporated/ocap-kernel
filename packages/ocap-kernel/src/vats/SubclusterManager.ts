@@ -1,4 +1,3 @@
-import type { CapData } from '@endo/marshal';
 import { SubclusterNotFoundError } from '@metamask/kernel-errors';
 import { Logger } from '@metamask/logger';
 
