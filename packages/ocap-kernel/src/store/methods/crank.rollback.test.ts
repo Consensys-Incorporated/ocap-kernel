@@ -1,6 +1,7 @@
 import { makeSQLKernelDatabase } from '@metamask/kernel-store/sqlite/nodejs';
 import { describe, it, expect, beforeEach } from 'vitest';
 
+import { asKRef, asVatId } from '../../../test/branded.ts';
 import { makeGCAction } from '../../types.ts';
 import { makeKernelStore } from '../index.ts';
 
@@ -38,14 +39,16 @@ describe('what a crank rollback reverts beyond the database', () => {
     {
       cache: 'terminatedVats',
       write: (store: ReturnType<typeof makeKernelStore>) =>
-        store.markVatAsTerminated('v1'),
+        store.markVatAsTerminated(asVatId('v1')),
       read: (store: ReturnType<typeof makeKernelStore>) =>
         store.getTerminatedVats(),
     },
     {
       cache: 'gcActions',
       write: (store: ReturnType<typeof makeKernelStore>) =>
-        store.addGCActions([makeGCAction('v1', 'dropExport', 'ko1')]),
+        store.addGCActions([
+          makeGCAction(asVatId('v1'), 'dropExport', asKRef('ko1')),
+        ]),
       read: (store: ReturnType<typeof makeKernelStore>) => [
         ...store.getGCActions(),
       ],
@@ -96,7 +99,9 @@ describe('a crank whose release finds SQLite already ended its transaction', () 
 
     kernelStore.startCrank();
     kernelStore.createCrankSavepoint('crank');
-    kernelStore.addGCActions([makeGCAction('v1', 'dropExport', 'ko1')]);
+    kernelStore.addGCActions([
+      makeGCAction(asVatId('v1'), 'dropExport', asKRef('ko1')),
+    ]);
     kdb.executeQuery('PRAGMA max_page_count = 1');
     expect(() => kdb.kernelKVStore.set('big', 'x'.repeat(100_000))).toThrow(
       'database or disk is full',

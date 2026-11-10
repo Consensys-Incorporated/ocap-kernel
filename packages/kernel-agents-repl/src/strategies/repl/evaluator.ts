@@ -79,7 +79,6 @@ export const makeEvaluator = ({
     );
 
     logger?.info('capabilities:', capabilities);
-    logger?.info('endowments:', endowments);
     logger?.info('evaluating:', code);
 
     // Prepare the compartment.

@@ -18,7 +18,6 @@ let fallbackCounter = 0;
  * @returns A float in [0, 1).
  */
 function drawRandomFloat(): number {
-  // eslint-disable-next-line n/no-unsupported-features/node-builtins
   const cryptoSource = globalThis.crypto;
   if (cryptoSource?.getRandomValues) {
     const bytes = new Uint32Array(1);
@@ -37,7 +36,7 @@ function drawRandomFloat(): number {
  *
  * @returns A discoverable exo with `randomInt` and `randomFloat` methods.
  */
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+// oxlint-disable-next-line typescript/explicit-function-return-type
 export function makeRandomNumberService() {
   return makeDiscoverableExo(
     'RandomNumberService',

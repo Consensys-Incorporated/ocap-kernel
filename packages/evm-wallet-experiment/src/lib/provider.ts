@@ -25,24 +25,33 @@ const hasTimers = typeof globalThis.setTimeout === 'function';
 /**
  * Send a JSON-RPC request to the given URL with retries.
  *
- * @param rpcUrl - The RPC endpoint URL.
- * @param method - The JSON-RPC method name.
- * @param params - The method parameters.
- * @param counter - Monotonic counter for JSON-RPC request IDs.
- * @param counter.value - The current counter value (mutated on each call).
+ * @param options - Options.
+ * @param options.fetchFn - The `fetch` to send it with.
+ * @param options.rpcUrl - The RPC endpoint URL.
+ * @param options.method - The JSON-RPC method name.
+ * @param options.params - The method parameters.
+ * @param options.counter - Monotonic counter for JSON-RPC request IDs.
+ * @param options.counter.value - The current count, incremented on each call.
  * @returns The JSON-RPC result.
  */
-async function jsonRpc(
-  rpcUrl: string,
-  method: string,
-  params: unknown[] = [],
-  counter: { value: number } = { value: 0 },
-): Promise<unknown> {
+async function jsonRpc({
+  fetchFn,
+  rpcUrl,
+  method,
+  params = [],
+  counter,
+}: {
+  fetchFn: typeof fetch;
+  rpcUrl: string;
+  method: string;
+  params?: unknown[] | undefined;
+  counter: { value: number };
+}): Promise<unknown> {
   counter.value += 1;
   const id = counter.value;
 
   if (!hasTimers) {
-    return jsonRpcOnce(rpcUrl, id, method, params);
+    return jsonRpcOnce({ fetchFn, rpcUrl, id, method, params });
   }
 
   let lastError: Error | undefined;
@@ -53,7 +62,7 @@ async function jsonRpc(
       );
     }
     try {
-      return await jsonRpcOnce(rpcUrl, id, method, params);
+      return await jsonRpcOnce({ fetchFn, rpcUrl, id, method, params });
     } catch (error: unknown) {
       const { status } = error as { status?: number };
       if (status && RETRYABLE_STATUS_CODES.has(status)) {
@@ -79,26 +88,35 @@ async function jsonRpc(
 /**
  * Send a single JSON-RPC request (no retries).
  *
- * @param rpcUrl - The RPC endpoint URL.
- * @param id - The JSON-RPC request ID.
- * @param method - The JSON-RPC method name.
- * @param params - The method parameters.
+ * @param options - Options.
+ * @param options.fetchFn - The `fetch` to send it with.
+ * @param options.rpcUrl - The RPC endpoint URL.
+ * @param options.id - The JSON-RPC request ID.
+ * @param options.method - The JSON-RPC method name.
+ * @param options.params - The method parameters.
  * @returns The JSON-RPC result.
  */
-async function jsonRpcOnce(
-  rpcUrl: string,
-  id: number,
-  method: string,
-  params: unknown[],
-): Promise<unknown> {
+async function jsonRpcOnce({
+  fetchFn,
+  rpcUrl,
+  id,
+  method,
+  params,
+}: {
+  fetchFn: typeof fetch;
+  rpcUrl: string;
+  id: number;
+  method: string;
+  params: unknown[];
+}): Promise<unknown> {
   const body = JSON.stringify({ jsonrpc: '2.0', id, method, params });
-  const init: RequestInit = {
+  const init = {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body,
   };
 
-  const response = await fetch(rpcUrl, init);
+  const response = await fetchFn(rpcUrl, init);
 
   if (!response.ok) {
     const error = new Error(
@@ -124,54 +142,43 @@ async function jsonRpcOnce(
  * Create a JSON-RPC provider for the given chain.
  *
  * @param config - The chain configuration.
+ * @param fetchFn - The `fetch` to send requests with.
  * @returns The provider instance.
  */
-export function makeProvider(config: ChainConfig): Provider {
+export function makeProvider(
+  config: ChainConfig,
+  fetchFn: typeof fetch,
+): Provider {
   const { rpcUrl } = config;
 
   // Monotonic counter for JSON-RPC request IDs, scoped to this provider instance.
   const requestCounter = { value: 0 };
+  const call = async (method: string, params?: unknown[]): Promise<unknown> =>
+    jsonRpc({ fetchFn, rpcUrl, method, params, counter: requestCounter });
 
   return harden({
     async request(method: string, params?: unknown[]): Promise<unknown> {
-      return jsonRpc(rpcUrl, method, params, requestCounter);
+      return call(method, params);
     },
 
     async broadcastTransaction(signedTx: Hex): Promise<Hex> {
-      return (await jsonRpc(
-        rpcUrl,
-        'eth_sendRawTransaction',
-        [signedTx],
-        requestCounter,
-      )) as Hex;
+      return (await call('eth_sendRawTransaction', [signedTx])) as Hex;
     },
 
     async getBalance(address: Address): Promise<string> {
-      return (await jsonRpc(
-        rpcUrl,
-        'eth_getBalance',
-        [address, 'latest'],
-        requestCounter,
-      )) as string;
+      return (await call('eth_getBalance', [address, 'latest'])) as string;
     },
 
     async getChainId(): Promise<number> {
-      const result = (await jsonRpc(
-        rpcUrl,
-        'eth_chainId',
-        [],
-        requestCounter,
-      )) as string;
+      const result = (await call('eth_chainId', [])) as string;
       return Number(result);
     },
 
     async getNonce(address: Address): Promise<number> {
-      const result = (await jsonRpc(
-        rpcUrl,
-        'eth_getTransactionCount',
-        [address, 'latest'],
-        requestCounter,
-      )) as string;
+      const result = (await call('eth_getTransactionCount', [
+        address,
+        'latest',
+      ])) as string;
       return Number(result);
     },
   });
@@ -181,11 +188,15 @@ export function makeProvider(config: ChainConfig): Provider {
  * Send an HTTP GET request and parse the JSON response, with retries.
  *
  * @param url - The URL to fetch.
+ * @param fetchFn - The `fetch` to send it with.
  * @returns The parsed JSON response body.
  */
-export async function httpGetJson(url: string): Promise<unknown> {
+export async function httpGetJson(
+  url: string,
+  fetchFn: typeof fetch,
+): Promise<unknown> {
   if (!hasTimers) {
-    return httpGetJsonOnce(url);
+    return httpGetJsonOnce(url, fetchFn);
   }
 
   let lastError: Error | undefined;
@@ -196,7 +207,7 @@ export async function httpGetJson(url: string): Promise<unknown> {
       );
     }
     try {
-      return await httpGetJsonOnce(url);
+      return await httpGetJsonOnce(url, fetchFn);
     } catch (error: unknown) {
       const { status } = error as { status?: number };
       if (status && RETRYABLE_STATUS_CODES.has(status)) {
@@ -223,10 +234,14 @@ export async function httpGetJson(url: string): Promise<unknown> {
  * Send a single HTTP GET request (no retries).
  *
  * @param url - The URL to fetch.
+ * @param fetchFn - The `fetch` to send it with.
  * @returns The parsed JSON response body.
  */
-async function httpGetJsonOnce(url: string): Promise<unknown> {
-  const response = await fetch(url);
+async function httpGetJsonOnce(
+  url: string,
+  fetchFn: typeof fetch,
+): Promise<unknown> {
+  const response = await fetchFn(url);
 
   if (!response.ok) {
     const error = new Error(

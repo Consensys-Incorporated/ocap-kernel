@@ -32,6 +32,14 @@ ollama list
 
 You should see `llama3.1:latest` in the output.
 
+To run the tests against another ollama model, such as `flint:latest`, pull it and set
+`LMS_MODEL`:
+
+```bash
+ollama pull flint:latest
+LMS_MODEL='flint:latest' yarn test:e2e:local
+```
+
 ### Validate Test Framework Setup
 
 Verify the configured test framework can access the resources above.

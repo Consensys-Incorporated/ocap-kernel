@@ -43,7 +43,7 @@ Categorize each changed file, then pick subagents based on which categories are 
 
 1. **docs**: `.md`, `.txt`, `CHANGELOG`, `LICENSE`, `docs/`, `.claude/`
 2. **ci**: `.github/workflows/`, `.github/actions/` — these often contain shell scripts with non-trivial logic
-3. **config**: `.json` (not `package.json`), `.yml`, `.yaml`, `.eslintrc*`, `.prettierrc*`, `tsconfig*`, `Dockerfile`, `.editorconfig`, `.gitignore`, `.gitattributes`, `.nvmrc`, `.yarnrc*`
+3. **config**: `.json` (not `package.json`), `.yml`, `.yaml`, `oxlint.config.*`, `.oxfmtrc*`, `tsconfig*`, `Dockerfile`, `.editorconfig`, `.gitignore`, `.gitattributes`, `.nvmrc`, `.yarnrc*`
 4. **test**: files matching `*.test.ts`, `*.spec.ts`, or under `test/` directories
 5. **code**: everything else (`.ts`, `.js`, `.mjs`, `.cjs`, `package.json`, etc.)
 

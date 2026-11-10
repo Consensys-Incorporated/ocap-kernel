@@ -4,20 +4,17 @@
     "jsx": "react-jsx",
     "jsxImportSource": "react",
     "allowJs": true,
-    "baseUrl": "./",
     "isolatedModules": true,
     "lib": ["DOM", "ES2022"],
-    "types": ["chrome", "vitest", "vitest/jsdom", "react", "react-dom"]
+    "types": [
+      "chrome",
+      "vitest",
+      "vitest/jsdom",
+      "react",
+      "react-dom",
+      "vite/client"
+    ]
   },
-  "references": [
-    { "path": "../kernel-browser-runtime" },
-    { "path": "../kernel-rpc-methods" },
-    { "path": "../kernel-store" },
-    { "path": "../kernel-utils" },
-    { "path": "../logger" },
-    { "path": "../ocap-kernel" },
-    { "path": "../repo-tools" }
-  ],
   "include": [
     "../../vitest.config.ts",
     "./src/**/*.ts",

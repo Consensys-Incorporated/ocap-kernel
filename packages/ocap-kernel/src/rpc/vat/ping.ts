@@ -10,7 +10,7 @@ export const pingSpec: PingSpec = {
   result: string(),
 } as const;
 
-// eslint-disable-next-line @typescript-eslint/no-empty-object-type
+// oxlint-disable-next-line typescript/no-empty-object-type
 export type PingHandler = Handler<'ping', EmptyJsonArray, string, {}>;
 
 export const pingHandler: PingHandler = {

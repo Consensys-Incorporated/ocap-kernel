@@ -7,6 +7,7 @@ import { KernelServiceManager } from './KernelServiceManager.ts';
 import { kser, kslot, makeKernelError } from './liveslots/kernel-marshal.ts';
 import { makeKernelStore } from './store/index.ts';
 import type { KernelMessage } from './types.ts';
+import { asKRef } from '../test/branded.ts';
 import { makeMapKernelDatabase } from '../test/storage.ts';
 
 /**
@@ -43,7 +44,6 @@ describe('KernelServiceManager', () => {
       initKernelObject: vi
         .fn()
         .mockImplementation(realKernelStore.initKernelObject),
-      kv: realKernelStore.kv,
     };
 
     mockKernelQueue = {
@@ -262,7 +262,7 @@ describe('KernelServiceManager', () => {
     });
 
     it('returns undefined for non-existent kref', () => {
-      const retrieved = serviceManager.getKernelServiceByKref('ko999');
+      const retrieved = serviceManager.getKernelServiceByKref(asKRef('ko999'));
       expect(retrieved).toBeUndefined();
     });
   });
@@ -282,7 +282,7 @@ describe('KernelServiceManager', () => {
     });
 
     it('returns false for non-service kref', () => {
-      expect(serviceManager.isKernelService('ko999')).toBe(false);
+      expect(serviceManager.isKernelService(asKRef('ko999'))).toBe(false);
     });
   });
 
@@ -322,7 +322,7 @@ describe('KernelServiceManager', () => {
 
       const message: KernelMessage = {
         methargs: kser(['testMethod', ['arg1']]),
-        result: 'kp123',
+        result: asKRef('kp123'),
       };
 
       serviceManager.invokeKernelService(registered.kref, message);
@@ -348,7 +348,7 @@ describe('KernelServiceManager', () => {
 
       const message: KernelMessage = {
         methargs: kser(['testMethod', []]),
-        result: 'kp123',
+        result: asKRef('kp123'),
       };
 
       serviceManager.invokeKernelService(registered.kref, message);
@@ -389,14 +389,14 @@ describe('KernelServiceManager', () => {
     it('rejects the caller for a non-existent service', () => {
       const message: KernelMessage = {
         methargs: kser(['testMethod', []]),
-        result: 'kp1',
+        result: asKRef('kp1'),
       };
 
       // Must not throw: a throw here escapes the crank and kills the run
       // loop, and this is reachable whenever an anonymous kernel object
       // outlives the process that hosted it.
       expect(() =>
-        serviceManager.invokeKernelService('ko999', message),
+        serviceManager.invokeKernelService(asKRef('ko999'), message),
       ).not.toThrow();
       expect(mockKernelQueue.resolvePromises).toHaveBeenCalledWith('kernel', [
         [
@@ -417,7 +417,7 @@ describe('KernelServiceManager', () => {
       };
 
       expect(() =>
-        serviceManager.invokeKernelService('ko999', message),
+        serviceManager.invokeKernelService(asKRef('ko999'), message),
       ).not.toThrow();
       expect(loggerErrorSpy).toHaveBeenCalledWith(
         'Error in kernel service method:',
@@ -438,7 +438,7 @@ describe('KernelServiceManager', () => {
 
       const message: KernelMessage = {
         methargs: kser(['unknownMethod', []]),
-        result: 'kp123',
+        result: asKRef('kp123'),
       };
 
       serviceManager.invokeKernelService(registered.kref, message);
@@ -492,7 +492,7 @@ describe('KernelServiceManager', () => {
 
       const message: KernelMessage = {
         methargs: kser(['anyMethod', []]),
-        result: 'kp123',
+        result: asKRef('kp123'),
       };
 
       serviceManager.invokeKernelService(registered.kref, message);
@@ -532,7 +532,7 @@ describe('KernelServiceManager', () => {
 
       const message: KernelMessage = {
         methargs: kser(['testMethod', ['arg1']]),
-        result: 'kp123',
+        result: asKRef('kp123'),
       };
 
       serviceManager.invokeKernelService(registered.kref, message);
@@ -556,7 +556,7 @@ describe('KernelServiceManager', () => {
 
       const message: KernelMessage = {
         methargs: kser(['voidMethod', []]),
-        result: 'kp123',
+        result: asKRef('kp123'),
       };
 
       serviceManager.invokeKernelService(registered.kref, message);
@@ -624,7 +624,7 @@ describe('KernelServiceManager', () => {
 
       serviceManager.invokeKernelService(kref, {
         methargs: kser(['ping', ['hello']]),
-        result: 'kp200',
+        result: asKRef('kp200'),
       });
       await delay();
 
@@ -711,7 +711,7 @@ describe('KernelServiceManager', () => {
         serviceManager.releaseAnonymousKernelObject(kref),
       ).not.toThrow();
       expect(() =>
-        serviceManager.releaseAnonymousKernelObject('ko9999'),
+        serviceManager.releaseAnonymousKernelObject(asKRef('ko9999')),
       ).not.toThrow();
     });
   });

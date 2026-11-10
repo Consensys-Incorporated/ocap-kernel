@@ -10,7 +10,7 @@
 export const makeTwoFacedFetchInput = (
   first: string,
   rest: string,
-): { input: RequestInfo | URL; getReads: () => number } => {
+): { input: Parameters<typeof fetch>[0]; getReads: () => number } => {
   let reads = 0;
   const input = {
     toString: () => {
@@ -19,7 +19,7 @@ export const makeTwoFacedFetchInput = (
     },
   };
   return {
-    input: input as unknown as RequestInfo | URL,
+    input: input as unknown as Parameters<typeof fetch>[0],
     getReads: () => reads,
   };
 };

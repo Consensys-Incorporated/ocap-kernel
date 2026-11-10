@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 
+import { asRemoteId, asVRef } from '../../../test/branded.ts';
 import { makeMapKernelDatabase } from '../../../test/storage.ts';
+import type { KRef } from '../../types.ts';
 import { makeKernelStore } from '../index.ts';
 
 /**
@@ -22,10 +24,10 @@ describe('a GC candidate produced outside a crank', () => {
    *
    * @returns The kref of the now-ownerless object.
    */
-  function orphanARemoteExport(): string {
-    const kref = kernelStore.initKernelObject('r1');
-    kernelStore.addCListEntry('r1', kref, 'o+1');
-    kernelStore.forgetEndpointImports('r1');
+  function orphanARemoteExport(): KRef {
+    const kref = kernelStore.initKernelObject(asRemoteId('r1'));
+    kernelStore.addCListEntry(asRemoteId('r1'), kref, asVRef('o+1'));
+    kernelStore.forgetEndpointImports(asRemoteId('r1'));
     return kref;
   }
 

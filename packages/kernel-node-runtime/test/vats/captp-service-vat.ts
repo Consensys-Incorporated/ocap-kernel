@@ -1,6 +1,8 @@
 import { E } from '@endo/eventual-send';
 import { makeDefaultExo } from '@metamask/kernel-utils/exo';
 
+type TestService = { doSomething: (left: number, right: number) => number };
+
 /**
  * Build function for a vat that invokes a CapTP-registered kernel service.
  *
@@ -9,10 +11,10 @@ import { makeDefaultExo } from '@metamask/kernel-utils/exo';
  * @returns The root object for the new vat.
  */
 export function buildRootObject(_vatPowers: unknown, _parameters: unknown) {
-  let testService: unknown;
+  let testService: TestService;
 
   return makeDefaultExo('root', {
-    async bootstrap(_vats: unknown, services: { testService: unknown }) {
+    async bootstrap(_vats: unknown, services: { testService: TestService }) {
       testService = services.testService;
     },
     async go() {

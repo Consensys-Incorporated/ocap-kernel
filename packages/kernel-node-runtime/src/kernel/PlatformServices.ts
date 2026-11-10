@@ -22,7 +22,7 @@ import { Worker as NodeWorker } from 'node:worker_threads';
 // Worker file loads from the built dist directory, requires rebuild after change
 // Note: Worker runs in same process and may be subject to spectre-style attacks
 const DEFAULT_WORKER_FILE = new URL(
-  '../../dist/vat/vat-worker.mjs',
+  '../../dist/vat/vat-worker.js',
   import.meta.url,
 ).pathname;
 
@@ -65,7 +65,7 @@ export class NodejsPlatformServices implements PlatformServices {
    * the kernel worker.
    *
    * @param args - A bag of optional arguments.
-   * @param args.workerFilePath - An optional path to a file defining the worker's routine. Defaults to 'vat-worker.mjs'.
+   * @param args.workerFilePath - An optional path to a file defining the worker's routine. Defaults to 'vat-worker.js'.
    * @param args.logger - An optional {@link Logger}. Defaults to a new logger labeled '[vat worker client]'.
    */
   constructor(args: {
@@ -105,7 +105,7 @@ export class NodejsPlatformServices implements PlatformServices {
 
     // Handle worker errors before 'online' event
     worker.once('error', (error) => {
-      // eslint-disable-next-line promise/no-promise-in-callback
+      // oxlint-disable-next-line promise/no-promise-in-callback
       this.#killWorker(vatId, worker).catch(() => {
         // Ignore termination errors
       });

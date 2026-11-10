@@ -1,12 +1,12 @@
 import '@ocap/repo-tools/test-utils/mock-endoify';
 
+import { makeOllamaNodejsKernelService } from '@metamask/kernel-language-model-service/ollama/nodejs';
 import { makeConsoleTransport, Logger } from '@metamask/logger';
 import type { MakeAgentArgs, Agent } from '@ocap/kernel-agents';
 import { getMoonPhase } from '@ocap/kernel-agents/capabilities/examples';
 import { count, add, multiply } from '@ocap/kernel-agents/capabilities/math';
 import { makeJsonAgent } from '@ocap/kernel-agents/json';
 import { makeReplAgent } from '@ocap/kernel-agents-repl';
-import { makeOllamaNodejsKernelService } from '@ocap/kernel-language-model-service/ollama/nodejs';
 import { fetchMock } from '@ocap/repo-tools/test-utils/fetch-mock';
 import {
   afterAll,
@@ -19,7 +19,7 @@ import {
   vi,
 } from 'vitest';
 
-import { DEFAULT_MODEL, LMS_PROVIDER } from './constants.ts';
+import { LMS_CHAT_MODEL, LMS_PROVIDER } from './constants.ts';
 import { filterTransports, randomLetter } from './utils.ts';
 
 const logger = new Logger({
@@ -86,11 +86,11 @@ describe.skipIf(LMS_PROVIDER !== 'ollama').each([
     });
 
     const makeLanguageModel = (svc: typeof service) => ({
-      getInfo: async () => ({ model: DEFAULT_MODEL, options: {} }),
+      getInfo: async () => ({ model: LMS_CHAT_MODEL, options: {} }),
       load: async () => undefined,
       unload: async () => undefined,
       sample: async (prompt: string) =>
-        svc.sample({ model: DEFAULT_MODEL, prompt, stream: true }),
+        svc.sample({ model: LMS_CHAT_MODEL, prompt, stream: true }),
     });
 
     it(

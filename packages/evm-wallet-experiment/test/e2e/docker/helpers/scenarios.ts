@@ -32,9 +32,7 @@ const TEST_MNEMONIC =
 const CHAIN_ID = 31337;
 const EVM_RPC_URL = 'http://evm:8545';
 const BUNDLER_URL = 'http://bundler:4337';
-// Hostnames only — the kernel's network caveat (packages/ocap-kernel
-// /src/vats/network-caveat.ts) matches `URL.hostname`, which never
-// includes a port.
+// Hostnames only: the provider vat's `http` config names hosts, not ports.
 const ALLOWED_HOSTS = ['evm', 'bundler'];
 
 export type HomeResult = {

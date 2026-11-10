@@ -1,8 +1,11 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 
 import { processGCActionSet } from './garbage-collection.ts';
+import { asGCAction, asVatId, asVRef } from '../../test/branded.ts';
 import { makeMapKernelDatabase } from '../../test/storage.ts';
 import { makeKernelStore } from '../store/index.ts';
+
+const v1 = asVatId('v1');
 
 describe('garbage-collection', () => {
   describe('processGCActionSet', () => {
@@ -14,16 +17,16 @@ describe('garbage-collection', () => {
 
     it('processes dropExport actions', () => {
       // Setup: Create object and add GC action
-      const ko1 = kernelStore.initKernelObject('v1');
-      kernelStore.addCListEntry('v1', ko1, 'o+1'); // Export reference
+      const ko1 = kernelStore.initKernelObject(v1);
+      kernelStore.addCListEntry(v1, ko1, asVRef('o+1')); // Export reference
 
       // Set reachable count to 0 but keep recognizable count
       kernelStore.setObjectRefCount(ko1, { reachable: 0, recognizable: 1 });
 
-      kernelStore.addGCActions([`v1 dropExport ${ko1}`]);
+      kernelStore.addGCActions([asGCAction(`v1 dropExport ${ko1}`)]);
 
       // Initial state checks
-      expect(kernelStore.getReachableFlag('v1', ko1)).toBe(true);
+      expect(kernelStore.getReachableFlag(v1, ko1)).toBe(true);
       expect(kernelStore.getObjectRefCount(ko1)).toStrictEqual({
         reachable: 0,
         recognizable: 1,
@@ -45,10 +48,10 @@ describe('garbage-collection', () => {
 
     it('processes retireExport actions', () => {
       // Setup: Create object with zero refcounts
-      const ko1 = kernelStore.initKernelObject('v1');
-      kernelStore.addCListEntry('v1', ko1, 'o+1');
+      const ko1 = kernelStore.initKernelObject(v1);
+      kernelStore.addCListEntry(v1, ko1, asVRef('o+1'));
       kernelStore.setObjectRefCount(ko1, { reachable: 0, recognizable: 0 });
-      kernelStore.addGCActions([`v1 retireExport ${ko1}`]);
+      kernelStore.addGCActions([asGCAction(`v1 retireExport ${ko1}`)]);
 
       // Process GC actions
       const result = processGCActionSet(kernelStore);
@@ -66,9 +69,9 @@ describe('garbage-collection', () => {
 
     it('processes retireImport actions', () => {
       // Setup: Create object and add GC action
-      const ko1 = kernelStore.initKernelObject('v1');
-      kernelStore.addCListEntry('v2', ko1, 'o-1'); // Import reference
-      kernelStore.addGCActions([`v2 retireImport ${ko1}`]);
+      const ko1 = kernelStore.initKernelObject(v1);
+      kernelStore.addCListEntry(asVatId('v2'), ko1, asVRef('o-1')); // Import reference
+      kernelStore.addGCActions([asGCAction(`v2 retireImport ${ko1}`)]);
 
       // Process GC actions
       const result = processGCActionSet(kernelStore);
@@ -85,15 +88,15 @@ describe('garbage-collection', () => {
     });
 
     it('groups two actions of one type for one vat into a single item', () => {
-      const ko1 = kernelStore.initKernelObject('v1');
-      const ko2 = kernelStore.initKernelObject('v1');
-      kernelStore.addCListEntry('v1', ko1, 'o+1');
-      kernelStore.addCListEntry('v1', ko2, 'o+2');
+      const ko1 = kernelStore.initKernelObject(v1);
+      const ko2 = kernelStore.initKernelObject(v1);
+      kernelStore.addCListEntry(v1, ko1, asVRef('o+1'));
+      kernelStore.addCListEntry(v1, ko2, asVRef('o+2'));
       kernelStore.setObjectRefCount(ko1, { reachable: 0, recognizable: 1 });
       kernelStore.setObjectRefCount(ko2, { reachable: 0, recognizable: 1 });
       kernelStore.addGCActions([
-        `v1 dropExport ${ko2}`,
-        `v1 dropExport ${ko1}`,
+        asGCAction(`v1 dropExport ${ko2}`),
+        asGCAction(`v1 dropExport ${ko1}`),
       ]);
 
       expect(processGCActionSet(kernelStore)).toStrictEqual({
@@ -106,11 +109,11 @@ describe('garbage-collection', () => {
 
     it('processes actions in priority order', () => {
       // Setup: Create objects and add multiple GC actions
-      const ko1 = kernelStore.initKernelObject('v1');
-      const ko2 = kernelStore.initKernelObject('v1');
+      const ko1 = kernelStore.initKernelObject(v1);
+      const ko2 = kernelStore.initKernelObject(v1);
 
-      kernelStore.addCListEntry('v1', ko1, 'o+1');
-      kernelStore.addCListEntry('v1', ko2, 'o+2');
+      kernelStore.addCListEntry(v1, ko1, asVRef('o+1'));
+      kernelStore.addCListEntry(v1, ko2, asVRef('o+2'));
 
       // Set up conditions for dropExport and retireExport
       kernelStore.setObjectRefCount(ko1, { reachable: 0, recognizable: 1 });
@@ -118,8 +121,8 @@ describe('garbage-collection', () => {
 
       // Add actions in reverse priority order
       kernelStore.addGCActions([
-        `v1 retireExport ${ko2}`,
-        `v1 dropExport ${ko1}`,
+        asGCAction(`v1 retireExport ${ko2}`),
+        asGCAction(`v1 dropExport ${ko1}`),
       ]);
 
       // Process first action - should be dropExport
@@ -141,11 +144,11 @@ describe('garbage-collection', () => {
 
     it('processes actions by vat ID order', () => {
       // Setup: Create objects in different vats
-      const ko1 = kernelStore.initKernelObject('v2');
-      const ko2 = kernelStore.initKernelObject('v1');
+      const ko1 = kernelStore.initKernelObject(asVatId('v2'));
+      const ko2 = kernelStore.initKernelObject(v1);
 
-      kernelStore.addCListEntry('v2', ko1, 'o+1');
-      kernelStore.addCListEntry('v1', ko2, 'o+1');
+      kernelStore.addCListEntry(asVatId('v2'), ko1, asVRef('o+1'));
+      kernelStore.addCListEntry(v1, ko2, asVRef('o+1'));
 
       // Set up conditions for dropExport
       kernelStore.setObjectRefCount(ko1, { reachable: 0, recognizable: 1 });
@@ -153,8 +156,8 @@ describe('garbage-collection', () => {
 
       // Add actions in reverse vat order
       kernelStore.addGCActions([
-        `v2 dropExport ${ko1}`,
-        `v1 dropExport ${ko2}`,
+        asGCAction(`v2 dropExport ${ko1}`),
+        asGCAction(`v1 dropExport ${ko2}`),
       ]);
 
       // Process first action - should be v1
@@ -175,12 +178,12 @@ describe('garbage-collection', () => {
     });
 
     it('skips actions that should not be processed', () => {
-      const ko1 = kernelStore.initKernelObject('v1');
-      kernelStore.addCListEntry('v1', ko1, 'o+1');
+      const ko1 = kernelStore.initKernelObject(v1);
+      kernelStore.addCListEntry(v1, ko1, asVRef('o+1'));
 
       // Add dropExport action but set reachable to false (should skip)
-      kernelStore.clearReachableFlag('v1', ko1);
-      kernelStore.addGCActions([`v1 dropExport ${ko1}`]);
+      kernelStore.clearReachableFlag(v1, ko1);
+      kernelStore.addGCActions([asGCAction(`v1 dropExport ${ko1}`)]);
 
       // Process actions - should return undefined since action should be skipped
       const result = processGCActionSet(kernelStore);
@@ -196,13 +199,13 @@ describe('garbage-collection', () => {
     });
 
     it('skips dropExport when object does not exist', () => {
-      const ko1 = kernelStore.initKernelObject('v1');
-      kernelStore.addCListEntry('v1', ko1, 'o+1');
+      const ko1 = kernelStore.initKernelObject(v1);
+      kernelStore.addCListEntry(v1, ko1, asVRef('o+1'));
 
       // Delete the object to simulate non-existence
       kernelStore.deleteKernelObject(ko1);
 
-      kernelStore.addGCActions([`v1 dropExport ${ko1}`]);
+      kernelStore.addGCActions([asGCAction(`v1 dropExport ${ko1}`)]);
 
       const result = processGCActionSet(kernelStore);
       expect(result).toBeUndefined();
@@ -210,13 +213,13 @@ describe('garbage-collection', () => {
     });
 
     it('skips retireExport when object has non-zero refcounts', () => {
-      const ko1 = kernelStore.initKernelObject('v1');
-      kernelStore.addCListEntry('v1', ko1, 'o+1');
+      const ko1 = kernelStore.initKernelObject(v1);
+      kernelStore.addCListEntry(v1, ko1, asVRef('o+1'));
 
       // Set non-zero refcounts
       kernelStore.setObjectRefCount(ko1, { reachable: 1, recognizable: 1 });
 
-      kernelStore.addGCActions([`v1 retireExport ${ko1}`]);
+      kernelStore.addGCActions([asGCAction(`v1 retireExport ${ko1}`)]);
 
       const result = processGCActionSet(kernelStore);
       expect(result).toBeUndefined();
@@ -224,13 +227,13 @@ describe('garbage-collection', () => {
     });
 
     it('skips retireExport when object does not exist', () => {
-      const ko1 = kernelStore.initKernelObject('v1');
-      kernelStore.addCListEntry('v1', ko1, 'o+1');
+      const ko1 = kernelStore.initKernelObject(v1);
+      kernelStore.addCListEntry(v1, ko1, asVRef('o+1'));
 
       // Delete the object
       kernelStore.deleteKernelObject(ko1);
 
-      kernelStore.addGCActions([`v1 retireExport ${ko1}`]);
+      kernelStore.addGCActions([asGCAction(`v1 retireExport ${ko1}`)]);
 
       const result = processGCActionSet(kernelStore);
       expect(result).toBeUndefined();
@@ -238,10 +241,10 @@ describe('garbage-collection', () => {
     });
 
     it('skips retireExport when clist entry does not exist', () => {
-      const ko1 = kernelStore.initKernelObject('v1');
+      const ko1 = kernelStore.initKernelObject(v1);
       kernelStore.setObjectRefCount(ko1, { reachable: 0, recognizable: 0 });
 
-      kernelStore.addGCActions([`v1 retireExport ${ko1}`]);
+      kernelStore.addGCActions([asGCAction(`v1 retireExport ${ko1}`)]);
 
       const result = processGCActionSet(kernelStore);
       expect(result).toBeUndefined();
@@ -249,9 +252,9 @@ describe('garbage-collection', () => {
     });
 
     it('skips retireImport when clist entry does not exist', () => {
-      const ko1 = kernelStore.initKernelObject('v1');
+      const ko1 = kernelStore.initKernelObject(v1);
 
-      kernelStore.addGCActions([`v2 retireImport ${ko1}`]);
+      kernelStore.addGCActions([asGCAction(`v2 retireImport ${ko1}`)]);
 
       const result = processGCActionSet(kernelStore);
       expect(result).toBeUndefined();
@@ -259,13 +262,13 @@ describe('garbage-collection', () => {
     });
 
     it('skips retireExport when object is recognizable', () => {
-      const ko1 = kernelStore.initKernelObject('v1');
-      kernelStore.addCListEntry('v1', ko1, 'o+1');
+      const ko1 = kernelStore.initKernelObject(v1);
+      kernelStore.addCListEntry(v1, ko1, asVRef('o+1'));
 
       // Set only recognizable count to non-zero
       kernelStore.setObjectRefCount(ko1, { reachable: 0, recognizable: 1 });
 
-      kernelStore.addGCActions([`v1 retireExport ${ko1}`]);
+      kernelStore.addGCActions([asGCAction(`v1 retireExport ${ko1}`)]);
 
       const result = processGCActionSet(kernelStore);
       expect(result).toBeUndefined();

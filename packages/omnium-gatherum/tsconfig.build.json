@@ -4,12 +4,10 @@
     "jsx": "react-jsx",
     "jsxImportSource": "react",
     "allowJs": true,
-    "baseUrl": "./",
-    "emitDeclarationOnly": false,
     "lib": ["DOM", "ES2022"],
     "noEmit": true,
     "rootDir": "./src",
-    "types": ["chrome", "ses", "react-dom"]
+    "types": ["chrome", "ses", "react-dom", "vite/client"]
   },
   "references": [
     { "path": "../kernel-browser-runtime/tsconfig.build.json" },

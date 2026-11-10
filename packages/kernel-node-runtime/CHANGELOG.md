@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `makeKernel` takes `kernelServices`, kernel services registered before the run loop starts ([#1215](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1215))
 - Add `assertSupportedPlatform`, exported from the package root and `./daemon`, which throws on Windows ([#1157](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1157))
 - Add `onRunLoopFailure` to `makeKernel`, forwarded to `Kernel.make` and called with the error that killed the kernel's run loop ([#1005](https://github.com/MetaMask/ocap-kernel/pull/1005))
 
@@ -23,6 +24,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **BREAKING:** `makeIOChannelFactory` is now `makeIOListenerFactory`, and `makeSocketIOChannel` is now `makeSocketIOListener`. The Unix-socket server hands each connection to `accept()` as its own `IOChannel`, whose receive buffer, decoder, line queue, and reader queue are local to that connection, so any number of peers can be served concurrently. Connections arriving before `accept()` is called are queued rather than dropped. Gone with the single-client design: the shared `currentSocket`, the session-boundary latch, the merged line queue, and the `socket.destroy()` that rejected every second connection ([#1007](https://github.com/MetaMask/ocap-kernel/pull/1007))
 - **BREAKING:** Drop `platformOptions.fetch` from `makeNodeJsVatSupervisor` ([#942](https://github.com/MetaMask/ocap-kernel/pull/942))
   - `fetch` is now a vat endowment; stub `globalThis.fetch` directly if needed
+
+### Removed
+
+- **BREAKING:** Remove the CommonJS build; the package is ESM-only. Its entry points are `.js` and `.d.ts` files, formerly `.mjs`/`.cjs` and `.d.mts`/`.d.cts` ([#1186](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1186))
 
 ### Fixed
 

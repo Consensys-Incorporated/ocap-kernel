@@ -1,4 +1,5 @@
 import '@ocap/repo-tools/test-utils/mock-endoify';
+import type { VatId } from '@metamask/ocap-kernel';
 import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('@metamask/logger', () => ({
@@ -28,7 +29,7 @@ vi.mock('./fetch-blob.ts', () => ({
 describe('makeNodeJsVatSupervisor', () => {
   it('returns an object with logger and supervisor properties', async () => {
     const { makeNodeJsVatSupervisor } = await import('./make-supervisor.ts');
-    const result = await makeNodeJsVatSupervisor('test-vat', 'test-log');
+    const result = await makeNodeJsVatSupervisor('v1' as VatId, 'test-log');
     expect(result).toHaveProperty('logger');
     expect(result).toHaveProperty('supervisor');
   });

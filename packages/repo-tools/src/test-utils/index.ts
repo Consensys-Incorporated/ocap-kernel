@@ -7,7 +7,7 @@ export * from './env/mock-kernel.ts';
 export { makeMockMessageTarget } from './postMessage.ts';
 export { makeAbortSignalMock } from './abort-signal.ts';
 
-// eslint-disable-next-line @typescript-eslint/ban-ts-comment
+// oxlint-disable-next-line typescript/ban-ts-comment
 // @ts-ignore Intermittent browser/Node incompatibility
 if (typeof self === 'undefined') {
   // @ts-expect-error Consistent browser/Node incompatibility

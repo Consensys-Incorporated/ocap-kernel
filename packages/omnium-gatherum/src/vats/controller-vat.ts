@@ -190,7 +190,7 @@ function defineMethods(
   const output: Record<string, (...args: unknown[]) => unknown> = {};
   for (const methodName of methodNames) {
     output[methodName] = (...args: unknown[]) =>
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       (E(source) as any)[methodName](...args);
   }
   return output;

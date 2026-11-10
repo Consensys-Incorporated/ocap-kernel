@@ -17,7 +17,7 @@ describe('capability extraction', () => {
   it('extractCapabilities returns the functions keyed by name', async () => {
     const funcs = extractCapabilities(makeRecord());
     expect(Object.keys(funcs)).toStrictEqual(['ping']);
-    expect(await funcs.ping(undefined as never)).toBe('pong');
+    expect(await funcs.ping?.(undefined as never)).toBe('pong');
   });
 
   it('extractCapabilitySchemas returns the schemas keyed by name', () => {

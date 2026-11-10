@@ -1,4 +1,4 @@
-/* eslint-disable n/no-process-env */
+/* oxlint-disable node/no-process-env */
 /**
  * Shared delegation flow for the Docker stack: create on home, push to away over CapTP.
  * Used by `docker/create-delegation.mjs`.

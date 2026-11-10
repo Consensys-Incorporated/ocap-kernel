@@ -1,21 +1,9 @@
 {
   "extends": "../../tsconfig.packages.json",
   "compilerOptions": {
-    "baseUrl": "./",
     "lib": ["DOM", "ES2022"],
     "types": ["ses", "vitest"]
   },
-  "references": [
-    { "path": "../kernel-errors" },
-    { "path": "../kernel-rpc-methods" },
-    { "path": "../kernel-shims" },
-    { "path": "../kernel-store" },
-    { "path": "../kernel-utils" },
-    { "path": "../logger" },
-    { "path": "../ocap-kernel" },
-    { "path": "../streams" },
-    { "path": "../repo-tools" }
-  ],
   "include": [
     "../../vitest.config.ts",
     "./test/**/*.ts",

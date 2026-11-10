@@ -1,6 +1,6 @@
 import { SampleGenerationError } from '@metamask/kernel-errors';
+import type { LanguageModel } from '@metamask/kernel-language-model-service';
 import type { Logger } from '@metamask/logger';
-import type { LanguageModel } from '@ocap/kernel-language-model-service';
 
 import type { Message, MessageTypeBase } from './types/messages.ts';
 import type { PREP, Progress } from './types.ts';

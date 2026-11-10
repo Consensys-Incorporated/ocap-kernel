@@ -4,6 +4,11 @@ import { makeDefaultExo } from '@metamask/kernel-utils/exo';
 import { unwrapTestLogger } from '../test-powers.ts';
 import type { TestPowers } from '../test-powers.ts';
 
+type Bob = {
+  hereIsAPromise: (promise: Promise<unknown>) => Promise<unknown>;
+  loopback: () => undefined;
+};
+
 /**
  * Build function for vats that will run various tests.
  *
@@ -15,7 +20,7 @@ import type { TestPowers } from '../test-powers.ts';
  * @param _baggage - Root of vat's persistent state (not used here).
  * @returns The root object for the new vat.
  */
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+// oxlint-disable-next-line typescript/explicit-function-return-type
 export function buildRootObject(
   vatPowers: TestPowers,
   parameters: { name?: string; test?: string } = {},
@@ -31,7 +36,7 @@ export function buildRootObject(
    * @param message - The message to print.
    */
   function log(message: string): void {
-    // eslint-disable-next-line no-console
+    // oxlint-disable-next-line no-console
     console.log(`${name}: ${message}`);
   }
 
@@ -39,7 +44,7 @@ export function buildRootObject(
   log(`configuration parameters: ${JSON.stringify(parameters)}`);
 
   return makeDefaultExo('root', {
-    async bootstrap(vats: { bob: unknown }) {
+    async bootstrap(vats: { bob: Bob }) {
       log(`bootstrap start`);
       tlog(`running test ${test}`);
       let doneP: Promise<unknown> = Promise.resolve('no activity');

@@ -122,13 +122,13 @@ the pointer.
 
 ## JSDoc
 
-This repo lints JSDoc: `jsdoc/require-jsdoc` is an error on functions, methods,
-and classes, and `jsdoc/require-description` an error everywhere. Tests and some
-JS and config globs are exempt — check `eslint.config.mjs` rather than assuming.
-**Do not delete a required block or its description** — make the prose minimal
-instead. Keep the `- ` before each
-`@param` description, and the sentence casing and terminal period the `jsdoc/*`
-rules require:
+This repo lints JSDoc: `ocap/require-jsdoc` is an error on functions, methods,
+and classes, and `jsdoc/require-param-description` and
+`jsdoc/require-returns-description` are errors wherever those tags appear. Tests
+and some JS and config globs are exempt — check `oxlint.config.ts` rather than
+assuming. **Do not delete a required block or its description** — make the prose
+minimal instead. Keep the `- ` before each `@param` description, and the
+sentence casing and terminal period the existing blocks use:
 
 ```ts
 /**

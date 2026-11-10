@@ -1,4 +1,4 @@
-import type { Kernel } from '@metamask/ocap-kernel';
+import type { Kernel, KRef } from '@metamask/ocap-kernel';
 import { makeKernelFacet, kslot } from '@metamask/ocap-kernel';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -9,7 +9,7 @@ describe('makeKernelCapTP', () => {
   const mockKernel = {
     getPresence: vi
       .fn()
-      .mockImplementation(async (kref: string, iface: string) =>
+      .mockImplementation(async (kref: KRef, iface: string) =>
         kslot(kref, iface),
       ),
     getStatus: vi.fn(),

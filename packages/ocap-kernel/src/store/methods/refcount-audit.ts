@@ -67,7 +67,7 @@ const REFCOUNT_KEY = /^(k[op]\d+)\.refCount$/u;
  * @param ctx - The store context.
  * @returns The reference count audit methods.
  */
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+// oxlint-disable-next-line typescript/explicit-function-return-type
 export function getRefCountAuditMethods(ctx: StoreContext) {
   const { getPrefixedKeys, refCountKey } = getBaseMethods(ctx.kv);
   const { getPinCount, getPinnedObjects } = getPinMethods(ctx);

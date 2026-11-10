@@ -33,6 +33,8 @@ export type MakeKernelResult = {
  * @param options.systemSubclusters - Optional system subcluster configurations.
  * @param options.onRunLoopFailure - Optional handler called if the kernel's run
  * loop dies, after which the kernel must be restarted.
+ * @param options.kernelServices - Kernel services to register before the run
+ * loop starts.
  * @returns The kernel and its database.
  * @throws If the kernel does not support the current platform.
  */
@@ -45,6 +47,7 @@ export async function makeKernel({
   ioListenerFactory,
   systemSubclusters,
   onRunLoopFailure,
+  kernelServices,
 }: {
   workerFilePath?: string;
   resetStorage?: boolean;
@@ -54,6 +57,7 @@ export async function makeKernel({
   ioListenerFactory?: IOListenerFactory;
   systemSubclusters?: SystemSubclusterConfig[];
   onRunLoopFailure?: OnRunLoopFailure;
+  kernelServices?: { name: string; service: object }[];
 }): Promise<MakeKernelResult> {
   assertSupportedPlatform();
 
@@ -77,6 +81,7 @@ export async function makeKernel({
     ioListenerFactory: ioListenerFactory ?? makeIOListenerFactory(),
     ...(systemSubclusters ? { systemSubclusters } : {}),
     ...(onRunLoopFailure ? { onRunLoopFailure } : {}),
+    ...(kernelServices ? { kernelServices } : {}),
   });
 
   return { kernel, kernelDatabase };

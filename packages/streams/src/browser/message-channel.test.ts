@@ -34,7 +34,7 @@ describe('initializeMessageChannel', () => {
     const postMessageSpy = vi.spyOn(targetWindow, 'postMessage');
 
     // We intentionally let this one go. It will never settle.
-    // eslint-disable-next-line @typescript-eslint/no-floating-promises
+    // oxlint-disable-next-line typescript/no-floating-promises
     initializeMessageChannel((message, transfer) =>
       targetWindow.postMessage(message, '*', transfer),
     );

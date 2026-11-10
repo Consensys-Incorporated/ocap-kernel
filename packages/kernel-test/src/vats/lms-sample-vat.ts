@@ -1,7 +1,7 @@
 import type { ERef } from '@endo/eventual-send';
+import { makeSampleClient } from '@metamask/kernel-language-model-service';
+import type { SampleService } from '@metamask/kernel-language-model-service';
 import { makeDefaultExo } from '@metamask/kernel-utils/exo';
-import { makeSampleClient } from '@ocap/kernel-language-model-service';
-import type { SampleService } from '@ocap/kernel-language-model-service';
 
 import { unwrapTestLogger } from '../test-powers.ts';
 import type { TestPowers } from '../test-powers.ts';
@@ -16,7 +16,7 @@ import type { TestPowers } from '../test-powers.ts';
  * @param parameters.prompt - The prompt to sample from.
  * @returns A default Exo instance.
  */
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+// oxlint-disable-next-line typescript/explicit-function-return-type
 export function buildRootObject(
   vatPowers: TestPowers,
   { prompt = 'Hello' }: { prompt?: string } = {},

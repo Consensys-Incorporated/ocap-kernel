@@ -30,7 +30,7 @@ async function resolveSwapToken(
   { address: string; decimals: number; symbol: string } | { error: string }
 > {
   const nativeSymbols = NATIVE_TOKENS_BY_CHAIN[chainId] ?? ['ETH'];
-  const primaryNative = nativeSymbols[0];
+  const primaryNative = nativeSymbols[0] ?? 'ETH';
   if (token === NATIVE_ETH || nativeSymbols.includes(token.toUpperCase())) {
     return { address: NATIVE_ETH, decimals: 18, symbol: primaryNative };
   }

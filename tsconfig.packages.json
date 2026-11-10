@@ -3,23 +3,86 @@
   "compilerOptions": {
     "module": "Preserve",
     "moduleResolution": "Bundler",
+    "noEmit": true,
+    "skipLibCheck": true,
     /**
-     * Here we ensure that TypeScript resolves `@ocap/*` imports to the
-     * uncompiled source code for packages that live in this repo.
+     * Resolve imports of packages in this repo, including their subpath
+     * exports, to source. Otherwise subpath imports resolve to `dist`
+     * declarations, whose branded types do not match those in `src`.
      */
     "paths": {
-      "@metamask/*": ["../*/src"],
-      "@ocap/kernel-language-model-service/open-v1/nodejs": [
-        "../kernel-language-model-service/src/open-v1/nodejs.ts"
+      "@metamask/kernel-language-model-service/ollama/nodejs": [
+        "./packages/kernel-language-model-service/src/ollama/nodejs.ts"
       ],
+      "@metamask/kernel-language-model-service/open-v1/nodejs": [
+        "./packages/kernel-language-model-service/src/open-v1/nodejs.ts"
+      ],
+      "@metamask/kernel-language-model-service/test-utils": [
+        "./packages/kernel-language-model-service/src/test-utils/index.ts"
+      ],
+      "@metamask/kernel-language-model-service/utils/parse-tool-arguments": [
+        "./packages/kernel-language-model-service/src/utils/parse-tool-arguments.ts"
+      ],
+      "@metamask/kernel-node-runtime/daemon": [
+        "./packages/kernel-node-runtime/src/daemon/index.ts"
+      ],
+      "@metamask/kernel-platforms/browser": [
+        "./packages/kernel-platforms/src/browser.ts"
+      ],
+      "@metamask/kernel-platforms/nodejs": [
+        "./packages/kernel-platforms/src/nodejs.ts"
+      ],
+      "@metamask/kernel-shims/*": ["./packages/kernel-shims/src/*.js"],
       "@metamask/kernel-store/sqlite/nodejs": [
-        "../kernel-store/src/sqlite/nodejs.ts"
+        "./packages/kernel-store/src/sqlite/nodejs.ts"
       ],
       "@metamask/kernel-store/sqlite/wasm": [
-        "../kernel-store/src/sqlite/wasm.ts"
+        "./packages/kernel-store/src/sqlite/wasm.ts"
       ],
-      "@metamask/logger/file-transport": ["../logger/src/file-transport.ts"],
-      "@ocap/*": ["../*/src"]
+      "@metamask/kernel-utils/described": [
+        "./packages/kernel-utils/src/described.ts"
+      ],
+      "@metamask/kernel-utils/discoverable": [
+        "./packages/kernel-utils/src/discoverable.ts"
+      ],
+      "@metamask/kernel-utils/exo": ["./packages/kernel-utils/src/exo.ts"],
+      "@metamask/kernel-utils/json-schema-to-struct": [
+        "./packages/kernel-utils/src/json-schema-to-struct.ts"
+      ],
+      "@metamask/kernel-utils/libp2p": [
+        "./packages/kernel-utils/src/libp2p-relay.ts"
+      ],
+      "@metamask/kernel-utils/nodejs": [
+        "./packages/kernel-utils/src/nodejs/index.ts"
+      ],
+      "@metamask/kernel-utils/vite-plugins": [
+        "./packages/kernel-utils/src/vite-plugins/index.ts"
+      ],
+      "@metamask/logger/file-transport": [
+        "./packages/logger/src/file-transport.ts"
+      ],
+      "@metamask/ocap-kernel/rpc": ["./packages/ocap-kernel/src/rpc/index.ts"],
+      "@metamask/streams/browser": ["./packages/streams/src/browser/index.ts"],
+      "@metamask/*": ["./packages/*/src"],
+      "@ocap/kernel-agents/agent": ["./packages/kernel-agents/src/agent.ts"],
+      "@ocap/kernel-agents/capabilities/*": [
+        "./packages/kernel-agents/src/capabilities/*"
+      ],
+      "@ocap/kernel-agents/chat": [
+        "./packages/kernel-agents/src/strategies/chat-agent.ts"
+      ],
+      "@ocap/kernel-agents/json": [
+        "./packages/kernel-agents/src/strategies/json-agent.ts"
+      ],
+      "@ocap/kernel-agents/test-utils": [
+        "./packages/kernel-agents/src/test-utils.ts"
+      ],
+      "@ocap/kernel-agents/types": ["./packages/kernel-agents/src/types.ts"],
+      "@ocap/kernel-agents/types/messages": [
+        "./packages/kernel-agents/src/types/messages.ts"
+      ],
+      "@ocap/kernel-agents/utils": ["./packages/kernel-agents/src/utils.ts"],
+      "@ocap/*": ["./packages/*/src"]
     }
   }
 }

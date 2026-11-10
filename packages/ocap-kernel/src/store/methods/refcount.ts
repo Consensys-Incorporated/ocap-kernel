@@ -13,7 +13,7 @@ import { parseRef } from '../utils/parse-ref.ts';
  * @returns A refcount store object that maps various persistent kernel data
  * structures onto `kv`.
  */
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+// oxlint-disable-next-line typescript/explicit-function-return-type
 export function getRefCountMethods(ctx: StoreContext) {
   const { refCountKey } = getBaseMethods(ctx.kv);
   const { getObjectRefCount, setObjectRefCount } = getObjectMethods(ctx);

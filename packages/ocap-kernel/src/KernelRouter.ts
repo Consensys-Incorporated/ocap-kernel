@@ -10,14 +10,19 @@ import { extractSingleRef } from './store/utils/extract-ref.ts';
 import { parseRef } from './store/utils/parse-ref.ts';
 import { isPromiseRef } from './store/utils/promise-ref.ts';
 import type {
+  ControlOperation,
   EndpointId,
   EndpointHandle,
   ERef,
   KRef,
   KernelMessage,
-  RunQueueItem,
+  RRef,
+  RunLoopItem,
   RunQueueItemSend,
+  RemoteEndpointHandle,
+  RunQueueItemPeerIncarnation,
   RunQueueItemBringOutYourDead,
+  RunQueueItemRemoteInbound,
   RunQueueItemNotify,
   RunQueueItemGCAction,
   CrankResult,
@@ -40,6 +45,21 @@ type MessageRoute = {
   endpointId?: EndpointId | 'kernel';
   target: KRef;
 } | null;
+
+type KernelRouterOptions = {
+  kernelStore: KernelStore;
+  kernelQueue: KernelQueue;
+  getEndpoint: (endpointId: EndpointId) => EndpointHandle;
+  invokeKernelService: (target: KRef, message: KernelMessage) => void;
+  restartVat: (vatId: VatId) => Promise<CrankResult | undefined>;
+  terminateVat: (
+    vatId: VatId,
+    reason?: CapData<KRef>,
+  ) => Promise<CrankResult | undefined>;
+  applyIncarnationChange: (item: RunQueueItemPeerIncarnation) => CrankResult;
+  performControl: (operation: ControlOperation) => Promise<void>;
+  logger?: Logger;
+};
 
 /**
  * The KernelRouter is responsible for routing messages to the correct endpoint.
@@ -75,38 +95,54 @@ export class KernelRouter {
     reason?: CapData<KRef>,
   ) => Promise<CrankResult | undefined>;
 
+  /**
+   * A function that records a peer's incarnation change. Synchronous: an
+   * await between taking the change and recording it would let a handshake
+   * find the incarnation neither waiting nor recorded, and queue it again.
+   */
+  readonly #applyIncarnationChange: (
+    item: RunQueueItemPeerIncarnation,
+  ) => CrankResult;
+
+  /** A function that carries out a control operation. */
+  readonly #performControl: (operation: ControlOperation) => Promise<void>;
+
   /** The logger, if any. */
   readonly #logger: Logger | undefined;
 
   /**
    * Construct a new KernelRouter.
    *
-   * @param kernelStore - The kernel's store.
-   * @param kernelQueue - The kernel's queue.
-   * @param getEndpoint - A function that returns an endpoint handle for a given endpoint id.
-   * @param invokeKernelService - A function that calls a method on a kernel service object.
-   * @param restartVat - A function that replaces a vat's worker.
-   * @param terminateVat - A function that ends a vat.
-   * @param logger - The logger. If not provided, no logging will be done.
+   * @param options - Options bag.
+   * @param options.kernelStore - The kernel's store.
+   * @param options.kernelQueue - The kernel's queue.
+   * @param options.getEndpoint - A function that returns an endpoint handle for a given endpoint id.
+   * @param options.invokeKernelService - A function that calls a method on a kernel service object.
+   * @param options.restartVat - A function that replaces a vat's worker.
+   * @param options.terminateVat - A function that ends a vat.
+   * @param options.applyIncarnationChange - A function that records a peer's incarnation change.
+   * @param options.performControl - A function that carries out a control operation.
+   * @param options.logger - The logger. If not provided, no logging will be done.
    */
-  constructor(
-    kernelStore: KernelStore,
-    kernelQueue: KernelQueue,
-    getEndpoint: (endpointId: EndpointId) => EndpointHandle,
-    invokeKernelService: (target: KRef, message: KernelMessage) => void,
-    restartVat: (vatId: VatId) => Promise<CrankResult | undefined>,
-    terminateVat: (
-      vatId: VatId,
-      reason?: CapData<KRef>,
-    ) => Promise<CrankResult | undefined>,
-    logger?: Logger,
-  ) {
+  constructor({
+    kernelStore,
+    kernelQueue,
+    getEndpoint,
+    invokeKernelService,
+    restartVat,
+    terminateVat,
+    applyIncarnationChange,
+    performControl,
+    logger,
+  }: KernelRouterOptions) {
     this.#kernelStore = kernelStore;
     this.#kernelQueue = kernelQueue;
     this.#getEndpoint = getEndpoint;
     this.#invokeKernelService = invokeKernelService;
     this.#restartVat = restartVat;
     this.#terminateVat = terminateVat;
+    this.#applyIncarnationChange = applyIncarnationChange;
+    this.#performControl = performControl;
     this.#logger = logger;
   }
 
@@ -139,7 +175,7 @@ export class KernelRouter {
    * @param item - The message/notification to deliver.
    * @returns The crank outcome.
    */
-  async deliver(item: RunQueueItem): Promise<CrankResult | undefined> {
+  async deliver(item: RunLoopItem): Promise<CrankResult | undefined> {
     switch (item.type) {
       case 'send':
         return await this.#deliverSend(item);
@@ -151,10 +187,17 @@ export class KernelRouter {
         return await this.#deliverGCAction(item);
       case 'bringOutYourDead':
         return await this.#deliverBringOutYourDead(item);
+      case 'remoteInbound':
+        return await this.#deliverRemoteInbound(item);
       case 'restartVat':
         return await this.#restartVat(item.vatId);
       case 'terminateVat':
         return await this.#terminateVat(item.vatId, item.reason);
+      case 'peerIncarnation':
+        return this.#applyIncarnationChange(item);
+      case 'control':
+        await this.#performControl(item.operation);
+        return undefined;
       default:
         // @ts-expect-error Runtime does not respect "never".
         Fail`unsupported or unknown run queue item type ${item.type}`;
@@ -439,18 +482,15 @@ export class KernelRouter {
    *
    * An endpoint can be named by persisted state without being live. A
    * terminated vat's c-lists outlive it until `cleanupTerminatedVat` reaches
-   * them, one vat per crank, and a reap scheduled for it outlives even that. A
-   * remote's state outlives every disconnection, and at startup the run loop
-   * begins inside `Kernel.make`, before an embedder can call `initRemoteComms`
-   * to restore any remote at all. Throwing here escapes the crank and kills the
-   * run loop, and the rollback puts the item back, so the next boot dies on it
-   * too.
+   * them, one vat per crank, and a reap scheduled for it outlives even that.
+   * Throwing here escapes the crank and kills the run loop, and the rollback
+   * puts the item back, so the next boot dies on it too.
    *
    * @param endpointId - The endpoint the item is addressed to.
    * @param what - What was being delivered, for the log.
    * @param options - Options bag.
    * @param options.discardable - Whether the delivery loses nothing by being
-   * dropped, and so may skip a remote that is merely out of reach.
+   * dropped, and so may skip a remote with no handle.
    * @returns The endpoint's handle, or undefined if it is not running.
    */
   #lookupEndpoint(
@@ -463,12 +503,12 @@ export class KernelRouter {
     } catch (error) {
       // A restart and a termination each happen inside a crank of their own,
       // so no crank sees a vat between workers. A vat with no handle has
-      // ended, is waiting on the termination its channel's loss queued, failed
-      // to start at boot, or was stranded by a retirement that did not
-      // complete.
+      // ended, is waiting on the termination its channel's loss queued, or was
+      // stranded by a retirement that did not complete.
       //
-      // A remote with no handle is only out of reach, so only a delivery with
-      // nothing to lose may skip one.
+      // Every remote the store has holds a handle from boot, so one without is
+      // missing its record, and only a delivery with nothing to lose may skip
+      // it.
       const skippable =
         error instanceof VatNotFoundError ||
         (discardable && isRemoteId(endpointId));
@@ -558,11 +598,11 @@ export class KernelRouter {
     const { type, endpointId, krefs } = item;
     this.#logCrank(`deliver ${endpointId} ${type} ${JSON.stringify(krefs)}`);
     const endpoint = this.#lookupEndpoint(endpointId, type);
-    // Only a skipped vat gets here without a handle; a remote throws above. One
-    // the store does not call terminated has been cleaned up whole, possibly
-    // by `nextTerminatedVatCleanup` earlier in this crank, or is still
-    // persisted. That one keeps its c-list as the vat last saw it, since a
-    // restart would bring up an incarnation still holding those erefs.
+    // Only a skipped vat gets here without a handle. One the store does not
+    // call terminated has been cleaned up whole, possibly by
+    // `nextTerminatedVatCleanup` earlier in this crank, or is still persisted.
+    // That one keeps its c-list as the vat last saw it, since a restart would
+    // bring up an incarnation still holding those erefs.
     if (!endpoint && !this.#kernelStore.isVatTerminated(endpointId as VatId)) {
       return { didDelivery: endpointId };
     }
@@ -591,9 +631,57 @@ export class KernelRouter {
     if (!endpoint) {
       return { didDelivery: endpointId };
     }
+    // A remote reads an rref in its own frame, so flip it as `translateRefKtoE`
+    // does for every other delivery.
+    const delivered = isRemoteId(endpointId)
+      ? erefs.map((eref) => this.#kernelStore.invertRRef(eref as RRef))
+      : erefs;
     return await this.#deliverUnlessLost(endpointId, async () =>
-      endpoint[GC_DELIVERY[type]](erefs),
+      endpoint[GC_DELIVERY[type]](delivered),
     );
+  }
+
+  /**
+   * Take delivery of a message from a remote peer, in a crank of its own.
+   *
+   * The remote can be gone by the time its turn comes: the message was
+   * accepted while it was live and the queue outlives it. Throwing here would
+   * escape the crank and kill the run loop, so the message is dropped.
+   *
+   * @param item - The inbound message.
+   * @returns The crank outcome.
+   */
+  async #deliverRemoteInbound(
+    item: RunQueueItemRemoteInbound,
+  ): Promise<CrankResult> {
+    const { remoteId, peerId, seq, message } = item;
+    const remote = this.#lookupEndpoint(remoteId, 'an inbound message', {
+      discardable: true,
+    }) as RemoteEndpointHandle | undefined;
+    if (!remote) {
+      return { didDelivery: remoteId };
+    }
+    // The remote ID has gone to another peer since, as after a reset (#1208).
+    // Delivered, the message would be read against that peer's c-list and
+    // answered to it.
+    if (remote.peerId !== peerId) {
+      this.#logger?.warn(
+        `Dropped inbound message seq=${seq} from peer ${peerId}: ${remoteId} is now another peer's`,
+      );
+      return { didDelivery: remoteId };
+    }
+    try {
+      return await remote.deliverInbound(message);
+    } catch (error) {
+      // What a peer sends can fail here: an unknown method, a reference that
+      // does not resolve, a reply to a redemption that has timed out. None of
+      // it is the kernel's to die of.
+      this.#logger?.error(
+        `Discarded inbound message seq=${seq} from ${remoteId}, which could not be delivered:`,
+        error,
+      );
+      return { didDelivery: remoteId, abort: true };
+    }
   }
 
   /**
@@ -626,8 +714,8 @@ export class KernelRouter {
    * awaiting the result of the message it was handling is told why the vat
    * ended.
    *
-   * A vat the kernel retired during the delivery is the exception: the crank
-   * commits, with whatever the vat sent before it was retired.
+   * A vat retired during the delivery is the exception: the crank commits,
+   * with whatever the vat sent before it was retired.
    *
    * @param endpointId - The endpoint the delivery is addressed to.
    * @param deliver - Makes the delivery.
@@ -647,10 +735,8 @@ export class KernelRouter {
         throw error;
       }
       if (!this.#kernelStore.isVatActive(endpointId)) {
-        // Retired by the kernel inside this crank, as `terminateAllVats` can
-        // do while the run loop runs. A rollback would undo that retirement,
-        // and any other it made in this crank. #1105 is to run
-        // `terminateAllVats` with the loop stopped.
+        // Defensive: nothing outside the run loop retires a vat mid-delivery,
+        // but a rollback here would undo such a retirement.
         return harden({ didDelivery: endpointId });
       }
       this.#logger?.warn(

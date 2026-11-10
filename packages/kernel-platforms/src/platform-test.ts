@@ -28,12 +28,13 @@ export const createPlatformTestSuite = (
       ).rejects.toThrow('unregistered capability');
     });
 
-    it('rejects a config the capability struct refuses', async () => {
-      await expect(
-        makePlatform({
-          fs: { root: 'tmp' },
-        } as unknown as Parameters<PlatformFactory>[0]),
-      ).rejects.toThrow();
-    });
+    it.each([{ fs: { root: 'tmp' } }, { http: { allow: [] } }])(
+      'rejects a config the capability struct refuses: %j',
+      async (config) => {
+        await expect(
+          makePlatform(config as unknown as Parameters<PlatformFactory>[0]),
+        ).rejects.toThrow();
+      },
+    );
   });
 };

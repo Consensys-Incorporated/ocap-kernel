@@ -1,12 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-import { makeProvider } from './provider.ts';
+import { httpGetJson, makeProvider } from './provider.ts';
 import type { Provider } from './provider.ts';
 
-// Mock globalThis.fetch for all tests.
-// Each test file runs in its own vitest worker, so this doesn't leak.
 const mockFetch = vi.fn();
-globalThis.fetch = mockFetch;
 
 /**
  * Create a mock fetch response.
@@ -29,15 +26,21 @@ describe('lib/provider', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    provider = makeProvider({ chainId: 1, rpcUrl: 'https://rpc.example.com' });
+    provider = makeProvider(
+      { chainId: 1, rpcUrl: 'https://rpc.example.com' },
+      mockFetch,
+    );
   });
 
   describe('makeProvider', () => {
     it('creates a provider for a known chain', () => {
-      const knownProvider = makeProvider({
-        chainId: 1,
-        rpcUrl: 'https://eth.example.com',
-      });
+      const knownProvider = makeProvider(
+        {
+          chainId: 1,
+          rpcUrl: 'https://eth.example.com',
+        },
+        mockFetch,
+      );
       expect(knownProvider).toBeDefined();
       expect(knownProvider.request).toBeDefined();
       expect(knownProvider.broadcastTransaction).toBeDefined();
@@ -47,11 +50,14 @@ describe('lib/provider', () => {
     });
 
     it('creates a provider for a custom chain', () => {
-      const customProvider = makeProvider({
-        chainId: 99999,
-        rpcUrl: 'https://custom-rpc.example.com',
-        name: 'Custom Chain',
-      });
+      const customProvider = makeProvider(
+        {
+          chainId: 99999,
+          rpcUrl: 'https://custom-rpc.example.com',
+          name: 'Custom Chain',
+        },
+        mockFetch,
+      );
       expect(customProvider).toBeDefined();
     });
   });
@@ -110,6 +116,33 @@ describe('lib/provider', () => {
         '0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266',
       );
       expect(nonce).toBe(42);
+    });
+  });
+
+  describe('httpGetJson', () => {
+    it('gets the URL through the given fetch and parses the body', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ a: 1 }),
+      });
+
+      expect(
+        await httpGetJson('https://api.example.com/x', mockFetch),
+      ).toStrictEqual({ a: 1 });
+      expect(mockFetch).toHaveBeenCalledWith('https://api.example.com/x');
+    });
+
+    it('rejects a non-retryable error status', async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        statusText: 'Not Found',
+      });
+
+      await expect(
+        httpGetJson('https://api.example.com/x', mockFetch),
+      ).rejects.toThrow('HTTP GET failed: 404 Not Found');
+      expect(mockFetch).toHaveBeenCalledTimes(1);
     });
   });
 });

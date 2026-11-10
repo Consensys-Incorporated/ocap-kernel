@@ -352,9 +352,7 @@ describe('makeRunLoopFailureHandler', () => {
  */
 const makeCleanupOptions = (
   overrides: Partial<FailedStartupCleanupOptions> = {},
-): FailedStartupCleanupOptions & {
-  logger: { error: ReturnType<typeof vi.fn>; info: ReturnType<typeof vi.fn> };
-} => ({
+): FailedStartupCleanupOptions => ({
   logger: { error: vi.fn(), info: vi.fn() },
   stopKernel: vi.fn().mockResolvedValue(undefined),
   closeDatabase: vi.fn(),

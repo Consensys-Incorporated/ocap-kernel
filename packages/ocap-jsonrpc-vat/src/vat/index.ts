@@ -78,7 +78,7 @@ export function buildRootObject(
   baggage: Baggage,
 ): unknown {
   const log = (...args: unknown[]): void => {
-    // eslint-disable-next-line no-console
+    // oxlint-disable-next-line no-console
     console.log('[ocap-jsonrpc-vat]', ...args);
   };
 
@@ -199,7 +199,7 @@ export function buildRootObject(
     const bridge = makeBridge({
       redeem: async (url) => E(services.ocapURLRedemptionService).redeem(url),
       invoke: async (target, method, args) =>
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        // oxlint-disable-next-line typescript/no-explicit-any
         E(target as any)[method](...args),
       isRemotable,
       label,

@@ -68,7 +68,7 @@ const provenance = new WeakMap<object, Provenance>();
 const makeForwarder =
   (target: object, methodName: string) =>
   async (...args: unknown[]): Promise<unknown> => {
-    // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+    // oxlint-disable-next-line typescript/no-non-null-assertion
     return E(target as Forwardable)[methodName]!(...args);
   };
 
@@ -203,6 +203,7 @@ export const join = async <Joined extends Methods = Methods>({
   name,
   refs: refsOrPromises,
 }: JoinOptions): Promise<Guarded<Joined>> => {
+  // oxlint-disable-next-line typescript/await-thenable -- An `object` may be a promise.
   const refs = await Promise.all(refsOrPromises);
   const records = refs.map((ref) => provenance.get(ref));
   const minted = records.filter(

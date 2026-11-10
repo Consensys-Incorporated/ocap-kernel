@@ -1,5 +1,5 @@
 import { Kernel } from '@metamask/ocap-kernel';
-import type { ClusterConfig } from '@metamask/ocap-kernel';
+import type { ClusterConfig, VatId } from '@metamask/ocap-kernel';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 import { makeKernel } from '../../src/kernel/make-kernel.ts';
@@ -14,7 +14,7 @@ describe('Kernel Worker', () => {
   let kernel: Kernel;
 
   // Tests below assume these are sorted for convenience.
-  const testVatIds = ['v1', 'v2', 'v3'].sort();
+  const testVatIds = (['v1', 'v2', 'v3'] as VatId[]).sort();
 
   beforeEach(async () => {
     ({ kernel } = await makeKernel({}));
@@ -77,7 +77,7 @@ describe('Kernel Worker', () => {
 
   it('pings vats', async () => {
     await launchTestVats();
-    const result = await kernel.pingVat('v1');
+    const result = await kernel.pingVat('v1' as VatId);
     expect(result).toBe('pong');
   }, 5000);
 });

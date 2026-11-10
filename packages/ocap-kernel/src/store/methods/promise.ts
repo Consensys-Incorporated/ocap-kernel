@@ -26,7 +26,7 @@ const PROMISE_EREF = /^r?p[-+]\d+$/u;
  * @returns A promise store object that maps various persistent kernel data
  * structures onto `kv`.
  */
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+// oxlint-disable-next-line typescript/explicit-function-return-type
 export function getPromiseMethods(ctx: StoreContext) {
   const {
     incCounter,

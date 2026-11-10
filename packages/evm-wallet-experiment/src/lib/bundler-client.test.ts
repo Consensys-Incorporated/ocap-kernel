@@ -3,10 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { makeBundlerClient } from './bundler-client.ts';
 import type { Hex } from '../types.ts';
 
-// Mock globalThis.fetch for all tests.
-// Each test file runs in its own vitest worker, so this doesn't leak.
 const mockFetch = vi.fn();
-globalThis.fetch = mockFetch;
 
 /**
  * Create a mock fetch response for bundler RPC.
@@ -31,10 +28,13 @@ describe('lib/bundler-client', () => {
 
   describe('makeBundlerClient', () => {
     it('creates a client', () => {
-      const client = makeBundlerClient({
-        bundlerUrl: 'https://bundler.example.com',
-        chainId: 1,
-      });
+      const client = makeBundlerClient(
+        {
+          bundlerUrl: 'https://bundler.example.com',
+          chainId: 1,
+        },
+        mockFetch,
+      );
 
       expect(client).toBeDefined();
       expect(client.sendUserOperation).toBeDefined();
@@ -48,10 +48,13 @@ describe('lib/bundler-client', () => {
     it('sends a user operation via RPC', async () => {
       mockFetch.mockResolvedValue(mockRpcResponse('0xuserophash'));
 
-      const client = makeBundlerClient({
-        bundlerUrl: 'https://bundler.example.com',
-        chainId: 1,
-      });
+      const client = makeBundlerClient(
+        {
+          bundlerUrl: 'https://bundler.example.com',
+          chainId: 1,
+        },
+        mockFetch,
+      );
 
       const result = await client.sendUserOperation({
         userOp: {} as never,
@@ -76,10 +79,13 @@ describe('lib/bundler-client', () => {
         }),
       );
 
-      const client = makeBundlerClient({
-        bundlerUrl: 'https://bundler.example.com',
-        chainId: 1,
-      });
+      const client = makeBundlerClient(
+        {
+          bundlerUrl: 'https://bundler.example.com',
+          chainId: 1,
+        },
+        mockFetch,
+      );
 
       const estimate = await client.estimateUserOperationGas({
         userOp: {} as never,
@@ -100,10 +106,13 @@ describe('lib/bundler-client', () => {
       };
       mockFetch.mockResolvedValue(mockRpcResponse(receipt));
 
-      const client = makeBundlerClient({
-        bundlerUrl: 'https://bundler.example.com',
-        chainId: 1,
-      });
+      const client = makeBundlerClient(
+        {
+          bundlerUrl: 'https://bundler.example.com',
+          chainId: 1,
+        },
+        mockFetch,
+      );
 
       const result = await client.getUserOperationReceipt('0xdeadbeef' as Hex);
       expect(result).toStrictEqual(receipt);
@@ -112,10 +121,13 @@ describe('lib/bundler-client', () => {
     it('returns null when receipt is not found', async () => {
       mockFetch.mockResolvedValue(mockRpcResponse(null));
 
-      const client = makeBundlerClient({
-        bundlerUrl: 'https://bundler.example.com',
-        chainId: 1,
-      });
+      const client = makeBundlerClient(
+        {
+          bundlerUrl: 'https://bundler.example.com',
+          chainId: 1,
+        },
+        mockFetch,
+      );
 
       const result = await client.getUserOperationReceipt('0xdeadbeef' as Hex);
       expect(result).toBeNull();
@@ -127,10 +139,13 @@ describe('lib/bundler-client', () => {
       const receipt = { success: true };
       mockFetch.mockResolvedValue(mockRpcResponse(receipt));
 
-      const client = makeBundlerClient({
-        bundlerUrl: 'https://bundler.example.com',
-        chainId: 1,
-      });
+      const client = makeBundlerClient(
+        {
+          bundlerUrl: 'https://bundler.example.com',
+          chainId: 1,
+        },
+        mockFetch,
+      );
 
       const result = await client.waitForUserOperationReceipt({
         hash: '0xdeadbeef' as Hex,
@@ -144,10 +159,13 @@ describe('lib/bundler-client', () => {
         .mockResolvedValueOnce(mockRpcResponse(null))
         .mockResolvedValueOnce(mockRpcResponse(receipt));
 
-      const client = makeBundlerClient({
-        bundlerUrl: 'https://bundler.example.com',
-        chainId: 1,
-      });
+      const client = makeBundlerClient(
+        {
+          bundlerUrl: 'https://bundler.example.com',
+          chainId: 1,
+        },
+        mockFetch,
+      );
 
       const result = await client.waitForUserOperationReceipt({
         hash: '0xdeadbeef' as Hex,
@@ -162,10 +180,13 @@ describe('lib/bundler-client', () => {
     it('throws on timeout', async () => {
       mockFetch.mockResolvedValue(mockRpcResponse(null));
 
-      const client = makeBundlerClient({
-        bundlerUrl: 'https://bundler.example.com',
-        chainId: 1,
-      });
+      const client = makeBundlerClient(
+        {
+          bundlerUrl: 'https://bundler.example.com',
+          chainId: 1,
+        },
+        mockFetch,
+      );
 
       await expect(
         client.waitForUserOperationReceipt({

@@ -6,6 +6,7 @@ import { makeMapKVStore } from '../../../test/storage.ts';
 import type { KRef } from '../../types.ts';
 import type { StoreContext } from '../types.ts';
 import { getBaseMethods } from './base.ts';
+import { asKRef } from '../../../test/branded.ts';
 
 describe('refcount-methods', () => {
   let kv: KVStore;
@@ -37,18 +38,18 @@ describe('refcount-methods', () => {
 
   describe('getRefCount', () => {
     it('returns 0 for non-existent references', () => {
-      kv.set(baseStore.refCountKey('ko99'), '0');
-      expect(refCountMethods.getRefCount('ko99')).toBe(0);
+      kv.set(baseStore.refCountKey(asKRef('ko99')), '0');
+      expect(refCountMethods.getRefCount(asKRef('ko99'))).toBe(0);
     });
 
     it('handles undefined values by returning NaN', () => {
-      expect(Number.isNaN(refCountMethods.getRefCount('nonexistent'))).toBe(
-        true,
-      );
+      expect(
+        Number.isNaN(refCountMethods.getRefCount('nonexistent' as KRef)),
+      ).toBe(true);
     });
 
     it('returns the correct reference count for existing references', () => {
-      const kref: KRef = 'ko1';
+      const kref = asKRef('ko1');
       kv.set(`${kref}.refCount`, '5');
       expect(refCountMethods.getRefCount(kref)).toBe(5);
     });
@@ -56,7 +57,7 @@ describe('refcount-methods', () => {
 
   describe('incRefCount', () => {
     it('initializes and increments reference count for new references', () => {
-      const kref: KRef = 'ko1';
+      const kref = asKRef('ko1');
 
       kv.set(baseStore.refCountKey(kref), '0');
 
@@ -68,13 +69,13 @@ describe('refcount-methods', () => {
     });
 
     it('handles incrementing from undefined', () => {
-      const kref: KRef = 'ko2';
+      const kref = asKRef('ko2');
       expect(Number.isNaN(refCountMethods.incRefCount(kref))).toBe(true);
       expect(kv.get(baseStore.refCountKey(kref))).toBe('NaN');
     });
 
     it('increments existing reference counts', () => {
-      const kref: KRef = 'kp42';
+      const kref = asKRef('kp42');
       kv.set(`${kref}.refCount`, '10');
 
       expect(refCountMethods.incRefCount(kref)).toBe(11);
@@ -84,7 +85,7 @@ describe('refcount-methods', () => {
 
   describe('decRefCount', () => {
     it('decrements reference counts correctly', () => {
-      const kref: KRef = 'ko1';
+      const kref = asKRef('ko1');
       kv.set(`${kref}.refCount`, '5');
 
       expect(refCountMethods.decRefCount(kref)).toBe(4);
@@ -95,7 +96,7 @@ describe('refcount-methods', () => {
     });
 
     it('can decrement to zero', () => {
-      const kref: KRef = 'ko1';
+      const kref = asKRef('ko1');
       kv.set(`${kref}.refCount`, '1');
 
       expect(refCountMethods.decRefCount(kref)).toBe(0);
@@ -103,7 +104,7 @@ describe('refcount-methods', () => {
     });
 
     it('can decrement below zero (though this should be avoided in practice)', () => {
-      const kref: KRef = 'ko1';
+      const kref = asKRef('ko1');
       kv.set(`${kref}.refCount`, '0');
 
       expect(refCountMethods.decRefCount(kref)).toBe(-1);
@@ -113,17 +114,17 @@ describe('refcount-methods', () => {
 
   describe('kernelRefExists', () => {
     it('returns false for non-existent references', () => {
-      expect(refCountMethods.kernelRefExists('ko99')).toBe(false);
+      expect(refCountMethods.kernelRefExists(asKRef('ko99'))).toBe(false);
     });
 
     it('returns true for existing references with non-zero count', () => {
-      const kref: KRef = 'ko1';
+      const kref = asKRef('ko1');
       kv.set(`${kref}.refCount`, '5');
       expect(refCountMethods.kernelRefExists(kref)).toBe(true);
     });
 
     it('returns true for existing references with zero count', () => {
-      const kref: KRef = 'ko1';
+      const kref = asKRef('ko1');
       kv.set(`${kref}.refCount`, '0');
       expect(refCountMethods.kernelRefExists(kref)).toBe(true);
     });
@@ -131,7 +132,7 @@ describe('refcount-methods', () => {
 
   describe('integration', () => {
     it('supports full reference counting lifecycle', () => {
-      const kref: KRef = 'ko42';
+      const kref = asKRef('ko42');
 
       expect(refCountMethods.kernelRefExists(kref)).toBe(false);
 
@@ -157,8 +158,8 @@ describe('refcount-methods', () => {
     });
 
     it('works with multiple references simultaneously', () => {
-      const kref1: KRef = 'ko1';
-      const kref2: KRef = 'kp2';
+      const kref1 = asKRef('ko1');
+      const kref2 = asKRef('kp2');
 
       kv.set(baseStore.refCountKey(kref1), '0');
       kv.set(baseStore.refCountKey(kref2), '0');
@@ -178,7 +179,7 @@ describe('refcount-methods', () => {
 
   describe('incrementRefCount', () => {
     it('increments promise reference counts', () => {
-      const kref: KRef = 'kp1';
+      const kref = asKRef('kp1');
 
       // Set up initial refCount
       kv.set(`${kref}.refCount`, '1');
@@ -190,7 +191,7 @@ describe('refcount-methods', () => {
     });
 
     it('does not increment object counts for exports', () => {
-      const kref: KRef = 'ko1';
+      const kref = asKRef('ko1');
 
       refCountMethods.incrementRefCount(kref, 'test', { isExport: true });
 
@@ -206,7 +207,7 @@ describe('refcount-methods', () => {
     });
 
     it('refuses to resurrect an object the kernel has deleted', () => {
-      const kref: KRef = 'ko99';
+      const kref = asKRef('ko99');
 
       expect(() => refCountMethods.incrementRefCount(kref, 'test')).toThrow(
         'incrementRefCount on deleted kref "ko99" ("test")',
@@ -215,7 +216,7 @@ describe('refcount-methods', () => {
     });
 
     it('refuses to resurrect a promise the kernel has deleted', () => {
-      const kref: KRef = 'kp99';
+      const kref = asKRef('kp99');
 
       expect(() => refCountMethods.incrementRefCount(kref, 'test')).toThrow(
         'incrementRefCount on deleted kref "kp99" ("test")',
@@ -226,7 +227,7 @@ describe('refcount-methods', () => {
     });
 
     it('increments an object that exists', () => {
-      const kref: KRef = 'ko1';
+      const kref = asKRef('ko1');
       kv.set(baseStore.refCountKey(kref), '0,0');
 
       refCountMethods.incrementRefCount(kref, 'test');
@@ -235,7 +236,7 @@ describe('refcount-methods', () => {
     });
 
     it('increments only the recognizable count when asked', () => {
-      const kref: KRef = 'ko1';
+      const kref = asKRef('ko1');
       kv.set(baseStore.refCountKey(kref), '1,1');
 
       refCountMethods.incrementRefCount(kref, 'test', {
@@ -248,7 +249,7 @@ describe('refcount-methods', () => {
 
   describe('decrementRefCount', () => {
     it('decrements promise reference counts', () => {
-      const kref: KRef = 'kp1';
+      const kref = asKRef('kp1');
 
       // Set up initial refCount
       kv.set(`${kref}.refCount`, '2');
@@ -262,7 +263,7 @@ describe('refcount-methods', () => {
     });
 
     it('adds promise to maybeFreeKrefs when count reaches zero', () => {
-      const kref: KRef = 'kp1';
+      const kref = asKRef('kp1');
 
       // Set up initial refCount
       kv.set(`${kref}.refCount`, '1');
@@ -276,7 +277,7 @@ describe('refcount-methods', () => {
     });
 
     it('does not decrement object counts for exports', () => {
-      const kref: KRef = 'ko1';
+      const kref = asKRef('ko1');
 
       const result = refCountMethods.decrementRefCount(kref, 'test', {
         isExport: true,
@@ -295,7 +296,7 @@ describe('refcount-methods', () => {
     });
 
     it('throws for underflow on promise refCount', () => {
-      const kref: KRef = 'kp1';
+      const kref = asKRef('kp1');
 
       // Set up initial refCount at 0
       kv.set(`${kref}.refCount`, '0');

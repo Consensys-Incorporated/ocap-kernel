@@ -399,6 +399,28 @@ export type RunQueueItemTerminateVat = Infer<
   typeof RunQueueItemTerminateVatStruct
 >;
 
+export type RunQueueItemRemoteInbound = {
+  type: 'remoteInbound';
+  remoteId: RemoteId;
+  peerId: string;
+  seq: number;
+  message: string;
+};
+
+export type RunQueueItemPeerIncarnation = {
+  type: 'peerIncarnation';
+  peerId: string;
+  incarnation: string;
+  /**
+   * Whether it replaced an incarnation the kernel knew the peer by when the
+   * handshake reported it. A restart has the peer's later arrivals taken ahead
+   * of it, as read late off the old incarnation's channel, and a later restart
+   * takes its place; a first incarnation has them taken behind it. The crank
+   * judges the restart again, against the store.
+   */
+  restart: boolean;
+};
+
 export const RunQueueItemStruct = union([
   RunQueueItemSendStruct,
   RunQueueItemNotifyStruct,
@@ -409,6 +431,29 @@ export const RunQueueItemStruct = union([
 ]);
 
 export type RunQueueItem = Infer<typeof RunQueueItemStruct>;
+
+/**
+ * What arrives from a peer: a message, or a change of incarnation a handshake
+ * reported. Held in memory and never written to the run queue, so it is not a
+ * {@link RunQueueItem} and the store's queue methods do not accept one.
+ */
+export type PeerArrival =
+  | RunQueueItemRemoteInbound
+  | RunQueueItemPeerIncarnation;
+
+/**
+ * A host call the run loop carries out ahead of all other work, in a crank of
+ * its own.
+ */
+export type ControlOperation = 'clearStorage' | 'reset' | 'terminateAllVats';
+
+export type RunLoopItemControl = {
+  type: 'control';
+  operation: ControlOperation;
+};
+
+/** Everything the run loop takes a crank for. */
+export type RunLoopItem = RunQueueItem | PeerArrival | RunLoopItemControl;
 
 /**
  * Assert that a value is a valid kernel message.
@@ -626,26 +671,11 @@ export type PlatformServices = {
 
 // Cluster configuration
 
-/**
- * Per-vat network configuration. Present only when the vat opts into the
- * `fetch` endowment via {@link VatConfig.globals}; an absent or missing
- * `allowedHosts` is treated as a denial of all hosts (there is no implicit
- * allow-all).
- */
-export type VatNetworkConfig = {
-  allowedHosts: string[];
-};
-
-export const vatNetworkConfigStruct = object({
-  allowedHosts: array(string()),
-});
-
 export type VatConfig = UserCodeSpec & {
   creationOptions?: Record<string, Json>;
   parameters?: Record<string, Json>;
   platformConfig?: Partial<PlatformConfig>;
   globals?: AllowedGlobalName[];
-  network?: VatNetworkConfig;
 };
 
 const UserCodeSpecStruct = union([
@@ -667,22 +697,15 @@ export const VatConfigStruct = define<VatConfig>('VatConfig', (value) => {
     return false;
   }
 
-  const {
-    creationOptions,
-    parameters,
-    platformConfig,
-    globals,
-    network,
-    ...specOnly
-  } = value as Record<string, unknown>;
+  const { creationOptions, parameters, platformConfig, globals, ...specOnly } =
+    value as Record<string, unknown>;
 
   return (
     is(specOnly, UserCodeSpecStruct) &&
     (!creationOptions || is(creationOptions, UnsafeJsonStruct)) &&
     (!parameters || is(parameters, UnsafeJsonStruct)) &&
     (!platformConfig || is(platformConfig, platformConfigStruct)) &&
-    (!globals || is(globals, array(AllowedGlobalNameStruct))) &&
-    (!network || is(network, vatNetworkConfigStruct))
+    (!globals || is(globals, array(AllowedGlobalNameStruct)))
   );
 });
 
@@ -793,8 +816,9 @@ const RemoteCommsConnectedStruct = object({
 /**
  * Whether the kernel is capable of processing its run queue. `idle` means the
  * run loop was never started, not that it has nothing to do — a loop parked on
- * an empty queue reports `running`. `failed` means nothing will ever be
- * processed again and the kernel must be restarted.
+ * an empty queue reports `running`. `stopped` means `Kernel.stop` ended the
+ * loop. `failed` means nothing will ever be processed again and the kernel
+ * must be restarted.
  */
 // The arms are `type()`, not `object()`, so a client shipped against them
 // tolerates a newer kernel adding a field to an arm. Note the limit of that:
@@ -803,6 +827,7 @@ const RemoteCommsConnectedStruct = object({
 export const RunLoopStatusStruct = union([
   type({ state: literal('idle') }),
   type({ state: literal('running') }),
+  type({ state: literal('stopped') }),
   // Two strings because one cannot be both: `error` is the message, `detail` the
   // cause chain. When a crank dies and its rollback then fails, the message names
   // the rollback and only the chain names what killed the kernel.
@@ -976,6 +1001,12 @@ export type EndpointHandle = {
   deliverRetireExports: (erefs: ERef[]) => Promise<CrankResult>;
   deliverRetireImports: (erefs: ERef[]) => Promise<CrankResult>;
   deliverBringOutYourDead: () => Promise<CrankResult>;
+};
+
+/** A remote's endpoint, which also takes delivery of what its peer sends. */
+export type RemoteEndpointHandle = EndpointHandle & {
+  peerId: string;
+  deliverInbound: (message: string) => Promise<CrankResult>;
 };
 
 /**

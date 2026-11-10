@@ -34,9 +34,9 @@
       "minimumReleaseAge": "0 days"
     },
     {
-      "description": "Group npm dependency updates for allowed packages",
+      "description": "Group npm dependency updates for allowed packages. @metamask/* is excluded on purpose; it is updated outside Renovate.",
       "matchManagers": ["npm"],
-      "matchPackagePrefixes": ["@metamask/", "@agoric/", "@endo/"],
+      "matchPackagePrefixes": ["@agoric/", "@endo/"],
       "matchPackageNames": ["ses"],
       "enabled": true,
       "rangeStrategy": "bump",
@@ -49,6 +49,12 @@
       "matchManagers": ["npm"],
       "matchPackageNames": ["@endo/captp"],
       "allowedVersions": "<=4.5.0"
+    },
+    {
+      "description": "pass-style 2.0.1 and patterns 2.x republish the 1.x code, but Endo's own packages still depend on ^1, so adopting ^2 installs a second copy of each. Allow 2.x once @endo/exo and @endo/marshal depend on it.",
+      "matchManagers": ["npm"],
+      "matchPackageNames": ["@endo/pass-style", "@endo/patterns"],
+      "allowedVersions": "<2"
     }
   ]
 }

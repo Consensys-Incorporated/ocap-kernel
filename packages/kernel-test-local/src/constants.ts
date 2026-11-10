@@ -2,7 +2,7 @@
  * Test constants for E2E tests
  */
 export const DEFAULT_MODEL = 'llama3.1:latest';
-export const TEST_MODELS = ['llama3.1:latest', 'gpt-oss:20b'];
+export const TEST_MODELS = ['llama3.1:latest', 'gpt-oss:20b', 'flint:latest'];
 
 /**
  * Ollama API endpoints
@@ -13,6 +13,7 @@ export const OLLAMA_TAGS_ENDPOINT = `${OLLAMA_API_BASE}/api/tags`;
 /**
  * Supported LMS providers for E2E tests.
  * Select with: LMS_PROVIDER=llama-cpp yarn test:e2e:local
+ * Override the provider's model with: LMS_MODEL=flint:latest yarn test:e2e:local
  */
 const LMS_PROVIDERS = {
   ollama: { baseUrl: OLLAMA_API_BASE, model: DEFAULT_MODEL },
@@ -21,17 +22,19 @@ const LMS_PROVIDERS = {
 
 export type LmsProvider = keyof typeof LMS_PROVIDERS;
 
-// eslint-disable-next-line n/no-process-env
+// oxlint-disable-next-line node/no-process-env
 const rawProvider = process?.env?.LMS_PROVIDER ?? 'ollama';
 export const LMS_PROVIDER: LmsProvider =
   rawProvider in LMS_PROVIDERS ? (rawProvider as LmsProvider) : 'ollama';
 
 export const LMS_BASE_URL = LMS_PROVIDERS[LMS_PROVIDER].baseUrl;
-export const LMS_CHAT_MODEL = LMS_PROVIDERS[LMS_PROVIDER].model;
+export const LMS_CHAT_MODEL: string =
+  // oxlint-disable-next-line node/no-process-env
+  process?.env?.LMS_MODEL ?? LMS_PROVIDERS[LMS_PROVIDER].model;
 
 /**
  * Logger tags to ignore, parsed from the LOGGER_IGNORE environment variable.
  */
 export const IGNORE_TAGS =
-  // eslint-disable-next-line n/no-process-env
+  // oxlint-disable-next-line node/no-process-env
   process?.env?.LOGGER_IGNORE?.split(',')?.map((tag) => tag.trim()) ?? [];

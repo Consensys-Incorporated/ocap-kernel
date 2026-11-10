@@ -223,7 +223,7 @@ describe('PlatformServicesServer', () => {
       logger = new Logger('test-server');
       stream = await TestDuplexStream.make(() => undefined);
       await stream.synchronize();
-      // eslint-disable-next-line no-new
+      // oxlint-disable-next-line no-new
       new PlatformServicesServer(
         stream as unknown as PlatformServicesStream,
         makeMockVatWorker,
@@ -252,7 +252,7 @@ describe('PlatformServicesServer', () => {
         outputs.push(message);
       });
       await testStream.synchronize();
-      // eslint-disable-next-line no-new
+      // oxlint-disable-next-line no-new
       new PlatformServicesServer(
         testStream as unknown as PlatformServicesStream,
         makeMockVatWorker,
@@ -278,7 +278,7 @@ describe('PlatformServicesServer', () => {
 
     describe('launch', () => {
       it('launches a vat', async () => {
-        const vatId = 'v0';
+        const vatId = 'v0' as VatId;
         await stream.receiveInput(makeLaunchMessageEvent('m0', vatId));
         await delay(10);
 
@@ -290,8 +290,8 @@ describe('PlatformServicesServer', () => {
 
       it('logs error if a vat with the same id already exists', async () => {
         const errorSpy = vi.spyOn(logger, 'error');
-        await stream.receiveInput(makeLaunchMessageEvent('m0', 'v0'));
-        await stream.receiveInput(makeLaunchMessageEvent('m1', 'v0'));
+        await stream.receiveInput(makeLaunchMessageEvent('m0', 'v0' as VatId));
+        await stream.receiveInput(makeLaunchMessageEvent('m1', 'v0' as VatId));
         await delay(10);
 
         expect(errorSpy).toHaveBeenCalledExactlyOnceWith(
@@ -303,7 +303,7 @@ describe('PlatformServicesServer', () => {
 
     describe('terminate', () => {
       it('terminates a vat', async () => {
-        const vatId = 'v0';
+        const vatId = 'v0' as VatId;
         await stream.receiveInput(makeLaunchMessageEvent('m0', vatId));
         await delay(10);
 
@@ -319,7 +319,9 @@ describe('PlatformServicesServer', () => {
 
       it('logs error if a vat with the specified id does not exist', async () => {
         const errorSpy = vi.spyOn(logger, 'error');
-        await stream.receiveInput(makeTerminateMessageEvent('m0', 'v0'));
+        await stream.receiveInput(
+          makeTerminateMessageEvent('m0', 'v0' as VatId),
+        );
         await delay(10);
 
         expect(errorSpy).toHaveBeenCalledExactlyOnceWith(
@@ -330,7 +332,7 @@ describe('PlatformServicesServer', () => {
 
       it('logs error if a vat fails to terminate', async () => {
         const errorSpy = vi.spyOn(logger, 'error');
-        const vatId = 'v0';
+        const vatId = 'v0' as VatId;
         const vatNotFoundError = new VatNotFoundError(vatId);
 
         await stream.receiveInput(makeLaunchMessageEvent('m0', vatId));
@@ -350,7 +352,7 @@ describe('PlatformServicesServer', () => {
 
       it('forgets a worker that fails to terminate', async () => {
         const errorSpy = vi.spyOn(logger, 'error');
-        const vatId = 'v0';
+        const vatId = 'v0' as VatId;
         await stream.receiveInput(makeLaunchMessageEvent('m0', vatId));
         await delay(10);
         workers[0]?.terminate.mockRejectedValue(new Error('stop failed'));
@@ -372,10 +374,10 @@ describe('PlatformServicesServer', () => {
     describe('terminateAll', () => {
       it('terminates all vats', async () => {
         await stream.receiveInput(
-          makeLaunchMessageEvent('m0', 'v0', 'bogus1.js'),
+          makeLaunchMessageEvent('m0', 'v0' as VatId, 'bogus1.js'),
         );
         await stream.receiveInput(
-          makeLaunchMessageEvent('m1', 'v1', 'bogus2.js'),
+          makeLaunchMessageEvent('m1', 'v1' as VatId, 'bogus2.js'),
         );
         await delay(10);
 
@@ -393,7 +395,7 @@ describe('PlatformServicesServer', () => {
 
       it('logs error if a vat fails to terminate', async () => {
         const errorSpy = vi.spyOn(logger, 'error');
-        const vatId = 'v0';
+        const vatId = 'v0' as VatId;
         const vatNotFoundError = new VatNotFoundError(vatId);
 
         await stream.receiveInput(makeLaunchMessageEvent('m0', vatId));
@@ -516,7 +518,7 @@ describe('PlatformServicesServer', () => {
             outputs.push(message);
           });
           await testStream.synchronize();
-          // eslint-disable-next-line no-new
+          // oxlint-disable-next-line no-new
           new PlatformServicesServer(
             testStream as unknown as PlatformServicesStream,
             makeMockVatWorker,
@@ -572,7 +574,7 @@ describe('PlatformServicesServer', () => {
             outputs.push(message);
           });
           await testStream.synchronize();
-          // eslint-disable-next-line no-new
+          // oxlint-disable-next-line no-new
           new PlatformServicesServer(
             testStream as unknown as PlatformServicesStream,
             makeMockVatWorker,
@@ -621,7 +623,7 @@ describe('PlatformServicesServer', () => {
             outputs.push(message);
           });
           await testStream.synchronize();
-          // eslint-disable-next-line no-new
+          // oxlint-disable-next-line no-new
           new PlatformServicesServer(
             testStream as unknown as PlatformServicesStream,
             makeMockVatWorker,
@@ -684,7 +686,7 @@ describe('PlatformServicesServer', () => {
             outputs.push(message);
           });
           await testStream.synchronize();
-          // eslint-disable-next-line no-new
+          // oxlint-disable-next-line no-new
           new PlatformServicesServer(
             testStream as unknown as PlatformServicesStream,
             makeMockVatWorker,

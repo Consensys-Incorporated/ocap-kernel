@@ -78,7 +78,7 @@ function makeKVStore(
    */
   function kvGetNextKey(previousKey: string): string | undefined {
     if (typeof previousKey !== 'string') {
-      // eslint-disable-next-line @typescript-eslint/restrict-template-expressions
+      // oxlint-disable-next-line typescript/restrict-template-expressions
       throw new Error(`previousKey ${previousKey} must be a string`);
     }
     return sqlKVGetNextKey.get(previousKey) as string | undefined;

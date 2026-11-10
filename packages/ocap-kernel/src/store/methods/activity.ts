@@ -10,7 +10,7 @@ const WAKE_THRESHOLD_MS = 3_600_000;
  * @param kv - The key/value store for persistence.
  * @returns An object with activity-tracking methods.
  */
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+// oxlint-disable-next-line typescript/explicit-function-return-type
 export function getActivityMethods(kv: KVStore) {
   /**
    * Detect whether the kernel is resuming after a period of system sleep that

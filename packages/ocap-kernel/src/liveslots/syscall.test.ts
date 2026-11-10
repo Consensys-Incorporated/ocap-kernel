@@ -15,9 +15,10 @@ describe('syscall', () => {
   // Mock supervisor that records syscalls and returns predefined results
   const createMockSupervisor = (): VatSupervisor => {
     const mockSupervisor = {
-      executeSyscall: vi.fn(
-        (_vso: VatSyscallObject): VatSyscallResult => ['ok', null],
-      ),
+      executeSyscall: vi.fn((_vso: VatSyscallObject): VatSyscallResult => [
+        'ok',
+        null,
+      ]),
     } as unknown as VatSupervisor;
     return mockSupervisor;
   };

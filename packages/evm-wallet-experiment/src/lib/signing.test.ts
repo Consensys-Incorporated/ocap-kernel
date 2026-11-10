@@ -59,6 +59,7 @@ describe('lib/signing', () => {
         account,
         contractAddress: '0x63c0c19a282a1B52b07dD5a65b58948A07DAE32B',
         chainId: 11155111,
+        nonce: 0,
       });
 
       const signed = await signTransaction({
@@ -86,6 +87,7 @@ describe('lib/signing', () => {
         account,
         contractAddress: '0x63c0c19a282a1B52b07dD5a65b58948A07DAE32B',
         chainId: 11155111,
+        nonce: 0,
       });
 
       const signed = await signTransaction({
@@ -204,6 +206,7 @@ describe('lib/signing', () => {
         account,
         contractAddress: '0x63c0c19a282a1B52b07dD5a65b58948A07DAE32B',
         chainId: 11155111,
+        nonce: 0,
       });
 
       expect(auth.address).toBe('0x63c0c19a282a1B52b07dD5a65b58948A07DAE32B');
@@ -218,15 +221,29 @@ describe('lib/signing', () => {
         account,
         contractAddress: '0x63c0c19a282a1B52b07dD5a65b58948A07DAE32B',
         chainId: 11155111,
+        nonce: 0,
       });
       const auth2 = await signAuthorization({
         account,
         contractAddress: '0x63c0c19a282a1B52b07dD5a65b58948A07DAE32B',
         chainId: 11155111,
+        nonce: 0,
       });
 
       expect(auth1.r).toBe(auth2.r);
       expect(auth1.s).toBe(auth2.s);
+    });
+
+    it('throws when the account cannot sign authorizations', async () => {
+      const account = { ...makeTestAccount(), signAuthorization: undefined };
+      await expect(
+        signAuthorization({
+          account,
+          contractAddress: '0x63c0c19a282a1B52b07dD5a65b58948A07DAE32B',
+          chainId: 11155111,
+          nonce: 0,
+        }),
+      ).rejects.toThrow('Account cannot sign EIP-7702 authorizations');
     });
   });
 

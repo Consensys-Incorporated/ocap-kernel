@@ -158,7 +158,7 @@ describe('narrowInterfaceGuard', () => {
 
   it('reads a sparse hole at a rest position as unconstrained', () => {
     const result = narrowFrom(makeBaseGuard(), {
-      // eslint-disable-next-line no-sparse-arrays
+      // oxlint-disable-next-line no-sparse-arrays
       write: [undefined, , M.lte(10)],
     });
 
@@ -211,7 +211,12 @@ describe('narrowInterfaceGuard', () => {
     expect(callKind).toBe('async');
   });
 
-  it.each([
+  it.each<{
+    scenario: string;
+    makeGuard: () => InterfaceGuard;
+    delta: NarrowingDelta;
+    message: string;
+  }>([
     {
       scenario: 'names a method the base does not have',
       makeGuard: makeBaseGuard,
@@ -276,7 +281,7 @@ describe('narrowInterfaceGuard, against a default-guarded base', () => {
   });
 
   it('treats a sparse hole as unconstrained', () => {
-    // eslint-disable-next-line no-sparse-arrays
+    // oxlint-disable-next-line no-sparse-arrays
     const result = narrowFrom(makePassableGuard(), { read: [, M.eq('x')] });
 
     expect(admits(result, 'read', [42, 'x'])).toBe(true);
@@ -505,7 +510,7 @@ describe('makeAbsorbingDelta', () => {
 
 describe('toDisjunctiveDelta', () => {
   it('copies each row, so changing the input later changes nothing', () => {
-    const delta = { read: [M.eq('a')] };
+    const delta: { read: Pattern[] } = { read: [M.eq('a')] };
 
     const lifted = toDisjunctiveDelta(delta);
     delta.read[0] = M.any();

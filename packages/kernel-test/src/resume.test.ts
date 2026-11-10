@@ -2,6 +2,7 @@ import type { CapData } from '@endo/marshal';
 import { makeSQLKernelDatabase } from '@metamask/kernel-store/sqlite/nodejs';
 import { waitUntilQuiescent } from '@metamask/kernel-utils';
 import { kunser } from '@metamask/ocap-kernel';
+import type { KRef, VatId } from '@metamask/ocap-kernel';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -112,13 +113,13 @@ describe('restarting vats', async () => {
     const { bootstrapResult, vatRootKrefs } =
       await kernel.launchSubcluster(testSubcluster);
     await waitUntilQuiescent();
-    expect(kunser(bootstrapResult as CapData<string>)).toBe('bootstrap Alice');
-    const v1Root = vatRootKrefs.alice;
-    const v2Root = vatRootKrefs.bob;
-    const v3Root = vatRootKrefs.carol;
-    await kernel.restartVat('v1');
-    await kernel.restartVat('v2');
-    await kernel.restartVat('v3');
+    expect(kunser(bootstrapResult as CapData<KRef>)).toBe('bootstrap Alice');
+    const v1Root = vatRootKrefs.alice!;
+    const v2Root = vatRootKrefs.bob!;
+    const v3Root = vatRootKrefs.carol!;
+    await kernel.restartVat('v1' as VatId);
+    await kernel.restartVat('v2' as VatId);
+    await kernel.restartVat('v3' as VatId);
     const resumeResultA = await runResume(kernel, v1Root);
     expect(resumeResultA).toBe('resume Alice');
     const resumeResultB = await runResume(kernel, v2Root);
@@ -142,10 +143,10 @@ describe('restarting vats', async () => {
     const { bootstrapResult, vatRootKrefs } =
       await kernel1.launchSubcluster(testSubcluster);
     await waitUntilQuiescent();
-    expect(kunser(bootstrapResult as CapData<string>)).toBe('bootstrap Alice');
-    const v1Root = vatRootKrefs.alice;
-    const v2Root = vatRootKrefs.bob;
-    const v3Root = vatRootKrefs.carol;
+    expect(kunser(bootstrapResult as CapData<KRef>)).toBe('bootstrap Alice');
+    const v1Root = vatRootKrefs.alice!;
+    const v2Root = vatRootKrefs.bob!;
+    const v3Root = vatRootKrefs.carol!;
     const { logger: logger2, entries: entries2 } = makeTestLogger();
     const kernel2 = await makeKernel(kernelDatabase, false, logger2);
     await new Promise((resolve) => setTimeout(resolve, 1000));

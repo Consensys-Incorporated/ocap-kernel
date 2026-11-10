@@ -8,7 +8,7 @@ import { join } from 'node:path';
  * @returns The absolute path to the OCAP state directory.
  */
 export function getOcapHome(): string {
-  // eslint-disable-next-line n/no-process-env
+  // oxlint-disable-next-line node/no-process-env
   const envValue = process.env.OCAP_HOME;
   if (envValue) {
     return envValue;

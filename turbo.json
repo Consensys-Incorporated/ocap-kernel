@@ -1,5 +1,11 @@
 {
   "$schema": "https://v2-9-1.turborepo.dev/schema.json",
+  "globalDependencies": [
+    ".oxfmtrc.json",
+    "tsconfig.base.json",
+    "tsconfig.packages.build.json",
+    "tsconfig.packages.json"
+  ],
   "tasks": {
     "build": {
       "dependsOn": ["^build"],
@@ -10,10 +16,22 @@
     },
     "test:dev": {
       "dependsOn": ["^build"],
+      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/vitest.config.ts"],
       "outputs": []
     },
     "test:dev:quiet": {
       "dependsOn": ["^build"],
+      "inputs": ["$TURBO_DEFAULT$", "$TURBO_ROOT$/vitest.config.ts"],
+      "outputs": []
+    },
+    "test:types": {
+      "dependsOn": ["^build"],
+      "inputs": [
+        "$TURBO_DEFAULT$",
+        "$TURBO_ROOT$/tsconfig.base.json",
+        "$TURBO_ROOT$/tsconfig.packages.json",
+        "$TURBO_ROOT$/vitest.config.ts"
+      ],
       "outputs": []
     }
   },

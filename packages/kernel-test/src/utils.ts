@@ -1,4 +1,3 @@
-// eslint-disable-next-line spaced-comment
 /// <reference types="vite/client" />
 
 import { NodejsPlatformServices } from '@metamask/kernel-node-runtime';
@@ -13,6 +12,7 @@ import type { LogEntry } from '@metamask/logger';
 import { Kernel, kunser } from '@metamask/ocap-kernel';
 import type {
   ClusterConfig,
+  KRef,
   OnRunLoopFailure,
   PlatformServices,
 } from '@metamask/ocap-kernel';
@@ -252,7 +252,7 @@ export async function runTestVats(
 }
 
 /**
- * Send the `resume message to the root of one of the test vats.
+ * Send the `resume` message to the root of one of the test vats.
  *
  * @param kernel - Our kernel.
  * @param rootRef - KRef of the object to which the message is sent.
@@ -261,7 +261,7 @@ export async function runTestVats(
  */
 export async function runResume(
   kernel: Kernel,
-  rootRef: string,
+  rootRef: KRef,
 ): Promise<unknown> {
   const resumeResultRaw = await kernel.queueMessage(rootRef, 'resume', []);
   return kunser(resumeResultRaw);

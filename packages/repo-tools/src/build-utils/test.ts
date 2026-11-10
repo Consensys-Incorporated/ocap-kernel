@@ -1,4 +1,4 @@
-/* eslint-disable no-console */
+/* oxlint-disable no-console */
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 
@@ -29,7 +29,7 @@ export async function runTests({
     await checkUntransformed(untransformedFiles);
     await checkTrustedPreludes(outDir, trustedPreludes);
     console.log('✅ Build tests passed successfully!');
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    // oxlint-disable-next-line typescript/no-explicit-any
   } catch (error: any) {
     console.error(`❌ ${error.message}`);
     throw error;

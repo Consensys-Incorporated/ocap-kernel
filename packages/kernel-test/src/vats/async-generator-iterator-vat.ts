@@ -5,6 +5,12 @@ import { makeEventualIterator, makeExoGenerator } from '@ocap/remote-iterables';
 import { unwrapTestLogger } from '../test-powers.ts';
 import type { TestPowers } from '../test-powers.ts';
 
+type Producer = {
+  generate: (stop: number) => AsyncIterator<number>;
+};
+
+type Consumer = { iterate: (producer: Producer) => Promise<void> };
+
 /**
  * Build function for testing async generators.
  *
@@ -14,7 +20,7 @@ import type { TestPowers } from '../test-powers.ts';
  * @param parameters.name - The name of the vat.
  * @returns The root object for the vat.
  */
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+// oxlint-disable-next-line typescript/explicit-function-return-type
 export function buildRootObject(
   vatPowers: TestPowers,
   { name }: { name: string },
@@ -25,7 +31,7 @@ export function buildRootObject(
 
   return makeDefaultExo('root', {
     async bootstrap(
-      { consumer, producer }: { consumer: unknown; producer: unknown },
+      { consumer, producer }: { consumer: Consumer; producer: Producer },
       _services: unknown,
     ) {
       tlog(`${name} is bootstrap`);
@@ -43,7 +49,7 @@ export function buildRootObject(
         })(),
       ),
 
-    iterate: async (producer: unknown) => {
+    iterate: async (producer: Producer) => {
       const remoteGenerator = await E(producer).generate(5);
       for await (const value of makeEventualIterator(remoteGenerator)) {
         tlog(`${name} iterating ${String(value)}`);

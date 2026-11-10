@@ -15,6 +15,7 @@ import {
   waitFor,
 } from '../utils.ts';
 import { pingDaemon, sendCommand } from './daemon-client.ts';
+import { LLM_CONFIG_FILENAME } from './llm-config.ts';
 import { ensureDaemon } from './daemon-spawn.ts';
 import { getRelayAddrPath, getRelayPidPath } from './relay.ts';
 
@@ -252,6 +253,9 @@ export async function handleDaemonBegone(socketPath: string): Promise<void> {
     return;
   }
   await deleteDaemonState({ ocapHome: getOcapHome(), socketPath });
+  // Not daemon state, but every later start would still read it, and need
+  // the key it names.
+  await rm(join(getOcapHome(), LLM_CONFIG_FILENAME), { force: true });
   process.stderr.write('All daemon state deleted.\n');
 }
 

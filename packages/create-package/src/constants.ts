@@ -2,7 +2,6 @@
  * The monorepo files that need to be parsed or modified.
  */
 export const MonorepoFile = {
-  TsConfig: 'tsconfig.json',
   TsConfigBuild: 'tsconfig.build.json',
 } as const;
 

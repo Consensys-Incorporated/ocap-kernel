@@ -14,6 +14,5 @@ describe('endoified', () => {
 
 declare global {
   // TypeScript requires you to use `var` here for this declarations to work.
-  // eslint-disable-next-line no-var
   var HandledPromise: HandledPromiseConstructor;
 }

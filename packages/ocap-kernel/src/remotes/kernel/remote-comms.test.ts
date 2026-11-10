@@ -50,7 +50,6 @@ describe('remote-comms', () => {
     mockRemoteMessageHandler = mocks.remoteMessageHandler;
 
     let counter = 1;
-    // eslint-disable-next-line n/no-unsupported-features/node-builtins
     vi.spyOn(globalThis.crypto, 'getRandomValues').mockImplementation((arr) => {
       arr[0] = counter;
       counter += 1;

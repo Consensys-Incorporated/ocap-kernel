@@ -11,7 +11,7 @@ import type { CrankBufferItem, Savepoint, StoreContext } from '../types.ts';
  * @param kdb - The kernel database.
  * @returns The crank methods.
  */
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+// oxlint-disable-next-line typescript/explicit-function-return-type
 export function getCrankMethods(ctx: StoreContext, kdb: KernelDatabase) {
   /**
    * Start a crank, giving it the next crank number.
@@ -119,7 +119,7 @@ export function getCrankMethods(ctx: StoreContext, kdb: KernelDatabase) {
   }
 
   /**
-   * Release all savepoints.
+   * Release all savepoints, committing the crank.
    */
   function releaseAllSavepoints(): void {
     const [outermost] = ctx.savepoints;
@@ -132,8 +132,7 @@ export function getCrankMethods(ctx: StoreContext, kdb: KernelDatabase) {
       // The store has discarded the crank's writes and its savepoints, unless
       // `t0` is nested in a savepoint taken outside the run loop. If the abort
       // doing that failed, this reload still sees those writes, and the store
-      // refuses every write until it is reopened. A `t0` left listed would make
-      // `reset` throw before restoring its keys.
+      // refuses every write until it is reopened.
       ctx.savepoints.length = 0;
       revertStateBeneathRollback(outermost, error);
       throw error;
@@ -212,7 +211,6 @@ export function getCrankMethods(ctx: StoreContext, kdb: KernelDatabase) {
     createCrankSavepoint,
     rollbackCrank,
     endCrank,
-    releaseAllSavepoints,
     waitForCrank,
     bufferCrankOutput,
     flushCrankBuffer,

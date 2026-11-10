@@ -15,7 +15,7 @@ problem, we have created this CLI that automates most of the job for us, creativ
 2. Add your dependencies.
    - Do this as normal using `yarn`.
    - Remember, if you are adding other monorepo packages as dependents, don't forget to add them
-     to the `references` array in your package's `tsconfig.json` and `tsconfig.build.json`.
+     to the `references` array in your package's `tsconfig.build.json`.
 3. Add coverage thresholds to the root `vitest.config.ts` file.
    - The downside of `.ts` config files is that they suck to work with programmatically.
 

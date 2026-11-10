@@ -4,6 +4,8 @@ import { makeDefaultExo } from '@metamask/kernel-utils/exo';
 import { unwrapTestLogger } from '../test-powers.ts';
 import type { TestPowers } from '../test-powers.ts';
 
+type Imported = { getValue: () => unknown };
+
 /**
  * Build function for vats that will run various tests.
  *
@@ -14,7 +16,7 @@ import type { TestPowers } from '../test-powers.ts';
  * @param _baggage - Root of vat's persistent state (not used here).
  * @returns The root object for the new vat.
  */
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+// oxlint-disable-next-line typescript/explicit-function-return-type
 export function buildRootObject(
   vatPowers: TestPowers,
   parameters: { name?: string } = {},
@@ -27,7 +29,7 @@ export function buildRootObject(
 
   let weakMap = new WeakMap<object, string>();
 
-  const importedObjects = new Map<string, object>();
+  const importedObjects = new Map<string, Imported>();
 
   /**
    * Print a message to the log.
@@ -35,7 +37,7 @@ export function buildRootObject(
    * @param message - The message to print.
    */
   function log(message: string): void {
-    // eslint-disable-next-line no-console
+    // oxlint-disable-next-line no-console
     console.log(`${name}: ${message}`);
   }
 
@@ -53,7 +55,7 @@ export function buildRootObject(
      * @param id - The ID to store the object under.
      * @returns The string 'stored'.
      */
-    storeImport(obj: object, id = 'default') {
+    storeImport(obj: Imported, id = 'default') {
       tlog(`Storing import ${id}`, obj);
       importedObjects.set(id, obj);
       weakMap.set(obj, id);
@@ -66,7 +68,7 @@ export function buildRootObject(
      * @param id - The ID of the object to use.
      * @returns The result of calling the object's method.
      */
-    useImport(id = 'default') {
+    async useImport(id = 'default') {
       tlog(`useImport ${id}`);
       const obj = importedObjects.get(id);
       if (!obj) {

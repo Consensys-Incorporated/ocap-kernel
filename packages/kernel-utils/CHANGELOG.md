@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add `raceAbort(promise, signal)`, which settles as `promise` does or rejects with `signal`'s reason if it aborts first ([#1163](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1163))
 - Add `pathUnder(segments)`, which builds an `@endo/patterns` pattern matching segment arrays under a prefix, with `..` excluded past the prefix so that traversal out of it is unrepresentable. Empty `segments` matches every `..`-free segment array ([#1134](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1134))
 - Add `narrow({ name, base, delta })`, which reads the base's interface guard over `E()` and returns an exo under the derived guard whose methods forward to the base. Narrowing a narrowing flattens: the result forwards straight to the original base under both deltas conjoined, so a chain of any depth stays one hop deep and costs one guard read. Every method of the result returns a promise, and the delta is hardened. A base built with `makeDefaultExo` names no method guards, so each method the delta names gets its patterns as its whole guard, and a method the base does not implement rejects when called rather than when narrowing ([#1134](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1134))
 - Add `join({ name, refs })`, which returns a narrowing of its refs' common base admitting exactly what any of them admits: the result's methods are the union of the operands', and a call is admitted when some operand admits all of its arguments, never by combining arguments that different operands admit. A method that more than one operand constrains gets a guard with no fixed arguments and a rest guard matching the whole argument list against each operand's positions, so a receiver in another vat sees that form rather than per-position guards. Every ref must be one `narrow` minted from that base, or the base itself, which admits everything and so absorbs. A ref minted from some other base, or by nothing at all, throws, as does a base built with `makeDefaultExo`, whose methods cannot be enumerated for it to absorb ([#1134](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1134))
@@ -30,6 +31,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - `stringify` includes an `AggregateError`'s `errors`, each with its own `cause` chain ([#1094](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1094))
+
+### Removed
+
+- **BREAKING:** Remove the CommonJS build; the package is ESM-only. Its entry points are `.js` and `.d.ts` files, formerly `.mjs`/`.cjs` and `.d.mts`/`.d.cts` ([#1186](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1186))
+
+### Fixed
+
+- Bump `@libp2p/crypto` from `5.1.14` to `5.1.23`, so `startRelay` no longer throws `Invalid JWK OKP key` on Node 24.22 ([#1185](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1185))
 
 ## [0.5.0]
 

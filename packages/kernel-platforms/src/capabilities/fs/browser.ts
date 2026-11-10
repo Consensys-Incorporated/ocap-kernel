@@ -25,6 +25,5 @@ export const browserFsOptions: FsPlatformOptions = {
 
 const specification: FsSpecification = makeFsSpecification(browserFsOptions);
 
-// eslint-disable-next-line prefer-destructuring -- annotated for declaration emit
 export const configStruct: FsConfigStruct = specification.configStruct;
 export const { capabilityFactory } = specification;

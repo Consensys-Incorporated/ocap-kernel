@@ -3,7 +3,7 @@ import { makePipe } from '@endo/stream';
 import type { Writer, Reader } from '@endo/stream';
 
 // This type is used in the docs.
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
+// oxlint-disable-next-line typescript/no-unused-vars
 import type { makeEventualIterator } from './eventual-iterator.ts';
 import { makeIteratorRef } from './reader-ref.ts';
 
@@ -14,7 +14,7 @@ import { makeIteratorRef } from './reader-ref.ts';
  * @param generator - The generator to make remotable.
  * @returns A remotable reference to the generator.
  */
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+// oxlint-disable-next-line typescript/explicit-function-return-type
 export const makeExoGenerator = <Item>(generator: AsyncGenerator<Item>) => {
   const [writer, reader] = makePipe<Item>() as unknown as [
     Writer<Item>,

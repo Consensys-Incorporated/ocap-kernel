@@ -6,7 +6,7 @@ import {
   Logger,
   makeStreamTransport,
   splitLoggerStream,
-} from '../../dist/index.mjs';
+} from '../../dist/index.js';
 
 main().catch(console.error);
 

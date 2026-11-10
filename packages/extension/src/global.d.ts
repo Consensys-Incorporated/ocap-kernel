@@ -12,10 +12,9 @@ declare global {
    * const status = await E(kernel).getStatus();
    * ```
    */
-  // eslint-disable-next-line no-var,id-length
+  // oxlint-disable-next-line id-length
   var E: typeof import('@endo/eventual-send').E;
 
-  // eslint-disable-next-line no-var
   var kernel: KernelFacet | Promise<KernelFacet>;
 }
 

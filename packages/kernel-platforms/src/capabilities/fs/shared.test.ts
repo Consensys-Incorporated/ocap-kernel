@@ -119,14 +119,22 @@ describe('makeFsBase', () => {
     };
   };
 
+  const getMethodGuards = (
+    capability: FsCapability,
+  ): Record<string, MethodGuard> => {
+    const interfaceGuard = capability[GET_INTERFACE_GUARD]?.();
+    if (interfaceGuard === undefined) {
+      throw new Error('Capability has no interface guard');
+    }
+    return (
+      getInterfaceGuardPayload(interfaceGuard) as unknown as {
+        methodGuards: Record<string, MethodGuard>;
+      }
+    ).methodGuards;
+  };
+
   const guardedMethodNames = (capability: FsCapability): string[] =>
-    Object.keys(
-      (
-        getInterfaceGuardPayload(
-          capability[GET_INTERFACE_GUARD](),
-        ) as unknown as { methodGuards: Record<string, MethodGuard> }
-      ).methodGuards,
-    );
+    Object.keys(getMethodGuards(capability));
 
   it('holds every method, leaving the method set to the narrowing', () => {
     const { base } = createMockBase();
@@ -140,11 +148,7 @@ describe('makeFsBase', () => {
     const { base } = createMockBase();
 
     expect(
-      (
-        getInterfaceGuardPayload(
-          (base as unknown as FsCapability)[GET_INTERFACE_GUARD](),
-        ) as unknown as { methodGuards: Record<string, MethodGuard> }
-      ).methodGuards.readFile,
+      getMethodGuards(base as unknown as FsCapability).readFile,
     ).toStrictEqual(
       M.callWhen(M.arrayOf(M.string()), M.string()).returns(M.string()),
     );

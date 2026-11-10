@@ -1,12 +1,16 @@
+import type { CapData } from '@endo/marshal';
 import { makeSQLKernelDatabase } from '@metamask/kernel-store/sqlite/nodejs';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 import { RemoteHandle } from './RemoteHandle.ts';
+import { asRRef, asRemoteId } from '../../../test/branded.ts';
 import { createMockRemotesFactory } from '../../../test/remotes-mocks.ts';
+import { KernelQueue } from '../../KernelQueue.ts';
 import { makeKernelStore } from '../../store/index.ts';
+import type { KRef } from '../../types.ts';
 import type { RemoteComms } from '../types.ts';
 
-const REMOTE_ID = 'r0';
+const REMOTE_ID = asRemoteId('r0');
 const PEER_ID = 'remote-peer-id';
 /** `MAX_PENDING_MESSAGES`, which RemoteHandle keeps to itself. */
 const CAPACITY = 200;
@@ -17,9 +21,13 @@ const ACK_TIMEOUT_MS = 100;
  * previous incarnation left behind.
  *
  * @param kernelStore - The store to restore from.
+ * @param kernelQueue - The run loop, if not a mock.
  * @returns The handle and the comms its sends land in.
  */
-function startOver(kernelStore: ReturnType<typeof makeKernelStore>): {
+function startOver(
+  kernelStore: ReturnType<typeof makeKernelStore>,
+  kernelQueue?: KernelQueue,
+): {
   remote: RemoteHandle;
   remoteComms: RemoteComms;
 } {
@@ -32,7 +40,7 @@ function startOver(kernelStore: ReturnType<typeof makeKernelStore>): {
     remoteId: REMOTE_ID,
     peerId: PEER_ID,
     kernelStore,
-    kernelQueue: factory.makeMockKernelQueue(),
+    kernelQueue: kernelQueue ?? factory.makeMockKernelQueue(),
     remoteComms,
     ackTimeoutMs: ACK_TIMEOUT_MS,
   });
@@ -158,6 +166,77 @@ async function deliverAndDie(
   kernelStore.endCrank();
 }
 
+/**
+ * A message from the peer, as it arrives on the wire.
+ *
+ * @param seq - Its sequence number.
+ * @returns The message.
+ */
+function fromPeer(seq: number): string {
+  return JSON.stringify({
+    seq,
+    method: 'deliver',
+    params: ['bringOutYourDead'],
+  });
+}
+
+/**
+ * A request from the peer to redeem a URL for an object the kernel has.
+ *
+ * @param kernelStore - The store holding the object.
+ * @param remoteComms - The comms that resolve the URL to it.
+ * @returns The request, as it arrives.
+ */
+function redeemRequest(
+  kernelStore: ReturnType<typeof makeKernelStore>,
+  remoteComms: RemoteComms,
+): string {
+  vi.mocked(remoteComms.redeemLocalOcapURL).mockResolvedValue(
+    kernelStore.initKernelObject('kernel'),
+  );
+  return JSON.stringify({
+    seq: 1,
+    method: 'redeemURL',
+    params: ['ocap:abc123@me', 'replyKey'],
+  });
+}
+
+/**
+ * Take delivery of a message from the peer in a crank of its own, the way the
+ * run loop does.
+ *
+ * @param options - Options bag.
+ * @param options.remote - The handle taking delivery.
+ * @param options.kernelStore - The store the crank runs against.
+ * @param options.message - The message, as it arrived.
+ * @param options.rollBack - Whether the crank rolls back instead of committing.
+ * @returns Whether the crank took the message rather than discarding it.
+ */
+async function takeInbound({
+  remote,
+  kernelStore,
+  message,
+  rollBack = false,
+}: {
+  remote: RemoteHandle;
+  kernelStore: ReturnType<typeof makeKernelStore>;
+  message: string;
+  rollBack?: boolean;
+}): Promise<boolean> {
+  kernelStore.startCrank();
+  kernelStore.createCrankSavepoint('crank');
+  kernelStore.createCrankSavepoint('delivery');
+  const { afterCommit } = await remote.deliverInbound(message);
+  if (rollBack) {
+    kernelStore.rollbackCrank('delivery');
+    kernelStore.endCrank();
+  } else {
+    kernelStore.endCrank();
+    await afterCommit?.();
+  }
+  return afterCommit !== undefined;
+}
+
 describe('RemoteHandle across a crank boundary', () => {
   // SES lockdown freezes Date, so vi.useFakeTimers() cannot be used here.
   const pendingTimers: (() => void)[] = [];
@@ -234,9 +313,9 @@ describe('RemoteHandle across a crank boundary', () => {
       kernelStore.createCrankSavepoint('crank');
       kernelStore.createCrankSavepoint('delivery');
       for (let i = 0; i < CAPACITY; i += 1) {
-        await remote.deliverBringOutYourDead();
+        await remote.deliverNotify([]);
       }
-      await expect(remote.deliverBringOutYourDead()).rejects.toThrow(
+      await expect(remote.deliverNotify([])).rejects.toThrow(
         `pending queue at capacity (${CAPACITY})`,
       );
       kernelStore.rollbackCrank('delivery');
@@ -245,6 +324,276 @@ describe('RemoteHandle across a crank boundary', () => {
       await deliverAndCommit(remote, kernelStore);
 
       expect(sentSeqs(remoteComms)).toStrictEqual([1]);
+    });
+  });
+
+  describe('an ACK whose crank rolls back', () => {
+    /**
+     * Take the peer's ACK of seq 1 inside a crank that then rolls back, as one
+     * arriving on the transport's flow while a vat delivery is awaited can be.
+     *
+     * @param remote - The handle the ACK reaches.
+     * @param kernelStore - The store the crank runs against.
+     */
+    function ackAndRollBack(
+      remote: RemoteHandle,
+      kernelStore: ReturnType<typeof makeKernelStore>,
+    ): void {
+      kernelStore.startCrank();
+      kernelStore.createCrankSavepoint('crank');
+      kernelStore.createCrankSavepoint('delivery');
+      remote.receiveFromPeer(JSON.stringify({ ack: 1 }));
+      kernelStore.rollbackCrank('delivery');
+      kernelStore.endCrank();
+    }
+
+    it('is written down again by the next ACK', async () => {
+      const { remote, kernelStore } = await makeRemoteOverRealStore();
+
+      await deliverAndCommit(remote, kernelStore);
+      ackAndRollBack(remote, kernelStore);
+
+      expect(kernelStore.getPendingMessage(REMOTE_ID, 1)).toBeDefined();
+
+      // Nothing new for the peer to acknowledge, so memory has nothing to move.
+      remote.receiveFromPeer(JSON.stringify({ ack: 1 }));
+
+      expect(kernelStore.getPendingMessage(REMOTE_ID, 1)).toBeUndefined();
+      expect(kernelStore.getRemoteSeqState(REMOTE_ID)).toMatchObject({
+        startSeq: 2,
+        nextSendSeq: 1,
+      });
+    });
+
+    it('is written down by the crank that numbers the next message', async () => {
+      const { remote, kernelStore } = await makeRemoteOverRealStore();
+
+      await deliverAndCommit(remote, kernelStore);
+      ackAndRollBack(remote, kernelStore);
+      await deliverAndCommit(remote, kernelStore);
+
+      expect(kernelStore.getPendingMessage(REMOTE_ID, 1)).toBeUndefined();
+    });
+
+    it('is written down by the crank of a message it takes for a duplicate', async () => {
+      const { remote, kernelStore } = await makeRemoteOverRealStore();
+
+      await deliverAndCommit(remote, kernelStore);
+      await takeInbound({ remote, kernelStore, message: fromPeer(1) });
+      ackAndRollBack(remote, kernelStore);
+
+      expect(
+        await takeInbound({ remote, kernelStore, message: fromPeer(1) }),
+      ).toBe(false);
+      expect(kernelStore.getPendingMessage(REMOTE_ID, 1)).toBeUndefined();
+    });
+
+    it('is written down by the crank of the message that carried it', async () => {
+      const { remote, kernelStore } = await makeRemoteOverRealStore();
+
+      await deliverAndCommit(remote, kernelStore);
+      const message = JSON.stringify({
+        seq: 1,
+        ack: 1,
+        method: 'deliver',
+        params: ['bringOutYourDead'],
+      });
+      kernelStore.startCrank();
+      kernelStore.createCrankSavepoint('crank');
+      kernelStore.createCrankSavepoint('delivery');
+      remote.receiveFromPeer(message);
+      kernelStore.rollbackCrank('delivery');
+      kernelStore.endCrank();
+
+      kernelStore.startCrank();
+      kernelStore.createCrankSavepoint('crank');
+      kernelStore.createCrankSavepoint('delivery');
+      await remote.deliverInbound(message);
+      kernelStore.endCrank();
+
+      // A restart retransmits whatever the store still holds.
+      const { remote: restarted, remoteComms } = startOver(kernelStore);
+      await deliverAndCommit(restarted, kernelStore);
+
+      expect(sentSeqs(remoteComms)).toStrictEqual([2]);
+    });
+  });
+
+  describe('an inbound message whose crank rolls back', () => {
+    it('is not acknowledged to the peer', async () => {
+      const { remote, kernelStore, remoteComms } =
+        await makeRemoteOverRealStore();
+
+      await takeInbound({
+        remote,
+        kernelStore,
+        message: fromPeer(1),
+        rollBack: true,
+      });
+      await deliverAndCommit(remote, kernelStore);
+
+      const [, sent] = vi.mocked(remoteComms.sendRemoteMessage).mock.calls[0]!;
+      expect(JSON.parse(sent).ack).toBeUndefined();
+    });
+
+    it('gets no redeemURL reply', async () => {
+      const { remote, kernelStore, remoteComms } =
+        await makeRemoteOverRealStore();
+
+      await takeInbound({
+        remote,
+        kernelStore,
+        message: redeemRequest(kernelStore, remoteComms),
+        rollBack: true,
+      });
+      await drainMicrotasks();
+
+      expect(sentSeqs(remoteComms)).toStrictEqual([]);
+      expect(kernelStore.getPendingMessage(REMOTE_ID, 1)).toBeUndefined();
+    });
+  });
+
+  describe('an inbound message whose crank commits', () => {
+    /**
+     * Take delivery of a message in a crank that commits and then goes no
+     * further, as a kernel dying between the commit and `afterCommit` leaves
+     * one.
+     *
+     * @param remote - The handle taking delivery.
+     * @param kernelStore - The store the crank runs against.
+     * @param message - The message, as it arrived.
+     */
+    async function takeInboundAndDie(
+      remote: RemoteHandle,
+      kernelStore: ReturnType<typeof makeKernelStore>,
+      message: string,
+    ): Promise<void> {
+      kernelStore.startCrank();
+      kernelStore.createCrankSavepoint('crank');
+      kernelStore.createCrankSavepoint('delivery');
+      await remote.deliverInbound(message);
+      kernelStore.endCrank();
+    }
+
+    it('is a duplicate to a kernel that restarts before its post-commit work', async () => {
+      const { remote, kernelStore } = await makeRemoteOverRealStore();
+
+      await takeInboundAndDie(remote, kernelStore, fromPeer(1));
+      const { remote: restarted } = startOver(kernelStore);
+
+      expect(
+        await takeInbound({
+          remote: restarted,
+          kernelStore,
+          message: fromPeer(1),
+        }),
+      ).toBe(false);
+    });
+
+    it('leaves its redeemURL reply for a kernel that restarts before sending it', async () => {
+      const { remote, kernelStore, remoteComms } =
+        await makeRemoteOverRealStore();
+
+      await takeInboundAndDie(
+        remote,
+        kernelStore,
+        redeemRequest(kernelStore, remoteComms),
+      );
+      await drainMicrotasks();
+      expect(sentSeqs(remoteComms)).toStrictEqual([]);
+
+      const { remote: restarted, remoteComms: restartedComms } =
+        startOver(kernelStore);
+      await deliverAndCommit(restarted, kernelStore);
+
+      expect(
+        vi
+          .mocked(restartedComms.sendRemoteMessage)
+          .mock.calls.map(([, sent]) => JSON.parse(sent).method),
+      ).toStrictEqual(['redeemURLReply', 'deliver']);
+    });
+  });
+
+  describe('a notify from the peer', () => {
+    const answer: CapData<KRef> = { body: '#"answer"', slots: [] };
+    const stop = new Error('test: stop run loop');
+
+    /**
+     * Have the peer resolve a promise a host caller waits on, with a real run
+     * loop taking delivery, then send a message whose crank commits.
+     *
+     * @param options - Options bag.
+     * @param options.abort - Whether the notify resolves the promise twice,
+     * which fails and aborts its crank.
+     * @returns What the caller heard, and what failed in a crank.
+     */
+    async function resolveFromThePeer({ abort }: { abort: boolean }): Promise<{
+      heard: unknown;
+      failures: unknown[];
+    }> {
+      const kernelStore = makeKernelStore(
+        await makeSQLKernelDatabase({ dbFilename: ':memory:' }),
+      );
+      kernelStore.initEndpoint(REMOTE_ID);
+      const kernelQueue = new KernelQueue(kernelStore, vi.fn());
+      const { remote } = startOver(kernelStore, kernelQueue);
+      const [kpid] = kernelStore.initKernelPromise();
+      kernelStore.setPromiseDecider(kpid, REMOTE_ID);
+      kernelStore.addCListEntry(REMOTE_ID, kpid, asRRef('rp+1'));
+      const heard = new Promise((resolve, reject) => {
+        kernelQueue.subscriptions.set(kpid, { resolve, reject });
+      }).catch((error: unknown) => error);
+
+      const resolution = ['rp+1', false, answer];
+      remote.receiveFromPeer(
+        JSON.stringify({
+          seq: 1,
+          method: 'deliver',
+          params: ['notify', abort ? [resolution, resolution] : [resolution]],
+        }),
+      );
+      // Its crank's flush is where a resolution an abort left behind would
+      // reach the caller.
+      remote.receiveFromPeer(fromPeer(2));
+      const failures: unknown[] = [];
+      const running = kernelQueue.run(async (item) => {
+        // The reap the peer's bringOutYourDead asks for.
+        if (item.type !== 'remoteInbound') {
+          throw stop;
+        }
+        try {
+          return await remote.deliverInbound(item.message);
+        } catch (error) {
+          // What the router does with a message that fails in its crank.
+          failures.push(error);
+          return { didDelivery: REMOTE_ID, abort: true };
+        }
+      });
+      await expect(running).rejects.toBe(stop);
+      return { heard: await heard, failures };
+    }
+
+    it('answers the caller once its crank commits', async () => {
+      expect(await resolveFromThePeer({ abort: false })).toStrictEqual({
+        heard: answer,
+        failures: [],
+      });
+    });
+
+    it('does not answer the caller from a crank that rolls back', async () => {
+      expect(await resolveFromThePeer({ abort: true })).toStrictEqual({
+        // Only the run loop's death, which ends the test, answers it.
+        heard: expect.objectContaining({
+          message:
+            'Kernel run loop died; this message result will never be delivered',
+          cause: stop,
+        }),
+        failures: [
+          expect.objectContaining({
+            message: expect.stringContaining('was already resolved'),
+          }),
+        ],
+      });
     });
   });
 
@@ -259,8 +608,7 @@ describe('RemoteHandle across a crank boundary', () => {
       const { afterCommit } = await remote.deliverBringOutYourDead();
       kernelStore.endCrank();
       // The handshake runs on the transport's flow, so it can land here.
-      remote.persistPeerRestart();
-      remote.finalizePeerRestart();
+      remote.holdForRestart();
       await afterCommit?.();
 
       expect(sentSeqs(remoteComms)).toStrictEqual([]);
@@ -275,9 +623,15 @@ describe('RemoteHandle across a crank boundary', () => {
       kernelStore.createCrankSavepoint('delivery');
       const { afterCommit } = await remote.deliverBringOutYourDead();
       kernelStore.endCrank();
-      remote.persistPeerRestart();
-      remote.finalizePeerRestart();
+      remote.holdForRestart();
       await afterCommit?.();
+      // The crank that records the restart.
+      kernelStore.startCrank();
+      kernelStore.createCrankSavepoint('crank');
+      kernelStore.createCrankSavepoint('delivery');
+      remote.persistPeerRestart();
+      kernelStore.endCrank();
+      remote.finalizePeerRestart();
 
       await deliverAndCommit(remote, kernelStore);
 
@@ -447,6 +801,26 @@ describe('RemoteHandle across a crank boundary', () => {
       expect(sentSeqs(remoteComms)).toStrictEqual([1, 3]);
     });
 
+    it('leaves a restart a queue to number from once an ACK writes the give-up down', async () => {
+      const { remote, kernelStore } = await makeRemoteOverRealStore();
+
+      await deliverAndCommit(remote, kernelStore);
+      kernelStore.startCrank();
+      kernelStore.createCrankSavepoint('crank');
+      kernelStore.createCrankSavepoint('delivery');
+      await remote.deliverBringOutYourDead();
+      remote.giveUp('not acknowledged after 3 retries');
+      kernelStore.rollbackCrank('delivery');
+      kernelStore.endCrank();
+      // A late ACK for the window the give-up abandoned.
+      remote.receiveFromPeer(JSON.stringify({ ack: 1 }));
+
+      const { remote: restarted, remoteComms } = startOver(kernelStore);
+      await deliverAndCommit(restarted, kernelStore);
+
+      expect(sentSeqs(remoteComms)).toStrictEqual([3]);
+    });
+
     it('leaves the delivery after it a number of its own', async () => {
       const { remote, kernelStore, remoteComms } =
         await makeRemoteOverRealStore();
@@ -586,7 +960,7 @@ describe('RemoteHandle across a crank boundary', () => {
       const { afterCommit } = await restarted.deliverBringOutYourDead();
       // Seq 1 did reach the peer, whose acknowledgement arrives on the
       // transport's flow, so it can land here.
-      await restarted.handleRemoteMessage(JSON.stringify({ ack: 1 }));
+      restarted.receiveFromPeer(JSON.stringify({ ack: 1 }));
       kernelStore.endCrank();
       await afterCommit?.();
 

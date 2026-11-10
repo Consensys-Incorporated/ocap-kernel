@@ -1,6 +1,6 @@
 import { mergeConfig } from '@ocap/repo-tools/vitest-config';
 import { fileURLToPath } from 'node:url';
-import { defineConfig, defineProject } from 'vitest/config';
+import { configDefaults, defineConfig, defineProject } from 'vitest/config';
 
 import defaultConfig from '../../vitest.config.ts';
 
@@ -11,6 +11,7 @@ export default defineConfig((args) => {
     defineProject({
       test: {
         name: 'kernel-test',
+        exclude: [...configDefaults.exclude, './src/**/*.perf.test.ts'],
         setupFiles: [
           fileURLToPath(
             import.meta.resolve('@metamask/kernel-shims/endoify-node'),
@@ -23,6 +24,11 @@ export default defineConfig((args) => {
 
   if (args.mode !== 'development') {
     config.test.coverage.thresholds = true;
+    // Nothing in this run loads them, so they would count as uncovered.
+    config.test.coverage.exclude = [
+      ...(config.test.coverage.exclude ?? []),
+      '**/src/performance/**',
+    ];
   }
 
   return config;

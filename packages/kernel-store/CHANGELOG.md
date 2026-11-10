@@ -13,6 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - On Node 24.20.0, 12.x aborts the process during teardown: `Statement::~Statement` reaches `RemoveEnvironmentCleanupHook` after the environment is gone, and Node asserts. The tests it kills have already passed, so it surfaces as a worker dying rather than as a failure anyone can read
   - Nothing in this package's driver changes. The 13.x major touches none of `prepare`, `run`, `get`, `all`, `iterate`, `pluck`, `transaction`, `exec`, or `close`
 
+### Removed
+
+- **BREAKING:** Remove the CommonJS build; the package is ESM-only. Its entry points are `.js` and `.d.ts` files, formerly `.mjs`/`.cjs` and `.d.mts`/`.d.cts` ([#1186](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1186))
+- **BREAKING:** Remove `sqlite/nodejs.js` and `sqlite/wasm.js`, the CommonJS mirrors of the `./sqlite/*` exports for Browserify ([#1186](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1186))
+
 ### Fixed
 
 - A failed `COMMIT` or outermost `RELEASE`, a `SAVEPOINT` that fails in a transaction `createSavepoint` opened for it, or a Node vat store update or `clear` whose own rollback fails, now discards that transaction instead of leaving it open with nothing meant to end it. Every later write joined it and reported success, then vanished on close or was committed by an unrelated savepoint's release ([#1094](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1094))

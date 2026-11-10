@@ -1,8 +1,10 @@
 import type { KernelDatabase } from '@metamask/kernel-store';
 import { makeSQLKernelDatabase } from '@metamask/kernel-store/sqlite/nodejs';
 import { makeKernelStore } from '@metamask/ocap-kernel';
-import type { RunQueueItem } from '@metamask/ocap-kernel';
+import type { KernelStore } from '@metamask/ocap-kernel';
 import { describe, it, expect } from 'vitest';
+
+type RunQueueItem = Parameters<KernelStore['enqueueRun']>[0];
 
 /**
  * The run loop rolls back the crank it died in, so that a restart resumes from a

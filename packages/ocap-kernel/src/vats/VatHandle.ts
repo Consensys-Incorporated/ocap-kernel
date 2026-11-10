@@ -97,7 +97,7 @@ export class VatHandle implements EndpointHandle {
    * @param params.onStreamFailure - Called when the channel ends before
    * `terminate` or `expectClose`.
    */
-  // eslint-disable-next-line no-restricted-syntax
+  // oxlint-disable-next-line ocap/no-restricted-syntax
   private constructor({
     vatId,
     vatConfig,
@@ -243,7 +243,7 @@ export class VatHandle implements EndpointHandle {
       await this.#rpcService.execute(message.method, message.params);
     } else {
       // We don't expect any JSON-RPC requests from the vat, but the stream may permit them
-      // eslint-disable-next-line @typescript-eslint/restrict-template-expressions
+      // oxlint-disable-next-line typescript/restrict-template-expressions
       throw new Error(`Received unexpected message: ${message}`);
     }
   }
@@ -337,9 +337,9 @@ export class VatHandle implements EndpointHandle {
 
   /**
    * Treat the channel's end as the kernel's own doing, for a kernel about to
-   * stop every worker. A command still waiting is left waiting rather than
-   * failed, so the crank that sent it never commits and its item is delivered
-   * again on the next start.
+   * stop every worker. A command still waiting on the channel, such as a ping,
+   * is left waiting rather than failed. None is a delivery: the run loop has
+   * made its last one by then.
    */
   expectClose(): void {
     this.#closing = true;

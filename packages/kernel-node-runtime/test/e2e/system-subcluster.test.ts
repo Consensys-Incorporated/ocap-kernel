@@ -3,6 +3,7 @@ import { Kernel, kunser } from '@metamask/ocap-kernel';
 import type {
   SystemSubclusterConfig,
   ClusterConfig,
+  KRef,
 } from '@metamask/ocap-kernel';
 import { delay } from '@ocap/repo-tools/test-utils';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -254,7 +255,7 @@ describe('System Subcluster', { timeout: 30_000 }, () => {
       const tempDir = await mkdtemp(join(tmpdir(), 'ocap-ss-'));
       const dbFilename = join(tempDir, 'kernel.db');
       try {
-        let root: string | undefined;
+        let root: KRef | undefined;
         const testKey = 'persistent-data';
         const testValue = 'hello from first incarnation';
 

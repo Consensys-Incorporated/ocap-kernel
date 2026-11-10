@@ -3,6 +3,7 @@ import { describe, it, expect, vi } from 'vitest';
 
 import type { Terminate } from './terminate.ts';
 import { terminateSpec, terminateHandler } from './terminate.ts';
+import type { VatId } from '../../types.ts';
 
 describe('terminate', () => {
   describe('terminateSpec', () => {
@@ -109,7 +110,7 @@ describe('terminate', () => {
       };
 
       const params = {
-        vatId: 'vat-123',
+        vatId: 'vat-123' as VatId,
       };
 
       const result = await terminateHandler.implementation(hooks, params);
@@ -127,7 +128,7 @@ describe('terminate', () => {
       };
 
       const params = {
-        vatId: 'test-vat-id',
+        vatId: 'test-vat-id' as VatId,
       };
 
       const result = await terminateHandler.implementation(hooks, params);
@@ -145,7 +146,7 @@ describe('terminate', () => {
       };
 
       const params = {
-        vatId: 'failing-vat',
+        vatId: 'failing-vat' as VatId,
       };
 
       await expect(
@@ -161,7 +162,7 @@ describe('terminate', () => {
       };
 
       const params = {
-        vatId: '',
+        vatId: '' as VatId,
       };
 
       await terminateHandler.implementation(hooks, params);
@@ -177,7 +178,7 @@ describe('terminate', () => {
       };
 
       const params = {
-        vatId: '🌟vat-123🌟',
+        vatId: '🌟vat-123🌟' as VatId,
       };
 
       await terminateHandler.implementation(hooks, params);
@@ -197,7 +198,7 @@ describe('terminate', () => {
       };
 
       const params = {
-        vatId: 'async-vat',
+        vatId: 'async-vat' as VatId,
       };
 
       const result = await terminateHandler.implementation(hooks, params);
@@ -206,10 +207,10 @@ describe('terminate', () => {
     });
 
     it.each([
-      { error: new Error('Network error'), vatId: 'v1' },
-      { error: new TypeError('Type error'), vatId: 'v2' },
-      { error: new Error('String error'), vatId: 'v3' },
-      { error: new Error('Object error'), vatId: 'v4' },
+      { error: new Error('Network error'), vatId: 'v1' as VatId },
+      { error: new TypeError('Type error'), vatId: 'v2' as VatId },
+      { error: new Error('String error'), vatId: 'v3' as VatId },
+      { error: new Error('Object error'), vatId: 'v4' as VatId },
     ])(
       'should handle termination error: $error.message for vat $vatId',
       async ({ error, vatId }) => {

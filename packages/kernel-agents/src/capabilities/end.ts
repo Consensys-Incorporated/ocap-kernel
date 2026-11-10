@@ -10,7 +10,7 @@ import { ifDefined } from '../utils.ts';
  * @template Result - The expected type of the final result.
  * @returns A tuple containing the end capability, a function to check if the end capability was invoked, and a function to get the final result.
  */
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+// oxlint-disable-next-line typescript/explicit-function-return-type
 export const makeEnd = <Result>() => {
   // Captured, mutable state for the first final result. Intentionally NOT
   // hardened: the exo method below closes over and mutates it.

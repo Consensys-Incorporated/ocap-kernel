@@ -1,5 +1,5 @@
 import '@metamask/kernel-shims/endoify-node';
-import { makeStreams } from '../../dist/vat/streams.mjs';
+import { makeStreams } from '../../dist/vat/streams.js';
 
 main().catch(console.error);
 

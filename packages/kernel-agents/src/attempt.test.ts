@@ -1,7 +1,7 @@
 import '@ocap/repo-tools/test-utils/mock-endoify';
 
+import type { LanguageModel } from '@metamask/kernel-language-model-service';
 import type { Logger } from '@metamask/logger';
-import type { LanguageModel } from '@ocap/kernel-language-model-service';
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 
 import { doAttempt } from './attempt.ts';
@@ -44,7 +44,7 @@ describe('doAttempt', () => {
 
   const makeProgress = (
     history: TestMessage[],
-    isDone: ReturnType<typeof vi.fn>,
+    isDone: () => boolean,
     result?: string,
   ): Progress<string, TestMessage[]> => {
     const progress: Progress<string, TestMessage[]> = {
@@ -102,7 +102,7 @@ describe('doAttempt', () => {
     let callCount = 0;
     mockPrompter.mockImplementation(() => ({
       // The ++ operator is exactly what we want here.
-      // eslint-disable-next-line no-plusplus
+      // oxlint-disable-next-line no-plusplus
       prompt: `prompt ${++callCount}`,
       readerArgs: {},
     }));

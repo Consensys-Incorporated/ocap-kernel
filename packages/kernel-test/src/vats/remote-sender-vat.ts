@@ -1,5 +1,9 @@
 import { E } from '@endo/eventual-send';
 import { makeDefaultExo } from '@metamask/kernel-utils/exo';
+import type {
+  OcapURLIssuerService,
+  OcapURLRedemptionService,
+} from '@metamask/ocap-kernel';
 
 import type { TestPowers } from '../test-powers.ts';
 
@@ -13,7 +17,7 @@ import type { TestPowers } from '../test-powers.ts';
  * @param _baggage - Root of vat's persistent state (not used here).
  * @returns The root object for the new vat.
  */
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+// oxlint-disable-next-line typescript/explicit-function-return-type
 export function buildRootObject(
   { logger }: TestPowers,
   parameters: { name?: string } = {},
@@ -22,15 +26,15 @@ export function buildRootObject(
   const name = parameters?.name ?? 'RemoteSender';
   logger.log(`buildRootObject "${name}"`);
 
-  let issuerService: unknown;
-  let redeemerService: unknown;
+  let issuerService: OcapURLIssuerService | undefined;
+  let redeemerService: OcapURLRedemptionService | undefined;
 
   return makeDefaultExo('remoteSenderRoot', {
     async bootstrap(
       vats: { receiver?: unknown },
       services: {
-        ocapURLIssuerService?: unknown;
-        ocapURLRedemptionService?: unknown;
+        ocapURLIssuerService?: OcapURLIssuerService;
+        ocapURLRedemptionService?: OcapURLRedemptionService;
       },
     ) {
       logger.log(`vat ${name} is bootstrap`);
@@ -50,9 +54,11 @@ export function buildRootObject(
       logger.log(`${name} attempting to redeem URL: ${remoteURL}`);
 
       if (redeemerService) {
-        const remoteObject = await E(redeemerService).redeem(remoteURL);
+        const remoteObject = (await E(redeemerService).redeem(
+          remoteURL,
+        )) as Record<string, (...methodArgs: unknown[]) => unknown>;
         logger.log(`${name} redeemed URL successfully`);
-        const result = await E(remoteObject)[method](...args);
+        const result = await E(remoteObject)[method]?.(...args);
         logger.log(`${name} got result:`, result);
         return result;
       }

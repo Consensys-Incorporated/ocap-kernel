@@ -4,7 +4,7 @@ import type {
   TransactionSerializableEIP7702,
   TransactionSerializableLegacy,
 } from 'viem';
-import type { HDAccount, LocalAccount } from 'viem/accounts';
+import type { HDAccount, LocalAccount, PrivateKeyAccount } from 'viem/accounts';
 
 import type {
   Address,
@@ -98,7 +98,7 @@ export async function signTransaction(options: {
  * @returns The signature as a hex string.
  */
 export async function signHash(options: {
-  account: HDAccount;
+  account: HDAccount | PrivateKeyAccount;
   hash: Hex;
 }): Promise<Hex> {
   const { account, hash } = options;
@@ -156,11 +156,15 @@ export async function signAuthorization(options: {
   account: LocalAccount;
   contractAddress: Address;
   chainId: number;
-  nonce?: number;
+  nonce: number;
 }): Promise<SignedAuthorization> {
+  // viem types `HDAccount.signAuthorization` as optional.
+  if (!options.account.signAuthorization) {
+    throw new Error('Account cannot sign EIP-7702 authorizations');
+  }
   return options.account.signAuthorization({
     contractAddress: options.contractAddress,
     chainId: options.chainId,
-    ...(options.nonce === undefined ? {} : { nonce: options.nonce }),
+    nonce: options.nonce,
   });
 }

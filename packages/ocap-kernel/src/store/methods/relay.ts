@@ -15,7 +15,7 @@ import { RelayEntryStruct } from '../types.ts';
  * @param ctx.logger - Optional logger for migration and diagnostic events.
  * @returns An object with relay and remote identity store methods.
  */
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+// oxlint-disable-next-line typescript/explicit-function-return-type
 export function getRelayMethods(ctx: {
   kv: KVStore;
   logger?: Logger | undefined;
@@ -56,7 +56,7 @@ export function getRelayMethods(ctx: {
 
     const parsed: unknown = parseStoredJSON(raw);
     if (!Array.isArray(parsed)) {
-      // eslint-disable-next-line @typescript-eslint/only-throw-error -- Fail returns never; throw is needed for TS narrowing
+      // oxlint-disable-next-line typescript/only-throw-error -- Fail returns never; throw is needed for TS narrowing
       throw Fail`knownRelays must be an array`;
     }
 

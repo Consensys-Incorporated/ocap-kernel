@@ -2,6 +2,7 @@ import type { KernelDatabase } from '@metamask/kernel-store';
 import { expect, describe, it, vi, beforeEach } from 'vitest';
 
 import { getCrankMethods } from './crank.ts';
+import { asKRef } from '../../../test/branded.ts';
 import type { KRef } from '../../types.ts';
 import type { Savepoint, StoreContext } from '../types.ts';
 
@@ -185,11 +186,11 @@ describe('crank methods', () => {
 
     it("restores the named savepoint's candidates, not an outer one's", () => {
       context.inCrank = true;
-      context.maybeFreeKrefs = new Set(['ko1']);
+      context.maybeFreeKrefs = new Set([asKRef('ko1')]);
       crankMethods.createCrankSavepoint('outer');
-      context.maybeFreeKrefs.add('ko2');
+      context.maybeFreeKrefs.add(asKRef('ko2'));
       crankMethods.createCrankSavepoint('inner');
-      context.maybeFreeKrefs.add('ko3');
+      context.maybeFreeKrefs.add(asKRef('ko3'));
 
       crankMethods.rollbackCrank('inner');
 
@@ -199,9 +200,9 @@ describe('crank methods', () => {
     it('goes back to the outermost savepoint when the rollback fails', () => {
       context.inCrank = true;
       crankMethods.createCrankSavepoint('outer');
-      context.maybeFreeKrefs.add('ko1');
+      context.maybeFreeKrefs.add(asKRef('ko1'));
       crankMethods.createCrankSavepoint('inner');
-      context.maybeFreeKrefs.add('ko2');
+      context.maybeFreeKrefs.add(asKRef('ko2'));
       vi.mocked(kdb.rollbackSavepoint).mockImplementationOnce(() => {
         throw new Error('database is gone');
       });
@@ -247,7 +248,9 @@ describe('crank methods', () => {
       }
 
       expect(thrown?.message).toContain('caches are gone');
-      expect((thrown?.cause as Error).message).toBe('database is gone');
+      expect((thrown?.cause as Error | undefined)?.message).toBe(
+        'database is gone',
+      );
     });
 
     it('clears the crank buffer', () => {
@@ -312,36 +315,18 @@ describe('crank methods', () => {
       expect(context.resolveCrank).toBeUndefined();
       expect(await waiter).toBeUndefined();
     });
-  });
-
-  describe('releaseAllSavepoints', () => {
-    it('should release all savepoints', () => {
-      context.inCrank = true;
-      context.savepoints = [makeSavepoint('test')];
-      crankMethods.releaseAllSavepoints();
-      expect(kdb.releaseSavepoint).toHaveBeenCalledWith('t0');
-      expect(context.savepoints).toStrictEqual([]);
-    });
-
-    it('should not call releaseSavepoint if no savepoints exist', () => {
-      context.inCrank = true;
-      crankMethods.releaseAllSavepoints();
-      expect(kdb.releaseSavepoint).not.toHaveBeenCalled();
-    });
 
     it('goes back to the outermost savepoint when the release fails', () => {
       context.inCrank = true;
-      context.maybeFreeKrefs.add('ko1');
+      context.maybeFreeKrefs.add(asKRef('ko1'));
       crankMethods.createCrankSavepoint('crank');
-      context.maybeFreeKrefs.add('ko2');
+      context.maybeFreeKrefs.add(asKRef('ko2'));
       crankMethods.createCrankSavepoint('delivery');
       vi.mocked(kdb.releaseSavepoint).mockImplementationOnce(() => {
         throw new Error('database is gone');
       });
 
-      expect(() => crankMethods.releaseAllSavepoints()).toThrow(
-        'database is gone',
-      );
+      expect(() => crankMethods.endCrank()).toThrow('database is gone');
 
       expect([...context.maybeFreeKrefs]).toStrictEqual(['ko1']);
       expect(context.savepoints).toStrictEqual([]);
@@ -359,7 +344,7 @@ describe('crank methods', () => {
         throw new Error('caches are gone');
       });
 
-      expect(() => crankMethods.releaseAllSavepoints()).toThrow(
+      expect(() => crankMethods.endCrank()).toThrow(
         expect.objectContaining({
           message: expect.stringContaining('caches are gone'),
           cause: expect.objectContaining({ message: 'database is gone' }),

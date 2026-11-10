@@ -1,8 +1,8 @@
 import type { ERef } from '@endo/eventual-send';
+import { makeChatClient } from '@metamask/kernel-language-model-service';
+import type { ChatService } from '@metamask/kernel-language-model-service';
 import { makeDefaultExo } from '@metamask/kernel-utils/exo';
 import type { Logger } from '@metamask/logger';
-import { makeChatClient } from '@ocap/kernel-language-model-service';
-import type { ChatService } from '@ocap/kernel-language-model-service';
 
 /**
  * A vat that uses a kernel language model service to perform a chat completion
@@ -14,7 +14,7 @@ import type { ChatService } from '@ocap/kernel-language-model-service';
  * @param parameters.model - The model to use for chat completion.
  * @returns A default Exo instance.
  */
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+// oxlint-disable-next-line typescript/explicit-function-return-type
 export function buildRootObject(
   vatPowers: Record<string, unknown>,
   { model }: { model: string },

@@ -2,8 +2,13 @@ import { E } from '@endo/eventual-send';
 import { makeDefaultExo } from '@metamask/kernel-utils/exo';
 import { Logger } from '@metamask/logger';
 import type { Baggage } from '@metamask/ocap-kernel';
+import type { SignedAuthorization } from 'viem';
 
-import type { DelegationSection } from '../lib/delegation-twin.ts';
+import type {
+  DelegationSection,
+  TransferFungibleFacet,
+  TransferNativeFacet,
+} from '../lib/delegation-twin.ts';
 import { makeDelegationTwin } from '../lib/delegation-twin.ts';
 import {
   decodeBalanceOfResult,
@@ -40,6 +45,7 @@ import type {
   Hex,
   SmartAccountConfig,
   TransactionRequest,
+  TransferNativeGrant,
   UserOperation,
   WalletCapabilities,
 } from '../types.ts';
@@ -94,6 +100,20 @@ type WalletServices = {
 // Typed facets for E() calls (no `any` — explicit method signatures)
 // ---------------------------------------------------------------------------
 
+type HomeSection = TransferNativeFacet & TransferFungibleFacet;
+
+type HomeCoordinatorRef = {
+  signTypedData: (data: Eip712TypedData, from?: Address) => Promise<Hex>;
+  signMessage: (message: string, account?: Address) => Promise<Hex>;
+  getAccounts: () => Promise<Address[]>;
+  redeemDelegation: (options: {
+    delegation: Delegation;
+    execution: Execution;
+  }) => Promise<Hex>;
+  getHomeSection: () => Promise<HomeSection>;
+  registerDelegateAddress: (address: string) => Promise<void>;
+};
+
 type KeyringFacet = {
   initialize: (
     options: { type: string; mnemonic?: string },
@@ -112,9 +132,9 @@ type KeyringFacet = {
   signAuthorization: (options: {
     contractAddress: Address;
     chainId: number;
-    nonce?: number;
+    nonce: number;
     from?: Address;
-  }) => Promise<unknown>;
+  }) => Promise<SignedAuthorization>;
 };
 
 type ProviderFacet = {
@@ -248,15 +268,17 @@ export function buildRootObject(
         bundlerUrl: string;
         entryPoint: Hex;
         chainId: number;
-        usePaymaster?: boolean;
-        sponsorshipPolicyId?: string;
-        environment?: {
-          EntryPoint: Hex;
-          DelegationManager: Hex;
-          SimpleFactory: Hex;
-          implementations: Record<string, Hex>;
-          caveatEnforcers: Record<string, Hex>;
-        };
+        usePaymaster?: boolean | undefined;
+        sponsorshipPolicyId?: string | undefined;
+        environment?:
+          | {
+              EntryPoint: Hex;
+              DelegationManager: Hex;
+              SimpleFactory: Hex;
+              implementations: Record<string, Hex>;
+              caveatEnforcers: Record<string, Hex>;
+            }
+          | undefined;
       }
     | undefined;
 
@@ -267,8 +289,8 @@ export function buildRootObject(
   let redemptionService: OcapURLRedemptionFacet | undefined;
 
   // Routing state
-  let homeSection: object | undefined; // remote ref to home's homeSection exo
-  let homeCoordRef: object | undefined; // remote ref to home coordinator (for delegate registration)
+  let homeSection: HomeSection | undefined; // remote ref to home's homeSection exo
+  let homeCoordRef: HomeCoordinatorRef | undefined; // remote ref to home coordinator (for delegate registration)
   let delegationSections: DelegationSection[] = [];
   // Keyed by delegation.id so rebuildRouting preserves in-memory spend counters.
   const delegationTwinMap = new Map<string, DelegationSection>();
@@ -315,8 +337,8 @@ export function buildRootObject(
   }
   smartAccountConfig =
     restoreFromBaggage<SmartAccountConfig>('smartAccountConfig');
-  homeCoordRef = restoreFromBaggage<object>('homeCoordRef');
-  homeSection = restoreFromBaggage<object>('homeSection');
+  homeCoordRef = restoreFromBaggage<HomeCoordinatorRef>('homeCoordRef');
+  homeSection = restoreFromBaggage<HomeSection>('homeSection');
 
   /** Chain ID from the last `configureProvider` call (avoids RPC on every send). */
   let cachedProviderChainId: number | undefined = restoreFromBaggage<number>(
@@ -458,8 +480,8 @@ export function buildRootObject(
   async function buildAndSubmitDirect7702Tx(options: {
     sender: Address;
     callData: Hex;
-    maxFeePerGas?: Hex;
-    maxPriorityFeePerGas?: Hex;
+    maxFeePerGas?: Hex | undefined;
+    maxPriorityFeePerGas?: Hex | undefined;
   }): Promise<Hex> {
     if (!providerVat) {
       throw new Error('Provider vat not available');
@@ -705,7 +727,8 @@ export function buildRootObject(
     }
 
     const sender =
-      smartAccountConfig?.address ?? options.delegations[0].delegate;
+      smartAccountConfig?.address ??
+      (options.delegations[0] as Delegation).delegate;
 
     const chainId = await resolveChainId();
     const sdkCallData = buildSdkRedeemCallData({
@@ -872,7 +895,6 @@ export function buildRootObject(
     ])) as string;
 
     if (isEip7702Delegated(code, chainId)) {
-      // eslint-disable-next-line require-atomic-updates
       smartAccountConfig = harden({
         implementation: 'stateless7702' as const,
         address: eoaAddress,
@@ -1011,7 +1033,6 @@ export function buildRootObject(
       await new Promise((resolve) => setTimeout(resolve, 2000));
     }
 
-    // eslint-disable-next-line require-atomic-updates
     smartAccountConfig = harden({
       implementation: 'stateless7702' as const,
       address: eoaAddress,
@@ -1800,7 +1821,10 @@ export function buildRootObject(
       // Coerce at the JSON boundary — CLI callers pass numeric strings.
       const amt = BigInt(amount);
       const matching = delegationSections.filter(
-        (sec) => sec.method === 'transferNative',
+        (
+          sec,
+        ): sec is Extract<DelegationSection, { method: 'transferNative' }> =>
+          sec.method === 'transferNative',
       );
       if (matching.length > 0) {
         const errors: unknown[] = [];
@@ -1848,7 +1872,10 @@ export function buildRootObject(
       const amt = BigInt(amount);
       const tokenLower = token.toLowerCase() as Address;
       const matching = delegationSections.filter(
-        (sec) => sec.method === 'transferFungible' && sec.token === tokenLower,
+        (
+          sec,
+        ): sec is Extract<DelegationSection, { method: 'transferFungible' }> =>
+          sec.method === 'transferFungible' && sec.token === tokenLower,
       );
       if (matching.length > 0) {
         const errors: unknown[] = [];
@@ -1914,7 +1941,9 @@ export function buildRootObject(
       if (!redemptionService) {
         throw new Error('OCAP URL redemption service not available');
       }
-      homeCoordRef = await E(redemptionService).redeem(ocapUrl);
+      homeCoordRef = (await E(redemptionService).redeem(
+        ocapUrl,
+      )) as HomeCoordinatorRef;
       homeSection = await E(homeCoordRef).getHomeSection();
       persistBaggage('homeCoordRef', homeCoordRef);
       persistBaggage('homeSection', homeSection);
@@ -1976,7 +2005,7 @@ export function buildRootObject(
         // Describe any native ETH amount limits in human-readable form.
         const limitParts: string[] = grants
           .filter(
-            (grant) =>
+            (grant): grant is TransferNativeGrant =>
               grant.method === 'transferNative' &&
               grant.maxAmount !== undefined,
           )

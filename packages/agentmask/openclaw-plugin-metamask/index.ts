@@ -36,7 +36,7 @@ import type {
 } from './types.ts';
 
 const pluginDir = dirname(fileURLToPath(import.meta.url));
-const DEFAULT_CLI = resolvePath(pluginDir, '../../kernel-cli/dist/app.mjs');
+const DEFAULT_CLI = resolvePath(pluginDir, '../../kernel-cli/dist/app.js');
 const DEFAULT_TIMEOUT_MS = 60_000;
 
 const PluginConfigStruct = object({
@@ -71,7 +71,7 @@ const configSchema: PluginConfigSchema = {
       ocapCliPath: {
         type: 'string',
         description:
-          'Absolute path to the ocap CLI entry point (.mjs file or binary).',
+          'Absolute path to the ocap CLI entry point (.js file or binary).',
       },
       ocapUrl: {
         type: 'string',
@@ -104,7 +104,7 @@ function resolveConfig<T>(options: {
   envVar: string;
   parse?: (value: string) => T;
 }): T | undefined {
-  // eslint-disable-next-line n/no-process-env
+  // oxlint-disable-next-line node/no-process-env
   const envValue = process.env[options.envVar];
   if (envValue !== undefined && envValue !== '') {
     return options.parse ? options.parse(envValue) : (envValue as T);
@@ -154,7 +154,7 @@ function register(api: OpenClawPluginApi): void {
   // resetState is implicit since state always starts fresh, but if explicitly
   // enabled it also logs for visibility.
   if (resetState) {
-    // eslint-disable-next-line no-console
+    // oxlint-disable-next-line no-console
     console.info('[metamask plugin] State reset enabled — starting clean.');
   }
 

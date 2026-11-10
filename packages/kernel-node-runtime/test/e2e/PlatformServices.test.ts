@@ -9,7 +9,7 @@ import { getTestWorkerFile } from '../get-test-worker.ts';
 describe('NodejsPlatformServices', () => {
   const testWorkerFile = getTestWorkerFile('stream-sync');
   const vatIdCounter = makeCounter();
-  const getTestVatId = (): VatId => `v${vatIdCounter()}`;
+  const getTestVatId = (): VatId => `v${vatIdCounter()}` as VatId;
 
   // Track all services to ensure cleanup
   const services: NodejsPlatformServices[] = [];
@@ -17,7 +17,6 @@ describe('NodejsPlatformServices', () => {
   afterEach(async () => {
     // Terminate all workers to prevent dangling processes
     await Promise.all(services.map(async (service) => service.terminateAll()));
-    // eslint-disable-next-line require-atomic-updates
     services.length = 0;
     vi.restoreAllMocks();
   });

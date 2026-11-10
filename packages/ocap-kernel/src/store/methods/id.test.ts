@@ -2,6 +2,7 @@ import type { KVStore } from '@metamask/kernel-store';
 import { describe, it, expect, beforeEach } from 'vitest';
 
 import { getIdMethods } from './id.ts';
+import { asRemoteId, asVatId } from '../../../test/branded.ts';
 import { makeMapKVStore } from '../../../test/storage.ts';
 import type { EndpointId } from '../../types.ts';
 import type { StoreContext } from '../types.ts';
@@ -86,7 +87,7 @@ describe('id-methods', () => {
 
   describe('initEndpoint', () => {
     it('initializes a vat endpoint', () => {
-      const vatId: EndpointId = 'v1';
+      const vatId: EndpointId = asVatId('v1');
 
       idStore.initEndpoint(vatId);
 
@@ -95,7 +96,7 @@ describe('id-methods', () => {
     });
 
     it('initializes a remote endpoint', () => {
-      const remoteId: EndpointId = 'r2';
+      const remoteId: EndpointId = asRemoteId('r2');
 
       idStore.initEndpoint(remoteId);
 
@@ -104,9 +105,9 @@ describe('id-methods', () => {
     });
 
     it('can initialize multiple endpoints', () => {
-      idStore.initEndpoint('v1');
-      idStore.initEndpoint('v2');
-      idStore.initEndpoint('r1');
+      idStore.initEndpoint(asVatId('v1'));
+      idStore.initEndpoint(asVatId('v2'));
+      idStore.initEndpoint(asRemoteId('r1'));
 
       expect(kv.get('e.nextPromiseId.v1')).toBe('1');
       expect(kv.get('e.nextObjectId.v1')).toBe('1');
@@ -119,7 +120,7 @@ describe('id-methods', () => {
     });
 
     it('can reinitialize an existing endpoint', () => {
-      const vatId: EndpointId = 'v3';
+      const vatId: EndpointId = asVatId('v3');
 
       // Initialize with default values
       idStore.initEndpoint(vatId);

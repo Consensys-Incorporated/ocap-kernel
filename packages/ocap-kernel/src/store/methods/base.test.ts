@@ -2,7 +2,9 @@ import type { KVStore } from '@metamask/kernel-store';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 import { getBaseMethods } from './base.ts';
+import { asKRef, asRemoteId, asVatId } from '../../../test/branded.ts';
 import { makeMapKVStore } from '../../../test/storage.ts';
+import type { KRef } from '../../types.ts';
 
 describe('base-methods', () => {
   let kv: KVStore;
@@ -15,32 +17,36 @@ describe('base-methods', () => {
 
   describe('getSlotKey', () => {
     it('generates correct slot keys', () => {
-      expect(baseStore.getSlotKey('v1', 'ko123')).toBe('v1.c.ko123');
-      expect(baseStore.getSlotKey('r2', 'kp456')).toBe('r2.c.kp456');
+      expect(baseStore.getSlotKey(asVatId('v1'), asKRef('ko123'))).toBe(
+        'v1.c.ko123',
+      );
+      expect(baseStore.getSlotKey(asRemoteId('r2'), asKRef('kp456'))).toBe(
+        'r2.c.kp456',
+      );
     });
   });
 
   describe('refCountKey', () => {
     it('generates correct reference count keys', () => {
-      expect(baseStore.refCountKey('ko1')).toBe('ko1.refCount');
-      expect(baseStore.refCountKey('kp42')).toBe('kp42.refCount');
-      expect(baseStore.refCountKey('v7')).toBe('v7.refCount');
+      expect(baseStore.refCountKey(asKRef('ko1'))).toBe('ko1.refCount');
+      expect(baseStore.refCountKey(asKRef('kp42'))).toBe('kp42.refCount');
+      expect(baseStore.refCountKey('v7' as KRef)).toBe('v7.refCount');
     });
   });
 
   describe('getOwnerKey', () => {
     it('generates correct owner keys', () => {
-      expect(baseStore.getOwnerKey('ko1')).toBe('ko1.owner');
-      expect(baseStore.getOwnerKey('kp42')).toBe('kp42.owner');
-      expect(baseStore.getOwnerKey('v7')).toBe('v7.owner');
+      expect(baseStore.getOwnerKey(asKRef('ko1'))).toBe('ko1.owner');
+      expect(baseStore.getOwnerKey(asKRef('kp42'))).toBe('kp42.owner');
+      expect(baseStore.getOwnerKey('v7' as KRef)).toBe('v7.owner');
     });
   });
 
   describe('getRevokedKey', () => {
     it('generates correct revoked keys', () => {
-      expect(baseStore.getRevokedKey('ko1')).toBe('ko1.revoked');
-      expect(baseStore.getRevokedKey('kp42')).toBe('kp42.revoked');
-      expect(baseStore.getRevokedKey('v7')).toBe('v7.revoked');
+      expect(baseStore.getRevokedKey(asKRef('ko1'))).toBe('ko1.revoked');
+      expect(baseStore.getRevokedKey(asKRef('kp42'))).toBe('kp42.revoked');
+      expect(baseStore.getRevokedKey('v7' as KRef)).toBe('v7.revoked');
     });
   });
 
@@ -93,6 +99,28 @@ describe('base-methods', () => {
       // But a new stored value object should see the updated KV store value
       const newValue = baseStore.provideCachedStoredValue('cached-key');
       expect(newValue.get()).toBe('changed-externally');
+    });
+
+    it('keeps its cached value when writing a new one fails', () => {
+      const value = baseStore.provideCachedStoredValue('failing-key', 'kept');
+      const fault = new Error('SQLITE_FULL');
+      vi.spyOn(kv, 'set').mockImplementationOnce(() => {
+        throw fault;
+      });
+
+      expect(() => value.set('lost')).toThrow(fault);
+      expect(value.get()).toBe('kept');
+    });
+
+    it('keeps its cached value when deleting it fails', () => {
+      const value = baseStore.provideCachedStoredValue('failing-key', 'kept');
+      const fault = new Error('SQLITE_FULL');
+      vi.spyOn(kv, 'delete').mockImplementationOnce(() => {
+        throw fault;
+      });
+
+      expect(() => value.delete()).toThrow(fault);
+      expect(value.get()).toBe('kept');
     });
 
     it('deletes values correctly', () => {
@@ -233,6 +261,47 @@ describe('base-methods', () => {
       );
     });
 
+    it.each([true, false])(
+      'leaves no gap when an entry fails to be written (cached: %s)',
+      (cached) => {
+        const queue = baseStore.provideStoredQueue('test', cached);
+        queue.enqueue({ id: 1 });
+        const fault = new Error('SQLITE_FULL');
+        const originalSet = kv.set;
+        const set = vi.spyOn(kv, 'set').mockImplementation((key, value) => {
+          if (key === 'queue.test.2') {
+            throw fault;
+          }
+          originalSet.call(kv, key, value);
+        });
+        expect(() => queue.enqueue({ id: 2 })).toThrow(fault);
+        set.mockRestore();
+        queue.enqueue({ id: 3 });
+
+        const reopened = baseStore.provideStoredQueue('test', cached);
+        expect([
+          reopened.dequeue(),
+          reopened.dequeue(),
+          reopened.dequeue(),
+        ]).toStrictEqual([{ id: 1 }, { id: 3 }, undefined]);
+      },
+    );
+
+    it.each([true, false])(
+      'keeps an entry when moving the tail past it fails (cached: %s)',
+      (cached) => {
+        const queue = baseStore.provideStoredQueue('test', cached);
+        queue.enqueue({ id: 1 });
+        const fault = new Error('SQLITE_FULL');
+        vi.spyOn(kv, 'set').mockImplementationOnce(() => {
+          throw fault;
+        });
+
+        expect(() => queue.dequeue()).toThrow(fault);
+        expect(queue.dequeue()).toStrictEqual({ id: 1 });
+      },
+    );
+
     it('returns undefined when dequeueing from an empty queue', () => {
       // Create a queue with matching head and tail (empty)
       kv.set('queue.test.head', '1');
@@ -289,7 +358,7 @@ describe('base-methods', () => {
 
       vi.spyOn(kv, 'getNextKey').mockImplementation(() => {
         if (keyIndex < mockKeys.length) {
-          // eslint-disable-next-line no-plusplus
+          // oxlint-disable-next-line no-plusplus
           return mockKeys[keyIndex++];
         }
         return undefined;

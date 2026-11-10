@@ -146,7 +146,7 @@ test.describe('Remote Communications', () => {
     // post-redemption render path under CI load.
     await expect(messageResponse).toBeVisible({ timeout: 50_000 });
     await expect(messageResponse).toContainText(
-      // eslint-disable-next-line no-useless-escape
+      // oxlint-disable-next-line no-useless-escape
       `Response:{\"body\":\"#\\\"vat Bob got \\\\\\\"hello\\\\\\\" from remote Alice\\\"\",\"slots\":[]}`,
     );
   });

@@ -56,7 +56,7 @@ export const readFile = async (
   path: string,
   encoding: BufferEncoding,
 ): Promise<string> => {
-  // eslint-disable-next-line no-bitwise -- open flags are a bitmask
+  // oxlint-disable-next-line no-bitwise -- open flags are a bitmask
   const handle = await fs.open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
     await assertCanonical(path);
@@ -77,6 +77,5 @@ const specification: FsSpecification = makeFsSpecification({
   toPath,
 });
 
-// eslint-disable-next-line prefer-destructuring -- annotated for declaration emit
 export const configStruct: FsConfigStruct = specification.configStruct;
 export const { capabilityFactory } = specification;

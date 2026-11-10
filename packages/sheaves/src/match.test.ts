@@ -10,7 +10,7 @@ import type { Provider } from './types.ts';
 const makeProvider = (
   tag: string,
   guards: Record<string, MethodGuard>,
-  methods: Record<string, (...args: unknown[]) => unknown>,
+  methods: Record<string, CallableFunction>,
   metadata: { cost: number },
 ): Provider<{ cost: number }> => ({
   exo: makeSection(tag, M.interface(tag, guards), methods),

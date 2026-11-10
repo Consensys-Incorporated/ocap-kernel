@@ -8,9 +8,8 @@ import { makeKernel } from './make-kernel.ts';
 import { assertSupportedPlatform } from '../platform.ts';
 
 vi.mock('@metamask/kernel-store/sqlite/nodejs', async () => {
-  const { makeMapKernelDatabase } = await import(
-    '../../../ocap-kernel/test/storage.ts'
-  );
+  const { makeMapKernelDatabase } =
+    await import('../../../ocap-kernel/test/storage.ts');
   return {
     makeSQLKernelDatabase: vi.fn(makeMapKernelDatabase),
   };
@@ -40,6 +39,16 @@ describe('makeKernel', () => {
       tags: ['kernel-store'],
       message: 'diagnostic',
     });
+  });
+
+  it('registers the kernel services it is given', async () => {
+    const { kernelDatabase } = await makeKernel({
+      kernelServices: [{ name: 'languageModelService', service: {} }],
+    });
+
+    expect(
+      kernelDatabase.kernelKVStore.get('kernelService.languageModelService'),
+    ).toBeDefined();
   });
 
   it('checks the platform before opening the database', async () => {

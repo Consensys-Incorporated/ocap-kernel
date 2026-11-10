@@ -43,7 +43,7 @@ export const asyncIterate = <Item>(
  * @param iterable - The iterable object.
  * @returns An exo for the iterator.
  */
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+// oxlint-disable-next-line typescript/explicit-function-return-type
 export const makeIteratorRef = <Item>(iterable: SomehowAsyncIterable<Item>) => {
   const iterator = asyncIterate(iterable);
   return makeExo('AsyncIterator', AsyncIteratorInterface, {

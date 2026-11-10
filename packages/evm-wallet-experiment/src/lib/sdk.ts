@@ -135,7 +135,7 @@ export function getDelegationManagerAddress(chainId: number): Address {
 /**
  * Map SDK caveat enforcer names to our CaveatType keys.
  */
-const SDK_ENFORCER_KEYS: Record<CaveatType, string> = {
+const SDK_ENFORCER_KEYS: Partial<Record<CaveatType, string>> = {
   allowedTargets: 'AllowedTargetsEnforcer',
   allowedMethods: 'AllowedMethodsEnforcer',
   valueLte: 'ValueLteEnforcer',

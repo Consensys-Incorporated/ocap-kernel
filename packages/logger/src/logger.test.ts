@@ -6,7 +6,8 @@ import { logLevels } from './constants.ts';
 import { Logger } from './logger.ts';
 import { lser } from './stream.ts';
 import type { LogMessage } from './stream.ts';
-import { makeConsoleTransport } from './transports.ts';
+import { makeArrayTransport, makeConsoleTransport } from './transports.ts';
+import type { LogEntry } from './types.ts';
 
 const consoleMethod = ['log', 'debug', 'info', 'warn', 'error'] as const;
 const transports = [makeConsoleTransport({ tags: true })];
@@ -82,13 +83,39 @@ describe('Logger', () => {
     expect(consoleSpy).toHaveBeenCalledWith('foo');
   });
 
-  it('passes objects directly in the data field', () => {
+  it('passes objects in the data field', () => {
     const consoleSpy = vi.spyOn(console, 'log');
     const logger = new Logger({ tags: ['test'], transports });
     const message = 'foo';
     const data = { bar: 'bar' };
     logger.log(message, data);
     expect(consoleSpy).toHaveBeenCalledWith(['test'], message, data);
+  });
+
+  it('logs a frozen copy of data, leaving the original mutable', () => {
+    const entries: LogEntry[] = [];
+    const logger = new Logger({ transports: [makeArrayTransport(entries)] });
+    const history = [{ step: 1 }];
+    logger.info('history:', history);
+    history.push({ step: 2 });
+
+    expect(entries).toStrictEqual([
+      { level: 'info', tags: [], message: 'history:', data: [[{ step: 1 }]] },
+    ]);
+    expect(Object.isFrozen(entries[0])).toBe(true);
+    expect(Object.isFrozen(entries[0]?.data)).toBe(true);
+    expect(Object.isFrozen(entries[0]?.data?.[0])).toBe(true);
+    expect(Object.isFrozen(history)).toBe(false);
+  });
+
+  it('logs a copy of an object passed as the message', () => {
+    const entries: LogEntry[] = [];
+    const logger = new Logger({ transports: [makeArrayTransport(entries)] });
+    const state = { count: 1 };
+    logger.info(state as unknown as string);
+    state.count = 2;
+
+    expect(entries[0]?.message).toStrictEqual({ count: 1 });
   });
 
   describe('subLogger', () => {
@@ -130,10 +157,10 @@ describe('Logger', () => {
           const consoleSpy = vi.spyOn(console, method);
           testLogger[method](`foo ${method}`);
           if (logLevels[level] <= logLevels[method]) {
-            // eslint-disable-next-line vitest/no-conditional-expect
+            // oxlint-disable-next-line vitest/no-conditional-expect
             expect(consoleSpy).toHaveBeenCalledWith(`foo ${method}`);
           } else {
-            // eslint-disable-next-line vitest/no-conditional-expect
+            // oxlint-disable-next-line vitest/no-conditional-expect
             expect(consoleSpy).not.toHaveBeenCalled();
           }
         });
