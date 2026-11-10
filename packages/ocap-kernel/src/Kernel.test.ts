@@ -17,6 +17,7 @@ import type {
   ClusterConfig,
   CrankResult,
   RunLoopItem,
+  QueueMessageResult,
   RunQueueItem,
   SubclusterId,
 } from './types.ts';
@@ -32,6 +33,10 @@ const mocks = vi.hoisted(() => {
     enqueueMessage = vi
       .fn()
       .mockResolvedValue({ body: '{"result":"ok"}', slots: [] });
+
+    releaseResult = vi.fn().mockResolvedValue(undefined);
+
+    releaseAbandonedResults = vi.fn().mockReturnValue(0);
 
     #runLoopFailure: Error | undefined;
 
@@ -465,6 +470,30 @@ describe('Kernel', () => {
       await kernel.launchSubcluster(makeSingleVatClusterConfig());
       const result = await kernel.queueMessage(asKRef('ko1'), 'hello', []);
       expect(result).toStrictEqual({ body: '{"result":"ok"}', slots: [] });
+    });
+
+    it.each([
+      ['releases', 'with', { body: '#"$0"', slots: ['ko2'], kpid: 'kp7' }, 1],
+      ['does not release', 'without', { body: '#"pong"', slots: [] }, 0],
+    ])('%s a result %s a kpid', async (_verb, _with, result, calls) => {
+      const kernel = await Kernel.make(
+        mockPlatformServices,
+        mockKernelDatabase,
+      );
+
+      await kernel.releaseResult(result as QueueMessageResult);
+
+      expect(
+        mocks.KernelQueue.lastInstance.releaseResult.mock.calls,
+      ).toStrictEqual(calls ? [['kp7']] : []);
+    });
+
+    it('releases the results a previous incarnation held when it starts', async () => {
+      await Kernel.make(mockPlatformServices, mockKernelDatabase);
+
+      expect(
+        mocks.KernelQueue.lastInstance.releaseAbandonedResults,
+      ).toHaveBeenCalledOnce();
     });
 
     it('deserializes CapData rejections into Errors', async () => {

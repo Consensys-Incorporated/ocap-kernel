@@ -33,6 +33,7 @@ const makeMockKernel = (): KernelFacetSource => ({
     service: {},
     systemOnly: false,
   }),
+  releaseResult: async () => Promise.resolve(),
   reset: async () => Promise.resolve(),
   terminateSubcluster: async () => Promise.resolve(),
 });
@@ -51,6 +52,7 @@ describe('makeKernelFacet', () => {
     expect(typeof facet.pingVat).toBe('function');
     expect(typeof facet.queueMessage).toBe('function');
     expect(typeof facet.registerKernelServiceObject).toBe('function');
+    expect(typeof facet.releaseResult).toBe('function');
     expect(typeof facet.reset).toBe('function');
     expect(typeof facet.terminateSubcluster).toBe('function');
   });

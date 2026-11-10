@@ -65,6 +65,7 @@
  *   nextPromiseId = NN                       // allocation counter for promise KRefs
  *   pinned.${kref} = NN                      // number of pins held on ${kref}
  *   ocapURLObjects.${kref} = NN              // number of ocap URLs naming ${kref}
+ *   heldResult.${kpid} = ${time}             // when ${kpid} was held for a `queueMessage` caller
  *   kernelService.${serviceName} = ${koid}   // kref of kernel service object ${serviceName}
  */
 
@@ -80,6 +81,7 @@ import { getCrankMethods } from './methods/crank.ts';
 import { getGCMethods } from './methods/gc.ts';
 import { getIdMethods } from './methods/id.ts';
 import { getObjectMethods } from './methods/object.ts';
+import { getHeldResultMethods } from './methods/held-result.ts';
 import { getPinMethods } from './methods/pinned.ts';
 import { getPromiseMethods } from './methods/promise.ts';
 import { getQueueMethods } from './methods/queue.ts';
@@ -229,6 +231,7 @@ export function makeKernelStore(kdb: KernelDatabase, logger?: Logger) {
   const reachable = getReachableMethods(context);
   const translators = getTranslators(context);
   const pinned = getPinMethods(context);
+  const heldResults = getHeldResultMethods(context);
   const crank = getCrankMethods(context, kdb);
   const subclusters = getSubclusterMethods(context);
   const activity = getActivityMethods(kv);
@@ -330,6 +333,7 @@ export function makeKernelStore(kdb: KernelDatabase, logger?: Logger) {
     ...remote,
     ...translators,
     ...pinned,
+    ...heldResults,
     ...crank,
     ...subclusters,
     ...activity,

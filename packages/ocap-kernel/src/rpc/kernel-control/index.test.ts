@@ -24,6 +24,7 @@ import {
 import { pingVatHandler, pingVatSpec } from './ping-vat.ts';
 import { queueMessageHandler, queueMessageSpec } from './queue-message.ts';
 import { redeemOcapURLHandler, redeemOcapURLSpec } from './redeem-ocap-url.ts';
+import { releaseResultHandler, releaseResultSpec } from './release-result.ts';
 import {
   registerLocationHintsHandler,
   registerLocationHintsSpec,
@@ -55,6 +56,7 @@ describe('handlers/index', () => {
       revoke: revokeHandler,
       isRevoked: isRevokedHandler,
       queueMessage: queueMessageHandler,
+      releaseResult: releaseResultHandler,
       terminateAllVats: terminateAllVatsHandler,
       collectGarbage: collectGarbageHandler,
       terminateVat: terminateVatHandler,
@@ -86,6 +88,7 @@ describe('handlers/index', () => {
       revoke: revokeSpec,
       isRevoked: isRevokedSpec,
       queueMessage: queueMessageSpec,
+      releaseResult: releaseResultSpec,
       terminateAllVats: terminateAllVatsSpec,
       collectGarbage: collectGarbageSpec,
       terminateVat: terminateVatSpec,

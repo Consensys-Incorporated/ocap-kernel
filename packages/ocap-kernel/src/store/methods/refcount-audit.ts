@@ -1,6 +1,7 @@
 import type { CapData } from '@endo/marshal';
 
 import { getBaseMethods } from './base.ts';
+import { getHeldResultMethods } from './held-result.ts';
 import { getPinMethods } from './pinned.ts';
 import type { KRef, KernelMessage, RunQueueItem } from '../../types.ts';
 import type { StoreContext } from '../types.ts';
@@ -71,6 +72,7 @@ const REFCOUNT_KEY = /^(k[op]\d+)\.refCount$/u;
 export function getRefCountAuditMethods(ctx: StoreContext) {
   const { getPrefixedKeys, refCountKey } = getBaseMethods(ctx.kv);
   const { getPinCount, getPinnedObjects } = getPinMethods(ctx);
+  const { getHeldResults } = getHeldResultMethods(ctx);
 
   /**
    * Render a tally the way the store encodes it, so expected and stored values
@@ -272,6 +274,10 @@ export function getRefCountAuditMethods(ctx: StoreContext) {
       for (let pins = getPinCount(kref); pins > 0; pins -= 1) {
         credit(kref, 'pin');
       }
+    }
+
+    for (const kpid of getHeldResults()) {
+      credit(kpid, 'held result');
     }
 
     return tallies;
