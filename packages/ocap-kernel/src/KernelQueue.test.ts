@@ -2162,6 +2162,85 @@ describe('KernelQueue', () => {
     });
   });
 
+  describe('panic', () => {
+    const cause = new Error('database or disk is full');
+
+    it.each([
+      {
+        when: 'once the delivery returns',
+        crankResult: { didDelivery: 'v1' },
+        arrange: (): void => undefined,
+        raisedInDelivery: true,
+        flushes: 0,
+      },
+      {
+        when: 'once a termination in it returns, before the flush',
+        crankResult: { terminate: { vatId: 'v1', info: {} } },
+        arrange: (): void => {
+          terminateVat.mockImplementationOnce(async () => {
+            kernelQueue.panic('termination failed', cause);
+          });
+        },
+        raisedInDelivery: false,
+        flushes: 0,
+      },
+      {
+        when: 'after the flush, before the commit',
+        crankResult: undefined,
+        arrange: (): void => {
+          (
+            kernelStore.flushCrankBuffer as unknown as MockInstance
+          ).mockImplementationOnce(() => {
+            kernelQueue.panic('late syscall failed', cause);
+            return [];
+          });
+        },
+        raisedInDelivery: false,
+        flushes: 1,
+      },
+    ])(
+      'kills the run loop $when, rolling its crank back',
+      async ({ crankResult, arrange, raisedInDelivery, flushes }) => {
+        (kernelStore.runQueueLength as unknown as MockInstance)
+          .mockReturnValueOnce(1)
+          .mockReturnValue(0);
+        (kernelStore.dequeueRun as unknown as MockInstance).mockReturnValueOnce(
+          { type: 'send', target: 'ko123', message: {} as KernelMessage },
+        );
+        arrange();
+        const deliver = vi.fn(async () => {
+          if (raisedInDelivery) {
+            kernelQueue.panic('syscall failed', cause);
+          }
+          return crankResult;
+        });
+
+        await expect(kernelQueue.run(deliver as never)).rejects.toThrow(
+          'Kernel panic:',
+        );
+        expect({
+          rolledBack: (kernelStore.rollbackCrank as unknown as MockInstance)
+            .mock.calls,
+          flushes: (kernelStore.flushCrankBuffer as unknown as MockInstance)
+            .mock.calls.length,
+        }).toStrictEqual({ rolledBack: [['crank']], flushes });
+      },
+    );
+
+    it('wakes a run loop waiting on an empty queue to die', async () => {
+      const park = makeRealPromiseKit();
+      (makePromiseKit as unknown as MockInstance).mockReturnValueOnce(park);
+      const running = kernelQueue.run(vi.fn());
+
+      kernelQueue.panic('handshake failed', cause);
+
+      await expect(running).rejects.toStrictEqual(
+        new Error('Kernel panic: handshake failed', { cause }),
+      );
+      expect(kernelStore.startCrank).toHaveBeenCalledOnce();
+    });
+  });
+
   describe('crank savepoints', () => {
     /**
      * Deliver one item and then die inside `collectGarbage`, once the crank

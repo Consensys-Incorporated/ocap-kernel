@@ -1,5 +1,6 @@
 import type { KVStore, KernelDatabase, VatStore } from '@metamask/kernel-store';
 
+import { markStoreFaults } from '../src/store/utils/store-fault.ts';
 import { keySearch } from '../src/utils/key-search.ts';
 
 /* oxlint-disable no-lonely-if, no-else-return */ // stupid rules that encourage unclear code
@@ -140,4 +141,24 @@ export function makeMapKernelDatabase(): KernelDatabase {
       // noop
     },
   };
+}
+
+/**
+ * Make an error the kernel takes for a store fault, as if its store threw it.
+ *
+ * @returns The error.
+ */
+export function makeStoreFault(): Error {
+  const fault = new Error('database or disk is full');
+  const kv = markStoreFaults({
+    set: () => {
+      throw fault;
+    },
+  } as unknown as KVStore);
+  try {
+    kv.set('key', 'value');
+  } catch {
+    // Marked on the way out.
+  }
+  return fault;
 }

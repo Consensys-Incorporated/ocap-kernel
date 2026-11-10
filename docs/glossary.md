@@ -222,6 +222,22 @@ loop between cranks, once the control operations asked for before it have run. A
 throws kills the run loop for the life of the kernel instance; callers still waiting on
 queued work, control operations included, are then rejected.
 
+### store fault
+
+An error the kernel's database throws on a read or write, as when the disk is full. It is
+the kernel's own fault, not the [vat](#vat)'s it was serving, so in a [syscall](#syscall)
+the kernel stops by a [kernel panic](#kernel-panic) rather than terminate the vat. The
+kernel marks what its store throws, so
+[`isStoreFault`](../packages/ocap-kernel/src/store/utils/store-fault.ts) can tell a store
+fault from a failed check of the kernel's own.
+
+### kernel panic
+
+After SwingSet's `kernelPanic`: a fault recorded where a throw would not reach the
+[run loop](#run-loop), such as a [store fault](#store-fault) in a [syscall](#syscall). The
+run loop throws it before the open [crank](#crank) commits, so the crank rolls back and the
+loop dies. See `panic` in [KernelQueue](../packages/ocap-kernel/src/KernelQueue.ts).
+
 ### kernel router
 
 The component responsible for routing messages to the correct [vat](#vat) based on target

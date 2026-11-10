@@ -84,6 +84,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A store fault (a read or write the kernel's database refuses, as on a full disk) in a syscall stops the kernel and rolls back the crank it happened in, instead of terminating the vat ([#1288](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1288))
 - A termination that fails partway, as when the store refuses a write, rolls back with its crank and kills the run loop, so the next start carries it out again, instead of leaving the vat persisted with no worker ([#1287](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1287))
 - A channel to a peer that a newer one replaced no longer drops the newer one when it ends. Reconnecting to a live peer used to redial in a loop until the connection rate limit blocked sends to it for up to a minute ([#1274](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1274))
 - A message, notify, GC action or reap addressed to a remote before `initRemoteComms` joins that remote's send queue and goes out once remote comms start. A message used to be rejected as `ENDPOINT_UNREACHABLE`, and the others to kill the run loop on every later boot ([#1098](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1098), [#1099](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1099), [#1248](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1248))

@@ -10,6 +10,7 @@ import type { KernelQueue } from '../KernelQueue.ts';
 import type { KernelStore } from '../store/index.ts';
 import type { KernelMessage, VatId } from '../types.ts';
 import { VatSyscall } from './VatSyscall.ts';
+import { makeStoreFault } from '../../test/storage.ts';
 
 describe('VatSyscall', () => {
   let kernelQueue: KernelQueue;
@@ -22,6 +23,10 @@ describe('VatSyscall', () => {
       enqueueSend: vi.fn(),
       resolvePromises: vi.fn(),
       enqueueNotify: vi.fn(),
+      panic: vi.fn(
+        (problem: string, cause: unknown) =>
+          new Error(`Kernel panic: ${problem}`, { cause }),
+      ),
     } as unknown as KernelQueue;
     kernelStore = {
       translateSyscallVtoK: vi.fn((_: string, vso: VatSyscallObject) => vso),
@@ -294,6 +299,49 @@ describe('VatSyscall', () => {
         error,
       );
     });
+
+    it.each([
+      {
+        where: 'during translation',
+        fail: (fault: Error) =>
+          (
+            kernelStore.translateSyscallVtoK as unknown as MockInstance
+          ).mockImplementationOnce(() => {
+            throw fault;
+          }),
+      },
+      {
+        where: 'after translation',
+        fail: (fault: Error) =>
+          (
+            kernelQueue.enqueueSend as unknown as MockInstance
+          ).mockImplementationOnce(() => {
+            throw fault;
+          }),
+      },
+    ])(
+      'stops the kernel on a store fault $where, without blaming the vat',
+      ({ fail }) => {
+        const storeFault = makeStoreFault();
+        fail(storeFault);
+
+        const result = vatSys.handleSyscall([
+          'send',
+          'ko1',
+          { methargs: { body: '#null', slots: [] }, result: null },
+        ] as VatSyscallObject);
+
+        expect({
+          result,
+          panic: (kernelQueue.panic as unknown as MockInstance).mock.calls,
+          illegalSyscall: vatSys.illegalSyscall,
+        }).toStrictEqual({
+          result: ['error', 'Kernel panic: syscall send from vat v1 failed'],
+          panic: [['syscall send from vat v1 failed', storeFault]],
+          illegalSyscall: undefined,
+        });
+      },
+    );
   });
 
   describe('invalid or unknown syscalls', () => {

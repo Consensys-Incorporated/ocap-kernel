@@ -14,6 +14,7 @@ import {
 import type { KernelQueue } from '../KernelQueue.ts';
 import { makeFatalKernelError } from '../liveslots/kernel-marshal.ts';
 import type { KernelStore } from '../store/index.ts';
+import { isStoreFault } from '../store/utils/store-fault.ts';
 import type {
   KernelSyscallObject,
   KernelMessage,
@@ -152,7 +153,10 @@ export class VatSyscall {
   }
 
   /**
-   * Handle a syscall from the vat.
+   * Handle a syscall from the vat. A store fault stops the kernel, and anything
+   * else is the vat's fault. SwingSet stops the kernel on any failure past
+   * translation, but our translation checks less than SwingSet's, so a vat's
+   * own mistake can get that far.
    *
    * @param vso - The syscall that was received.
    * @returns The result of the syscall.
@@ -248,6 +252,16 @@ export class VatSyscall {
       }
       return harden(['ok', null]);
     } catch (error) {
+      // Returned, not thrown: this runs in the drain of the vat's channel,
+      // where a throw reads as the channel lost.
+      if (isStoreFault(error)) {
+        const panic = this.#kernelQueue.panic(
+          `syscall ${vso[0]} from vat ${this.vatId} failed`,
+          error,
+        );
+        this.#logger?.error(panic.message, error);
+        return harden(['error', panic.message]);
+      }
       this.#logger?.error(`Fatal syscall error in vat ${this.vatId}`, error);
       this.#recordVatFatalSyscall(
         'ILLEGAL_SYSCALL',
