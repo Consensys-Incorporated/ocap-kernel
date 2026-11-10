@@ -236,7 +236,19 @@ export class RemoteManager {
     peerId: string,
     observedIncarnation: string,
   ): Promise<boolean> {
-    const stored = this.#kernelStore.getPeerIncarnation(peerId);
+    let stored: string | undefined;
+    try {
+      stored = this.#kernelStore.getPeerIncarnation(peerId);
+    } catch (error) {
+      const panic = this.#kernelQueue.panic(
+        `reading the incarnation of peer ${peerId} failed`,
+        error,
+      );
+      this.#logger?.error(panic.message, error);
+      // Thrown too, so the transport fails the handshake rather than answer it
+      // from nothing.
+      throw panic;
+    }
     const waiting = this.#kernelQueue.waitingIncarnations(peerId);
     const known = stored === undefined ? waiting : [stored, ...waiting];
     if (!known.includes(observedIncarnation)) {

@@ -9,6 +9,7 @@ import type { KernelStore } from './store/index.ts';
 import { extractSingleRef } from './store/utils/extract-ref.ts';
 import { parseRef } from './store/utils/parse-ref.ts';
 import { isPromiseRef } from './store/utils/promise-ref.ts';
+import { isStoreFault } from './store/utils/store-fault.ts';
 import type {
   ControlOperation,
   EndpointId,
@@ -676,7 +677,10 @@ export class KernelRouter {
     } catch (error) {
       // What a peer sends can fail here: an unknown method, a reference that
       // does not resolve, a reply to a redemption that has timed out. None of
-      // it is the kernel's to die of.
+      // it is the kernel's to die of, but a store fault is.
+      if (isStoreFault(error)) {
+        throw error;
+      }
       this.#logger?.error(
         `Discarded inbound message seq=${seq} from ${remoteId}, which could not be delivered:`,
         error,

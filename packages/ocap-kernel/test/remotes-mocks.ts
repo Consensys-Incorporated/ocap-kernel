@@ -82,6 +82,10 @@ export class MockRemotesFactory {
       waitingIncarnations: vi.fn().mockReturnValue([]),
       resolvePromises: vi.fn(),
       assertRunLoopAlive: vi.fn(),
+      panic: vi.fn(
+        (problem: string, cause: unknown) =>
+          new Error(`Kernel panic: ${problem}`, { cause }),
+      ),
       waitForCrank: vi.fn(),
       writeOutsideCrank: vi.fn<KernelQueue['writeOutsideCrank']>(
         async (write) => write(),
