@@ -2298,6 +2298,42 @@ describe('transport.initTransport', () => {
       });
     });
 
+    it('ignores the end of a channel a newer one has replaced', async () => {
+      let inboundHandler: ((channel: MockChannel) => void) | undefined;
+      mockConnectionFactory.onInboundConnection.mockImplementation(
+        (handler) => {
+          inboundHandler = handler;
+        },
+      );
+      const oldChannel = createMockChannel('peer-1');
+      const newChannel = createMockChannel('peer-1');
+      let endOldChannel = (_error: Error): void => undefined;
+      const oldChannelEnds = new Promise<never>((_resolve, reject) => {
+        endOldChannel = reject;
+      });
+      oldChannel.msgStream.read.mockReturnValueOnce(oldChannelEnds);
+      mockConnectionFactory.dialIdempotent.mockResolvedValueOnce(oldChannel);
+      const { sendRemoteMessage } = await initTransport('0x1234', {}, vi.fn());
+      await sendRemoteMessage('peer-1', makeTestMessage('msg1'));
+      inboundHandler?.(newChannel);
+      await vi.waitFor(() => {
+        expect(mockConnectionFactory.closeChannel).toHaveBeenCalledWith(
+          oldChannel,
+          'peer-1',
+        );
+      });
+
+      endOldChannel(new UnexpectedEOFError('stream closed'));
+      await new Promise((resolve) => setImmediate(resolve));
+      await sendRemoteMessage('peer-1', makeTestMessage('msg2'));
+
+      expect({
+        reconnections: mockReconnectionManager.startReconnection.mock.calls,
+        dials: mockConnectionFactory.dialIdempotent.mock.calls.length,
+        sentOnNewChannel: newChannel.msgStream.write.mock.calls.length,
+      }).toStrictEqual({ reconnections: [], dials: 1, sentOnNewChannel: 1 });
+    });
+
     it('reuses existing channel when dial race occurs', async () => {
       const mockChannel = createMockChannel('peer-1');
       mockConnectionFactory.dialIdempotent.mockResolvedValue(mockChannel);
