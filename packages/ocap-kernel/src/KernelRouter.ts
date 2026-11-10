@@ -32,6 +32,7 @@ import type {
 import { isRemoteId, isVatId } from './types.ts';
 import { assert, Fail } from './utils/assert.ts';
 import { makeLostVatReason } from './vats/lost-vat-reason.ts';
+import { capReasonText } from './vats/vat-limits.ts';
 
 const GC_DELIVERY = {
   dropExports: 'deliverDropExports',
@@ -417,7 +418,7 @@ export class KernelRouter {
             this.#rejectResultIfPending(
               eid,
               message.result,
-              makeKernelError('DELIVERY_FAILED', detail),
+              makeKernelError('DELIVERY_FAILED', capReasonText(detail)),
             );
           }
           // Continue processing other messages - don't let one failure crash the queue

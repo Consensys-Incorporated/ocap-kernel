@@ -28,6 +28,7 @@ import type {
 import { ROOT_OBJECT_VREF } from '../types.ts';
 import type { AllowedGlobalName } from './endowments.ts';
 import { makeLostVatReason } from './lost-vat-reason.ts';
+import { capReasonText } from './vat-limits.ts';
 import { VatHandle } from './VatHandle.ts';
 import type { PingVatResult } from '../rpc/index.ts';
 
@@ -228,7 +229,7 @@ export class VatManager {
         .find(({ vats }) => Object.values(vats).includes(vatId))?.id;
       const where = subclusterId ? ` of subcluster ${subclusterId}` : '';
       const failure = new Error(
-        `Vat ${vatId}${where} was terminated after its worker would not start: ${error instanceof Error ? error.message : String(error)}`,
+        `Vat ${vatId}${where} was terminated after its worker would not start: ${capReasonText(error instanceof Error ? error.message : String(error))}`,
         { cause: error },
       );
       this.#logger.error(failure.message, error);
@@ -590,7 +591,7 @@ export class VatManager {
             vatId,
             terminating: true,
             terminationError: reason
-              ? new Error(`Vat termination: ${reason.body}`)
+              ? new Error(`Vat termination: ${capReasonText(reason.body)}`)
               : new VatDeletedError(vatId),
           }
         : { vatId, terminating: false },
@@ -663,8 +664,13 @@ export class VatManager {
    */
   #retireVat(vatId: VatId, error: Error): void {
     this.#vats.delete(vatId);
-    if (!this.#kernelStore.isVatTerminated(vatId)) {
-      const failure = makeKernelError('VAT_TERMINATED', error.message);
+    const recording = !this.#kernelStore.isVatTerminated(vatId);
+    if (recording) {
+      // Fixed, as in SwingSet: each promise stores its own copy of the reason.
+      const failure = makeKernelError(
+        'VAT_TERMINATED',
+        `Vat ${vatId} was terminated`,
+      );
       for (const kpid of this.#kernelStore.getPromisesByDecider(vatId)) {
         this.#kernelQueue.resolvePromises(vatId, [[kpid, true, failure]]);
       }
@@ -672,6 +678,9 @@ export class VatManager {
       this.#kernelStore.markVatAsTerminated(vatId);
     }
     this.#kernelStore.deleteVat(vatId);
+    if (recording) {
+      this.#logger.log(`Vat ${vatId} was terminated: ${error.message}`);
+    }
   }
 
   /**
@@ -994,7 +1003,7 @@ export class VatManager {
     const lost = error instanceof StreamReadError;
     const reason = lost && error.cause instanceof Error ? error.cause : error;
     const failure = new Error(
-      `Vat ${vatId} was terminated after its restart failed: ${reason instanceof Error ? reason.message : String(reason)}`,
+      `Vat ${vatId} was terminated after its restart failed: ${capReasonText(reason instanceof Error ? reason.message : String(reason))}`,
       { cause: error },
     );
     this.#logger.error(failure.message, error);

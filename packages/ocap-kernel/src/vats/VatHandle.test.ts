@@ -8,8 +8,9 @@ import { TestDuplexStream } from '@ocap/repo-tools/test-utils/streams';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { MockInstance } from 'vitest';
 
-import { asSubclusterId, asVatId } from '../../test/branded.ts';
+import { asERef, asSubclusterId, asVatId } from '../../test/branded.ts';
 import type { KernelQueue } from '../KernelQueue.ts';
+import { makeFatalKernelError } from '../liveslots/kernel-marshal.ts';
 import { makeKernelStore } from '../store/index.ts';
 import type { KernelStore } from '../store/index.ts';
 import type {
@@ -18,6 +19,7 @@ import type {
   EndpointMessage,
   VatDeliveryResult,
 } from '../types.ts';
+import { MAX_VAT_MESSAGE_LENGTH } from './vat-limits.ts';
 import { VatHandle } from './VatHandle.ts';
 import { makeMapKernelDatabase } from '../../test/storage.ts';
 
@@ -95,6 +97,19 @@ describe('VatHandle', () => {
         'handleMessage throws',
         { id: 'v0:1', method: 'ping', params: [], jsonrpc: '2.0' },
         /^Received unexpected message/u,
+      ],
+      [
+        'a syscall is over the size limit',
+        {
+          jsonrpc: '2.0',
+          method: 'syscall',
+          params: [
+            'exit',
+            false,
+            { body: 'x'.repeat(MAX_VAT_MESSAGE_LENGTH), slots: [] },
+          ],
+        },
+        /^Vat v0 sent a syscall over 12000000 characters$/u,
       ],
     ])('reports the failure if %s', async (_case, input, cause) => {
       const onStreamFailure = vi.fn();
@@ -333,6 +348,68 @@ describe('VatHandle', () => {
 
       expect(await sendVatCommandPromise).toBe('test-response');
     });
+
+    it.each([
+      {
+        what: 'a state entry over the size limit',
+        reply: [
+          [
+            [
+              ['small', 'value'],
+              ['big', 'x'.repeat(MAX_VAT_MESSAGE_LENGTH)],
+            ],
+            [],
+          ],
+          null,
+        ],
+        reason: `Vat v0 wrote a state entry over ${MAX_VAT_MESSAGE_LENGTH} characters`,
+      },
+      {
+        what: 'a delivery error over 10,000 characters',
+        reply: [[[['small', 'value']], []], 'x'.repeat(10_005)],
+        reason: `${'x'.repeat(10_000)}… (5 more characters)`,
+      },
+    ])(
+      'terminates a vat whose delivery reply has $what, writing none of its state',
+      async ({ reply, reason }) => {
+        // The map database hands out a new, empty vat store on every call.
+        const written: [string, string][] = [];
+        mockKernelStore = makeKernelStore({
+          ...makeMapKernelDatabase(),
+          makeVatStore: () => ({
+            getKVData: () => [],
+            updateKVData: (sets: [string, string][]) => {
+              written.push(...sets);
+            },
+          }),
+        });
+        const { vat, stream } = await makeVat();
+        const delivering = vat.deliverMessage(asERef('o+0'), {
+          methargs: { body: '#["hello",[]]', slots: [] },
+          result: null,
+        });
+        await delay(10);
+
+        await stream.receiveInput({
+          id: 'v0:1',
+          result: reply,
+          jsonrpc: '2.0',
+        });
+
+        expect({ crank: await delivering, written }).toStrictEqual({
+          crank: {
+            didDelivery: 'v0',
+            abort: true,
+            terminate: {
+              vatId: 'v0',
+              reject: true,
+              info: makeFatalKernelError('INTERNAL_ERROR', reason),
+            },
+          },
+          written: [],
+        });
+      },
+    );
   });
 
   describe('terminate', () => {

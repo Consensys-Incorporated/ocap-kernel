@@ -249,7 +249,16 @@ describe('VatManager', () => {
       }).toStrictEqual({
         running: ['v2'],
         rejected: [
-          ['v1', [['kp1', true, makeKernelError('VAT_TERMINATED', message)]]],
+          [
+            'v1',
+            [
+              [
+                'kp1',
+                true,
+                makeKernelError('VAT_TERMINATED', 'Vat v1 was terminated'),
+              ],
+            ],
+          ],
         ],
         terminated: [['v1']],
         deleted: [['v1']],
@@ -604,9 +613,7 @@ describe('VatManager', () => {
           [
             'kp1',
             true,
-            expect.objectContaining({
-              body: expect.stringContaining('channel failed'),
-            }),
+            makeKernelError('VAT_TERMINATED', 'Vat v1 was terminated'),
           ],
         ]);
         expect(mockKernelStore.deleteVat).toHaveBeenCalledWith('v1');
@@ -1292,7 +1299,8 @@ describe('VatManager', () => {
         expect(mockKernelStore.deleteVat).toHaveBeenCalledWith('v1');
       });
 
-      it('rejects the promises it was deciding', async () => {
+      it('rejects the promises it was deciding with a fixed reason, and logs its own', async () => {
+        const log = vi.spyOn(mockLogger, 'log').mockReturnValue();
         mockKernelStore.getPromisesByDecider.mockImplementation(() =>
           yieldKRefs('kp1'),
         );
@@ -1307,11 +1315,12 @@ describe('VatManager', () => {
           [
             'kp1',
             true,
-            expect.objectContaining({
-              body: expect.stringContaining('Custom reason'),
-            }),
+            makeKernelError('VAT_TERMINATED', 'Vat v1 was terminated'),
           ],
         ]);
+        expect(log).toHaveBeenCalledWith(
+          'Vat v1 was terminated: Vat termination: Custom reason',
+        );
       });
 
       it('releases the pin its root was launched with', async () => {
