@@ -421,8 +421,13 @@ export class KernelRouter {
             endpoint.deliverMessage(endpointTarget, endpointMessage),
           );
         } catch (error) {
-          // Delivery failed (e.g., remote queue full). Reject the kernel promise
-          // so the caller knows the message wasn't delivered.
+          // A remote's failure, but for a store fault, is taken for the peer's,
+          // and a peer must not be able to stop the kernel. A vat's worker
+          // failures end in its termination before here, so what a vat's
+          // delivery throws is the kernel's.
+          if (!isRemoteId(eid) || isStoreFault(error)) {
+            throw error;
+          }
           this.#logger?.error(`Delivery to ${endpointId} failed:`, error);
           if (message.result) {
             const detail =
@@ -433,7 +438,6 @@ export class KernelRouter {
               makeKernelError('DELIVERY_FAILED', capReasonText(detail)),
             );
           }
-          // Continue processing other messages - don't let one failure crash the queue
         }
       } else if (isKernelServiceMessage) {
         crankResult = this.#deliverKernelServiceMessage(target, message);

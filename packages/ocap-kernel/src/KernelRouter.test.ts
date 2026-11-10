@@ -26,6 +26,7 @@ import type {
   KRef,
 } from './types.ts';
 import { asKRef, asRemoteId, asVatId } from '../test/branded.ts';
+import { makeStoreFault } from '../test/storage.ts';
 
 const v1 = asVatId('v1');
 
@@ -537,9 +538,9 @@ describe('KernelRouter', () => {
           `${'x'.repeat(10_000)}… (5 more characters)`,
         ],
       ])(
-        'rejects with DELIVERY_FAILED when endpoint.deliverMessage throws %s',
+        "rejects with DELIVERY_FAILED when a remote's deliverMessage throws %s",
         async (_what, thrown, detail) => {
-          const endpointId = v1;
+          const endpointId = asRemoteId('r1');
           const target = asKRef('ko123');
           (kernelStore.getOwner as unknown as MockInstance).mockReturnValueOnce(
             endpointId,
@@ -562,6 +563,41 @@ describe('KernelRouter', () => {
           expect(kernelQueue.resolvePromises).toHaveBeenCalledWith(endpointId, [
             ['kp1', true, makeKernelError('DELIVERY_FAILED', detail)],
           ]);
+        },
+      );
+
+      it.each([
+        {
+          what: "a vat's failure",
+          owner: v1,
+          failure: new Error('kernel bug'),
+        },
+        {
+          what: "a remote's store fault",
+          owner: asRemoteId('r1'),
+          failure: makeStoreFault(),
+        },
+      ])(
+        'throws $what, for the run loop to roll back',
+        async ({ owner, failure }) => {
+          (kernelStore.getOwner as unknown as MockInstance).mockReturnValueOnce(
+            owner,
+          );
+          (
+            endpointHandle.deliverMessage as unknown as MockInstance
+          ).mockRejectedValueOnce(failure);
+
+          await expect(
+            kernelRouter.deliver({
+              type: 'send',
+              target: asKRef('ko123'),
+              message: {
+                methargs: { body: 'method args', slots: [] },
+                result: asKRef('kp1'),
+              },
+            }),
+          ).rejects.toBe(failure);
+          expect(kernelQueue.resolvePromises).not.toHaveBeenCalled();
         },
       );
     });

@@ -9,6 +9,7 @@ import type {
   ExtractResult,
 } from '@metamask/kernel-rpc-methods';
 import type { VatStore } from '@metamask/kernel-store';
+import { stringify } from '@metamask/kernel-utils';
 import type { JsonRpcMessage } from '@metamask/kernel-utils';
 import { Logger } from '@metamask/logger';
 import type { DuplexStream } from '@metamask/streams';
@@ -380,7 +381,9 @@ export class VatHandle implements EndpointHandle {
    * @param payload - The payload of the command.
    * @param payload.method - The method to call.
    * @param payload.params - The parameters to pass to the method.
-   * @returns A promise that resolves the response to the command.
+   * @returns A promise for the response to the command. A delivery the worker
+   * fails, by an error reply, a malformed result or a write the channel
+   * refuses, is taken for a delivery error, which terminates the vat.
    */
   async sendVatCommand<Method extends VatMethod>({
     method,
@@ -389,7 +392,24 @@ export class VatHandle implements EndpointHandle {
     method: Method;
     params: ExtractParams<Method, typeof vatMethodSpecs>;
   }): Promise<ExtractResult<Method, typeof vatMethodSpecs>> {
-    const result = await this.#rpcClient.call(method, params);
+    let result: unknown;
+    try {
+      result = await this.#rpcClient.call(method, params);
+    } catch (error) {
+      if (
+        method !== 'deliver' ||
+        this.#closing ||
+        error instanceof StreamReadError
+      ) {
+        throw error;
+      }
+      const detail =
+        error instanceof Error ? error.message : stringify(error, 0);
+      result = harden([
+        [[], []],
+        `Vat worker failed the delivery: ${detail}`,
+      ] satisfies VatDeliveryResult);
+    }
     if (method === 'initVat' || method === 'deliver') {
       const [[sets, deletes], vatError] = result as VatDeliveryResult;
       let deliveryError = vatError;
@@ -408,7 +428,7 @@ export class VatHandle implements EndpointHandle {
         this.#vatStore.updateKVData(sets, deletes);
       }
     }
-    return result;
+    return result as ExtractResult<Method, typeof vatMethodSpecs>;
   }
 
   /**

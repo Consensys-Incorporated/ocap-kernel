@@ -451,6 +451,106 @@ describe('VatHandle', () => {
         ['kept', 'old'],
       ]);
     });
+
+    it.each([
+      {
+        what: 'an error',
+        reply: { error: { code: -32603, message: 'worker blew up' } },
+        info: makeFatalKernelError(
+          'INTERNAL_ERROR',
+          'Vat worker failed the delivery: {"code":-32603,"message":"worker blew up"}',
+        ),
+      },
+      {
+        what: 'a result that does not fit',
+        reply: { result: 'garbage' },
+        info: {
+          body: expect.stringContaining('Vat worker failed the delivery: '),
+          slots: [],
+        },
+      },
+    ])(
+      'terminates a vat whose worker answers a delivery with $what',
+      async ({ reply, info }) => {
+        const { vat, stream } = await makeVat();
+        const delivering = vat.deliverMessage(asERef('o+0'), {
+          methargs: { body: '#["hello",[]]', slots: [] },
+          result: null,
+        });
+        await delay(10);
+
+        await stream.receiveInput({
+          id: 'v0:1',
+          jsonrpc: '2.0',
+          ...reply,
+        } as JsonRpcMessage);
+
+        expect(await delivering).toStrictEqual({
+          didDelivery: 'v0',
+          abort: true,
+          terminate: { vatId: 'v0', reject: true, info },
+        });
+      },
+    );
+
+    it.each([
+      {
+        what: 'a delivery whose channel dies',
+        send: async (vat: VatHandle) =>
+          vat.deliverMessage(asERef('o+0'), {
+            methargs: { body: '#["hello",[]]', slots: [] },
+            result: null,
+          }),
+        input: NaN,
+        failure: 'Unexpected stream read error.',
+      },
+      {
+        what: 'a ping the worker answers with an error',
+        send: async (vat: VatHandle) => vat.ping(),
+        input: {
+          id: 'v0:1',
+          error: { code: -32603, message: 'worker blew up' },
+          jsonrpc: '2.0',
+        },
+        failure: 'worker blew up',
+      },
+    ])('still rejects $what', async ({ send, input, failure }) => {
+      const { vat, stream } = await makeVat();
+      const sending = send(vat);
+      sending.catch(() => undefined);
+      await delay(10);
+
+      await stream.receiveInput(input);
+
+      await expect(sending).rejects.toMatchObject({ message: failure });
+    });
+
+    it('throws a store fault from writing the vat state, rather than blame the vat', async () => {
+      const fault = new Error('database or disk is full');
+      mockKernelStore = makeKernelStore({
+        ...makeMapKernelDatabase(),
+        makeVatStore: () => ({
+          getKVData: () => [],
+          updateKVData: () => {
+            throw fault;
+          },
+        }),
+      });
+      const { vat, stream } = await makeVat();
+      const delivering = vat.deliverMessage(asERef('o+0'), {
+        methargs: { body: '#["hello",[]]', slots: [] },
+        result: null,
+      });
+      await delay(10);
+
+      await stream.receiveInput({
+        id: 'v0:1',
+        result: [[[['key', 'value']], []], null],
+        jsonrpc: '2.0',
+      });
+
+      await expect(delivering).rejects.toBe(fault);
+    });
   });
 
   describe('terminate', () => {
