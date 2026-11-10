@@ -181,8 +181,8 @@ export class VatManager {
    * written directly, as no crank is open.
    *
    * @returns A promise that resolves once every vat has started or been
-   *   terminated, and rejects on a store fault, a failed termination, or a
-   *   vat that would not start after a panic.
+   *   terminated, and rejects if the kernel panicked during the starts, or a
+   *   termination failed.
    */
   async initializeAllVats(): Promise<void> {
     const starts: Promise<void>[] = [];
@@ -197,6 +197,10 @@ export class VatManager {
     const failures = (await Promise.allSettled(starts)).flatMap((outcome) =>
       outcome.status === 'rejected' ? [outcome.reason] : [],
     );
+    // A panic during the starts, as from a syscall's store fault, can leave
+    // every start succeeding; it fails the boot here, before anything more is
+    // written outside a crank, and leads what else failed after it.
+    this.#kernelQueue.assertRunLoopAlive('start');
     if (failures.length > 1) {
       throw new AggregateError(
         failures,
@@ -220,10 +224,9 @@ export class VatManager {
     try {
       await this.#relaunchVat(vatId, vatConfig);
     } catch (error) {
-      // A panic, so that the other starts retire nothing: the kernel's fault
-      // fails the boot rather than cost a vat.
+      // `#startVat` has panicked; the boot fails rather than cost the vat.
       if (isStoreFault(error)) {
-        throw this.#kernelQueue.panic(`starting vat ${vatId} failed`, error);
+        throw error;
       }
       if (this.#kernelQueue.isHalted()) {
         this.#logger.error(`Vat ${vatId} would not start:`, error);
@@ -425,6 +428,11 @@ export class VatManager {
         throw running.lost;
       }
     } catch (error) {
+      // Before the wait, so the starts under way see the kernel halted, and a
+      // relaunch that gives up on this start meanwhile does not lose the fault.
+      if (isStoreFault(error)) {
+        this.#kernelQueue.panic(`starting vat ${vatId} failed`, error);
+      }
       await this.#platformServices
         .terminate(vatId)
         .catch((stopError: unknown) =>

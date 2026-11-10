@@ -413,7 +413,10 @@ export class KernelRouter {
           if (!isRemoteId(eid) || isStoreFault(error)) {
             throw error;
           }
-          this.#logger?.error(`Delivery to ${endpointId} failed:`, error);
+          this.#logger?.error(
+            `Dropped a message to ${target} on ${endpointId}${message.result ? `, rejecting its result ${message.result}` : ''}:`,
+            error,
+          );
           if (message.result) {
             this.#rejectResultIfPending(
               eid,

@@ -111,18 +111,12 @@ function makePlatformServices(
 }
 
 function dumpStore(kernelDatabase: KernelDatabase): Record<string, unknown> {
-  const { get, getNextKey } = kernelDatabase.kernelKVStore;
-  const kv: Record<string, string | undefined> = {};
-  for (let key = getNextKey(''); key !== undefined; key = getNextKey(key)) {
-    kv[key] = get(key);
-  }
-  const vatState = Object.fromEntries(
-    ['v1', 'v2'].map((vatId) => [
-      vatId,
-      kernelDatabase.makeVatStore(vatId).getKVData(),
-    ]),
-  );
-  return { kv, vatState };
+  return {
+    kv: kernelDatabase.executeQuery('SELECT key, value FROM kv ORDER BY key'),
+    vatState: kernelDatabase.executeQuery(
+      'SELECT vatID, key, value FROM kv_vatstore ORDER BY vatID, key',
+    ),
+  };
 }
 
 describe('a store fault', () => {
@@ -168,13 +162,21 @@ describe('a store fault', () => {
     const before = dumpStore(first.kernelDatabase);
 
     await waitForDeath(first.kernel);
+    const { runLoop } = await first.kernel.getStatus();
     const after = dumpStore(first.kernelDatabase);
     await first.kernel.stop();
     vi.restoreAllMocks();
     const second = await setUpRealKernel({ dbFilename });
 
-    expect(after).toStrictEqual(before);
+    expect({
+      diedOf: runLoop.state === 'failed' && runLoop.error,
+      after,
+    }).toStrictEqual({
+      diedOf: 'Kernel panic: syscall resolve from vat v2 failed',
+      after: before,
+    });
     await vi.waitFor(() => expect(second.received).toContain('v2:answer'));
+    await second.kernel.stop();
   });
 
   it("writing a vat's state stops the kernel rather than fail the message", async () => {
@@ -238,18 +240,9 @@ describe('a store fault', () => {
     });
   });
 
-  it.each([
-    {
-      other: 'starts',
-      refusal: 'Kernel panicked; cannot start',
-    },
-    {
-      other: 'fails to start',
-      refusal: 'Kernel panicked; cannot retire vat v2, which would not start',
-    },
-  ])(
+  it.each([{ other: 'starts' }, { other: 'fails to start' }])(
     'in a syscall while a vat starts at boot fails Kernel.make, writing nothing after it, when the other vat $other',
-    async ({ other, refusal }) => {
+    async ({ other }) => {
       const { kernelDatabase } = await storeOfAStoppedKernel();
       failWrites(kernelDatabase, (key) => key.startsWith('v1.c.p+'));
       fakeStarts(async ({ vatId, kernelQueue, kernelStore }) => {
@@ -283,7 +276,7 @@ describe('a store fault', () => {
           ([message]) => message === 'Vat v2 would not start:',
         ),
       }).toStrictEqual({
-        failure: refusal,
+        failure: 'Kernel panicked; cannot start',
         cause: 'Kernel panic: syscall send from vat v1 failed',
         workersStopped: 1,
         terminated: '[]',
@@ -321,16 +314,13 @@ describe('a store fault', () => {
     }).catch((error: Error) => error);
 
     expect({
-      failures: ((failure as AggregateError).errors as Error[]).map(
-        ({ message }) => message,
-      ),
+      failure: (failure as Error).message,
+      cause: ((failure as Error).cause as Error).message,
       terminated: kernelDatabase.kernelKVStore.get('vats.terminated'),
       kept: kernelDatabase.kernelKVStore.get('vatConfig.v2') !== undefined,
     }).toStrictEqual({
-      failures: [
-        'Kernel panic: starting vat v1 failed',
-        'Kernel panicked; cannot retire vat v2, which would not start',
-      ],
+      failure: 'Kernel panicked; cannot start',
+      cause: 'Kernel panic: starting vat v1 failed',
       terminated: '[]',
       kept: true,
     });
@@ -445,6 +435,7 @@ describe('a store fault', () => {
 
     expect({
       runLoop: (await kernel.getStatus()).runLoop,
+      running: kernel.getVatIds(),
       recorded: ['v3', 'v4'].map((vatId) =>
         kernelDatabase.kernelKVStore.get(`vatConfig.${vatId}`),
       ),
@@ -458,6 +449,7 @@ describe('a store fault', () => {
         error: 'Kernel panic: syscall send from vat v1 failed',
         detail: expect.any(String),
       },
+      running: ['v1', 'v2'],
       recorded: [undefined, undefined],
       stopped: ['v3', 'v4'],
     });

@@ -895,8 +895,8 @@ describe('a store fault', () => {
     }).toStrictEqual({
       runLoop: {
         state: 'failed',
-        error: fault.message,
-        detail: expect.any(String),
+        error: 'Kernel panic: starting vat v1 failed',
+        detail: expect.stringContaining(fault.message),
       },
       restart: DEAD_WORK,
       queued: 1,

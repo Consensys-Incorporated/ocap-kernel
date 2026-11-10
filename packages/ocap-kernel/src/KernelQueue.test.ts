@@ -1819,10 +1819,113 @@ describe('KernelQueue', () => {
   });
 
   describe('onCommit', () => {
+    /**
+     * Run cranks that each deliver a send, calling `during` inside them.
+     *
+     * @param during - What each crank's delivery does, by crank number.
+     * @returns The run loop's promise.
+     */
+    const runCranksWhile = async (
+      during: (crank: number) => Promise<unknown>,
+    ): Promise<void> => {
+      (kernelStore.isInCrank as unknown as MockInstance).mockReturnValue(true);
+      (kernelStore.runQueueLength as unknown as MockInstance).mockReturnValue(
+        1,
+      );
+      (kernelStore.dequeueRun as unknown as MockInstance).mockReturnValue({
+        type: 'send',
+        target: 'ko123',
+        message: {} as KernelMessage,
+      });
+      let crank = 0;
+      return kernelQueue.run(async () => {
+        crank += 1;
+        return (await during(crank)) as undefined;
+      });
+    };
+
     it('answers at once when no crank is open', () => {
       const answer = vi.fn();
 
       kernelQueue.onCommit(answer);
+
+      expect(answer).toHaveBeenCalledOnce();
+    });
+
+    it.each([
+      { what: 'commits', abort: false },
+      { what: 'aborts, once it commits', abort: true },
+    ])('answers a crank that $what, after the commit', async ({ abort }) => {
+      const order: string[] = [];
+      (kernelStore.endCrank as unknown as MockInstance).mockImplementation(() =>
+        order.push('commit'),
+      );
+
+      await expect(
+        runCranksWhile(async (crank) => {
+          if (crank === 1) {
+            kernelQueue.onCommit(() => order.push('answer'));
+            return { abort };
+          }
+          throw new Error(KILL_RUN_LOOP);
+        }),
+      ).rejects.toThrow(KILL_RUN_LOOP);
+
+      expect(order).toStrictEqual(['commit', 'answer', 'commit']);
+    });
+
+    it('drops the answer of a crank that fails to commit', async () => {
+      (kernelStore.endCrank as unknown as MockInstance).mockImplementation(
+        () => {
+          throw new Error(KILL_RUN_LOOP);
+        },
+      );
+      const answer = vi.fn();
+
+      await expect(
+        runCranksWhile(async () => {
+          kernelQueue.onCommit(answer);
+          return { abort: true };
+        }),
+      ).rejects.toThrow(KILL_RUN_LOOP);
+
+      expect(answer).not.toHaveBeenCalled();
+    });
+
+    it('answers a committed crank before a held request fails to be written', async () => {
+      const fault = new Error('SQLITE_FULL');
+      (
+        kernelStore.enqueueRun as unknown as MockInstance
+      ).mockImplementationOnce(() => {
+        throw fault;
+      });
+      const answer = vi.fn();
+
+      await expect(
+        runCranksWhile(async () => {
+          kernelQueue.onCommit(answer);
+          kernelQueue.enqueueRestartVat(v1);
+          return { abort: true };
+        }),
+      ).rejects.toBe(fault);
+
+      expect(answer).toHaveBeenCalledOnce();
+    });
+
+    it('answers once, not again on a later crank', async () => {
+      const answer = vi.fn();
+
+      await expect(
+        runCranksWhile(async (crank) => {
+          if (crank === 1) {
+            kernelQueue.onCommit(answer);
+          }
+          if (crank > 3) {
+            throw new Error(KILL_RUN_LOOP);
+          }
+          return undefined;
+        }),
+      ).rejects.toThrow(KILL_RUN_LOOP);
 
       expect(answer).toHaveBeenCalledOnce();
     });

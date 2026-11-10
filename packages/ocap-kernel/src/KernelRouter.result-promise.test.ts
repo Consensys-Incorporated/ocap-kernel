@@ -1,3 +1,4 @@
+import type { CapData } from '@endo/marshal';
 import { ResourceLimitError } from '@metamask/kernel-errors';
 import { makeSQLKernelDatabase } from '@metamask/kernel-store/sqlite/nodejs';
 import type { Logger } from '@metamask/logger';
@@ -5,7 +6,7 @@ import { describe, it, expect, vi } from 'vitest';
 
 import { KernelQueue } from './KernelQueue.ts';
 import { KernelRouter } from './KernelRouter.ts';
-import { kser } from './liveslots/kernel-marshal.ts';
+import { kser, kunser } from './liveslots/kernel-marshal.ts';
 import { makeKernelStore } from './store/index.ts';
 import type { EndpointHandle, KRef, RunQueueItem } from './types.ts';
 import { asRRef, asRemoteId } from '../test/branded.ts';
@@ -93,23 +94,43 @@ describe('a result promise whose delivery fails', () => {
   }
 
   it.each([
-    { what: 'a full queue', failure: new ResourceLimitError('queue full') },
+    {
+      what: 'a full queue',
+      failure: new ResourceLimitError('queue full'),
+      reason: 'queue full',
+    },
     {
       what: 'a message too large to send',
       failure: new RangeError('Invalid string length'),
+      reason: 'Invalid string length',
     },
-  ])('rejects it once the delivery fails with $what', async ({ failure }) => {
-    const { kernelStore, kernelQueue, runCrank } = await makeFixture(
-      async () => {
-        throw failure;
-      },
-    );
-    const result = queueSendWithResult(kernelStore, kernelQueue);
+    {
+      what: 'a long reason',
+      failure: new Error('x'.repeat(10_005)),
+      reason: `${'x'.repeat(10_000)}… (5 more characters)`,
+    },
+  ])(
+    'rejects it once the delivery fails with $what',
+    async ({ failure, reason }) => {
+      const { kernelStore, kernelQueue, runCrank } = await makeFixture(
+        async () => {
+          throw failure;
+        },
+      );
+      const result = queueSendWithResult(kernelStore, kernelQueue);
 
-    await runCrank();
+      await runCrank();
 
-    expect(kernelStore.getKernelPromise(result).state).toBe('rejected');
-  });
+      const { state, value } = kernelStore.getKernelPromise(result);
+      expect({
+        state,
+        reason: (kunser(value as CapData<KRef>) as Error).message,
+      }).toStrictEqual({
+        state: 'rejected',
+        reason: `[KERNEL:DELIVERY_FAILED] ${reason}`,
+      });
+    },
+  );
 
   it.each([
     { how: 'fulfilled', rejected: false, state: 'fulfilled' },

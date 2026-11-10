@@ -276,14 +276,47 @@ describe('VatManager', () => {
         .catch((error: Error) => error);
 
       expect({
-        failure: (failure as Error).message,
-        cause: (failure as Error).cause,
+        failure,
         panic: mockKernelQueue.panic.mock.calls,
         terminated: mockKernelStore.markVatAsTerminated.mock.calls,
       }).toStrictEqual({
-        failure: 'Kernel panic: starting vat v1 failed',
-        cause: storeFault,
+        failure: storeFault,
         panic: [['starting vat v1 failed', storeFault]],
+        terminated: [],
+      });
+    });
+
+    it('panics on a store fault before its relaunch gives up, so the vat is not retired', async () => {
+      vatManager = new VatManager({
+        platformServices: mockPlatformServices,
+        kernelStore: mockKernelStore,
+        kernelQueue: mockKernelQueue,
+        logger: mockLogger,
+        vatRelaunchTimeoutMs: 1,
+      });
+      vi.spyOn(mockLogger, 'error').mockReturnValue();
+      mockKernelQueue.panic.mockImplementation((problem, cause) => {
+        mockKernelQueue.isHalted.mockReturnValue(true);
+        mockKernelQueue.assertRunLoopAlive.mockImplementation((what) => {
+          throw new Error(`Kernel panicked; cannot ${what}`);
+        });
+        return new Error(`Kernel panic: ${problem}`, { cause });
+      });
+      makeVatHandleMock.mockRejectedValueOnce(makeStoreFault());
+      // Stopping the failed worker outlasts the relaunch's timeout.
+      mockPlatformServices.terminate.mockReturnValueOnce(
+        new Promise(() => undefined),
+      );
+
+      const failure = await vatManager
+        .initializeAllVats()
+        .catch((error: Error) => error);
+
+      expect({
+        failure: (failure as Error).message,
+        terminated: mockKernelStore.markVatAsTerminated.mock.calls,
+      }).toStrictEqual({
+        failure: 'Kernel panicked; cannot start',
         terminated: [],
       });
     });
