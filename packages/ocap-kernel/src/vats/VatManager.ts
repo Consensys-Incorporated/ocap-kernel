@@ -236,7 +236,7 @@ export class VatManager {
       // Not `#stopVat`: the failed start has already stopped its worker, and a
       // platform stuck launching it may be stuck stopping it too. What its
       // `initVat` wrote stays, as no crank is open to roll it back.
-      this.#retireVat(vatId, failure);
+      this.#retireVat(vatId);
     }
   }
 
@@ -585,13 +585,17 @@ export class VatManager {
     terminating: boolean,
     reason?: CapData<KRef>,
   ): Promise<void> {
+    if (terminating && reason) {
+      // The vat's promises get a fixed reason, so its own is kept only here.
+      this.#logger.log(`Terminating vat ${vatId}: ${reason.body}`);
+    }
     await this.#stopVat(
       terminating
         ? {
             vatId,
             terminating: true,
             terminationError: reason
-              ? new Error(`Vat termination: ${capReasonText(reason.body)}`)
+              ? new Error(`Vat termination: ${reason.body}`)
               : new VatDeletedError(vatId),
           }
         : { vatId, terminating: false },
@@ -621,7 +625,7 @@ export class VatManager {
     let recordFailure: Error | undefined;
     try {
       if (terminating) {
-        this.#retireVat(vatId, terminationError);
+        this.#retireVat(vatId);
       } else {
         // A restart keeps the pin and the records.
         this.#vats.delete(vatId);
@@ -660,13 +664,11 @@ export class VatManager {
    * spending an embedder's pin.
    *
    * @param vatId - The vat being retired.
-   * @param error - Why it is being retired.
    */
-  #retireVat(vatId: VatId, error: Error): void {
+  #retireVat(vatId: VatId): void {
     this.#vats.delete(vatId);
-    const recording = !this.#kernelStore.isVatTerminated(vatId);
-    if (recording) {
-      // Fixed, as in SwingSet: each promise stores its own copy of the reason.
+    if (!this.#kernelStore.isVatTerminated(vatId)) {
+      // Not the vat's reason, as in SwingSet: each promise would store a copy.
       const failure = makeKernelError(
         'VAT_TERMINATED',
         `Vat ${vatId} was terminated`,
@@ -678,9 +680,6 @@ export class VatManager {
       this.#kernelStore.markVatAsTerminated(vatId);
     }
     this.#kernelStore.deleteVat(vatId);
-    if (recording) {
-      this.#logger.log(`Vat ${vatId} was terminated: ${error.message}`);
-    }
   }
 
   /**

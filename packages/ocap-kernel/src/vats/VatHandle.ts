@@ -33,7 +33,6 @@ import type { AllowedGlobalName } from './endowments.ts';
 import {
   MAX_VAT_MESSAGE_LENGTH,
   capReasonText,
-  fitsVatMessageLimit,
   fitsVatStateLimit,
 } from './vat-limits.ts';
 import { VatSyscall } from './VatSyscall.ts';
@@ -156,10 +155,11 @@ export class VatHandle implements EndpointHandle {
    */
   static async make(params: VatConstructorProps): Promise<VatHandle> {
     const vat = new VatHandle(params);
-    const [, deliveryError] = await vat.#init();
+    await vat.#init();
+    const { deliveryError } = vat.#vatSyscall;
     if (deliveryError) {
       throw new Error(
-        `Failed to initialize vat ${vat.vatId}: ${capReasonText(deliveryError)}`,
+        `Failed to initialize vat ${vat.vatId}: ${deliveryError}`,
       );
     }
     return vat;
@@ -243,11 +243,11 @@ export class VatHandle implements EndpointHandle {
    */
   async #handleMessage(message: JsonRpcMessage): Promise<void> {
     if (isJsonRpcResponse(message)) {
-      // Not measured whole: a delivery's reply carries all of its state
-      // changes, which `sendVatCommand` checks one entry at a time.
+      // A reply is not measured whole: it carries all of a delivery's state
+      // changes, so `sendVatCommand` checks each entry.
       this.#rpcClient.handleResponse(message.id as string, message);
     } else if (isJsonRpcNotification(message)) {
-      if (!fitsVatMessageLimit(message)) {
+      if (JSON.stringify(message).length > MAX_VAT_MESSAGE_LENGTH) {
         throw new Error(
           `Vat ${this.vatId} sent a syscall over ${MAX_VAT_MESSAGE_LENGTH} characters`,
         );
@@ -380,9 +380,7 @@ export class VatHandle implements EndpointHandle {
    * @param payload - The payload of the command.
    * @param payload.method - The method to call.
    * @param payload.params - The parameters to pass to the method.
-   * @returns A promise for the response to the command. A delivery or
-   * `initVat` that writes a state entry over the size limit gets a result
-   * that reports this as its `deliveryError` and writes nothing.
+   * @returns A promise that resolves the response to the command.
    */
   async sendVatCommand<Method extends VatMethod>({
     method,
@@ -391,15 +389,13 @@ export class VatHandle implements EndpointHandle {
     method: Method;
     params: ExtractParams<Method, typeof vatMethodSpecs>;
   }): Promise<ExtractResult<Method, typeof vatMethodSpecs>> {
-    let result: unknown = await this.#rpcClient.call(method, params);
+    const result = await this.#rpcClient.call(method, params);
     if (method === 'initVat' || method === 'deliver') {
-      if (!fitsVatStateLimit((result as VatDeliveryResult)[0])) {
-        result = harden([
-          [[], []],
-          `Vat ${this.vatId} wrote a state entry over ${MAX_VAT_MESSAGE_LENGTH} characters`,
-        ] satisfies VatDeliveryResult);
+      const [[sets, deletes], vatError] = result as VatDeliveryResult;
+      let deliveryError = vatError;
+      if (!deliveryError && !fitsVatStateLimit([sets, deletes])) {
+        deliveryError = `Vat ${this.vatId} wrote a state entry over ${MAX_VAT_MESSAGE_LENGTH} characters`;
       }
-      const [[sets, deletes], deliveryError] = result as VatDeliveryResult;
       this.#vatSyscall.deliveryError = deliveryError
         ? capReasonText(deliveryError)
         : undefined;
@@ -412,7 +408,7 @@ export class VatHandle implements EndpointHandle {
         this.#vatStore.updateKVData(sets, deletes);
       }
     }
-    return result as ExtractResult<Method, typeof vatMethodSpecs>;
+    return result;
   }
 
   /**

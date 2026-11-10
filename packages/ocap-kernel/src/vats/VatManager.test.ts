@@ -1318,9 +1318,7 @@ describe('VatManager', () => {
             makeKernelError('VAT_TERMINATED', 'Vat v1 was terminated'),
           ],
         ]);
-        expect(log).toHaveBeenCalledWith(
-          'Vat v1 was terminated: Vat termination: Custom reason',
-        );
+        expect(log).toHaveBeenCalledWith('Terminating vat v1: Custom reason');
       });
 
       it('releases the pin its root was launched with', async () => {

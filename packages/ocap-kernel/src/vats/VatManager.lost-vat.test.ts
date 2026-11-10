@@ -23,6 +23,7 @@ import type {
   KRef,
 } from '../types.ts';
 import { makeGCAction } from '../types.ts';
+import { MAX_VAT_MESSAGE_LENGTH } from './vat-limits.ts';
 import { VatHandle } from './VatHandle.ts';
 import { VatManager } from './VatManager.ts';
 import { asVatId, asVRef } from '../../test/branded.ts';
@@ -34,7 +35,7 @@ type Stream = TestDuplexStream<JsonRpcMessage, JsonRpcMessage>;
 type KernelDatabase = Awaited<ReturnType<typeof makeSQLKernelDatabase>>;
 
 /** How a vat loses its channel. */
-type Death = 'close' | 'bad frame';
+type Death = 'close' | 'bad frame' | 'oversized syscall';
 
 type Worker = {
   /** Make a syscall, as liveslots would mid-delivery. */
@@ -42,7 +43,7 @@ type Worker = {
   /**
    * Lose the channel: a close ends it cleanly, as a runtime may for an exited
    * worker; a bad frame fails it, as a garbled message from a live worker
-   * does.
+   * does; the kernel ends it on a syscall over the size limit.
    */
   die: (death: Death) => Promise<void>;
 };
@@ -82,6 +83,16 @@ function makeWorkers() {
             throw new Error(`Vat ${vatId} has no channel to close`);
           }
           await holder.stream.return();
+        } else if (death === 'oversized syscall') {
+          await receive({
+            jsonrpc: '2.0',
+            method: 'syscall',
+            params: [
+              'exit',
+              false,
+              { body: 'x'.repeat(MAX_VAT_MESSAGE_LENGTH), slots: [] },
+            ],
+          });
         } else {
           await receive(NaN);
         }
@@ -381,7 +392,7 @@ describe('a vat that loses its channel mid-delivery', () => {
       caller: /^none$/u,
     },
   ];
-  const deaths: Death[] = ['close', 'bad frame'];
+  const deaths: Death[] = ['close', 'bad frame', 'oversized syscall'];
 
   it.each(
     deaths.flatMap((death) =>

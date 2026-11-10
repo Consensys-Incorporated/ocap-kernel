@@ -1,20 +1,24 @@
 import type { VatCheckpoint } from '@metamask/kernel-store';
 
 /**
- * How much of a vat's text a termination reason keeps. Building a reason from
- * text near JavaScript's maximum string length throws, failing the termination.
+ * How much of a vat's text the kernel keeps in a reason or error it builds,
+ * some of which it stores. Building one from text near JavaScript's maximum
+ * string length throws.
  */
-export const MAX_REASON_LENGTH = 10_000;
+const MAX_REASON_LENGTH = 10_000;
 
 /**
  * The most a vat may send in one syscall, in characters of JSON, and the most
  * one entry of its state may hold. SwingSet's vat channel refuses a message
  * over 12 MB, and there each write to a vat's state is a message of its own.
+ * SwingSet then panics, which would recur on every start; here the vat is
+ * terminated. A message is measured once received, so this bounds what is
+ * stored, not memory.
  */
 export const MAX_VAT_MESSAGE_LENGTH = 12_000_000;
 
 /**
- * Cut text from a vat to {@link MAX_REASON_LENGTH}.
+ * Cut text from a vat to {@link MAX_REASON_LENGTH}, noting how much was cut.
  *
  * @param text - The text.
  * @returns The text, cut short if it is longer.
@@ -24,20 +28,6 @@ export function capReasonText(text: string): string {
   return over > 0
     ? `${text.slice(0, MAX_REASON_LENGTH)}… (${over} more characters)`
     : text;
-}
-
-/**
- * Whether a message from a vat fits {@link MAX_VAT_MESSAGE_LENGTH}.
- *
- * @param message - The message.
- * @returns True if so, and false for one too large to measure.
- */
-export function fitsVatMessageLimit(message: unknown): boolean {
-  try {
-    return JSON.stringify(message).length <= MAX_VAT_MESSAGE_LENGTH;
-  } catch {
-    return false;
-  }
 }
 
 /**

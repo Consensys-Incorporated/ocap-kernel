@@ -528,40 +528,41 @@ describe('KernelRouter', () => {
         );
       });
 
-      it('rejects with DELIVERY_FAILED when endpoint.deliverMessage throws', async () => {
-        const endpointId = v1;
-        const target = asKRef('ko123');
-        (kernelStore.getOwner as unknown as MockInstance).mockReturnValueOnce(
-          endpointId,
-        );
-        (
-          endpointHandle.deliverMessage as unknown as MockInstance
-        ).mockRejectedValueOnce(new Error('queue full'));
-        const message: KernelMessage = {
-          methargs: { body: 'method args', slots: [] },
-          result: asKRef('kp1'),
-        };
-        const sendItem: RunQueueItemSend = {
-          type: 'send',
-          target,
-          message,
-        };
+      it.each([
+        ['a short error', 'queue full', 'queue full'],
+        [
+          'an error over 10,000 characters',
+          'x'.repeat(10_005),
+          `${'x'.repeat(10_000)}… (5 more characters)`,
+        ],
+      ])(
+        'rejects with DELIVERY_FAILED when endpoint.deliverMessage throws %s',
+        async (_what, thrown, detail) => {
+          const endpointId = v1;
+          const target = asKRef('ko123');
+          (kernelStore.getOwner as unknown as MockInstance).mockReturnValueOnce(
+            endpointId,
+          );
+          (
+            endpointHandle.deliverMessage as unknown as MockInstance
+          ).mockRejectedValueOnce(new Error(thrown));
+          const message: KernelMessage = {
+            methargs: { body: 'method args', slots: [] },
+            result: asKRef('kp1'),
+          };
+          const sendItem: RunQueueItemSend = {
+            type: 'send',
+            target,
+            message,
+          };
 
-        await kernelRouter.deliver(sendItem);
+          await kernelRouter.deliver(sendItem);
 
-        expect(kernelQueue.resolvePromises).toHaveBeenCalledWith(
-          endpointId,
-          expect.arrayContaining([
-            expect.arrayContaining([
-              'kp1',
-              true,
-              expect.objectContaining({
-                body: expect.stringContaining('[KERNEL:DELIVERY_FAILED]'),
-              }),
-            ]),
-          ]),
-        );
-      });
+          expect(kernelQueue.resolvePromises).toHaveBeenCalledWith(endpointId, [
+            ['kp1', true, makeKernelError('DELIVERY_FAILED', detail)],
+          ]);
+        },
+      );
     });
 
     describe('notify', () => {

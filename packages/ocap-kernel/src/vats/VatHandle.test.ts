@@ -1,4 +1,5 @@
 import type { VatOneResolution } from '@agoric/swingset-liveslots';
+import { makeSQLKernelDatabase } from '@metamask/kernel-store/sqlite/nodejs';
 import type { JsonRpcMessage } from '@metamask/kernel-utils';
 import { isJsonRpcMessage } from '@metamask/kernel-utils';
 import type { Logger } from '@metamask/logger';
@@ -350,9 +351,9 @@ describe('VatHandle', () => {
     });
 
     it.each([
-      {
-        what: 'a state entry over the size limit',
-        reply: [
+      [
+        'a state entry over the size limit',
+        [
           [
             [
               ['small', 'value'],
@@ -362,27 +363,18 @@ describe('VatHandle', () => {
           ],
           null,
         ],
-        reason: `Vat v0 wrote a state entry over ${MAX_VAT_MESSAGE_LENGTH} characters`,
-      },
-      {
-        what: 'a delivery error over 10,000 characters',
-        reply: [[[['small', 'value']], []], 'x'.repeat(10_005)],
-        reason: `${'x'.repeat(10_000)}… (5 more characters)`,
-      },
+        `Vat v0 wrote a state entry over ${MAX_VAT_MESSAGE_LENGTH} characters`,
+      ],
+      [
+        'a delivery error over 10,000 characters',
+        [[[['small', 'value']], []], 'x'.repeat(10_005)],
+        `${'x'.repeat(10_000)}… (5 more characters)`,
+      ],
     ])(
-      'terminates a vat whose delivery reply has $what, writing none of its state',
-      async ({ reply, reason }) => {
-        // The map database hands out a new, empty vat store on every call.
-        const written: [string, string][] = [];
-        mockKernelStore = makeKernelStore({
-          ...makeMapKernelDatabase(),
-          makeVatStore: () => ({
-            getKVData: () => [],
-            updateKVData: (sets: [string, string][]) => {
-              written.push(...sets);
-            },
-          }),
-        });
+      'terminates a vat whose delivery reply has %s, writing none of its state',
+      async (_what, reply, reason) => {
+        const kdb = await makeSQLKernelDatabase({ dbFilename: ':memory:' });
+        mockKernelStore = makeKernelStore(kdb);
         const { vat, stream } = await makeVat();
         const delivering = vat.deliverMessage(asERef('o+0'), {
           methargs: { body: '#["hello",[]]', slots: [] },
@@ -396,7 +388,10 @@ describe('VatHandle', () => {
           jsonrpc: '2.0',
         });
 
-        expect({ crank: await delivering, written }).toStrictEqual({
+        expect({
+          crank: await delivering,
+          state: kdb.makeVatStore('v0').getKVData(),
+        }).toStrictEqual({
           crank: {
             didDelivery: 'v0',
             abort: true,
@@ -406,10 +401,56 @@ describe('VatHandle', () => {
               info: makeFatalKernelError('INTERNAL_ERROR', reason),
             },
           },
-          written: [],
+          state: [],
         });
       },
     );
+
+    it('refuses a vat whose initVat reply has a state entry over the size limit, writing none of it', async () => {
+      sendVatCommandMock.mockRestore();
+      const kdb = await makeSQLKernelDatabase({ dbFilename: ':memory:' });
+      kdb.makeVatStore('v0').updateKVData([['kept', 'old']], []);
+      const holder: {
+        stream?: TestDuplexStream<JsonRpcMessage, JsonRpcMessage>;
+      } = {};
+      const vatStream = await TestDuplexStream.make<
+        JsonRpcMessage,
+        JsonRpcMessage
+      >(
+        () => {
+          setTimeout(() => {
+            holder.stream
+              ?.receiveInput({
+                jsonrpc: '2.0',
+                id: 'v0:1',
+                result: [
+                  [[['big', 'x'.repeat(MAX_VAT_MESSAGE_LENGTH)]], ['kept']],
+                  null,
+                ],
+              })
+              .catch(() => undefined);
+          }, 0);
+        },
+        { validateInput: isJsonRpcMessage },
+      );
+      holder.stream = vatStream;
+
+      const making = VatHandle.make({
+        kernelQueue: null as unknown as KernelQueue,
+        kernelStore: makeKernelStore(kdb),
+        vatId: asVatId('v0'),
+        vatConfig: { sourceSpec: 'not-really-there.js' },
+        vatStream,
+        onStreamFailure: () => undefined,
+      });
+
+      await expect(making).rejects.toThrow(
+        `Failed to initialize vat v0: Vat v0 wrote a state entry over ${MAX_VAT_MESSAGE_LENGTH} characters`,
+      );
+      expect(kdb.makeVatStore('v0').getKVData()).toStrictEqual([
+        ['kept', 'old'],
+      ]);
+    });
   });
 
   describe('terminate', () => {

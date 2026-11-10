@@ -187,8 +187,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
-- **BREAKING:** A vat that sends a syscall over 12,000,000 characters of JSON, or writes a state entry over 12,000,000 characters, is terminated ([#1286](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1286))
-- **BREAKING:** The promises a terminated vat was deciding are rejected with a fixed `VAT_TERMINATED` error, instead of each storing a copy of the reason, which a vat could make long enough to fill the disk. The reason is logged, and a vat's text in it is cut to 10,000 characters ([#1286](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1286))
+- **BREAKING:** A vat that sends a syscall over 12,000,000 characters of JSON, or writes a state entry over 12,000,000 characters, is terminated, or fails to launch. Liveslots accepts some values that are stored over that size: a durable collection value full of quotes or other characters JSON escapes, or a virtual object whose properties add up past it ([#1286](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1286))
+- **BREAKING:** The promises a terminated vat was deciding are rejected with a fixed `VAT_TERMINATED` error; the vat's reason is logged instead, so it can't fill the disk with a copy per promise ([#1286](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1286))
+- A vat's text in a rejection reason or error the kernel builds is cut to 10,000 characters ([#1286](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1286))
 - A peer's first message or an ocap URL redemption that arrives while a crank aborts no longer leaves two peers sharing one c-list, through which either could reach objects the kernel exported to the other ([#1204](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1204))
 - An endpoint can no longer retire or abandon a kernel object it does not own, nor one it names only as an import: `abandonExports` on an import ref tore that import down unchecked ([#1085](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1085))
 
