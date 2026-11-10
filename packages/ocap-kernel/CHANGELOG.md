@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Record the latest ocap URL issued for each object, as `ocapURLString.${kref}`, until its URLs are released ([#1229](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1229))
 - Add `Kernel.releaseResult`, also on the kernel facet and as a `releaseResult` RPC method. A `queueMessage` result that carries krefs, or a `bootstrapResult` that does, now has a `kpid`, and the kernel keeps its krefs alive for the caller until it is released or the kernel next starts; a result without a `kpid` needs no release ([#1285](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1285))
 - `Kernel.make` takes `kernelServices`, kernel services registered before the run loop starts; one registered later writes into whatever crank is open ([#1215](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1215))
 - Add `Request`, `Headers`, and `Response` to the globals a vat may request, for `makeFetch` from `@metamask/kernel-platforms` ([#942](https://github.com/MetaMask/ocap-kernel/pull/942), [#1163](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1163))

@@ -140,8 +140,9 @@ describe('the hold on a queueMessage result', () => {
     start();
     const result = await kernelQueue.enqueueMessage(root, 'fetch', []);
     const kpid = result.kpid as KRef;
-    // The kernel does not yet retire the vat's entry for a settled promise
-    // (#1229), which would keep the promise whether or not it is held.
+    // This endpoint resolves without going through `VatSyscall`, which is
+    // what retires the vat's entry, and the entry would keep the promise
+    // whether or not it is held.
     await kernelQueue.writeOutsideCrank(() => kernelStore.forgetKref(v1, kpid));
     await kernelQueue.enqueueMessage(root, 'fetch', []);
     expect(kernelStore.getObjectRefCount(gift).reachable).toBe(2);

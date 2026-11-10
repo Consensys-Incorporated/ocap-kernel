@@ -162,13 +162,23 @@ describe('Garbage Collection', () => {
       'held-object',
     ]);
 
+    const createdRef = created.slots[0] as KRef;
     expect(pong.kpid).toBeUndefined();
     expect(kernelStore.getHeldResults()).toStrictEqual([created.kpid]);
+    expect(kernelStore.getObjectRefCount(createdRef)).toStrictEqual({
+      reachable: 1,
+      recognizable: 1,
+    });
 
     await kernel.releaseResult(pong);
     await kernel.releaseResult(created);
 
     expect(kernelStore.getHeldResults()).toStrictEqual([]);
+    expect(kernelStore.kernelRefExists(created.kpid as KRef)).toBe(false);
+    expect(kernelStore.getObjectRefCount(createdRef)).toStrictEqual({
+      reachable: 0,
+      recognizable: 0,
+    });
     await expect(kernel.releaseResult(created)).rejects.toThrow(
       'is not a held result',
     );
