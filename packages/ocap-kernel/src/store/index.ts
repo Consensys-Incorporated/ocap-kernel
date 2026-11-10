@@ -63,6 +63,7 @@
  *   nextRemoteId = NN                        // allocation counter for remote IDs
  *   nextObjectId = NN                        // allocation counter for object KRefs
  *   nextPromiseId = NN                       // allocation counter for promise KRefs
+ *   crankNumber = NN                         // number of the most recent crank
  *   pinned.${kref} = NN                      // number of pins held on ${kref}
  *   ocapURLObjects.${kref} = NN              // number of ocap URLs naming ${kref}
  *   kernelService.${serviceName} = ${koid}   // kref of kernel service object ${serviceName}
@@ -149,6 +150,8 @@ export function makeKernelStore(kdb: KernelDatabase, logger?: Logger) {
     nextVatId: ['nextVatId', '1'],
     /** Counter for allocating RemoteIDs */
     nextRemoteId: ['nextRemoteId', '1'],
+    /** Number of the most recent crank */
+    crankNumber: ['crankNumber', '0'],
     // Garbage collection
     gcActions: ['gcActions', '[]'],
     reapQueue: ['reapQueue', '[]'],
