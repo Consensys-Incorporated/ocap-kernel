@@ -223,12 +223,13 @@ queued work, control operations included, are then rejected.
 ### store fault
 
 An error the kernel's database throws on a read or write, as when the disk is full. It is
-the kernel's own fault, not the [vat](#vat)'s or peer's it was serving, so the kernel stops
-rather than terminate the vat or drop the message: by a [kernel panic](#kernel-panic) where
-a throw would not reach the [run loop](#run-loop), otherwise by a throw out of the
-[crank](#crank), which rolls the crank back. The kernel marks what its stores throw, so
-[`isStoreFault`](../packages/ocap-kernel/src/store/utils/store-fault.ts) can tell a store
-fault from a failed check of the kernel's own.
+the kernel's own fault, not the [vat](#vat)'s or peer's it was serving, so in a
+[crank](#crank), a [syscall](#syscall) or a peer's handshake the kernel stops rather than
+terminate the vat or drop the message: by a [kernel panic](#kernel-panic) where a throw
+would not reach the [run loop](#run-loop), otherwise by a throw out of the crank, which
+rolls the crank back. At boot it fails `Kernel.make`. The kernel marks what its stores
+throw, so [`isStoreFault`](../packages/ocap-kernel/src/store/utils/store-fault.ts) can
+tell a store fault from a failed check of the kernel's own.
 
 ### kernel panic
 

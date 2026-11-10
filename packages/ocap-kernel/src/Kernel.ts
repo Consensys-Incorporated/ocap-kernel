@@ -372,6 +372,9 @@ export class Kernel {
     // This ensures that any messages in the queue have their target vats ready
     try {
       await this.#vatManager.initializeAllVats();
+      // A panic during the starts, as from a syscall's store fault, can leave
+      // every start succeeding; it fails the boot here, before anything more is
+      // written outside a crank.
       this.#kernelQueue.assertRunLoopAlive('start');
       await this.#subclusterManager.removeSystemSubclustersWithoutBootstrapVat();
     } catch (error) {

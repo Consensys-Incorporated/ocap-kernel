@@ -11,7 +11,7 @@ import { describe, it, expect, onTestFinished, vi } from 'vitest';
 
 import { Kernel } from './Kernel.ts';
 import { kser } from './liveslots/kernel-marshal.ts';
-import type { PlatformServices } from './types.ts';
+import type { PlatformServices, SystemSubclusterConfig } from './types.ts';
 import { VatHandle } from './vats/VatHandle.ts';
 import { VatSyscall } from './vats/VatSyscall.ts';
 import { asVatId } from '../test/branded.ts';
@@ -58,6 +58,73 @@ async function waitForDeath(kernel: {
   await delay(0);
 }
 
+async function makeStoreFile(): Promise<string> {
+  const dir = await mkdtemp(join(tmpdir(), 'panic-boot-'));
+  onTestFinished(async () => rm(dir, { recursive: true, force: true }));
+  return join(dir, 'store.db');
+}
+
+async function storeOfAStoppedKernel(
+  systemSubclusters?: SystemSubclusterConfig[],
+): Promise<{ kernelDatabase: KernelDatabase; vats: Record<string, string> }> {
+  const dbFilename = await makeStoreFile();
+  const first = await setUpRealKernel({
+    dbFilename,
+    ...(systemSubclusters && { systemSubclusters }),
+  });
+  const vats: Record<string, string> = {};
+  for (const subcluster of first.kernel.getSubclusters()) {
+    Object.assign(vats, subcluster.vats);
+  }
+  await first.kernel.stop();
+  vi.restoreAllMocks();
+  return { kernelDatabase: await makeSQLKernelDatabase({ dbFilename }), vats };
+}
+
+function fakeStarts(
+  start: (params: Parameters<typeof VatHandle.make>[0]) => Promise<void>,
+): void {
+  vi.spyOn(VatHandle, 'make').mockImplementation(async (params) => {
+    await start(params);
+    return {
+      vatId: params.vatId,
+      config: params.vatConfig,
+      terminate: async () => undefined,
+      expectClose: () => undefined,
+    } as unknown as VatHandle;
+  });
+}
+
+function makePlatformServices(
+  terminate: PlatformServices['terminate'] = vi
+    .fn()
+    .mockResolvedValue(undefined),
+): PlatformServices {
+  return {
+    launch: vi.fn(async () =>
+      TestDuplexStream.make<JsonRpcMessage, JsonRpcMessage>(() => undefined),
+    ),
+    terminate,
+    terminateAll: vi.fn().mockResolvedValue(undefined),
+    stopRemoteComms: vi.fn().mockResolvedValue(undefined),
+  } as unknown as PlatformServices;
+}
+
+function dumpStore(kernelDatabase: KernelDatabase): Record<string, unknown> {
+  const { get, getNextKey } = kernelDatabase.kernelKVStore;
+  const kv: Record<string, string | undefined> = {};
+  for (let key = getNextKey(''); key !== undefined; key = getNextKey(key)) {
+    kv[key] = get(key);
+  }
+  const vatState = Object.fromEntries(
+    ['v1', 'v2'].map((vatId) => [
+      vatId,
+      kernelDatabase.makeVatStore(vatId).getKVData(),
+    ]),
+  );
+  return { kv, vatState };
+}
+
 describe('a store fault', () => {
   it("in a syscall's write stops the kernel and leaves the vat as it was", async () => {
     const { kernel, kernelDatabase, doomedRoot, terminated } =
@@ -85,6 +152,29 @@ describe('a store fault', () => {
       terminated: [],
       queued: 1,
     });
+  });
+
+  it('in a syscall rolls the whole store back, and the next start delivers the message again', async () => {
+    const dbFilename = await makeStoreFile();
+    const first = await setUpRealKernel({ dbFilename });
+    failWrites(
+      first.kernelDatabase,
+      (key, value) => /^kp\d+\.state$/u.test(key) && value !== 'unresolved',
+    );
+    first.kernel
+      .queueMessage(first.doomedRoot, 'answer', [])
+      .catch(() => undefined);
+    // Queued and not yet taken: the crank starts once this turn ends.
+    const before = dumpStore(first.kernelDatabase);
+
+    await waitForDeath(first.kernel);
+    const after = dumpStore(first.kernelDatabase);
+    await first.kernel.stop();
+    vi.restoreAllMocks();
+    const second = await setUpRealKernel({ dbFilename });
+
+    expect(after).toStrictEqual(before);
+    await vi.waitFor(() => expect(second.received).toContain('v2:answer'));
   });
 
   it("writing a vat's state stops the kernel rather than fail the message", async () => {
@@ -160,46 +250,21 @@ describe('a store fault', () => {
   ])(
     'in a syscall while a vat starts at boot fails Kernel.make, writing nothing after it, when the other vat $other',
     async ({ other, refusal }) => {
-      const dir = await mkdtemp(join(tmpdir(), 'panic-boot-'));
-      onTestFinished(async () => rm(dir, { recursive: true, force: true }));
-      const dbFilename = join(dir, 'store.db');
-      const first = await setUpRealKernel({ dbFilename });
-      await first.kernel.stop();
-      vi.restoreAllMocks();
-
-      const kernelDatabase = await makeSQLKernelDatabase({ dbFilename });
+      const { kernelDatabase } = await storeOfAStoppedKernel();
       failWrites(kernelDatabase, (key) => key.startsWith('v1.c.p+'));
-      vi.spyOn(VatHandle, 'make').mockImplementation(
-        async ({ vatId, vatConfig, kernelQueue, kernelStore }) => {
-          if (vatId === 'v1') {
-            new VatSyscall({ vatId, kernelQueue, kernelStore }).handleSyscall([
-              'send',
-              'o+0',
-              { methargs: kser(['hello', []]), result: 'p+5' },
-            ]);
-          } else if (other === 'fails to start') {
-            await delay(0);
-            throw new Error('bundle not found');
-          }
-          return {
-            vatId,
-            config: vatConfig,
-            terminate: async () => undefined,
-            expectClose: () => undefined,
-          } as unknown as VatHandle;
-        },
-      );
-      const platformServices = {
-        launch: vi.fn(async () =>
-          TestDuplexStream.make<JsonRpcMessage, JsonRpcMessage>(
-            () => undefined,
-          ),
-        ),
-        terminate: vi.fn().mockResolvedValue(undefined),
-        terminateAll: vi.fn().mockResolvedValue(undefined),
-        stopRemoteComms: vi.fn().mockResolvedValue(undefined),
-      } as unknown as PlatformServices;
-
+      fakeStarts(async ({ vatId, kernelQueue, kernelStore }) => {
+        if (vatId === 'v1') {
+          new VatSyscall({ vatId, kernelQueue, kernelStore }).handleSyscall([
+            'send',
+            'o+0',
+            { methargs: kser(['hello', []]), result: 'p+5' },
+          ]);
+        } else if (other === 'fails to start') {
+          await delay(0);
+          throw new Error('bundle not found');
+        }
+      });
+      const platformServices = makePlatformServices();
       const logger = new Logger({ transports: [] });
       vi.spyOn(logger, 'subLogger').mockReturnValue(logger);
       const logError = vi.spyOn(logger, 'error');
@@ -227,6 +292,50 @@ describe('a store fault', () => {
     },
   );
 
+  it('reading a vat state at boot fails Kernel.make, and retires no vat that fails to start after it', async () => {
+    const { kernelDatabase } = await storeOfAStoppedKernel();
+    const fault = new Error('database or disk is full');
+    const makeVatStore = kernelDatabase.makeVatStore.bind(kernelDatabase);
+    vi.spyOn(kernelDatabase, 'makeVatStore').mockImplementation((vatId) =>
+      vatId === 'v1'
+        ? {
+            getKVData: () => {
+              throw fault;
+            },
+            updateKVData: () => undefined,
+          }
+        : makeVatStore(vatId),
+    );
+    fakeStarts(async ({ vatId, kernelStore }) => {
+      if (vatId === 'v1') {
+        // As `VatHandle` reads the vat's state for its `initVat`.
+        kernelStore.makeVatStore(vatId).getKVData();
+      } else {
+        await delay(0);
+        throw new Error('bundle not found');
+      }
+    });
+
+    const failure = await Kernel.make(makePlatformServices(), kernelDatabase, {
+      logger: new Logger({ transports: [] }),
+    }).catch((error: Error) => error);
+
+    expect({
+      failures: ((failure as AggregateError).errors as Error[]).map(
+        ({ message }) => message,
+      ),
+      terminated: kernelDatabase.kernelKVStore.get('vats.terminated'),
+      kept: kernelDatabase.kernelKVStore.get('vatConfig.v2') !== undefined,
+    }).toStrictEqual({
+      failures: [
+        'Kernel panic: starting vat v1 failed',
+        'Kernel panicked; cannot retire vat v2, which would not start',
+      ],
+      terminated: '[]',
+      kept: true,
+    });
+  });
+
   it.each([
     {
       when: 'while the vats start',
@@ -243,9 +352,6 @@ describe('a store fault', () => {
   ])(
     'in a syscall $when at boot fails Kernel.make',
     async ({ panicsOn, refusal, terminated }) => {
-      const dir = await mkdtemp(join(tmpdir(), 'panic-boot-'));
-      onTestFinished(async () => rm(dir, { recursive: true, force: true }));
-      const dbFilename = join(dir, 'store.db');
       const systemSubclusters = [
         {
           name: 'sys',
@@ -258,61 +364,37 @@ describe('a store fault', () => {
           },
         },
       ];
-      const first = await setUpRealKernel({ dbFilename, systemSubclusters });
-      const vats: Record<string, string> = {};
-      for (const subcluster of first.kernel.getSubclusters()) {
-        Object.assign(vats, subcluster.vats);
-      }
-      await first.kernel.stop();
-      vi.restoreAllMocks();
-
-      const kernelDatabase = await makeSQLKernelDatabase({ dbFilename });
+      const { kernelDatabase, vats } =
+        await storeOfAStoppedKernel(systemSubclusters);
       failWrites(kernelDatabase, (key) =>
         key.startsWith(`${vats.waiter}.c.p+`),
       );
       let panicFromWaiter = (): void => undefined;
-      vi.spyOn(VatHandle, 'make').mockImplementation(
-        async ({ vatId, vatConfig, kernelQueue, kernelStore }) => {
-          if (vatId === vats.boot) {
-            throw new Error('bundle not found');
+      fakeStarts(async ({ vatId, kernelQueue, kernelStore }) => {
+        if (vatId === vats.boot) {
+          throw new Error('bundle not found');
+        }
+        if (vatId === vats.waiter) {
+          panicFromWaiter = () => {
+            new VatSyscall({ vatId, kernelQueue, kernelStore }).handleSyscall([
+              'send',
+              'o+0',
+              { methargs: kser(['late', []]), result: 'p+5' },
+            ]);
+          };
+          if (panicsOn === 'start') {
+            await delay(0);
+            panicFromWaiter();
           }
-          if (vatId === vats.waiter) {
-            panicFromWaiter = () => {
-              new VatSyscall({ vatId, kernelQueue, kernelStore }).handleSyscall(
-                [
-                  'send',
-                  'o+0',
-                  { methargs: kser(['late', []]), result: 'p+5' },
-                ],
-              );
-            };
-            if (panicsOn === 'start') {
-              await delay(0);
-              panicFromWaiter();
-            }
-          }
-          return {
-            vatId,
-            config: vatConfig,
-            terminate: async () => undefined,
-            expectClose: () => undefined,
-          } as unknown as VatHandle;
-        },
-      );
-      const platformServices = {
-        launch: vi.fn(async () =>
-          TestDuplexStream.make<JsonRpcMessage, JsonRpcMessage>(
-            () => undefined,
-          ),
-        ),
-        terminate: vi.fn(async (vatId: string) => {
+        }
+      });
+      const platformServices = makePlatformServices(
+        vi.fn(async (vatId: string) => {
           if (panicsOn === 'removal' && vatId === vats.other) {
             panicFromWaiter();
           }
         }),
-        terminateAll: vi.fn().mockResolvedValue(undefined),
-        stopRemoteComms: vi.fn().mockResolvedValue(undefined),
-      } as unknown as PlatformServices;
+      );
 
       const failure = await Kernel.make(platformServices, kernelDatabase, {
         logger: new Logger({ transports: [] }),

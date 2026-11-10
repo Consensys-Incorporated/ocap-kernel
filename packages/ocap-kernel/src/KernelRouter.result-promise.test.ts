@@ -8,7 +8,9 @@ import { KernelRouter } from './KernelRouter.ts';
 import { kser } from './liveslots/kernel-marshal.ts';
 import { makeKernelStore } from './store/index.ts';
 import type { EndpointHandle, KRef, RunQueueItem } from './types.ts';
-import { asVatId, asVRef } from '../test/branded.ts';
+import { asRRef, asRemoteId } from '../test/branded.ts';
+
+const r1 = asRemoteId('r1');
 
 /**
  * `KernelRouter`'s own tests mock `resolvePromises`, so nothing there can see a
@@ -70,7 +72,7 @@ describe('a result promise whose delivery fails', () => {
   }
 
   /**
-   * Queue a message to v1's root with a result promise.
+   * Queue a message to an object of r1's with a result promise.
    *
    * @param kernelStore - The store to set up.
    * @param kernelQueue - The queue to send through.
@@ -80,9 +82,8 @@ describe('a result promise whose delivery fails', () => {
     kernelStore: ReturnType<typeof makeKernelStore>,
     kernelQueue: KernelQueue,
   ): KRef {
-    kernelStore.setVatConfig(asVatId('v1'), { bundleName: 'vat1' });
-    kernelStore.initEndpoint(asVatId('v1'));
-    const target = kernelStore.exportFromEndpoint(asVatId('v1'), asVRef('o+1'));
+    kernelStore.initEndpoint(r1);
+    const target = kernelStore.exportFromEndpoint(r1, asRRef('ro+1'));
     const [result] = kernelStore.initKernelPromise();
     kernelQueue.enqueueSend(target, {
       methargs: kser(['ping', []]),
@@ -91,10 +92,16 @@ describe('a result promise whose delivery fails', () => {
     return result;
   }
 
-  it('rejects it once the delivery reports failure', async () => {
+  it.each([
+    { what: 'a full queue', failure: new ResourceLimitError('queue full') },
+    {
+      what: 'a message too large to send',
+      failure: new RangeError('Invalid string length'),
+    },
+  ])('rejects it once the delivery fails with $what', async ({ failure }) => {
     const { kernelStore, kernelQueue, runCrank } = await makeFixture(
       async () => {
-        throw new ResourceLimitError('queue full');
+        throw failure;
       },
     );
     const result = queueSendWithResult(kernelStore, kernelQueue);
@@ -121,7 +128,7 @@ describe('a result promise whose delivery fails', () => {
       );
       const result = queueSendWithResult(kernelStore, kernelQueue);
       endpointDoes.settleTheResult = () =>
-        kernelQueue.resolvePromises(asVatId('v1'), [
+        kernelQueue.resolvePromises(r1, [
           [result, rejected, kser('settled by the endpoint')],
         ]);
 

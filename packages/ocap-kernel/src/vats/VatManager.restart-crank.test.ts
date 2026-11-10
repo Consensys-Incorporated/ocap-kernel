@@ -32,14 +32,22 @@ type BufferArgs = {
  * A real store and run loop, with `v1` running under a mocked worker and `v2`
  * persisted beside it.
  *
- * @param makeNewWorker - What the restart's `VatHandle.make` does.
- * @param vatRelaunchTimeoutMs - How long the restart waits for it.
+ * @param options - Options bag.
+ * @param options.makeNewWorker - What the restart's `VatHandle.make` does.
+ * @param options.vatRelaunchTimeoutMs - How long the restart waits for it.
+ * @param options.afterTermination - What the run loop does once a termination
+ * it carries out returns.
  * @returns The pieces a test drives.
  */
-async function setUp(
-  makeNewWorker: (args: BufferArgs) => Promise<VatHandle>,
-  vatRelaunchTimeoutMs?: number,
-) {
+async function setUp({
+  makeNewWorker,
+  vatRelaunchTimeoutMs,
+  afterTermination,
+}: {
+  makeNewWorker: (args: BufferArgs) => Promise<VatHandle>;
+  vatRelaunchTimeoutMs?: number;
+  afterTermination?: (args: BufferArgs) => void;
+}) {
   const kdb = await makeSQLKernelDatabase({ dbFilename: ':memory:' });
   const kernelStore = makeKernelStore(kdb);
   kernelStore.setRefCountAuditing(true);
@@ -54,8 +62,12 @@ async function setUp(
   // The `terminateVat` `Kernel` passes, held in an object so the queue can
   // reach a manager that needs the queue to exist first.
   const kernel: { vatManager?: VatManager } = {};
-  const kernelQueue = new KernelQueue(kernelStore, async (vatId, reason) =>
-    kernel.vatManager?.stopVat(vatId, true, reason),
+  const kernelQueue: KernelQueue = new KernelQueue(
+    kernelStore,
+    async (vatId, reason) => {
+      await kernel.vatManager?.stopVat(vatId, true, reason);
+      afterTermination?.({ kernelStore, kernelQueue, target, kpid });
+    },
   );
   const platformServices = {
     launch: vi.fn().mockResolvedValue({
@@ -83,7 +95,14 @@ async function setUp(
       makeNewWorker({ kernelStore, kernelQueue, target, kpid }),
     );
   await vatManager.runVat(asVatId('v1'), config);
-  return { kernelStore, kernelQueue, vatManager, platformServices, target };
+  return {
+    kdb,
+    kernelStore,
+    kernelQueue,
+    vatManager,
+    platformServices,
+    target,
+  };
 }
 
 /**
@@ -109,11 +128,13 @@ describe('a restart whose relaunch fails', () => {
     },
   ])('discards $what its failed initVat buffered', async ({ buffer }) => {
     const { kernelStore, kernelQueue, vatManager, platformServices } =
-      await setUp(async (args) => {
-        // What the new worker's `initVat` syscalls leave in the crank buffer
-        // before the handshake fails.
-        buffer(args);
-        throw new Error('handshake timed out');
+      await setUp({
+        makeNewWorker: async (args) => {
+          // What the new worker's `initVat` syscalls leave in the crank buffer
+          // before the handshake fails.
+          buffer(args);
+          throw new Error('handshake timed out');
+        },
       });
 
     const restarting = vatManager.restartVat(asVatId('v1'));
@@ -151,13 +172,13 @@ describe('a restart whose crank fails after the relaunch', () => {
       vatId: 'v1',
       terminate: vi.fn().mockResolvedValue(undefined),
     } as unknown as VatHandle;
-    const { kernelQueue, vatManager } = await setUp(
-      async ({ kernelStore, target }) => {
+    const { kernelQueue, vatManager } = await setUp({
+      makeNewWorker: async ({ kernelStore, target }) => {
         // A reference count no one holds, for the crank's audit to find.
         kernelStore.incrementRefCount(target, 'test');
         return newWorker;
       },
-    );
+    });
 
     const restarting = vatManager.restartVat(asVatId('v1'));
     const running = kernelQueue.run(async () =>
@@ -169,12 +190,69 @@ describe('a restart whose crank fails after the relaunch', () => {
   });
 });
 
+describe('a restart whose relaunch fails, in a crank that then fails', () => {
+  it.each([
+    {
+      what: 'the death cannot be written',
+      faultKey: 'vats.terminated',
+    },
+    {
+      what: 'the audit fails after the death',
+      afterTermination: ({ kernelStore, target }: BufferArgs): void => {
+        kernelStore.incrementRefCount(target, 'test');
+      },
+    },
+    {
+      what: 'the kernel panicked during the relaunch',
+      panics: true,
+    },
+  ])(
+    'leaves its caller to the run loop when $what, and keeps the vat',
+    async ({ faultKey, afterTermination, panics }) => {
+      const { kdb, kernelStore, kernelQueue, vatManager } = await setUp({
+        makeNewWorker: async () => {
+          if (panics) {
+            kernelQueue.panic('test', new Error('database or disk is full'));
+          }
+          throw new Error('handshake timed out');
+        },
+        ...(afterTermination && { afterTermination }),
+      });
+      if (faultKey) {
+        const { kernelKVStore } = kdb;
+        const set = kernelKVStore.set.bind(kernelKVStore);
+        vi.spyOn(kernelKVStore, 'set').mockImplementation((key, value) => {
+          if (key === faultKey) {
+            throw new Error('database or disk is full');
+          }
+          set(key, value);
+        });
+      }
+
+      const restarting = vatManager.restartVat(asVatId('v1'));
+      restarting.catch(() => undefined);
+      const running = kernelQueue.run(async () =>
+        vatManager.performVatRestart(asVatId('v1')),
+      );
+
+      await expect(running).rejects.toThrow(Error);
+      await expect(restarting).rejects.toThrow(
+        'Kernel run loop died before this work was done',
+      );
+      expect({
+        active: kernelStore.isVatActive(asVatId('v1')),
+        terminated: kernelStore.getTerminatedVats(),
+      }).toStrictEqual({ active: true, terminated: [] });
+    },
+  );
+});
+
 describe('a restart whose new worker never answers', () => {
   it('terminates the vat and goes on to the next item', async () => {
-    const { kernelStore, kernelQueue, vatManager, target } = await setUp(
-      async () => new Promise<VatHandle>(() => undefined),
-      1,
-    );
+    const { kernelStore, kernelQueue, vatManager, target } = await setUp({
+      makeNewWorker: async () => new Promise<VatHandle>(() => undefined),
+      vatRelaunchTimeoutMs: 1,
+    });
     const restarting = vatManager.restartVat(asVatId('v1'));
     restarting.catch(() => undefined);
     kernelQueue.enqueueSend(target, {

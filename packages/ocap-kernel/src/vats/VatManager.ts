@@ -48,11 +48,6 @@ type RunningVat = { handle?: VatHandle; lost?: Error };
 type Waiter<Value> = {
   resolve: (value: Value) => void;
   reject: (error: Error) => void;
-  /**
-   * Set once the waiter is promised an answer that does not depend on the run
-   * loop, so the loop's death no longer needs to give one.
-   */
-  answerDue: boolean;
 };
 
 /** The callers a crank took, and the ways it can answer them. */
@@ -61,11 +56,10 @@ type TakenWaiters<Value> = {
   /** Answer now, from a crank's `afterCommit`. */
   answer: (outcome: Value | Error) => void;
   /**
-   * Answer once the crank ends, whether or not it commits or the run loop
-   * survives it, so callers wake to what it committed. They may wake inside
-   * the next crank, which can still roll back what they write.
+   * Answer once the crank commits, as `afterCommit` would, but after an abort
+   * too.
    */
-  answerOnceCrankEnds: (outcome: Value | Error) => void;
+  answerOnceCrankCommits: (outcome: Value | Error) => void;
 };
 
 /**
@@ -226,8 +220,10 @@ export class VatManager {
     try {
       await this.#relaunchVat(vatId, vatConfig);
     } catch (error) {
+      // A panic, so that the other starts retire nothing: the kernel's fault
+      // fails the boot rather than cost a vat.
       if (isStoreFault(error)) {
-        throw error;
+        throw this.#kernelQueue.panic(`starting vat ${vatId} failed`, error);
       }
       if (this.#kernelQueue.isHalted()) {
         this.#logger.error(`Vat ${vatId} would not start:`, error);
@@ -293,6 +289,7 @@ export class VatManager {
       // Its worker is stopped here, since a `stop` may have stopped the others
       // already.
       if (this.#kernelQueue.isHalted()) {
+        this.#vats.delete(vatId);
         await this.#platformServices
           .terminate(vatId)
           .catch((stopError: unknown) =>
@@ -850,15 +847,8 @@ export class VatManager {
     // than an unhandled one from a waiter nothing will ever await.
     enqueue();
     const { promise, resolve, reject } = makePromiseKit<Value>();
-    const waiter: Waiter<Value> = { resolve, reject, answerDue: false };
-    waiters.set(vatId, [...(waiters.get(vatId) ?? []), waiter]);
-    // Not once a crank has promised an answer: it may have committed the work
-    // before the loop died.
-    const stopWatchingTheRunLoop = this.#kernelQueue.onRunLoopDeath((error) => {
-      if (!waiter.answerDue) {
-        reject(error);
-      }
-    });
+    waiters.set(vatId, [...(waiters.get(vatId) ?? []), { resolve, reject }]);
+    const stopWatchingTheRunLoop = this.#kernelQueue.onRunLoopDeath(reject);
     try {
       return await promise;
     } finally {
@@ -882,7 +872,6 @@ export class VatManager {
     waiters.delete(vatId);
     const answer = (outcome: Value | Error): void => {
       for (const waiter of taken) {
-        waiter.answerDue = true;
         if (outcome instanceof Error) {
           waiter.reject(outcome);
         } else {
@@ -890,16 +879,10 @@ export class VatManager {
         }
       }
     };
-    const answerOnceCrankEnds = (outcome: Value | Error): void => {
-      for (const waiter of taken) {
-        waiter.answerDue = true;
-      }
-      this.#kernelQueue
-        .waitForCrank()
-        .then(() => answer(outcome))
-        .catch(this.#logger.error);
+    const answerOnceCrankCommits = (outcome: Value | Error): void => {
+      this.#kernelQueue.onCommit(() => answer(outcome));
     };
-    return { count: taken.length, answer, answerOnceCrankEnds };
+    return { count: taken.length, answer, answerOnceCrankCommits };
   }
 
   /**
@@ -1002,7 +985,7 @@ export class VatManager {
   }
 
   /**
-   * Answer a failed restart's callers once its crank ends, and have the run
+   * Answer a failed restart's callers once its crank commits, and have the run
    * loop terminate the vat.
    *
    * @param options - Named options.
@@ -1029,8 +1012,8 @@ export class VatManager {
       { cause: error },
     );
     this.#logger.error(failure.message, error);
-    // Not `answer` from `afterCommit`, which an aborted crank skips.
-    taken.answerOnceCrankEnds(failure);
+    // Not from `afterCommit`, which an aborted crank skips.
+    taken.answerOnceCrankCommits(failure);
     // Through the crank result, so the run loop rolls back before retiring
     // the vat: what the new worker's `initVat` buffered would otherwise be
     // flushed on behalf of a vat that no longer exists. The rollback restores

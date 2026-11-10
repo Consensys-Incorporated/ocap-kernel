@@ -529,62 +529,84 @@ describe('KernelRouter', () => {
         );
       });
 
-      it('rejects with DELIVERY_FAILED when a remote refuses the message', async () => {
-        const endpointId = asRemoteId('r1');
-        const target = asKRef('ko123');
-        (kernelStore.getOwner as unknown as MockInstance).mockReturnValueOnce(
-          endpointId,
-        );
-        (
-          endpointHandle.deliverMessage as unknown as MockInstance
-        ).mockRejectedValueOnce(new ResourceLimitError('queue full'));
-        const message: KernelMessage = {
-          methargs: { body: 'method args', slots: [] },
-          result: asKRef('kp1'),
-        };
-        const sendItem: RunQueueItemSend = {
-          type: 'send',
-          target,
-          message,
-        };
-
-        await kernelRouter.deliver(sendItem);
-
-        expect(kernelQueue.resolvePromises).toHaveBeenCalledWith(
-          endpointId,
-          expect.arrayContaining([
-            expect.arrayContaining([
-              'kp1',
-              true,
-              expect.objectContaining({
-                body: expect.stringContaining('[KERNEL:DELIVERY_FAILED]'),
-              }),
-            ]),
-          ]),
-        );
-      });
-
-      it('throws any other delivery failure, for the run loop to roll back', async () => {
-        (kernelStore.getOwner as unknown as MockInstance).mockReturnValueOnce(
-          v1,
-        );
-        const failure = new Error('kernel bug');
-        (
-          endpointHandle.deliverMessage as unknown as MockInstance
-        ).mockRejectedValueOnce(failure);
-
-        await expect(
-          kernelRouter.deliver({
+      it.each([
+        { what: 'refuses it', failure: new ResourceLimitError('queue full') },
+        {
+          what: 'fails to send it',
+          failure: new RangeError('Invalid string length'),
+        },
+      ])(
+        'rejects with DELIVERY_FAILED when a remote $what',
+        async ({ failure }) => {
+          const endpointId = asRemoteId('r1');
+          const target = asKRef('ko123');
+          (kernelStore.getOwner as unknown as MockInstance).mockReturnValueOnce(
+            endpointId,
+          );
+          (
+            endpointHandle.deliverMessage as unknown as MockInstance
+          ).mockRejectedValueOnce(failure);
+          const message: KernelMessage = {
+            methargs: { body: 'method args', slots: [] },
+            result: asKRef('kp1'),
+          };
+          const sendItem: RunQueueItemSend = {
             type: 'send',
-            target: asKRef('ko123'),
-            message: {
-              methargs: { body: 'method args', slots: [] },
-              result: asKRef('kp1'),
-            },
-          }),
-        ).rejects.toBe(failure);
-        expect(kernelQueue.resolvePromises).not.toHaveBeenCalled();
-      });
+            target,
+            message,
+          };
+
+          await kernelRouter.deliver(sendItem);
+
+          expect(kernelQueue.resolvePromises).toHaveBeenCalledWith(
+            endpointId,
+            expect.arrayContaining([
+              expect.arrayContaining([
+                'kp1',
+                true,
+                expect.objectContaining({
+                  body: expect.stringContaining('[KERNEL:DELIVERY_FAILED]'),
+                }),
+              ]),
+            ]),
+          );
+        },
+      );
+
+      it.each([
+        {
+          what: "a vat's failure",
+          owner: v1,
+          failure: new Error('kernel bug'),
+        },
+        {
+          what: "a remote's store fault",
+          owner: asRemoteId('r1'),
+          failure: makeStoreFault(),
+        },
+      ])(
+        'throws $what, for the run loop to roll back',
+        async ({ owner, failure }) => {
+          (kernelStore.getOwner as unknown as MockInstance).mockReturnValueOnce(
+            owner,
+          );
+          (
+            endpointHandle.deliverMessage as unknown as MockInstance
+          ).mockRejectedValueOnce(failure);
+
+          await expect(
+            kernelRouter.deliver({
+              type: 'send',
+              target: asKRef('ko123'),
+              message: {
+                methargs: { body: 'method args', slots: [] },
+                result: asKRef('kp1'),
+              },
+            }),
+          ).rejects.toBe(failure);
+          expect(kernelQueue.resolvePromises).not.toHaveBeenCalled();
+        },
+      );
     });
 
     describe('notify', () => {

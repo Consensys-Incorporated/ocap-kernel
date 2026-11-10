@@ -1,6 +1,6 @@
 import type { VatOneResolution } from '@agoric/swingset-liveslots';
 import type { CapData } from '@endo/marshal';
-import { ResourceLimitError, VatNotFoundError } from '@metamask/kernel-errors';
+import { VatNotFoundError } from '@metamask/kernel-errors';
 import { Logger } from '@metamask/logger';
 
 import { KernelQueue } from './KernelQueue.ts';
@@ -33,6 +33,7 @@ import type {
 import { isRemoteId, isVatId } from './types.ts';
 import { assert, Fail } from './utils/assert.ts';
 import { makeLostVatReason } from './vats/lost-vat-reason.ts';
+import { capReasonText } from './vats/vat-limits.ts';
 
 const GC_DELIVERY = {
   dropExports: 'deliverDropExports',
@@ -405,9 +406,11 @@ export class KernelRouter {
             endpoint.deliverMessage(endpointTarget, endpointMessage),
           );
         } catch (error) {
-          // Only a remote whose queue is full refuses a message; anything else
-          // is the kernel's own fault.
-          if (!(error instanceof ResourceLimitError)) {
+          // A remote's failure, but for a store fault, is taken for the peer's,
+          // and a peer must not be able to stop the kernel. A vat's worker
+          // failures end in its termination before here, so what a vat's
+          // delivery throws is the kernel's.
+          if (!isRemoteId(eid) || isStoreFault(error)) {
             throw error;
           }
           this.#logger?.error(`Delivery to ${endpointId} failed:`, error);
@@ -415,7 +418,12 @@ export class KernelRouter {
             this.#rejectResultIfPending(
               eid,
               message.result,
-              makeKernelError('DELIVERY_FAILED', error.message),
+              makeKernelError(
+                'DELIVERY_FAILED',
+                capReasonText(
+                  error instanceof Error ? error.message : String(error),
+                ),
+              ),
             );
           }
         }

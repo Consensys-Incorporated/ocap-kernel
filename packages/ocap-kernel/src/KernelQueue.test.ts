@@ -1818,6 +1818,16 @@ describe('KernelQueue', () => {
     });
   });
 
+  describe('onCommit', () => {
+    it('answers at once when no crank is open', () => {
+      const answer = vi.fn();
+
+      kernelQueue.onCommit(answer);
+
+      expect(answer).toHaveBeenCalledOnce();
+    });
+  });
+
   describe('resolvePromises', () => {
     it('resolves kernel promises and buffers notifications for subscribers', () => {
       const endpointId = v1;

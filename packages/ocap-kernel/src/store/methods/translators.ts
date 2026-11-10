@@ -170,6 +170,8 @@ export function getTranslators(ctx: StoreContext) {
    * @returns the KRef corresponding to `eref` in this endpoint.
    */
   function translateRefEtoK(endpointId: EndpointId, eref: ERef): KRef {
+    // An endpoint's c-list keeps both directions under one prefix, so a kref
+    // passed for an eref would read back the entry's other half.
     insistERef(eref);
     let kref = erefToKref(endpointId, eref);
     kref ??= exportFromEndpoint(endpointId, eref);

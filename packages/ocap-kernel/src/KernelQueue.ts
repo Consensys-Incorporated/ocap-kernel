@@ -109,6 +109,9 @@ export class KernelQueue {
    */
   #resolvedWithKernelSubscription: KernelOneResolution[] = [];
 
+  /** Answers the open crank gives once it commits, an abort or not. */
+  #answersOnCommit: (() => void)[] = [];
+
   /** Callers awaiting work the run loop has been asked for but not yet done. */
   readonly #pendingWorkWaiters: Set<(error: Error) => void> = new Set();
 
@@ -275,8 +278,13 @@ export class KernelQueue {
         crankFailure = { error };
         throw error;
       } finally {
+        const answers = this.#answersOnCommit;
+        this.#answersOnCommit = [];
         this.#endCrank(crankFailure);
         if (!crankFailure) {
+          for (const answer of answers) {
+            answer();
+          }
           try {
             this.#writeHeldRequests();
           } catch (error) {
@@ -407,6 +415,21 @@ export class KernelQueue {
   }
 
   /**
+   * Run `answer` once the open crank commits, whether or not it aborts, or now
+   * if no crank is open. A crank that throws or fails to commit drops it,
+   * leaving its callers to {@link onRunLoopDeath}.
+   *
+   * @param answer - What answers the crank's callers.
+   */
+  onCommit(answer: () => void): void {
+    if (this.#kernelStore.isInCrank()) {
+      this.#answersOnCommit.push(answer);
+    } else {
+      answer();
+    }
+  }
+
+  /**
    * Record the death of the run loop and fail everyone who would otherwise wait
    * forever: the kernel's own message-result subscriptions, held requests,
    * callers waiting on queued work, and queued control operations. Kernel
@@ -468,15 +491,17 @@ export class KernelQueue {
    * Refuse work that would otherwise sit in a queue nobody drains: the kernel
    * panicked, the run loop died, or `endRunLoop` ended it.
    *
-   * For callers at an ingress boundary only. Teardown must not be refused even
-   * though it also enqueues: `VatManager` and `RemoteManager` reject the
-   * promises a dying endpoint was deciding, via `resolvePromises`, which enqueues
-   * notifies for their subscribers. Once the loop has ended this instance never
-   * delivers those notifies, which is acceptable since the endpoint is going
-   * away, whereas refusing them would throw from the teardown. Nothing clears a
-   * `failed` state and `run` refuses to be called twice, so a kernel that has
-   * failed stays failed for the life of the instance. Recovery means a new
-   * kernel, which in practice means a new process.
+   * For callers at an ingress boundary, and for the boot and launch steps that
+   * must write nothing once the kernel has panicked. Other teardown must not be
+   * refused even though it also enqueues: `VatManager` and `RemoteManager`
+   * reject the promises a dying endpoint was deciding, via `resolvePromises`,
+   * which enqueues notifies for their subscribers. Once the loop has ended this
+   * instance never delivers those notifies, which is acceptable since the
+   * endpoint is going away, whereas refusing them would throw from the
+   * teardown. Nothing clears a `failed` state and `run` refuses to be called
+   * twice, so a kernel that has failed stays failed for the life of the
+   * instance. Recovery means a new kernel, which in practice means a new
+   * process.
    *
    * @param what - What is being refused, completing "cannot ...".
    * @throws If the kernel has panicked, or the run loop has died or stopped.
@@ -513,7 +538,11 @@ export class KernelQueue {
   }
 
   /**
-   * Whether the kernel has panicked or its run loop has died.
+   * Whether the kernel has panicked or its run loop has died. From then on it
+   * writes nothing outside a crank, where nothing would roll the write back: it
+   * refuses vats' syscalls and the state a vat reports after a delivery, and
+   * retires or records no vat at boot or launch. A remote's acknowledgements
+   * and give-up still write (#1152).
    *
    * @returns True if so.
    */

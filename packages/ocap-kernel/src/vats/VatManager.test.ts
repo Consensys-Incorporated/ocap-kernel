@@ -165,6 +165,8 @@ describe('VatManager', () => {
 
     mockKernelQueue = {
       waitForCrank: vi.fn().mockResolvedValue(undefined),
+      // Stands in for a crank that commits.
+      onCommit: vi.fn((answer: () => void) => answer()),
       resolvePromises: vi.fn(),
       // Stands in for the run loop taking the item in a crank of its own.
       enqueueRestartVat: vi.fn((vatId: VatId) => {
@@ -265,12 +267,25 @@ describe('VatManager', () => {
       ]);
     });
 
-    it('fails on a store fault rather than terminate the vat', async () => {
+    it('panics on a store fault rather than terminate the vat', async () => {
       const storeFault = makeStoreFault();
       makeVatHandleMock.mockRejectedValueOnce(storeFault);
 
-      await expect(vatManager.initializeAllVats()).rejects.toBe(storeFault);
-      expect(mockKernelStore.markVatAsTerminated).not.toHaveBeenCalled();
+      const failure = await vatManager
+        .initializeAllVats()
+        .catch((error: Error) => error);
+
+      expect({
+        failure: (failure as Error).message,
+        cause: (failure as Error).cause,
+        panic: mockKernelQueue.panic.mock.calls,
+        terminated: mockKernelStore.markVatAsTerminated.mock.calls,
+      }).toStrictEqual({
+        failure: 'Kernel panic: starting vat v1 failed',
+        cause: storeFault,
+        panic: [['starting vat v1 failed', storeFault]],
+        terminated: [],
+      });
     });
 
     it('terminates a vat whose worker will not start, and starts the others', async () => {
@@ -502,11 +517,13 @@ describe('VatManager', () => {
           ([vatId]) => vatId,
         ),
         recorded: mockKernelStore.setVatConfig.mock.calls,
+        running: vatManager.getVatIds(),
       }).toStrictEqual({
         failure: 'Failed to launch vat v1 (test)',
         cause: 'Kernel panicked; cannot record a launched vat',
         stopped: ['v1'],
         recorded: [],
+        running: [],
       });
     });
 
@@ -1879,19 +1896,21 @@ describe('VatManager', () => {
       });
     });
 
-    it('answers a failed restart only once the crank ends', async () => {
+    it('answers a failed restart only once the crank commits', async () => {
       await vatManager.runVat(v1, createMockVatConfig());
       leaveRequestQueued();
       const rejected = vi.fn();
       const restarting = vatManager.restartVat(v1).catch(rejected);
-      const { promise: crankEnded, resolve: endCrank } = makePromiseKit<void>();
-      mockKernelQueue.waitForCrank.mockReturnValueOnce(crankEnded);
+      let commit = (): void => undefined;
+      mockKernelQueue.onCommit.mockImplementationOnce((answer) => {
+        commit = answer;
+      });
       mockPlatformServices.launch.mockRejectedValueOnce(new Error('ENOENT'));
 
       await vatManager.performVatRestart(v1);
       await new Promise((resolve) => setImmediate(resolve));
       expect(rejected).not.toHaveBeenCalled();
-      endCrank();
+      commit();
       await restarting;
 
       expect(rejected).toHaveBeenCalledOnce();

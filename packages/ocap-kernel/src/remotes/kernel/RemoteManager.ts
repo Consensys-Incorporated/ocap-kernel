@@ -245,6 +245,8 @@ export class RemoteManager {
         error,
       );
       this.#logger?.error(panic.message, error);
+      // Thrown too, so the transport fails the handshake rather than answer it
+      // from nothing.
       throw panic;
     }
     const waiting = this.#kernelQueue.waitingIncarnations(peerId);

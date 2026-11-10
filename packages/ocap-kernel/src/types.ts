@@ -829,8 +829,8 @@ export const RunLoopStatusStruct = union([
   type({ state: literal('running') }),
   type({ state: literal('stopped') }),
   // Two strings because one cannot be both: `error` is the message, `detail` the
-  // cause chain. When a crank dies and its rollback then fails, the message names
-  // the rollback and only the chain names what killed the kernel.
+  // cause chain, such as the store error behind a panic, which the message
+  // leaves out.
   type({ state: literal('failed'), error: string(), detail: string() }),
 ]);
 
