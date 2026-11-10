@@ -119,7 +119,7 @@ Otherwise, after all launched subagents complete:
    - A brief narrative description of the PR
    - A summary of the changes (bullet points)
    - A brief description of how the code is tested (narrative, not a checklist)
-   - A `Closes #N` line for each issue the PR fixes. When a PR is split or superseded, carry these lines over to the replacement PRs.
+   - A `Closes #N` line for each issue the PR fixes completely. GitHub closes the issue when the first such PR merges, so if several PRs share the fix, only the one that completes it says `Closes #N` and the others say `Refs #N`. When a PR is split or superseded, carry its references over to the replacement PRs by the same rule.
 
    **If this is a stacked PR**, add `--draft` to create it as a draft PR.
 
