@@ -250,6 +250,7 @@ async function setUp({ onDisk = false }: { onDisk?: boolean } = {}) {
   const survivorERef = kernelStore.translateRefKtoE(v1, survivorRoot, true);
   return {
     ...kernel,
+    kdb,
     doomedRoot,
     survivorRoot,
     survivorERef,
@@ -765,4 +766,33 @@ describe('a vat that loses its channel as it launches', () => {
       });
     },
   );
+});
+
+describe('a termination whose death cannot be written', () => {
+  it('is rolled back, and the next start carries it out', async () => {
+    const harness = await setUp({ onDisk: true });
+    const { kdb, kernelQueue, vatManager } = harness;
+    harness.run();
+    const set = kdb.kernelKVStore.set.bind(kdb.kernelKVStore);
+    vi.spyOn(kdb.kernelKVStore, 'set').mockImplementation((key, value) => {
+      if (key === 'vats.terminated') {
+        throw new Error('database or disk is full');
+      }
+      set(key, value);
+    });
+    vatManager.terminateVat(v1).catch(() => undefined);
+    await vi.waitFor(() =>
+      expect(kernelQueue.getRunLoopStatus().state).toBe('failed'),
+    );
+
+    const next = await harness.reboot();
+    await deliverEverythingQueued({ ...harness, ...next });
+
+    expect({
+      running: next.vatManager.getVatIds(),
+      persisted: [...next.kernelStore.getAllVatRecords()].map(
+        ({ vatID }) => vatID,
+      ),
+    }).toStrictEqual({ running: ['v2'], persisted: ['v2'] });
+  });
 });

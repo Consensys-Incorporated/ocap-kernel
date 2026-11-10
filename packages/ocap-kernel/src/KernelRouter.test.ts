@@ -1406,7 +1406,7 @@ describe('KernelRouter', () => {
     describe('terminateVat', () => {
       it('hands a queued termination request to the vat manager', async () => {
         const reason = kser('because');
-        const crankResult = { irrevocable: true };
+        const crankResult = { afterCommit: async () => undefined };
         mockTerminateVat.mockResolvedValueOnce(crankResult);
 
         const result = await kernelRouter.deliver({
