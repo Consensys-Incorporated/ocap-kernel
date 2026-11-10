@@ -206,9 +206,13 @@ describe('a restart whose relaunch fails, in a crank that then fails', () => {
       what: 'the kernel panicked during the relaunch',
       panics: true,
     },
+    {
+      what: 'the commit fails',
+      commitFails: true,
+    },
   ])(
     'leaves its caller to the run loop when $what, and keeps the vat',
-    async ({ faultKey, afterTermination, panics }) => {
+    async ({ faultKey, afterTermination, panics, commitFails }) => {
       const { kdb, kernelStore, kernelQueue, vatManager } = await setUp({
         makeNewWorker: async () => {
           if (panics) {
@@ -218,6 +222,13 @@ describe('a restart whose relaunch fails, in a crank that then fails', () => {
         },
         ...(afterTermination && { afterTermination }),
       });
+      if (commitFails) {
+        // As the driver fails a release: the transaction rolled back.
+        vi.spyOn(kdb, 'releaseSavepoint').mockImplementationOnce((name) => {
+          kdb.rollbackSavepoint(name);
+          throw new Error('database or disk is full');
+        });
+      }
       if (faultKey) {
         const { kernelKVStore } = kdb;
         const set = kernelKVStore.set.bind(kernelKVStore);

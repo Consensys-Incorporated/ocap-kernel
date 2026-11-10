@@ -277,11 +277,11 @@ describe('VatManager', () => {
 
       expect({
         failure,
-        panic: mockKernelQueue.panic.mock.calls,
+        panic: mockKernelQueue.panic.mock.calls[0],
         terminated: mockKernelStore.markVatAsTerminated.mock.calls,
       }).toStrictEqual({
         failure: storeFault,
-        panic: [['starting vat v1 failed', storeFault]],
+        panic: ['starting vat v1 failed', storeFault],
         terminated: [],
       });
     });

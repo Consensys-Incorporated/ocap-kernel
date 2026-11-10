@@ -326,6 +326,41 @@ describe('a store fault', () => {
     });
   });
 
+  it('retiring a vat at boot fails Kernel.make, and retires no vat that fails to start after it', async () => {
+    const { kernelDatabase } = await storeOfAStoppedKernel();
+    const { kernelKVStore } = kernelDatabase;
+    const set = kernelKVStore.set.bind(kernelKVStore);
+    // Once, so that a retirement after it would be written.
+    let faulted = false;
+    vi.spyOn(kernelKVStore, 'set').mockImplementation((key, value) => {
+      if (key === 'vats.terminated' && !faulted) {
+        faulted = true;
+        throw new Error('database or disk is full');
+      }
+      set(key, value);
+    });
+    fakeStarts(async ({ vatId }) => {
+      if (vatId === 'v2') {
+        await delay(0);
+      }
+      throw new Error('bundle not found');
+    });
+
+    const failure = await Kernel.make(makePlatformServices(), kernelDatabase, {
+      logger: new Logger({ transports: [] }),
+    }).catch((error: Error) => error);
+
+    expect({
+      failure: (failure as Error).message,
+      cause: ((failure as Error).cause as Error).message,
+      kept: kernelKVStore.get('vatConfig.v2') !== undefined,
+    }).toStrictEqual({
+      failure: 'Kernel panicked; cannot start',
+      cause: 'Kernel panic: starting vat v1 failed',
+      kept: true,
+    });
+  });
+
   it.each([
     {
       when: 'while the vats start',
@@ -405,7 +440,7 @@ describe('a store fault', () => {
     },
   );
 
-  it('in a syscall while a subcluster launches leaves its vats unrecorded, their workers stopped', async () => {
+  it('in a syscall while a subcluster launches leaves its vats unrecorded, their workers stopped, and writes nothing more', async () => {
     const { kernel, kernelDatabase, launch, platformServices } =
       await setUpRealKernel();
     failWrites(kernelDatabase, (key) => key.startsWith('v1.c.p+'));
@@ -436,6 +471,7 @@ describe('a store fault', () => {
     expect({
       runLoop: (await kernel.getStatus()).runLoop,
       running: kernel.getVatIds(),
+      subclusters: kernel.getSubclusters().map(({ id }) => id),
       recorded: ['v3', 'v4'].map((vatId) =>
         kernelDatabase.kernelKVStore.get(`vatConfig.${vatId}`),
       ),
@@ -450,6 +486,7 @@ describe('a store fault', () => {
         detail: expect.any(String),
       },
       running: ['v1', 'v2'],
+      subclusters: ['s1', 's2'],
       recorded: [undefined, undefined],
       stopped: ['v3', 'v4'],
     });

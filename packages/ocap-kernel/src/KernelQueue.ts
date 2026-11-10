@@ -538,11 +538,11 @@ export class KernelQueue {
   }
 
   /**
-   * Whether the kernel has panicked or its run loop has died. From then on it
-   * writes nothing outside a crank, where nothing would roll the write back: it
-   * refuses vats' syscalls and the state a vat reports after a delivery, and
-   * retires or records no vat at boot or launch. A remote's acknowledgements
-   * and give-up still write (#1152).
+   * Whether the kernel has panicked or its run loop has died. Then, as nothing
+   * would roll back a write outside a crank, it refuses vats' syscalls and the
+   * state a vat reports after a delivery, and retires or records no vat at
+   * boot or launch. A remote's acknowledgements and give-up still write
+   * (#1152).
    *
    * @returns True if so.
    */

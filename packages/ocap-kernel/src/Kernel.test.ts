@@ -171,12 +171,27 @@ const mocks = vi.hoisted(() => {
 
     readonly #runLoopDeathWaiters = new Set<(error: Error) => void>();
 
-    isHalted = vi.fn(() => this.#runLoopFailure !== undefined);
+    #panic: Error | undefined;
+
+    panic = vi.fn((problem: string, cause: unknown) => {
+      const error = new Error(`Kernel panic: ${problem}`, { cause });
+      this.#panic ??= error;
+      return error;
+    });
+
+    isHalted = vi.fn(
+      () => this.#panic !== undefined || this.#runLoopFailure !== undefined,
+    );
 
     assertRunLoopAlive = vi.fn((what: string) => {
       if (this.#runLoopFailure) {
         throw new Error(`Kernel run loop died; cannot ${what}`, {
           cause: this.#runLoopFailure,
+        });
+      }
+      if (this.#panic) {
+        throw new Error(`Kernel panicked; cannot ${what}`, {
+          cause: this.#panic,
         });
       }
     });
@@ -430,14 +445,16 @@ describe('Kernel', () => {
         const stopFailure =
           'Failed to stop the vat workers of a kernel that did not start:';
 
-        await expect(
-          Kernel.make(mockPlatformServices, db, { logger }),
-        ).rejects.toBe(refusal);
+        const failure = await Kernel.make(mockPlatformServices, db, {
+          logger,
+        }).catch((error: Error) => error);
 
         // Told first, or the stop would end its channel as a lost vat's and
         // queue its termination for the next boot.
         const [other] = vatHandles;
         expect({
+          failure: (failure as Error).message,
+          cause: ((failure as Error).cause as Error).cause,
           handles: vatHandles.length,
           toldBeforeStop:
             (other?.expectClose.mock.invocationCallOrder[0] ?? Infinity) <
@@ -448,6 +465,8 @@ describe('Kernel', () => {
             .filter(([message]) => message === stopFailure)
             .map(([, error]) => error),
         }).toStrictEqual({
+          failure: 'Kernel panicked; cannot start',
+          cause: refusal,
           handles: 1,
           toldBeforeStop: true,
           terminateAll: 1,

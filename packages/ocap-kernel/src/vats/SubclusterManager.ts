@@ -142,6 +142,11 @@ export class SubclusterManager {
         await this.#launchVatsForSubcluster(subclusterId, config);
       return { subclusterId, rootKref, bootstrapResult, vatRootKrefs };
     } catch (error) {
+      // After a halt nothing more is written outside a crank, so the record
+      // stays for the next start.
+      if (this.#kernelQueue.isHalted()) {
+        throw error;
+      }
       // Roll back: terminate any vats that launched successfully, then clean
       // up IO channels and the persisted subcluster record.
       // Each step is best-effort — cleanup errors must not mask the original

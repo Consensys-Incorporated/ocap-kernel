@@ -189,7 +189,15 @@ export class VatManager {
     for (const { vatID, vatConfig } of this.#kernelStore.getAllVatRecords()) {
       // Per vat, so one whose bundle has moved since it was launched costs the
       // kernel that vat rather than its whole startup.
-      starts.push(this.#startPersistedVat(vatID, vatConfig));
+      starts.push(
+        this.#startPersistedVat(vatID, vatConfig).catch((error: unknown) => {
+          // Also one while retiring the vat, so the other starts retire none.
+          if (isStoreFault(error)) {
+            this.#kernelQueue.panic(`starting vat ${vatID} failed`, error);
+          }
+          throw error;
+        }),
+      );
     }
     // Settled before rethrowing, so no start still under way writes the store
     // after `Kernel.make` rejects, when the embedder may boot another kernel
