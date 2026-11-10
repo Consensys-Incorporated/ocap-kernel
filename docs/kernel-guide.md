@@ -59,6 +59,7 @@ const kernel = await Kernel.make(platformServices, kernelDatabase, {
 | `launchSubcluster(config)`                            | Launch a new subcluster of vats. Returns `{ subclusterId, rootKref, bootstrapResult }`. |
 | `terminateSubcluster(subclusterId)`                   | Terminate a subcluster and all its vats.                                                |
 | `queueMessage(target, method, args)`                  | Send a message to a kernel object (identified by kref).                                 |
+| `releaseResult(result)`                               | Give up the krefs in a `queueMessage` result or a `bootstrapResult`.                    |
 | `getStatus()`                                         | Get current kernel status (vats, subclusters, remote comms state).                      |
 | `revoke(kref)`                                        | Revoke an object. Any future `E()` calls to it will fail.                               |
 | `isRevoked(kref)`                                     | Check if an object has been revoked.                                                    |
@@ -366,6 +367,7 @@ The **kernel facet** is a built-in `systemOnly` service that gives system vats a
 | `terminateSubcluster(id)`            | Terminate a subcluster              |
 | `getSystemSubclusterRoot(name)`      | Get a system subcluster's root kref |
 | `queueMessage(target, method, args)` | Send a message to any kernel object |
+| `releaseResult(result)`              | Give up the krefs in a result       |
 | `getPresence(kref, iface?)`          | Convert a kref to a presence        |
 | `pingVat(vatId)`                     | Ping a vat                          |
 | `reset()`                            | Reset the kernel (debugging)        |
@@ -637,6 +639,21 @@ const rootKref = kernel.getSystemSubclusterRoot('weather-system');
 const result = await kernel.queueMessage(rootKref, 'getWeatherReport', [
   'Paris',
 ]);
+```
+
+A result that carries krefs also has a `kpid`. The kernel keeps those krefs
+alive for the caller until the result is passed to `kernel.releaseResult`, or
+until the kernel next starts. Releasing a result without a `kpid` does nothing,
+so a caller can release every result without looking:
+
+```ts
+const result = await kernel.queueMessage(rootKref, 'getForecaster', ['Paris']);
+try {
+  const [forecaster] = result.slots;
+  await kernel.queueMessage(forecaster, 'forecast', [3]);
+} finally {
+  await kernel.releaseResult(result);
+}
 ```
 
 ### Vat side (weather-vat.ts)

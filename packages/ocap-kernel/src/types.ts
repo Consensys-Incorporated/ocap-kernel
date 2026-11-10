@@ -272,6 +272,19 @@ export const KernelCapDataStruct = object({
   slots: array(KRefStruct),
 });
 
+/**
+ * What `queueMessage` answers with. `kpid` is present when the kernel is
+ * holding the result promise for the caller, which it does while the answer
+ * carries slots; `releaseResult` ends the hold.
+ */
+export const QueueMessageResultStruct = object({
+  body: string(),
+  slots: array(KRefStruct),
+  kpid: exactOptional(KRefStruct),
+});
+
+export type QueueMessageResult = Infer<typeof QueueMessageResultStruct>;
+
 export const KernelMessageStruct = object({
   methargs: KernelCapDataStruct,
   result: exactOptional(union([KRefStruct, literal(null)])),
@@ -792,8 +805,11 @@ export type SubclusterLaunchResult = {
   subclusterId: SubclusterId;
   /** The kref of the bootstrap vat's root object. */
   rootKref: KRef;
-  /** The CapData result of calling bootstrap() on the root object, if any. */
-  bootstrapResult: CapData<KRef> | undefined;
+  /**
+   * The result of calling bootstrap() on the root object, if any. Pass it to
+   * `releaseResult` once the krefs in it are no longer needed.
+   */
+  bootstrapResult: QueueMessageResult | undefined;
   /** Map from vat name to root kref for all successfully launched vats. */
   vatRootKrefs: Record<string, KRef>;
 };

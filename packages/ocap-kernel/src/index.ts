@@ -16,6 +16,7 @@ export type {
   IOSpec,
   KRef,
   KernelMessage,
+  QueueMessageResult,
   EndpointMessage,
   VatId,
   VatPowers,

@@ -353,6 +353,31 @@ describe('handleDaemonQueueMessage', () => {
     expect(stdoutSpy).toHaveBeenCalledWith('"hello"\n');
   });
 
+  it('prettifies a result that names the promise the kernel holds for it', async () => {
+    const { sendCommand } = await import('./daemon-client.ts');
+    vi.mocked(sendCommand).mockResolvedValueOnce({
+      jsonrpc: '2.0',
+      id: '1',
+      result: { body: '#"$0.Alleged: token"', slots: ['ko7'], kpid: 'kp3' },
+    });
+    const { prettifySmallcaps } = await import('@metamask/kernel-utils');
+    vi.mocked(prettifySmallcaps).mockReturnValueOnce('<ko7>');
+    const stdoutSpy = vi.spyOn(process.stdout, 'write').mockReturnValue(true);
+
+    await handleDaemonQueueMessage({
+      target: 'ko1',
+      method: 'fetch',
+      args: [],
+      socketPath,
+    });
+
+    expect(prettifySmallcaps).toHaveBeenCalledWith({
+      body: '#"$0.Alleged: token"',
+      slots: ['ko7'],
+    });
+    expect(stdoutSpy).toHaveBeenCalledWith('"<ko7>"\n');
+  });
+
   it('prints raw CapData when raw is true', async () => {
     const { sendCommand } = await import('./daemon-client.ts');
     const rawResult = { body: '#"hello"', slots: [] };
