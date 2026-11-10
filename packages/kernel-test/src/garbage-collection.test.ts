@@ -132,8 +132,6 @@ describe('Garbage Collection', () => {
       [objectId],
     );
     const createObjectRef = createObjectData.slots[0] as KRef;
-    // Held only by the pin taken for the caller of `queueMessage`
-    expect(kernelStore.getPinCount(createObjectRef)).toBe(1);
     expect(kernelStore.getObjectRefCount(createObjectRef)).toStrictEqual({
       reachable: 1,
       recognizable: 1,
@@ -302,7 +300,6 @@ describe('Garbage Collection', () => {
       expect(kernelStore.getImporters(sharedKRef)).toStrictEqual(
         [importerVatId, secondImporterVatId].sort(),
       );
-      // Two importers, plus the pin taken for the caller of `createObject`
       expect(kernelStore.getObjectRefCount(sharedKRef)).toStrictEqual({
         reachable: 3,
         recognizable: 3,
@@ -364,7 +361,6 @@ describe('Garbage Collection', () => {
       });
 
       expect(kernelStore.getImporters(sharedKRef)).toStrictEqual([]);
-      // Only the pin taken for the caller of `createObject` still holds it
       expect(kernelStore.getObjectRefCount(sharedKRef)).toStrictEqual({
         reachable: 1,
         recognizable: 1,

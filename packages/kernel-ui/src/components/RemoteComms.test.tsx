@@ -257,13 +257,13 @@ describe('RemoteComms', () => {
           vats: {},
           ocapUrls: [
             {
-              kref: 'ko1',
-              owner: 'v1',
+              vatId: 'v1',
+              promiseId: 'kp1',
               ocapUrl: 'ocap://example.com/capability1',
             },
             {
-              kref: 'ko2',
-              owner: 'v2',
+              vatId: 'v2',
+              promiseId: 'kp2',
               ocapUrl: 'ocap://example.com/capability2',
             },
           ],
@@ -277,23 +277,23 @@ describe('RemoteComms', () => {
     expect(screen.getByTestId('exported-urls-text')).toBeInTheDocument();
 
     // Check that both URLs are displayed
-    const url1Input = screen.getByTestId('ocap-url-ko1');
+    const url1Input = screen.getByTestId('ocap-url-kp1');
     expect(url1Input).toBeInTheDocument();
     expect(url1Input).toHaveValue('ocap://example.com/capability1');
     expect(url1Input).toHaveAttribute('readonly');
 
-    const url2Input = screen.getByTestId('ocap-url-ko2');
+    const url2Input = screen.getByTestId('ocap-url-kp2');
     expect(url2Input).toBeInTheDocument();
     expect(url2Input).toHaveValue('ocap://example.com/capability2');
     expect(url2Input).toHaveAttribute('readonly');
 
-    // Check owners are displayed
-    expect(screen.getByText('Owner v1')).toBeInTheDocument();
-    expect(screen.getByText('Owner v2')).toBeInTheDocument();
+    // Check vat IDs are displayed
+    expect(screen.getByText('Vat v1')).toBeInTheDocument();
+    expect(screen.getByText('Vat v2')).toBeInTheDocument();
 
-    // Check krefs are displayed
-    expect(screen.getByText('(ko1)')).toBeInTheDocument();
-    expect(screen.getByText('(ko2)')).toBeInTheDocument();
+    // Check promise IDs are displayed
+    expect(screen.getByText('(kp1)')).toBeInTheDocument();
+    expect(screen.getByText('(kp2)')).toBeInTheDocument();
   });
 
   it('should not display exported ocap URLs section when empty', () => {

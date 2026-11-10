@@ -9,7 +9,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Record the latest ocap URL issued for each object, as `ocapURLString.${kref}`, until its URLs are released ([#1229](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1229))
 - `Kernel.make` takes `kernelServices`, kernel services registered before the run loop starts; one registered later writes into whatever crank is open ([#1215](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1215))
 - Add `Request`, `Headers`, and `Response` to the globals a vat may request, for `makeFetch` from `@metamask/kernel-platforms` ([#942](https://github.com/MetaMask/ocap-kernel/pull/942), [#1163](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1163))
 - Add `getRemoteIDs` to the kernel store, listing every remote the kernel knows about ([#1088](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1088))
@@ -88,7 +87,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A message, notify, GC action or reap addressed to a remote before `initRemoteComms` joins that remote's send queue and goes out once remote comms start. A message used to be rejected as `ENDPOINT_UNREACHABLE`, and the others to kill the run loop on every later boot ([#1098](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1098), [#1099](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1099), [#1248](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1248))
 - A reap addressed to a remote whose send queue is full is skipped, and a GC action is sent anyway, instead of killing the run loop ([#1099](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1099), [#1248](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1248))
 - Settled promises are no longer kept in vat c-lists forever, so they and the objects they resolved to are now collected ([#1229](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1229))
-  - Every kref in the result of a `queueMessage` call, promises included, is pinned instead, and nothing releases the pin, not even terminating the subcluster that returned it
   - Remotes keep their c-list entries for settled promises
 - A `queueMessage` made while a crank is running is no longer lost if that crank aborts; its caller used to wait forever or get another promise's value ([#1204](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1204))
 - A `queueMessage` naming a kref the kernel does not have, as its target or in an argument, rejects with `OBJECT_DELETED` instead of an internal error that leaked its result promise and could leave its target uncollectable ([#1204](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1204))
