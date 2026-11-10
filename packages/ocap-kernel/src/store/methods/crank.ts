@@ -14,14 +14,10 @@ import type { CrankBufferItem, Savepoint, StoreContext } from '../types.ts';
 // oxlint-disable-next-line typescript/explicit-function-return-type
 export function getCrankMethods(ctx: StoreContext, kdb: KernelDatabase) {
   /**
-   * Start a crank, giving it the next crank number.
+   * Start a crank.
    */
   function startCrank(): void {
     !ctx.inCrank || Fail`startCrank while already in a crank`;
-    // Written before the crank's savepoints exist, so a crank that rolls back
-    // still used up its number. Written before `inCrank` is set, so a failed
-    // write does not leave the store believing a crank is open.
-    ctx.crankNumber.set(`${getCrankNumber() + 1}`);
     ctx.inCrank = true;
     const { promise, resolve } = makePromiseKit<void>();
     ctx.crankSettled = promise;
@@ -53,6 +49,7 @@ export function getCrankMethods(ctx: StoreContext, kdb: KernelDatabase) {
   function rollbackCrank(savepoint: string): void {
     ctx.inCrank || Fail`rollbackCrank outside of crank`;
     ctx.crankBuffer.length = 0; // Discard buffered outputs
+    const crankNumber = getCrankNumber();
     for (const ordinal of ctx.savepoints.keys()) {
       const restored = ctx.savepoints[ordinal];
       if (restored?.name === savepoint) {
@@ -72,6 +69,11 @@ export function getCrankMethods(ctx: StoreContext, kdb: KernelDatabase) {
           throw error;
         }
         revertStateBeneathRollback(restored);
+        // The rollback undoes the crank's delivery, not the crank: it keeps
+        // the number it took, so no later crank gets the same one.
+        if (getCrankNumber() !== crankNumber) {
+          ctx.crankNumber.set(`${crankNumber}`);
+        }
         return;
       }
     }
@@ -187,9 +189,24 @@ export function getCrankMethods(ctx: StoreContext, kdb: KernelDatabase) {
   }
 
   /**
-   * Get the number of the current crank, or of the most recent one if none is
-   * in progress. Cranks are numbered from 1 across the life of the kernel,
-   * restarts included; 0 means no crank has ever run.
+   * Give the crank in progress its number, the one after the last numbered
+   * crank's. The run loop calls this once the crank has taken an item, so a
+   * pass that finds nothing to do takes no number and writes nothing.
+   *
+   * @returns The number given.
+   */
+  function incrementCrankNumber(): number {
+    ctx.inCrank || Fail`incrementCrankNumber outside of crank`;
+    const crankNumber = getCrankNumber() + 1;
+    ctx.crankNumber.set(`${crankNumber}`);
+    return crankNumber;
+  }
+
+  /**
+   * Get the number of the crank in progress, or of the last numbered crank if
+   * none is in progress or the current one has not taken its item yet. Cranks
+   * are numbered from 1 across the life of the kernel, restarts included; 0
+   * means no crank has ever run.
    *
    * @returns The crank number.
    */
@@ -214,6 +231,7 @@ export function getCrankMethods(ctx: StoreContext, kdb: KernelDatabase) {
     waitForCrank,
     bufferCrankOutput,
     flushCrankBuffer,
+    incrementCrankNumber,
     getCrankNumber,
     isInCrank,
   };

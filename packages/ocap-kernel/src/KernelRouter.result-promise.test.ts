@@ -57,6 +57,7 @@ describe('a result promise whose delivery fails', () => {
       kernelStore.createCrankSavepoint('start');
       try {
         const item = kernelStore.dequeueRun() as RunQueueItem;
+        kernelStore.incrementCrankNumber();
         await kernelRouter.deliver(item);
         kernelStore.collectGarbage();
         kernelStore.assertRefCountsIfAuditing();

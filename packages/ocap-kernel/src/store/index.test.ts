@@ -142,6 +142,7 @@ describe('kernel store', () => {
         'hasCListEntry',
         'importsKernelSlot',
         'incRefCount',
+        'incrementCrankNumber',
         'incrementRefCount',
         'initEndpoint',
         'initKernelObject',
@@ -211,28 +212,36 @@ describe('kernel store', () => {
   });
 
   describe('crank numbering', () => {
+    /**
+     * Run a crank that takes an item, as the run loop numbers them.
+     *
+     * @param ks - The store to run it in.
+     */
+    function runNumberedCrank(ks: ReturnType<typeof makeKernelStore>): void {
+      ks.startCrank();
+      ks.incrementCrankNumber();
+      ks.endCrank();
+    }
+
     it('continues from where a previous store over the same database left off', () => {
       const first = makeKernelStore(mockKernelDatabase);
-      first.startCrank();
-      first.endCrank();
-      first.startCrank();
-      first.endCrank();
+      runNumberedCrank(first);
+      runNumberedCrank(first);
       expect(first.getCrankNumber()).toBe(2);
 
       const second = makeKernelStore(mockKernelDatabase);
       expect(second.getCrankNumber()).toBe(2);
       second.startCrank();
-      expect(second.getCrankNumber()).toBe(3);
+      expect(second.incrementCrankNumber()).toBe(3);
     });
 
     it('starts over after a reset', () => {
       const ks = makeKernelStore(mockKernelDatabase);
-      ks.startCrank();
-      ks.endCrank();
+      runNumberedCrank(ks);
       ks.reset();
       expect(ks.getCrankNumber()).toBe(0);
       ks.startCrank();
-      expect(ks.getCrankNumber()).toBe(1);
+      expect(ks.incrementCrankNumber()).toBe(1);
     });
   });
 

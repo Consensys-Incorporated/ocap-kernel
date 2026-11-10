@@ -65,14 +65,22 @@ describe('crank methods', () => {
       );
     });
 
-    it('numbers cranks from 1, keeping the last number between cranks', () => {
+    it('numbers cranks from 1 as each takes its item, keeping the number between cranks', () => {
       expect(crankMethods.getCrankNumber()).toBe(0);
       crankMethods.startCrank();
+      expect(crankMethods.getCrankNumber()).toBe(0);
+      expect(crankMethods.incrementCrankNumber()).toBe(1);
       expect(crankMethods.getCrankNumber()).toBe(1);
       crankMethods.endCrank();
       expect(crankMethods.getCrankNumber()).toBe(1);
       crankMethods.startCrank();
-      expect(crankMethods.getCrankNumber()).toBe(2);
+      expect(crankMethods.incrementCrankNumber()).toBe(2);
+    });
+
+    it('leaves a crank that takes no item unnumbered', () => {
+      crankMethods.startCrank();
+      crankMethods.endCrank();
+      expect(crankMethods.getCrankNumber()).toBe(0);
     });
   });
 

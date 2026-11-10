@@ -243,6 +243,10 @@ export class KernelQueue {
         try {
           const queueItem = this.#getNextRunQueueItem();
           if (queueItem) {
+            // Numbered here rather than in `startCrank`, so a pass that finds
+            // nothing to do neither takes a number nor writes, and the number
+            // commits with the crank instead of in a transaction of its own.
+            this.#kernelStore.incrementCrankNumber();
             this.#kernelStore.nextTerminatedVatCleanup();
             const crankResult = await deliver(queueItem);
             await this.#processCrankResult(crankResult, queueItem);
