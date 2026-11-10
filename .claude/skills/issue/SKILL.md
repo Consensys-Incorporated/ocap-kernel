@@ -22,7 +22,11 @@ When asked to file an issue, follow these steps:
      `bug`.
    - Exactly one `area: *` label, by its description. If two fit, pick the one
      where the fix lands.
-   - `security` as well, when its description applies.
+   - `security` as well, when the finding breaks one of the three properties in
+     Mark Miller's security model:
+     - confidentiality or integrity, across any vat or peer boundary;
+     - availability, only when a peer is the attacker. A vat that exhausts
+       resources is outside the model.
 
 4. **Umbrella.** If an open tracking issue covers this work, make the new issue
    its sub-issue with `--parent <parent>` rather than writing a "Related:" line.
