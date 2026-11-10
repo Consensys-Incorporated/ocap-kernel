@@ -83,7 +83,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- A store fault (a read or write the kernel's database refuses, as on a full disk) in a delivery, a syscall, a vat's start or a peer's handshake stops the kernel and rolls back the crank it happened in, instead of being blamed on a vat or a peer, or committed without the write that failed. At boot it fails `Kernel.make` ([#1275](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1275))
+- A store fault (a read or write the kernel's database refuses, as on a full disk) in a delivery, a syscall, a vat worker's start or a peer's handshake stops the kernel and rolls back the crank it happened in, instead of being blamed on a vat or a peer, or committed without the write that failed. At boot it fails `Kernel.make` ([#1275](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1275))
 - **BREAKING:** A vat whose worker answers a delivery with an error is terminated. The error used to reject a message with `DELIVERY_FAILED`, and kill the run loop for any other delivery ([#1275](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1275))
 - **BREAKING:** A vat that sends the kernel a syscall over 12,000,000 characters of JSON, or writes a state entry over 12,000,000 characters, is terminated ([#1275](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1275))
 - **BREAKING:** The promises a terminated vat was deciding are rejected with a fixed `VAT_TERMINATED` error, instead of each storing a copy of the reason, which a vat could make long enough to fill the disk. The reason is logged, cut to 10,000 characters ([#1275](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1275))

@@ -316,11 +316,18 @@ describe('a store fault', () => {
     expect({
       failure: (failure as Error).message,
       cause: ((failure as Error).cause as Error).message,
+      failures: ((failure as AggregateError).errors as Error[]).map(
+        ({ message }) => message,
+      ),
       terminated: kernelDatabase.kernelKVStore.get('vats.terminated'),
       kept: kernelDatabase.kernelKVStore.get('vatConfig.v2') !== undefined,
     }).toStrictEqual({
       failure: 'Kernel panicked; cannot start',
       cause: 'Kernel panic: starting vat v1 failed',
+      failures: [
+        fault.message,
+        'Kernel panicked; cannot retire vat v2, which would not start',
+      ],
       terminated: '[]',
       kept: true,
     });

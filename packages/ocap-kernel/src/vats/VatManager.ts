@@ -207,8 +207,16 @@ export class VatManager {
     );
     // A panic during the starts, as from a syscall's store fault, can leave
     // every start succeeding; it fails the boot here, before anything more is
-    // written outside a crank, and leads what else failed after it.
-    this.#kernelQueue.assertRunLoopAlive('start');
+    // written outside a crank, and leads what else failed.
+    try {
+      this.#kernelQueue.assertRunLoopAlive('start');
+    } catch (refusal) {
+      if (failures.length === 0) {
+        throw refusal;
+      }
+      const { message, cause } = refusal as Error;
+      throw new AggregateError(failures, message, { cause });
+    }
     if (failures.length > 1) {
       throw new AggregateError(
         failures,
