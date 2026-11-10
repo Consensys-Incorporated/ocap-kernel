@@ -27,7 +27,6 @@ const REJECTION_WITH_OBJECT: Answer = {
  * @param answer - How `v1` resolves each message's result.
  * @returns The pieces a test drives. `start` starts the run loop.
  */
-// oxlint-disable-next-line typescript/explicit-function-return-type
 async function setUp(answer: Answer) {
   const kdb = await makeSQLKernelDatabase({ dbFilename: ':memory:' });
   const kernelStore = makeKernelStore(kdb);
