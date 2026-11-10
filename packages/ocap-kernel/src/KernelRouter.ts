@@ -148,6 +148,17 @@ export class KernelRouter {
   }
 
   /**
+   * Log a delivery event, tagged with the crank it happened in.
+   *
+   * @param message - What happened.
+   */
+  #logCrank(message: string): void {
+    this.#logger?.log(
+      `@@@@ crank ${this.#kernelStore.getCrankNumber()} ${message}`,
+    );
+  }
+
+  /**
    * Deliver a run queue item to its target.
    *
    * If the item being delivered is message whose target is a promise, it is
@@ -329,16 +340,16 @@ export class KernelRouter {
       for (const slot of item.message.methargs.slots) {
         this.#kernelStore.decrementRefCount(slot, 'deliver|splat|slot');
       }
-      this.#logger?.log(
-        `@@@@ message went splat ${item.target}<-${JSON.stringify(item.message)}`,
+      this.#logCrank(
+        `message went splat ${item.target}<-${JSON.stringify(item.message)}`,
       );
       return crankResult;
     }
 
     const { endpointId, target } = route;
     const { message } = item;
-    this.#logger?.log(
-      `@@@@ deliver ${endpointId} send ${target}<-${JSON.stringify(message)}`,
+    this.#logCrank(
+      `deliver ${endpointId} send ${target}<-${JSON.stringify(message)}`,
     );
     if (endpointId) {
       const isKernelServiceMessage = endpointId === 'kernel';
@@ -376,8 +387,8 @@ export class KernelRouter {
           for (const slot of message.methargs.slots) {
             this.#kernelStore.decrementRefCount(slot, 'deliver|splat|slot');
           }
-          this.#logger?.log(
-            `@@@@ message went splat (endpoint gone) ${target}<-${JSON.stringify(message)}`,
+          this.#logCrank(
+            `message went splat (endpoint gone) ${target}<-${JSON.stringify(message)}`,
           );
           return crankResult;
         }
@@ -528,9 +539,7 @@ export class KernelRouter {
       context === 'kernel' && isPromise,
       `${kpid} is not a kernel promise`,
     );
-    this.#logger?.log(
-      `@@@@ deliver ${endpointId} notify ${endpointId} ${kpid}`,
-    );
+    this.#logCrank(`deliver ${endpointId} notify ${endpointId} ${kpid}`);
     const promise = this.#kernelStore.getKernelPromise(kpid);
     const { state, value } = promise;
     assert(value, `no value for promise ${kpid}`);
@@ -588,9 +597,7 @@ export class KernelRouter {
    */
   async #deliverGCAction(item: RunQueueItemGCAction): Promise<CrankResult> {
     const { type, endpointId, krefs } = item;
-    this.#logger?.log(
-      `@@@@ deliver ${endpointId} ${type} ${JSON.stringify(krefs)}`,
-    );
+    this.#logCrank(`deliver ${endpointId} ${type} ${JSON.stringify(krefs)}`);
     const endpoint = this.#lookupEndpoint(endpointId, type);
     // Only a skipped vat gets here without a handle. One the store does not
     // call terminated has been cleaned up whole, possibly by
@@ -688,7 +695,7 @@ export class KernelRouter {
     item: RunQueueItemBringOutYourDead,
   ): Promise<CrankResult | undefined> {
     const { endpointId } = item;
-    this.#logger?.log(`@@@@ deliver ${endpointId} bringOutYourDead`);
+    this.#logCrank(`deliver ${endpointId} bringOutYourDead`);
     const endpoint = this.#lookupEndpoint(endpointId, 'bringOutYourDead', {
       // A reap is a hint, so dropping one loses nothing.
       discardable: true,

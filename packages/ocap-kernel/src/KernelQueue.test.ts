@@ -69,6 +69,7 @@ describe('KernelQueue', () => {
       getGCActions: vi.fn().mockReturnValue([]),
       startCrank: vi.fn(),
       endCrank: vi.fn(),
+      incrementCrankNumber: vi.fn(),
       createCrankSavepoint: vi.fn(),
       rollbackCrank: vi.fn(),
       waitForCrank: vi.fn(),
@@ -2348,7 +2349,66 @@ describe('KernelQueue', () => {
       // Two items delivered = two cranks = two startCrank + two endCrank calls
       expect(kernelStore.startCrank).toHaveBeenCalledTimes(2);
       expect(kernelStore.endCrank).toHaveBeenCalledTimes(2);
+      expect(kernelStore.incrementCrankNumber).toHaveBeenCalledTimes(2);
       expect(deliver).toHaveBeenCalledTimes(2);
+    });
+
+    it('numbers the crank once it has taken its item, before delivering it', async () => {
+      (
+        kernelStore.runQueueLength as unknown as MockInstance
+      ).mockReturnValueOnce(1);
+      (kernelStore.dequeueRun as unknown as MockInstance).mockReturnValueOnce({
+        type: 'send',
+        target: asKRef('ko1'),
+        message: {} as KernelMessage,
+      });
+      const deliver = vi.fn().mockRejectedValue(new Error(KILL_RUN_LOOP));
+
+      await expect(kernelQueue.run(deliver)).rejects.toThrow(KILL_RUN_LOOP);
+
+      const callOrder = (method: unknown, call = 0): number =>
+        (method as MockInstance).mock.invocationCallOrder[call] as number;
+      const numbered = callOrder(kernelStore.incrementCrankNumber);
+      // The second savepoint is `delivery`.
+      expect(numbered).toBeGreaterThan(
+        callOrder(kernelStore.createCrankSavepoint, 1),
+      );
+      expect(numbered).toBeGreaterThan(callOrder(kernelStore.dequeueRun));
+      expect(numbered).toBeLessThan(callOrder(deliver));
+    });
+
+    it('leaves a pass that finds nothing to do unnumbered', async () => {
+      (kernelStore.runQueueLength as unknown as MockInstance).mockReturnValue(
+        0,
+      );
+      let turns = 0;
+      (kernelStore.endCrank as unknown as MockInstance).mockImplementation(
+        () => {
+          turns += 1;
+          if (turns === 1) {
+            // The first pass found nothing. Give the second an item.
+            (
+              kernelStore.runQueueLength as unknown as MockInstance
+            ).mockReturnValue(1);
+            (
+              kernelStore.dequeueRun as unknown as MockInstance
+            ).mockReturnValueOnce({
+              type: 'send',
+              target: asKRef('ko1'),
+              message: {} as KernelMessage,
+            });
+          } else {
+            throw new Error(KILL_RUN_LOOP);
+          }
+        },
+      );
+      const deliver = vi.fn().mockResolvedValue(undefined);
+
+      await expect(kernelQueue.run(deliver)).rejects.toThrow(KILL_RUN_LOOP);
+
+      expect(kernelStore.startCrank).toHaveBeenCalledTimes(2);
+      expect(deliver).toHaveBeenCalledOnce();
+      expect(kernelStore.incrementCrankNumber).toHaveBeenCalledOnce();
     });
   });
 

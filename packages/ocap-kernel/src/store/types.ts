@@ -16,6 +16,7 @@ export type StoreContext = {
   nextPromiseId: StoredValue; // Holds string
   nextVatId: StoredValue; // Holds string
   nextRemoteId: StoredValue; // Holds string
+  crankNumber: StoredValue; // Holds string
   maybeFreeKrefs: Set<KRef>;
   gcActions: StoredValue; // Holds GCAction[]
   reapQueue: StoredValue; // Holds ReapAction[]
