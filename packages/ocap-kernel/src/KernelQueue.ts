@@ -21,8 +21,6 @@ import type {
   RunQueueItemPeerIncarnation,
   RunQueueItemRemoteInbound,
   RunQueueItemNotify,
-  RunQueueItemRestartVat,
-  RunQueueItemTerminateVat,
   RunQueueItemSend,
   VatId,
 } from './types.ts';
@@ -45,8 +43,6 @@ type Subscription = {
 
 /** Work from outside the run loop, waiting for a crank of its own. */
 type InboxItem = {
-  /** What the work is, completing "cannot ..." when it is refused. */
-  what: string;
   work: () => InboxOutcome<unknown> | Promise<InboxOutcome<unknown>>;
   resolve: (value: unknown) => void;
   reject: (reason: unknown) => void;
@@ -84,23 +80,6 @@ export async function attempt<Value>(
           ? error
           : new Error(String(error), { cause: error }),
     };
-  }
-}
-
-/**
- * Answer an inbox item's caller with how its work ended.
- *
- * @param item - The item.
- * @param outcome - What its work returned.
- */
-function answerInboxItem(
-  item: InboxItem,
-  outcome: InboxOutcome<unknown>,
-): void {
-  if ('failure' in outcome) {
-    item.reject(outcome.failure);
-  } else {
-    item.resolve(outcome.value);
   }
 }
 
@@ -327,7 +306,11 @@ export class KernelQueue {
       const inbox = this.#inboxInFlight;
       this.#inboxInFlight = undefined;
       if (inbox && inboxOutcome) {
-        answerInboxItem(inbox, inboxOutcome);
+        if ('failure' in inboxOutcome) {
+          inbox.reject(inboxOutcome.failure);
+        } else {
+          inbox.resolve(inboxOutcome.value);
+        }
       }
     }
   }
@@ -365,7 +348,7 @@ export class KernelQueue {
       throw Error(`Kernel run loop is stopping; cannot ${what}`);
     }
     const { promise, resolve, reject } = makePromiseKit<unknown>();
-    this.#inbox.push({ what, work, resolve, reject });
+    this.#inbox.push({ work, resolve, reject });
     this.#wakeRunLoop();
     return promise as Promise<Value>;
   }
@@ -802,12 +785,11 @@ export class KernelQueue {
     console.debug('enqueueMessage', target, method, args);
     const methargs = kser([method, args]);
     const { promise, resolve, reject } = makePromiseKit<CapData<KRef>>();
-    const subscription = { resolve, reject };
     // The caller holds one promise for both the write and the answer. Told
     // apart, a message written and then abandoned by the run loop's death
     // would reject an answer nobody was holding.
     this.enqueueInbox('queue a message', () => {
-      this.#writeMessage(target, methargs, subscription);
+      this.#writeMessage(target, methargs, { resolve, reject });
       return { value: undefined };
     }).catch(reject);
     return promise;
@@ -1064,9 +1046,8 @@ export class KernelQueue {
    * is written.
    */
   async enqueueRestartVat(vatId: VatId): Promise<void> {
-    const item: RunQueueItemRestartVat = { type: 'restartVat', vatId };
     await this.enqueueInbox('restart a vat', () => {
-      this.#enqueueRun(item);
+      this.#enqueueRun({ type: 'restartVat', vatId });
       return { value: undefined };
     });
   }
@@ -1086,13 +1067,12 @@ export class KernelQueue {
   ): Promise<void> {
     // A queued row takes no reference count on what it names.
     !reason?.slots.length || Fail`a termination reason cannot carry slots`;
-    const item: RunQueueItemTerminateVat = {
-      type: 'terminateVat',
-      vatId,
-      ...(reason && { reason }),
-    };
     await this.enqueueInbox('terminate a vat', () => {
-      this.#enqueueRun(item);
+      this.#enqueueRun({
+        type: 'terminateVat',
+        vatId,
+        ...(reason && { reason }),
+      });
       return { value: undefined };
     });
   }

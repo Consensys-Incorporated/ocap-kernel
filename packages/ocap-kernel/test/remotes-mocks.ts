@@ -81,8 +81,6 @@ export class MockRemotesFactory {
       acceptPeerIncarnation: vi.fn(),
       waitingIncarnations: vi.fn().mockReturnValue([]),
       resolvePromises: vi.fn(),
-      assertRunLoopAlive: vi.fn(),
-      waitForCrank: vi.fn(),
       // Runs the work at once, as the queue does before its run loop starts.
       enqueueInbox: vi.fn<KernelQueue['enqueueInbox']>(async (_what, work) => {
         const outcome = await work();

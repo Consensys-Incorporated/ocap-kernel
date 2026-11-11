@@ -595,18 +595,13 @@ describe('RemoteManager', () => {
      */
     const holdWrites = (): (() => void) => {
       const held: (() => void)[] = [];
+      const runAtOnce = vi
+        .mocked(mockKernelQueue.enqueueInbox)
+        .getMockImplementation()!;
       vi.mocked(mockKernelQueue.enqueueInbox).mockImplementation(
-        async (_what, work) =>
-          new Promise((resolve, reject) => {
-            held.push(() => {
-              Promise.resolve(work())
-                .then((outcome) =>
-                  'failure' in outcome
-                    ? reject(outcome.failure)
-                    : resolve(outcome.value),
-                )
-                .catch(reject);
-            });
+        async (what, work) =>
+          new Promise((resolve) => {
+            held.push(() => resolve(runAtOnce(what, work)));
           }),
       );
       return () => {

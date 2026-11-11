@@ -165,45 +165,31 @@ describe('an inbox item', () => {
     });
   });
 
-  it('rejects its caller with a failure, and the run loop goes on', async () => {
-    const { kernelStore, kernelQueue } = await makeFixture(0);
-    const running = kernelQueue.run(async () => undefined);
-    const failure = new Error('no such vat');
+  it.each([
+    { outcome: 'a failure', abort: false, written: true },
+    { outcome: 'a failure that aborts', abort: true, written: false },
+  ])(
+    'rejects its caller with $outcome, and the run loop goes on',
+    async ({ abort, written }) => {
+      const { kernelStore, kernelQueue } = await makeFixture(0);
+      const running = kernelQueue.run(async () => undefined);
+      const failure = new Error('worker would not start');
 
-    await expect(
-      kernelQueue.enqueueInbox('pin', () => {
-        kernelStore.setVatConfig(asVatId('v9'), { bundleName: 'kept' });
-        return { failure };
-      }),
-    ).rejects.toBe(failure);
-    await kernelQueue.endRunLoop();
-    await running;
+      await expect(
+        kernelQueue.enqueueInbox('launch', () => {
+          kernelStore.setVatConfig(asVatId('v9'), { bundleName: 'written' });
+          return { abort, failure };
+        }),
+      ).rejects.toBe(failure);
+      await kernelQueue.endRunLoop();
+      await running;
 
-    expect({
-      written: kernelStore.isVatActive(asVatId('v9')),
-      state: kernelQueue.getRunLoopStatus().state,
-    }).toStrictEqual({ written: true, state: 'stopped' });
-  });
-
-  it('rolls its writes back when the outcome aborts, and the run loop goes on', async () => {
-    const { kernelStore, kernelQueue } = await makeFixture(0);
-    const running = kernelQueue.run(async () => undefined);
-    const failure = new Error('worker would not start');
-
-    await expect(
-      kernelQueue.enqueueInbox('launch', () => {
-        kernelStore.setVatConfig(asVatId('v9'), { bundleName: 'rolled back' });
-        return { abort: true, failure };
-      }),
-    ).rejects.toBe(failure);
-    await kernelQueue.endRunLoop();
-    await running;
-
-    expect({
-      written: kernelStore.isVatActive(asVatId('v9')),
-      state: kernelQueue.getRunLoopStatus().state,
-    }).toStrictEqual({ written: false, state: 'stopped' });
-  });
+      expect({
+        written: kernelStore.isVatActive(asVatId('v9')),
+        state: kernelQueue.getRunLoopStatus().state,
+      }).toStrictEqual({ written, state: 'stopped' });
+    },
+  );
 
   it('rolls back what an attempt wrote before it threw', async () => {
     const { kernelStore, kernelQueue } = await makeFixture(0);

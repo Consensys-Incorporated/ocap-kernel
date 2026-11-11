@@ -1,8 +1,10 @@
 import type { CapData } from '@endo/marshal';
 import { SubclusterNotFoundError } from '@metamask/kernel-errors';
+import { isCapData } from '@metamask/kernel-utils';
 import { Logger } from '@metamask/logger';
 
 import type { IOManager } from '../io/IOManager.ts';
+import { attempt } from '../KernelQueue.ts';
 import type { KernelQueue } from '../KernelQueue.ts';
 import type { VatManager } from './VatManager.ts';
 import { kslot, kunser } from '../liveslots/kernel-marshal.ts';
@@ -28,11 +30,6 @@ type SubclusterManagerOptions = {
   getKernelService: (
     name: string,
   ) => { kref: KRef; systemOnly: boolean } | undefined;
-  writeMessage: (
-    target: KRef,
-    method: string,
-    args: unknown[],
-  ) => Promise<CapData<KRef>>;
   ioManager?: IOManager;
   logger?: Logger;
 };
@@ -63,16 +60,6 @@ export class SubclusterManager {
     name: string,
   ) => { kref: KRef; systemOnly: boolean } | undefined;
 
-  /**
-   * Writes a message from the kernel inside the open crank, for the run loop
-   * to deliver, and gives a promise for its answer.
-   */
-  readonly #writeMessage: (
-    target: KRef,
-    method: string,
-    args: unknown[],
-  ) => Promise<CapData<KRef>>;
-
   /** Logger for diagnostic output */
   readonly #logger: Logger;
 
@@ -90,8 +77,6 @@ export class SubclusterManager {
    * @param options.kernelQueue - The kernel's message queue for scheduling deliveries.
    * @param options.vatManager - Manager for creating and managing vat instances.
    * @param options.getKernelService - Function to retrieve a kernel service by its kref.
-   * @param options.writeMessage - Function that writes a message from the
-   * kernel inside the open crank and gives a promise for its answer.
    * @param options.ioManager - Optional IO manager for IO channel lifecycle.
    * @param options.logger - Optional logger for diagnostic output.
    */
@@ -100,7 +85,6 @@ export class SubclusterManager {
     kernelQueue,
     vatManager,
     getKernelService,
-    writeMessage,
     ioManager,
     logger,
   }: SubclusterManagerOptions) {
@@ -108,7 +92,6 @@ export class SubclusterManager {
     this.#kernelQueue = kernelQueue;
     this.#vatManager = vatManager;
     this.#getKernelService = getKernelService;
-    this.#writeMessage = writeMessage;
     this.#ioManager = ioManager;
     this.#logger = logger ?? new Logger('SubclusterManager');
     harden(this);
@@ -165,7 +148,7 @@ export class SubclusterManager {
             teardownError,
           ),
       );
-      throw error;
+      throw isCapData(error) ? kunser(error as CapData<KRef>) : error;
     }
     return { subclusterId, rootKref, bootstrapResult, vatRootKrefs };
   }
@@ -188,7 +171,7 @@ export class SubclusterManager {
     }: { isSystem: boolean; systemName?: string | undefined },
   ): Promise<InboxOutcome<Launched>> {
     const subclusterId = this.#kernelStore.addSubcluster(config);
-    try {
+    const outcome = await attempt(async () => {
       // Create IO channels before validating services so that IO service
       // names are registered and discoverable by #validateServices.
       if (config.io) {
@@ -215,15 +198,16 @@ export class SubclusterManager {
         ]),
       );
       // Last: a failure after it would leave the answer's subscription behind.
-      const answer = this.#writeMessage(rootKref, 'bootstrap', [
+      const answer = this.#kernelQueue.writeMessage(rootKref, 'bootstrap', [
         roots,
         services,
       ]);
       // Awaited once the crank commits; a crank that dies first abandons the
       // answer with nobody holding it.
       answer.catch(() => undefined);
-      return { value: { subclusterId, rootKref, vatRootKrefs, answer } };
-    } catch (error) {
+      return { subclusterId, rootKref, vatRootKrefs, answer };
+    });
+    if ('failure' in outcome) {
       // The rollback forgets the records; the workers and channels are the
       // kernel's to stop. A store fault is reported to the caller the same way
       // until the kernel can tell it from a vat's failure (#1291).
@@ -236,11 +220,8 @@ export class SubclusterManager {
           cleanupError,
         );
       }
-      return {
-        abort: true,
-        failure: error instanceof Error ? error : new Error(String(error)),
-      };
     }
+    return outcome;
   }
 
   /**

@@ -559,17 +559,14 @@ export class RemoteManager {
         // `#provideRemote`, not `establishRemote`: a setup queued for an
         // earlier caller may have run first.
         const remote = this.#provideRemote(peerId, hints);
-        try {
-          const answer = use(remote);
-          // Awaited once the crank commits; a crank that dies first abandons
-          // an answer with nobody holding it.
-          Promise.resolve(answer).catch(() => undefined);
-          return { value: { used: answer } };
-        } catch (error) {
-          return {
-            failure: error instanceof Error ? error : new Error(String(error)),
-          };
-        }
+        // A throw from `use` rejects its answer, not the crank.
+        const answer = new Promise<Result>((resolve) => {
+          resolve(use(remote));
+        });
+        // Awaited once the crank commits; a crank that dies first abandons
+        // the answer with nobody holding it.
+        answer.catch(() => undefined);
+        return { value: { used: answer } };
       },
     );
     return await used;

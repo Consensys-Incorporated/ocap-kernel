@@ -222,10 +222,6 @@ export class Kernel {
       vatManager: this.#vatManager,
       getKernelService: (name) =>
         this.#kernelServiceManager.getKernelService(name),
-      // Not async: a store fault in the write must throw out of the crank.
-      // oxlint-disable-next-line typescript/promise-function-async
-      writeMessage: (target, method, args) =>
-        this.#answerOf(this.#kernelQueue.writeMessage(target, method, args)),
       ...(this.#ioManager ? { ioManager: this.#ioManager } : {}),
       logger: this.#logger.subLogger({ tags: ['SubclusterManager'] }),
     });
@@ -529,21 +525,8 @@ export class Kernel {
     method: string,
     args: unknown[],
   ): Promise<CapData<KRef>> {
-    return this.#answerOf(
-      this.#kernelQueue.enqueueMessage(target, method, args),
-    );
-  }
-
-  /**
-   * Await a message's answer, throwing a rejection the kernel serialized as
-   * the error it stands for.
-   *
-   * @param answer - The promise the kernel queue gave for the answer.
-   * @returns The answer.
-   */
-  async #answerOf(answer: Promise<CapData<KRef>>): Promise<CapData<KRef>> {
     try {
-      return await answer;
+      return await this.#kernelQueue.enqueueMessage(target, method, args);
     } catch (rejection) {
       if (isCapData(rejection)) {
         throw kunser(rejection as CapData<KRef>);
@@ -614,12 +597,10 @@ export class Kernel {
   }
 
   /**
-   * Terminates a named sub-cluster of vats, each by way of `terminateVat`.
-   * Refused on a dead run loop. A member that survives keeps the subcluster
-   * and its IO channels, and makes this reject.
+   * Terminates a named sub-cluster of vats, in a crank of its own.
    *
    * @param subclusterId - The id of the subcluster to terminate.
-   * @returns A promise that resolves when termination is complete.
+   * @returns A promise that resolves once the crank has committed.
    */
   async terminateSubcluster(subclusterId: SubclusterId): Promise<void> {
     return this.#subclusterManager.terminateSubcluster(subclusterId);
