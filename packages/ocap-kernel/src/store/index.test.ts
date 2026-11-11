@@ -99,6 +99,7 @@ describe('kernel store', () => {
         'getAllSystemSubclusterMappings',
         'getAllVatRecords',
         'getAnonymousKernelObjects',
+        'getCrankNumber',
         'getGCActions',
         'getHeldResults',
         'getImporters',
@@ -143,6 +144,7 @@ describe('kernel store', () => {
         'holdResult',
         'importsKernelSlot',
         'incRefCount',
+        'incrementCrankNumber',
         'incrementRefCount',
         'initEndpoint',
         'initKernelObject',
@@ -211,6 +213,40 @@ describe('kernel store', () => {
         'unpinObject',
         'waitForCrank',
       ]);
+    });
+  });
+
+  describe('crank numbering', () => {
+    /**
+     * Run a crank that takes an item, as the run loop numbers them.
+     *
+     * @param ks - The store to run it in.
+     */
+    function runNumberedCrank(ks: ReturnType<typeof makeKernelStore>): void {
+      ks.startCrank();
+      ks.incrementCrankNumber();
+      ks.endCrank();
+    }
+
+    it('continues from where a previous store over the same database left off', () => {
+      const first = makeKernelStore(mockKernelDatabase);
+      runNumberedCrank(first);
+      runNumberedCrank(first);
+      expect(first.getCrankNumber()).toBe(2);
+
+      const second = makeKernelStore(mockKernelDatabase);
+      expect(second.getCrankNumber()).toBe(2);
+      second.startCrank();
+      expect(second.incrementCrankNumber()).toBe(3);
+    });
+
+    it('starts over after a reset', () => {
+      const ks = makeKernelStore(mockKernelDatabase);
+      runNumberedCrank(ks);
+      ks.reset();
+      expect(ks.getCrankNumber()).toBe(0);
+      ks.startCrank();
+      expect(ks.incrementCrankNumber()).toBe(1);
     });
   });
 
