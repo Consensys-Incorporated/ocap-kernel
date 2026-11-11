@@ -28,14 +28,17 @@ function failWrites(
 }
 
 /**
- * Read every row the kernel keeps.
+ * Read every row the kernel keeps, except the crank number: a rolled-back
+ * crank keeps the number it took, so no later crank gets the same one.
  *
  * @param kernelDatabase - The kernel's database.
  * @returns The rows of its tables.
  */
 function dumpStore(kernelDatabase: KernelDatabase): Record<string, unknown> {
   return {
-    kv: kernelDatabase.executeQuery('SELECT key, value FROM kv ORDER BY key'),
+    kv: kernelDatabase.executeQuery(
+      "SELECT key, value FROM kv WHERE key != 'crankNumber' ORDER BY key",
+    ),
     vatState: kernelDatabase.executeQuery(
       'SELECT vatID, key, value FROM kv_vatstore ORDER BY vatID, key',
     ),
