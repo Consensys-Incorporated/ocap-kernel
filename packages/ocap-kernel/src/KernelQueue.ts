@@ -110,9 +110,6 @@ export class KernelQueue {
    */
   #resolvedWithKernelSubscription: KernelOneResolution[] = [];
 
-  /** Answers the open crank gives once it commits, an abort or not. */
-  #answersOnCommit: (() => void)[] = [];
-
   /** Callers awaiting work the run loop has been asked for but not yet done. */
   readonly #pendingWorkWaiters: Set<(error: Error) => void> = new Set();
 
@@ -136,11 +133,8 @@ export class KernelQueue {
   /** Thunk to signal run queue transition from empty to non-empty */
   #wakeUpTheRunQueue: (() => void) | null;
 
-  /**
-   * Whether the store has discarded the open crank's transaction, as a failed
-   * rollback does, taking every savepoint with it.
-   */
-  #crankDiscarded: boolean = false;
+  /** A failed rollback discards every savepoint, leaving the catch none. */
+  #abortRollbackFailed: boolean = false;
 
   /**
    * The run loop's state, as one value so that a failure recorded for a loop
@@ -220,7 +214,7 @@ export class KernelQueue {
       let heldFailure: { error: unknown } | undefined;
 
       this.#kernelStore.startCrank();
-      this.#crankDiscarded = false;
+      this.#abortRollbackFailed = false;
       try {
         // Two savepoints, because rolling back the outermost one discards the
         // enclosing transaction (see `rollbackSavepoint`) and an aborted
@@ -245,9 +239,7 @@ export class KernelQueue {
             this.#kernelStore.nextTerminatedVatCleanup();
             const crankResult = await deliver(queueItem);
             await this.#processCrankResult(crankResult, queueItem);
-            if (!crankResult?.abort) {
-              afterCommit = crankResult?.afterCommit;
-            }
+            afterCommit = crankResult?.afterCommit;
           } else {
             if (this.#wakeUpTheRunQueue !== null) {
               Fail`run queue already waiting to be woken; cannot sleep again before the previous wake handler is consumed`;
@@ -258,7 +250,7 @@ export class KernelQueue {
             wakeUpPromise = promise;
           }
         } catch (error) {
-          if (!this.#crankDiscarded) {
+          if (!this.#abortRollbackFailed) {
             try {
               this.#kernelStore.rollbackCrank('crank');
             } catch (rollbackError) {
@@ -278,13 +270,8 @@ export class KernelQueue {
         crankFailure = { error };
         throw error;
       } finally {
-        const answers = this.#answersOnCommit;
-        this.#answersOnCommit = [];
         this.#endCrank(crankFailure);
         if (!crankFailure) {
-          for (const answer of answers) {
-            answer();
-          }
           try {
             this.#writeHeldRequests();
           } catch (error) {
@@ -409,21 +396,6 @@ export class KernelQueue {
     return () => {
       this.#pendingWorkWaiters.delete(reject);
     };
-  }
-
-  /**
-   * Run `answer` once the open crank commits, whether or not it aborts, or now
-   * if no crank is open. A crank that throws or fails to commit drops it,
-   * leaving its callers to {@link onRunLoopDeath}.
-   *
-   * @param answer - What answers the crank's callers.
-   */
-  onCommit(answer: () => void): void {
-    if (this.#kernelStore.isInCrank()) {
-      this.#answersOnCommit.push(answer);
-    } else {
-      answer();
-    }
   }
 
   /**
@@ -622,7 +594,7 @@ export class KernelQueue {
       try {
         this.#kernelStore.rollbackCrank('delivery');
       } catch (error) {
-        this.#crankDiscarded = true;
+        this.#abortRollbackFailed = true;
         throw error;
       }
       // Discard kernel subscriptions that were queued for invocation
