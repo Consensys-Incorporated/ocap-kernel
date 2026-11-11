@@ -1050,7 +1050,7 @@ describe('VatManager', () => {
         async () => undefined,
       );
       const restarting = vatManager.restartVat(v1);
-      // Held during a crank that then kills the run loop, so never written.
+      // Written, but the run loop dies before carrying it out.
       mockKernelQueue.enqueueTerminateVat.mockImplementationOnce(
         async () => undefined,
       );

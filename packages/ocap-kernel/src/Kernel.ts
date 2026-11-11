@@ -112,7 +112,7 @@ export class Kernel {
    * @param options.ioListenerFactory - Optional factory for creating IO listeners.
    * @param options.allowedGlobalNames - Optional list of allowed global names for vat endowments.
    * @param options.onRunLoopFailure - Optional handler called if the run loop dies.
-   * @param options.vatRelaunchTimeoutMs - How long a persisted vat's start at boot, or a vat's restart, waits for its worker before terminating the vat.
+   * @param options.vatRelaunchTimeoutMs - How long a vat's start, at boot, on restart or in a launch, waits for its worker before the vat is terminated or the launch fails.
    * @param options.auditRefCounts - If true, verify every kref's reference
    * counts against the references the kernel actually holds at the end of each
    * crank, and throw on any mismatch. Intended for tests and debugging; the
@@ -275,7 +275,7 @@ export class Kernel {
    * @param options.systemSubclusters - Optional array of system subcluster configurations.
    * @param options.allowedGlobalNames - Optional list of allowed global names for vat endowments. When set, only these names from the `VatSupervisor`'s configured endowments (see `createDefaultEndowments`) are available to vats.
    * @param options.onRunLoopFailure - Optional handler called if the run loop dies. The kernel must be restarted after that, so an embedder that outlives it (e.g. a daemon) should use this to terminate or restart.
-   * @param options.vatRelaunchTimeoutMs - How long a persisted vat's start at boot, or a vat's restart, waits for its worker before terminating the vat, in milliseconds: more than 0 and at most 2^31 - 1. Defaults to 30 seconds.
+   * @param options.vatRelaunchTimeoutMs - How long a vat's start, at boot, on restart or in a launch, waits for its worker before the vat is terminated or the launch fails, in milliseconds: more than 0 and at most 2^31 - 1. Defaults to 30 seconds.
    * @param options.auditRefCounts - If true, verify reference counts against
    * ground truth at the end of each crank and throw on any mismatch.
    * @param options.kernelServices - Kernel services to register before the run
@@ -588,7 +588,8 @@ export class Kernel {
   }
 
   /**
-   * Launches a sub-cluster of vats.
+   * Launches a sub-cluster of vats, in a crank of its own. A vat that does not
+   * start within `vatRelaunchTimeoutMs` rolls the whole launch back.
    *
    * @param config - Configuration object for sub-cluster.
    * @returns A promise for the subcluster ID and the (CapData encoded) result
@@ -601,7 +602,8 @@ export class Kernel {
   }
 
   /**
-   * Terminates a named sub-cluster of vats, in a crank of its own.
+   * Terminates a named sub-cluster of vats, in a crank of its own. A failure
+   * partway rolls back its store writes and kills the run loop.
    *
    * @param subclusterId - The id of the subcluster to terminate.
    * @returns A promise that resolves once the crank has committed.
@@ -972,9 +974,9 @@ export class Kernel {
 
   /**
    * Gracefully stop the kernel without deleting vats. Waits for the open crank
-   * and every host call queued before this; if one never ends, neither does
-   * this, and the embedder has to end the process. A later call settles as
-   * this one does.
+   * and for the crank of each host call queued before this; if one never ends,
+   * neither does this, and the embedder has to end the process. A later call
+   * settles as this one does.
    */
   async stop(): Promise<void> {
     this.#stopping ??= this.#stop();

@@ -83,7 +83,8 @@ function fakeVats() {
  * Make a kernel on a real store over fake vats, whose platform records the
  * workers it is asked to stop.
  *
- * @returns The kernel, its database and platform services, and the vats.
+ * @returns The kernel, the vats, and a function that reads what the tests
+ * check.
  */
 async function makeKernel() {
   vi.spyOn(console, 'debug').mockImplementation(() => undefined);
@@ -173,7 +174,7 @@ describe('a subcluster with a peer vat that fails to launch', () => {
     });
   });
 
-  it('keeps its vat ids from a launch asked for during it, stopping a member that lost its channel', async () => {
+  it('gives none of its vat ids to a launch asked for during it, and stops a member that lost its channel', async () => {
     const { kernel, vats, state } = await makeKernel();
     const launching = kernel.launchSubcluster({
       bootstrap: 'lost',

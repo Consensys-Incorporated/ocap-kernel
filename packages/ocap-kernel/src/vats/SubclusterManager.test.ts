@@ -187,7 +187,7 @@ describe('SubclusterManager', () => {
         's1',
       );
       // The bootstrap message targets the real root KRef once all vats have
-      // launched, and is written in the launch's crank.
+      // launched.
       expect(mockWriteMessage).toHaveBeenCalledWith('ko1', 'bootstrap', [
         { testVat: expect.anything() },
         {},

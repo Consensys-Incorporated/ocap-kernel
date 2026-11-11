@@ -111,6 +111,19 @@ describe('what a crank rollback reverts beyond the database', () => {
     },
   );
 
+  it('leaves the counters where they were when the crank it rolls back wiped the store', () => {
+    kernelStore.startCrank();
+    kernelStore.getNextVatId();
+    kernelStore.getNextVatId();
+    kernelStore.endCrank();
+
+    crankThenRollBack(() => kernelStore.reset());
+
+    kernelStore.startCrank();
+    expect(kernelStore.getNextVatId()).toBe('v3');
+    kernelStore.endCrank();
+  });
+
   it('drops a collection candidate the abandoned crank created', () => {
     crankThenRollBack(() => {
       const [kpid] = kernelStore.initKernelPromise();

@@ -86,7 +86,13 @@ export function getCrankMethods(ctx: StoreContext, kdb: KernelDatabase) {
         }
         revertStateBeneathRollback(restored);
         for (const [field, value] of counters) {
-          if (value !== undefined && ctx[field].get() !== value) {
+          // Only upward: a crank that wiped the store took the counters down,
+          // and those are the values the rollback undoes.
+          const reverted = ctx[field].get();
+          if (
+            value !== undefined &&
+            (reverted === undefined || Number(value) > Number(reverted))
+          ) {
             ctx[field].set(value);
           }
         }

@@ -403,11 +403,10 @@ export function makeKernelStore(kdb: KernelDatabase, logger?: Logger) {
     // not running when it was issued.
     //
     // The ledger counts, per target, how many URLs name it, and holds one pin
-    // for as long as that count is nonzero. An issuance whose mint fails is
-    // rolled back with its crank. `releaseOcapURLRetentions` drops the
-    // target's whole retention at once, for disavowing every URL naming it.
-    // Revocation writes only the revoked flag, so a revoked object's URLs stay
-    // retained, redeemable, and undeliverable.
+    // for as long as that count is nonzero. `releaseOcapURLRetentions` drops
+    // the target's whole retention at once, for disavowing every URL naming
+    // it. Revocation writes only the revoked flag, so a revoked object's URLs
+    // stay retained, redeemable, and undeliverable.
     getOcapURLObjects(): KRef[] {
       return [...getPrefixedKeys(OCAP_URL_PREFIX)].map(
         (key) => key.slice(OCAP_URL_PREFIX.length) as KRef,

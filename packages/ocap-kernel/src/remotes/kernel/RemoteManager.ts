@@ -529,11 +529,11 @@ export class RemoteManager {
 
   /**
    * Act on the RemoteHandle for a peer, in a crank of its own, setting one up
-   * if it has none. Set up inside whatever crank was open, an abort would
-   * give its ID to the next new remote while its handle lives on. `use` runs
-   * in that crank, as soon as the handle exists, so what it writes before its
-   * first `await` commits with the setup; what it throws is the caller's to
-   * hear, and leaves the setup committed.
+   * if it has none. Set up inside whatever crank was open, an abort would take
+   * back its records while its handle lives on. `use` runs in that crank, as
+   * soon as the handle exists, so what it writes before its first `await`
+   * commits with the setup; what it throws is the caller's to hear, and leaves
+   * the setup committed.
    *
    * @param peerId - The libp2p peer for which a handle is sought.
    * @param options - Options bag.

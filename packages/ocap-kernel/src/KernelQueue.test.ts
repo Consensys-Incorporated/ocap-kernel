@@ -807,7 +807,7 @@ describe('KernelQueue', () => {
       },
     );
 
-    it('rejects the caller with what a write throws when no crank is open, leaving no subscription', async () => {
+    it('rejects the caller with what a write throws before the run loop has started, leaving no subscription', async () => {
       (makePromiseKit as unknown as MockInstance).mockReturnValueOnce(
         makeRealPromiseKit(),
       );

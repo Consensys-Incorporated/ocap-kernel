@@ -209,8 +209,7 @@ export class SubclusterManager {
     });
     if ('failure' in outcome) {
       // The rollback forgets the records; the workers and channels are the
-      // kernel's to stop. A store fault is reported to the caller the same way
-      // until the kernel can tell it from a vat's failure (#1291).
+      // kernel's to stop.
       await this.#stopMembers(subclusterId, outcome.failure);
       try {
         await this.#ioManager?.destroyChannels(subclusterId);
@@ -269,8 +268,8 @@ export class SubclusterManager {
    *
    * @param subclusterId - The subcluster.
    * @param failure - Why the launch failed.
-   * @throws Every member's stop failure, with the launch's failure as the
-   * cause, once each of the others has been tried.
+   * @throws An `AggregateError` of the members' stop failures, with the
+   * launch's failure as its cause, once every member has been tried.
    */
   async #stopMembers(
     subclusterId: SubclusterId,

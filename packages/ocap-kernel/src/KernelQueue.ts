@@ -45,8 +45,7 @@ type InboxItem = {
   work: () => InboxOutcome<unknown> | Promise<InboxOutcome<unknown>>;
   resolve: (value: unknown) => void;
   reject: (reason: unknown) => void;
-  /** Queued during another inbox item's crank. */
-  queuedInInbox: boolean;
+  queuedDuringInboxCrank: boolean;
 };
 
 type Deliver = (item: RunLoopItem) => Promise<CrankResult | undefined>;
@@ -62,9 +61,9 @@ const DEAD_RUN_LOOP_RESULT =
 
 /**
  * Carry out a host call's work for `enqueueInbox`, turning a throw into a
- * failure that rejects the caller and rolls the crank back. A store fault is
- * reported the same way until the kernel can tell it from the caller's error
- * (#1291).
+ * failure that rejects the caller and, unless `rollback` is false, rolls the
+ * crank back. A store fault is reported the same way until the kernel can tell
+ * it from the caller's error, as #1288's `isStoreFault` will.
  *
  * @param work - The call's work.
  * @param options - Options.
@@ -131,7 +130,6 @@ export class KernelQueue {
   /** The inbox item whose crank is open, answered once it commits. */
   #inboxInFlight: InboxItem | undefined;
 
-  /** Whether the last crank was an inbox item's. */
   #tookInboxLast = false;
 
   /** Set by `endRunLoop`, and resolved once the loop has ended. */
@@ -253,10 +251,12 @@ export class KernelQueue {
           // calling cannot starve the run queue.
           const letTheRestGo =
             this.#tookInboxLast &&
-            this.#inbox[0]?.queuedInInbox === true &&
+            this.#inbox[0]?.queuedDuringInboxCrank === true &&
             !this.#ending;
           let inbox = letTheRestGo ? undefined : this.#inbox.shift();
-          const queueItem = inbox ? undefined : this.#getNextRunQueueItem();
+          const queueItem = inbox
+            ? undefined
+            : this.#getNextRunQueueItem({ arrivals: !letTheRestGo });
           inbox ??= queueItem ? undefined : this.#inbox.shift();
           this.#tookInboxLast = inbox !== undefined;
           // At the take, so a crank that dies before the work starts still
@@ -334,10 +334,10 @@ export class KernelQueue {
 
   /**
    * Hand the run loop work from outside it: a host call, or a request the
-   * kernel's own code makes while a crank may be open. The loop takes it ahead
-   * of everything else, in a crank of its own, and answers once that crank
-   * commits. Before the loop has started the work runs at once, as the
-   * kernel's boot writes do, with no crank to roll back.
+   * kernel's own code makes while a crank may be open. The loop takes it in a
+   * crank of its own and answers once that crank commits. Before the loop has
+   * started the work runs at once, as the kernel's boot writes do, with no
+   * crank to roll back.
    *
    * @param what - What the work is, completing "cannot ..." when refused.
    * @param work - The work. Its writes must be made by the time its promise
@@ -368,7 +368,7 @@ export class KernelQueue {
       work,
       resolve,
       reject,
-      queuedInInbox: this.#inboxInFlight !== undefined,
+      queuedDuringInboxCrank: this.#inboxInFlight !== undefined,
     });
     this.#wakeRunLoop();
     return promise as Promise<Value>;
@@ -409,7 +409,7 @@ export class KernelQueue {
    * Reject every inbox item waiting behind the open crank, for a kernel wiping
    * its store in that crank. Carried out after the wipe, a request made during
    * it would act on the fresh kernel: a termination asked for during a reset
-   * would kill the vat relaunched under the same id.
+   * would kill the next vat launched under that id.
    *
    * @param error - What to tell their callers.
    */
@@ -557,12 +557,20 @@ export class KernelQueue {
   }
 
   /**
-   * Take the next item for the run loop, once the inbox is empty.
+   * Take the next item for the run loop other than an inbox item.
    * **ATTN:** Removes it from the kernel store or the arrivals.
    *
+   * @param options - Options.
+   * @param options.arrivals - Whether a peer's arrival may be taken. Not in a
+   * turn the inbox gives up: a peer's restart taken then could overtake an
+   * older message of that peer's still in the inbox.
    * @returns The next item, or undefined if nothing is waiting.
    */
-  #getNextRunQueueItem(): RunLoopItem | undefined {
+  #getNextRunQueueItem({
+    arrivals,
+  }: {
+    arrivals: boolean;
+  }): RunLoopItem | undefined {
     const gcAction = processGCActionSet(this.#kernelStore);
     if (gcAction) {
       return gcAction;
@@ -575,7 +583,7 @@ export class KernelQueue {
 
     // Arrivals and the run queue take turns, so a peer that sends faster than
     // cranks finish cannot hold up the kernel's own work.
-    const arrivalFirst = !this.#tookArrivalLast;
+    const arrivalFirst = arrivals && !this.#tookArrivalLast;
     this.#tookArrivalLast = false;
     if (arrivalFirst) {
       const arrival = this.#takeArrival();
@@ -590,7 +598,7 @@ export class KernelQueue {
         return item;
       }
     }
-    return this.#takeArrival();
+    return arrivals ? this.#takeArrival() : undefined;
   }
 
   /**

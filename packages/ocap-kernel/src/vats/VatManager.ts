@@ -112,9 +112,9 @@ export class VatManager {
 
   /**
    * Restart callers a queued termination has overtaken, or that asked while
-   * one was pending, by vat, for its crank to answer. Not answered sooner: a
-   * termination held during a crank that kills the run loop is never written,
-   * and they must hear of the death.
+   * one was pending, by vat, for its crank to answer. Not answered sooner: the
+   * run loop can die before the termination is carried out, and they must hear
+   * of that death instead.
    */
   readonly #supersededRestarts: Map<VatId, Waiter<VatHandle>[]>;
 
@@ -392,8 +392,8 @@ export class VatManager {
       throw error;
     }
     if (launch?.abandoned) {
-      // The boot or crank that gave up on this worker retires the vat, so a
-      // handle registered now would bring it back.
+      // The boot or crank that gave up on this worker retires the vat or rolls
+      // it back, so a handle registered now would bring it back.
       vat
         .terminate(true)
         .catch((error: unknown) =>
@@ -674,7 +674,6 @@ export class VatManager {
     // Refused before the restarts are handed to the termination: a refused
     // one leaves the vat running and the restart still due.
     this.#kernelQueue.assertInboxOpen('terminate a vat');
-    // A queued row takes no reference count on what it names.
     !reason?.slots.length || Fail`a termination reason cannot carry slots`;
     await this.#awaitQueuedWork(this.#terminationWaiters, vatId, async () => {
       // Before the request is written, and so before any crank, since a

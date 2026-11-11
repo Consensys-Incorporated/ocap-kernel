@@ -157,8 +157,12 @@ describe('an inbox item', () => {
   });
 
   it.each([
-    { outcome: 'a failure', abort: false, written: true },
-    { outcome: 'a failure that aborts', abort: true, written: false },
+    { outcome: 'a failure, keeping its writes', abort: false, written: true },
+    {
+      outcome: 'a failure that aborts, rolling its writes back',
+      abort: true,
+      written: false,
+    },
   ])(
     'rejects its caller with $outcome, and the run loop goes on',
     async ({ abort, written }) => {
@@ -183,10 +187,10 @@ describe('an inbox item', () => {
   );
 
   it.each([
-    { rollback: true, kept: false },
-    { rollback: false, kept: true },
+    { rollback: true, kept: false, verb: 'rolls back' },
+    { rollback: false, kept: true, verb: 'keeps' },
   ])(
-    'keeps what an attempt wrote before it threw only without a rollback: $rollback',
+    '$verb what an attempt wrote before it threw, given rollback: $rollback',
     async ({ rollback, kept }) => {
       const { kernelStore, kernelQueue } = await makeFixture(0);
       const running = kernelQueue.run(async () => undefined);
@@ -210,7 +214,7 @@ describe('an inbox item', () => {
     },
   );
 
-  it('lets the run queue have a crank before an item asked for during another inbox crank', async () => {
+  it("lets the run queue, but not a peer's arrival, have a crank before an item asked for during another inbox crank", async () => {
     const { kernelQueue } = await makeFixture(2);
     const taken: string[] = [];
     const ask = (name: string, then: () => void): void => {
@@ -225,11 +229,12 @@ describe('an inbox item', () => {
     const running = kernelQueue.run(async (item) => {
       taken.push(item.type);
       if (taken.length === 1) {
-        ask('first', () =>
+        ask('first', () => {
+          kernelQueue.acceptRemoteInbound(arrival);
           ask('second', () => {
             kernelQueue.endRunLoop().catch(() => undefined);
-          }),
-        );
+          });
+        });
       }
       return undefined;
     });
