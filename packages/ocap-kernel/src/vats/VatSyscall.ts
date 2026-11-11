@@ -154,7 +154,7 @@ export class VatSyscall {
 
   /**
    * Handle a syscall from the vat. A store fault stops the kernel, and anything
-   * else is the vat's fault. SwingSet stops the kernel on any failure past
+   * else is taken for the vat's fault. SwingSet stops the kernel on any failure past
    * translation, but our translation checks less than SwingSet's, so a vat's
    * own mistake can get that far.
    *

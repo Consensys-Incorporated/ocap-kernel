@@ -25,23 +25,27 @@ describe('markStoreFaults', () => {
     },
   );
 
-  it('passes calls through, and does not mark a missing key', () => {
+  it.each([
+    ['a missing key', 'other'],
+    ['an empty value', 'empty'],
+  ])('passes calls through, and does not mark %s', (_, key) => {
     const marked = markStoreFaults(makeMapKVStore());
     marked.set('key', 'value');
-    let missing: unknown;
+    marked.set('empty', '');
+    let refused: unknown;
     try {
-      marked.getRequired('other');
+      marked.getRequired(key);
     } catch (error) {
-      missing = error;
+      refused = error;
     }
 
     expect({
       found: marked.getRequired('key'),
-      missing,
-      marked: isStoreFault(missing),
+      refused,
+      marked: isStoreFault(refused),
     }).toStrictEqual({
       found: 'value',
-      missing: Error("no record matching key 'other'"),
+      refused: Error(`no record matching key '${key}'`),
       marked: false,
     });
   });

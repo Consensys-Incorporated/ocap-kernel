@@ -136,6 +136,7 @@ export class KernelQueue {
   /** A failed rollback discards every savepoint, leaving the catch none. */
   #abortRollbackFailed: boolean = false;
 
+  /** The first fault {@link panic} recorded, thrown by the run loop. */
   #panic: Error | undefined;
 
   /**
@@ -254,7 +255,9 @@ export class KernelQueue {
             this.#wakeUpTheRunQueue = resolve;
             wakeUpPromise = promise;
           }
-        } catch (error) {
+        } catch (thrown) {
+          // The panic, if any, came first and is the fault to report.
+          const error = this.#panic ?? thrown;
           if (!this.#abortRollbackFailed) {
             try {
               this.#kernelStore.rollbackCrank('crank');
@@ -495,7 +498,7 @@ export class KernelQueue {
    *
    * @param problem - What failed, completing "Kernel panic: ...".
    * @param cause - The error that was caught.
-   * @returns The panic's error.
+   * @returns This call's error; the run loop throws the first one recorded.
    */
   panic(problem: string, cause: unknown): Error {
     const error = new Error(`Kernel panic: ${problem}`, { cause });
