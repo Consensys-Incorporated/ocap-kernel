@@ -647,21 +647,37 @@ describe('RemoteManager', () => {
       expect(await used).toBe('used');
     });
 
-    it("hands a known peer's message to its handle at once, without the kernel queue", async () => {
-      const remote = remoteManager.establishRemote('existing-peer');
-      const receive = vi
-        .spyOn(remote, 'receiveFromPeer')
-        .mockImplementation(() => undefined);
+    it.each([
+      [
+        'another crank',
+        async (manager: RemoteManager) => manager.establishRemote('peer'),
+      ],
+      [
+        'its own first message',
+        async (manager: RemoteManager) => {
+          await manager.handleRemoteMessage('peer', peerMessage(1));
+          return manager.getRemote(asRemoteId('r1'));
+        },
+      ],
+    ])(
+      "hands a known peer's message to its handle at once, without the kernel queue, once %s has set the peer up",
+      async (_, setUp) => {
+        const remote = await setUp(remoteManager);
+        vi.mocked(mockKernelQueue.enqueueInbox).mockClear();
+        const receive = vi
+          .spyOn(remote, 'receiveFromPeer')
+          .mockImplementation(() => undefined);
 
-      const handled = remoteManager.handleRemoteMessage(
-        'existing-peer',
-        peerMessage(1),
-      );
+        const handled = remoteManager.handleRemoteMessage(
+          'peer',
+          peerMessage(2),
+        );
 
-      expect(receive).toHaveBeenCalledExactlyOnceWith(peerMessage(1));
-      expect(mockKernelQueue.enqueueInbox).not.toHaveBeenCalled();
-      expect(await handled).toBeNull();
-    });
+        expect(receive).toHaveBeenCalledExactlyOnceWith(peerMessage(2));
+        expect(mockKernelQueue.enqueueInbox).not.toHaveBeenCalled();
+        expect(await handled).toBeNull();
+      },
+    );
 
     it('resolves to what a promise returned by use resolves to', async () => {
       const writeHeld = holdWrites();
@@ -717,6 +733,32 @@ describe('RemoteManager', () => {
           .mocked(mockKernelQueue.acceptRemoteInbound)
           .mock.calls.map(([{ seq }]) => seq),
       ).toStrictEqual([1, 2]);
+    });
+
+    it("keeps a peer's message behind every one of its own still in the inbox", async () => {
+      const writeHeld = holdWrites();
+      const first = remoteManager.handleRemoteMessage(
+        'new-peer',
+        peerMessage(1),
+      );
+      writeHeld();
+      const second = remoteManager.handleRemoteMessage(
+        'new-peer',
+        peerMessage(2),
+      );
+      await first;
+      const third = remoteManager.handleRemoteMessage(
+        'new-peer',
+        peerMessage(3),
+      );
+      writeHeld();
+      await Promise.all([second, third]);
+
+      expect(
+        vi
+          .mocked(mockKernelQueue.acceptRemoteInbound)
+          .mock.calls.map(([{ seq }]) => seq),
+      ).toStrictEqual([1, 2, 3]);
     });
 
     it("keeps a peer's message behind one of its own still in the inbox, once another crank has set the peer up", async () => {

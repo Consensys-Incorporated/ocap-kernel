@@ -214,34 +214,53 @@ describe('an inbox item', () => {
     },
   );
 
-  it("lets the run queue, but not a peer's arrival, have a crank before an item asked for during another inbox crank", async () => {
-    const { kernelQueue } = await makeFixture(2);
-    const taken: string[] = [];
-    const ask = (name: string, then: () => void): void => {
-      kernelQueue
-        .enqueueInbox(name, () => {
-          taken.push(name);
-          then();
-          return { value: undefined };
-        })
-        .catch(() => undefined);
-    };
-    const running = kernelQueue.run(async (item) => {
-      taken.push(item.type);
-      if (taken.length === 1) {
-        ask('first', () => {
-          kernelQueue.acceptRemoteInbound(arrival);
-          ask('second', () => {
-            kernelQueue.endRunLoop().catch(() => undefined);
+  it.each([
+    {
+      when: 'running',
+      after: 'one run-queue crank',
+      stopping: false,
+      expected: ['send', 'first', 'send', 'second'],
+    },
+    {
+      when: 'stopping',
+      after: 'nothing',
+      stopping: true,
+      expected: ['send', 'first', 'second'],
+    },
+  ])(
+    "takes an item asked for during another inbox crank after $after while $when, and never after a peer's arrival",
+    async ({ stopping, expected }) => {
+      const { kernelQueue } = await makeFixture(3);
+      const taken: string[] = [];
+      const ask = (name: string, then: () => void): void => {
+        kernelQueue
+          .enqueueInbox(name, () => {
+            taken.push(name);
+            then();
+            return { value: undefined };
+          })
+          .catch(() => undefined);
+      };
+      const running = kernelQueue.run(async (item) => {
+        taken.push(item.type);
+        if (taken.length === 1) {
+          ask('first', () => {
+            kernelQueue.acceptRemoteInbound(arrival);
+            ask('second', () => {
+              kernelQueue.endRunLoop().catch(() => undefined);
+            });
+            if (stopping) {
+              kernelQueue.endRunLoop().catch(() => undefined);
+            }
           });
-        });
-      }
-      return undefined;
-    });
+        }
+        return undefined;
+      });
 
-    await running;
-    expect(taken).toStrictEqual(['send', 'first', 'send', 'second']);
-  });
+      await running;
+      expect(taken).toStrictEqual(expected);
+    },
+  );
 
   it('keeps what it wrote when a later crank aborts', async () => {
     const { kernelStore, kernelQueue } = await makeFixture(2);

@@ -228,6 +228,27 @@ describe('a host call on a real kernel', () => {
   );
 });
 
+describe('initRemoteComms on a real kernel', () => {
+  it('keeps the identity it wrote when the transport fails to start', async () => {
+    const { kernel, kernelDatabase, platformServices } =
+      await setUpRealKernel();
+    Object.assign(platformServices, {
+      initializeRemoteComms: vi
+        .fn()
+        .mockRejectedValue(new Error('transport failed')),
+    });
+
+    await expect(kernel.initRemoteComms()).rejects.toThrow('transport failed');
+
+    expect({
+      identity:
+        makeKernelStore(kernelDatabase).getRemoteIdentityValue('peerId') !==
+        undefined,
+      runLoop: (await kernel.getStatus()).runLoop.state,
+    }).toStrictEqual({ identity: true, runLoop: 'running' });
+  });
+});
+
 describe('stop on a real kernel', () => {
   it('tears down even when the run loop dies before it ends', async () => {
     const harness = await setUpRealKernel();
