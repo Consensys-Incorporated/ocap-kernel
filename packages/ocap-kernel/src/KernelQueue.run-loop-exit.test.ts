@@ -85,7 +85,7 @@ describe('a queueMessage caller the vat has not answered', () => {
       async ({ kernel }: Harness): Promise<void> => kernel.reset(),
       // The vat's termination rejects the promise it decides before the reset
       // abandons the rest.
-      '[KERNEL:VAT_TERMINATED] Vat was deleted.',
+      '[KERNEL:VAT_TERMINATED] Vat v1 was terminated',
     ],
     [
       'the kernel stops',

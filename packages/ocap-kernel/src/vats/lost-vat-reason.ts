@@ -2,6 +2,7 @@ import type { CapData } from '@endo/marshal';
 
 import { makeKernelError } from '../liveslots/kernel-marshal.ts';
 import type { KRef, VatId } from '../types.ts';
+import { capReasonText } from './vat-limits.ts';
 
 /**
  * The reason a vat that lost its channel to its worker is terminated with.
@@ -19,6 +20,6 @@ export const makeLostVatReason = (
   const cause = error.cause instanceof Error ? error.cause : error;
   return makeKernelError(
     'VAT_TERMINATED',
-    `Vat ${vatId} lost its channel: ${cause.message}`,
+    `Vat ${vatId} lost its channel: ${capReasonText(cause.message)}`,
   );
 };
