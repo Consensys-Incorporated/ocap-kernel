@@ -23,8 +23,15 @@ describe('crank methods', () => {
 
   beforeEach(() => {
     mockCrankBuffer = [];
+    let crankNumber = '0';
     context = {
       inCrank: false,
+      crankNumber: {
+        get: () => crankNumber,
+        set: (value: string) => {
+          crankNumber = value;
+        },
+      },
       savepoints: [],
       crankBuffer: mockCrankBuffer,
       maybeFreeKrefs: new Set(),
@@ -56,6 +63,24 @@ describe('crank methods', () => {
       expect(() => crankMethods.startCrank()).toThrow(
         'startCrank while already in a crank',
       );
+    });
+
+    it('numbers cranks from 1 as each takes its item, keeping the number between cranks', () => {
+      expect(crankMethods.getCrankNumber()).toBe(0);
+      crankMethods.startCrank();
+      expect(crankMethods.getCrankNumber()).toBe(0);
+      expect(crankMethods.incrementCrankNumber()).toBe(1);
+      expect(crankMethods.getCrankNumber()).toBe(1);
+      crankMethods.endCrank();
+      expect(crankMethods.getCrankNumber()).toBe(1);
+      crankMethods.startCrank();
+      expect(crankMethods.incrementCrankNumber()).toBe(2);
+    });
+
+    it('leaves a crank that takes no item unnumbered', () => {
+      crankMethods.startCrank();
+      crankMethods.endCrank();
+      expect(crankMethods.getCrankNumber()).toBe(0);
     });
   });
 

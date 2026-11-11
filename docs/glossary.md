@@ -80,7 +80,9 @@ A single execution cycle of the kernel's [run loop](#run-loop). Each crank proce
 item: a control operation such as `reset`, a message from a remote peer, or an item off
 the [run queue](#run-queue), such as a message or notification for [a vat](#vat). The
 first two wait in memory until their crank comes. Cranks can be aborted and rolled back if
-errors occur. See the
+errors occur. Cranks are numbered from 1 by a counter kept in the
+[kernel store](../packages/ocap-kernel/src/store/index.ts), so the numbering continues
+across kernel restarts; a crank that rolls back still used up its number. See the
 [KernelQueue](../packages/ocap-kernel/src/KernelQueue.ts) for the run loop implementation.
 
 ### syscall

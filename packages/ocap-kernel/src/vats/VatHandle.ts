@@ -30,6 +30,11 @@ import type {
   EndpointHandle,
 } from '../types.ts';
 import type { AllowedGlobalName } from './endowments.ts';
+import {
+  MAX_VAT_MESSAGE_LENGTH,
+  capReasonText,
+  fitsVatStateLimit,
+} from './vat-limits.ts';
 import { VatSyscall } from './VatSyscall.ts';
 
 type MessageFromVat = JsonRpcResponse | JsonRpcNotification;
@@ -150,7 +155,8 @@ export class VatHandle implements EndpointHandle {
    */
   static async make(params: VatConstructorProps): Promise<VatHandle> {
     const vat = new VatHandle(params);
-    const [, deliveryError] = await vat.#init();
+    await vat.#init();
+    const { deliveryError } = vat.#vatSyscall;
     if (deliveryError) {
       throw new Error(
         `Failed to initialize vat ${vat.vatId}: ${deliveryError}`,
@@ -237,8 +243,15 @@ export class VatHandle implements EndpointHandle {
    */
   async #handleMessage(message: JsonRpcMessage): Promise<void> {
     if (isJsonRpcResponse(message)) {
+      // A reply is not measured whole: it carries all of a delivery's state
+      // changes, so `sendVatCommand` checks each entry.
       this.#rpcClient.handleResponse(message.id as string, message);
     } else if (isJsonRpcNotification(message)) {
+      if (JSON.stringify(message).length > MAX_VAT_MESSAGE_LENGTH) {
+        throw new Error(
+          `Vat ${this.vatId} sent a syscall over ${MAX_VAT_MESSAGE_LENGTH} characters`,
+        );
+      }
       this.#rpcService.assertHasMethod(message.method);
       await this.#rpcService.execute(message.method, message.params);
     } else {
@@ -378,8 +391,14 @@ export class VatHandle implements EndpointHandle {
   }): Promise<ExtractResult<Method, typeof vatMethodSpecs>> {
     const result = await this.#rpcClient.call(method, params);
     if (method === 'initVat' || method === 'deliver') {
-      const [[sets, deletes], deliveryError] = result as VatDeliveryResult;
-      this.#vatSyscall.deliveryError = deliveryError ?? undefined;
+      const [[sets, deletes], vatError] = result as VatDeliveryResult;
+      let deliveryError = vatError;
+      if (!deliveryError && !fitsVatStateLimit([sets, deletes])) {
+        deliveryError = `Vat ${this.vatId} wrote a state entry over ${MAX_VAT_MESSAGE_LENGTH} characters`;
+      }
+      this.#vatSyscall.deliveryError = deliveryError
+        ? capReasonText(deliveryError)
+        : undefined;
       const noErrors = !deliveryError && !this.#vatSyscall.illegalSyscall;
       // On errors, we neither update this vat's KV data nor rollback previous changes.
       // This is safe because vats are always terminated when errors occur

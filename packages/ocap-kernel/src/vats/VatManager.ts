@@ -28,6 +28,7 @@ import type {
 import { ROOT_OBJECT_VREF } from '../types.ts';
 import type { AllowedGlobalName } from './endowments.ts';
 import { makeLostVatReason } from './lost-vat-reason.ts';
+import { capReasonText } from './vat-limits.ts';
 import { VatHandle } from './VatHandle.ts';
 import type { PingVatResult } from '../rpc/index.ts';
 
@@ -228,14 +229,14 @@ export class VatManager {
         .find(({ vats }) => Object.values(vats).includes(vatId))?.id;
       const where = subclusterId ? ` of subcluster ${subclusterId}` : '';
       const failure = new Error(
-        `Vat ${vatId}${where} was terminated after its worker would not start: ${error instanceof Error ? error.message : String(error)}`,
+        `Vat ${vatId}${where} was terminated after its worker would not start: ${capReasonText(error instanceof Error ? error.message : String(error))}`,
         { cause: error },
       );
       this.#logger.error(failure.message, error);
       // Not `#stopVat`: the failed start has already stopped its worker, and a
       // platform stuck launching it may be stuck stopping it too. What its
       // `initVat` wrote stays, as no crank is open to roll it back.
-      this.#retireVat(vatId, failure);
+      this.#retireVat(vatId);
     }
   }
 
@@ -584,6 +585,10 @@ export class VatManager {
     terminating: boolean,
     reason?: CapData<KRef>,
   ): Promise<void> {
+    if (terminating && reason) {
+      // The vat's promises get a fixed reason, so its own is kept only here.
+      this.#logger.log(`Terminating vat ${vatId}: ${reason.body}`);
+    }
     await this.#stopVat(
       terminating
         ? {
@@ -620,7 +625,7 @@ export class VatManager {
     let recordFailure: Error | undefined;
     try {
       if (terminating) {
-        this.#retireVat(vatId, terminationError);
+        this.#retireVat(vatId);
       } else {
         // A restart keeps the pin and the records.
         this.#vats.delete(vatId);
@@ -659,12 +664,15 @@ export class VatManager {
    * spending an embedder's pin.
    *
    * @param vatId - The vat being retired.
-   * @param error - Why it is being retired.
    */
-  #retireVat(vatId: VatId, error: Error): void {
+  #retireVat(vatId: VatId): void {
     this.#vats.delete(vatId);
     if (!this.#kernelStore.isVatTerminated(vatId)) {
-      const failure = makeKernelError('VAT_TERMINATED', error.message);
+      // Not the vat's reason, as in SwingSet: each promise would store a copy.
+      const failure = makeKernelError(
+        'VAT_TERMINATED',
+        `Vat ${vatId} was terminated`,
+      );
       for (const kpid of this.#kernelStore.getPromisesByDecider(vatId)) {
         this.#kernelQueue.resolvePromises(vatId, [[kpid, true, failure]]);
       }
@@ -994,7 +1002,7 @@ export class VatManager {
     const lost = error instanceof StreamReadError;
     const reason = lost && error.cause instanceof Error ? error.cause : error;
     const failure = new Error(
-      `Vat ${vatId} was terminated after its restart failed: ${reason instanceof Error ? reason.message : String(reason)}`,
+      `Vat ${vatId} was terminated after its restart failed: ${capReasonText(reason instanceof Error ? reason.message : String(reason))}`,
       { cause: error },
     );
     this.#logger.error(failure.message, error);

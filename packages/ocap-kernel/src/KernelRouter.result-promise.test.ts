@@ -57,6 +57,7 @@ describe('a result promise whose delivery fails', () => {
       kernelStore.createCrankSavepoint('start');
       try {
         const item = kernelStore.dequeueRun() as RunQueueItem;
+        kernelStore.incrementCrankNumber();
         await kernelRouter.deliver(item);
         kernelStore.collectGarbage();
         kernelStore.assertRefCountsIfAuditing();
@@ -91,7 +92,7 @@ describe('a result promise whose delivery fails', () => {
   }
 
   it('rejects it once the delivery reports failure', async () => {
-    const { kernelStore, kernelQueue, runCrank } = await makeFixture(
+    const { kernelStore, kernelQueue, logger, runCrank } = await makeFixture(
       async () => {
         throw new Error('stream closed');
       },
@@ -101,6 +102,9 @@ describe('a result promise whose delivery fails', () => {
     await runCrank();
 
     expect(kernelStore.getKernelPromise(result).state).toBe('rejected');
+    expect(logger.log).toHaveBeenCalledWith(
+      expect.stringMatching(/^@@@@ crank 1 deliver v1 send /u),
+    );
   });
 
   it.each([

@@ -59,6 +59,17 @@ describe('what a crank rollback reverts beyond the database', () => {
     expect(read(kernelStore)).toStrictEqual([]);
   });
 
+  it('keeps the number of a crank that rolled back', () => {
+    crankThenRollBack(() => {
+      expect(kernelStore.incrementCrankNumber()).toBe(1);
+    });
+
+    expect(kernelStore.getCrankNumber()).toBe(1);
+    kernelStore.startCrank();
+    expect(kernelStore.incrementCrankNumber()).toBe(2);
+    kernelStore.endCrank();
+  });
+
   it('drops a collection candidate the abandoned crank created', () => {
     crankThenRollBack(() => {
       const [kpid] = kernelStore.initKernelPromise();
