@@ -7,7 +7,7 @@ import { IOManager } from './io/IOManager.ts';
 import type { IOListenerFactory } from './io/types.ts';
 import { makeKernelFacet } from './kernel-facet.ts';
 import type { KernelFacet } from './kernel-facet.ts';
-import { KernelQueue } from './KernelQueue.ts';
+import { attempt, KernelQueue } from './KernelQueue.ts';
 import { KernelRouter } from './KernelRouter.ts';
 import { KernelServiceManager } from './KernelServiceManager.ts';
 import type { KernelService } from './KernelServiceManager.ts';
@@ -19,6 +19,7 @@ import type { RemoteCommsOptions } from './remotes/types.ts';
 import type { PingVatResult } from './rpc/index.ts';
 import { makeKernelStore } from './store/index.ts';
 import type { KernelStore } from './store/index.ts';
+import { isPromiseRef } from './store/utils/promise-ref.ts';
 import type {
   VatId,
   RemoteId,
@@ -34,7 +35,6 @@ import type {
   SubclusterLaunchResult,
   EndpointHandle,
   SystemSubclusterConfig,
-  ControlOperation,
 } from './types.ts';
 import { isVatId, isRemoteId } from './types.ts';
 import type { AllowedGlobalName } from './vats/endowments.ts';
@@ -184,6 +184,7 @@ export class Kernel {
     this.#ocapURLManager = new OcapURLManager({
       remoteManager: this.#remoteManager,
       kernelStore: this.#kernelStore,
+      kernelQueue: this.#kernelQueue,
     });
 
     this.#kernelServiceManager = new KernelServiceManager({
@@ -221,7 +222,10 @@ export class Kernel {
       vatManager: this.#vatManager,
       getKernelService: (name) =>
         this.#kernelServiceManager.getKernelService(name),
-      queueMessage: this.queueMessage.bind(this),
+      // Not async: a store fault in the write must throw out of the crank.
+      // oxlint-disable-next-line typescript/promise-function-async
+      writeMessage: (target, method, args) =>
+        this.#answerOf(this.#kernelQueue.writeMessage(target, method, args)),
       ...(this.#ioManager ? { ioManager: this.#ioManager } : {}),
       logger: this.#logger.subLogger({ tags: ['SubclusterManager'] }),
     });
@@ -240,7 +244,6 @@ export class Kernel {
       applyIncarnationChange: this.#remoteManager.applyIncarnationChange.bind(
         this.#remoteManager,
       ),
-      performControl: this.#performControl.bind(this),
       logger: this.#logger,
     });
 
@@ -280,8 +283,7 @@ export class Kernel {
    * @param options.auditRefCounts - If true, verify reference counts against
    * ground truth at the end of each crank and throw on any mismatch.
    * @param options.kernelServices - Kernel services to register before the run
-   * loop starts. Registering one later writes the store into whatever crank is
-   * open (#1171).
+   * loop starts.
    * @returns A promise for the new kernel instance.
    */
   static async make(
@@ -397,42 +399,6 @@ export class Kernel {
   }
 
   /**
-   * Carry out a control operation, in the crank the run loop opened for it.
-   *
-   * @param operation - The operation.
-   */
-  async #performControl(operation: ControlOperation): Promise<void> {
-    switch (operation) {
-      case 'clearStorage':
-        this.#kernelStore.clear();
-        this.#abandonQueuedWork(
-          new Error('Kernel storage was cleared; queued work was abandoned'),
-        );
-        return;
-      case 'reset':
-        if (this.#ioManager) {
-          await this.#ioManager.destroyAllChannels();
-        }
-        await this.#vatManager.terminateAllVats();
-        this.#subclusterManager.clearSystemSubclusters();
-        this.#resetKernelState();
-        // Last, after every await, so a request made during the reset is
-        // abandoned with the rest.
-        this.#abandonQueuedWork(
-          new Error('Kernel was reset; queued work was abandoned'),
-        );
-        return;
-      case 'terminateAllVats':
-        await this.#vatManager.terminateAllVats();
-        return;
-      default:
-        throw new Error(
-          `unknown control operation ${String(operation satisfies never)}`,
-        );
-    }
-  }
-
-  /**
    * Tell the embedder the kernel is finished, since it owns the decision to
    * exit or restart. Deliberately not re-thrown: an unhandled rejection would
    * take the process down without giving it that chance.
@@ -500,17 +466,22 @@ export class Kernel {
   async initIdentity(options?: {
     mnemonic?: string | undefined;
   }): Promise<void> {
-    await this.#remoteManager.initIdentity(options);
+    await this.#kernelQueue.enqueueInbox('initialize the identity', async () =>
+      attempt(async () => this.#remoteManager.initIdentity(options)),
+    );
   }
 
   /**
-   * Initialize the remote comms object.
+   * Initialize the remote comms object. The run loop waits while the transport
+   * starts, since the identity and relays it writes belong to one crank.
    *
    * @param options - Options for remote communications initialization.
    * @returns A promise that resolves when initialization is complete.
    */
   async initRemoteComms(options?: RemoteCommsOptions): Promise<void> {
-    await this.#remoteManager.initRemoteComms(options);
+    await this.#kernelQueue.enqueueInbox('initialize remote comms', async () =>
+      attempt(async () => this.#remoteManager.initRemoteComms(options)),
+    );
   }
 
   /**
@@ -558,8 +529,21 @@ export class Kernel {
     method: string,
     args: unknown[],
   ): Promise<CapData<KRef>> {
+    return this.#answerOf(
+      this.#kernelQueue.enqueueMessage(target, method, args),
+    );
+  }
+
+  /**
+   * Await a message's answer, throwing a rejection the kernel serialized as
+   * the error it stands for.
+   *
+   * @param answer - The promise the kernel queue gave for the answer.
+   * @returns The answer.
+   */
+  async #answerOf(answer: Promise<CapData<KRef>>): Promise<CapData<KRef>> {
     try {
-      return await this.#kernelQueue.enqueueMessage(target, method, args);
+      return await answer;
     } catch (rejection) {
       if (isCapData(rejection)) {
         throw kunser(rejection as CapData<KRef>);
@@ -589,24 +573,30 @@ export class Kernel {
   }
 
   /**
-   * Register a kernel service object.
+   * Register a kernel service object, in a crank of its own.
    *
    * @param name - The name of the service.
    * @param object - The service object to register.
    * @param options - Registration options.
    * @param options.systemOnly - Whether the service is only available to system
    * subclusters. Defaults to `false`.
-   * @returns The registration details including the kref.
+   * @returns A promise for the registration details including the kref.
    */
-  registerKernelServiceObject(
+  async registerKernelServiceObject(
     name: string,
     object: object,
     options?: { systemOnly?: boolean },
-  ): KernelService {
-    return this.#kernelServiceManager.registerKernelServiceObject(
-      name,
-      object,
-      options,
+  ): Promise<KernelService> {
+    return this.#kernelQueue.enqueueInbox(
+      'register a kernel service',
+      async () =>
+        attempt(() =>
+          this.#kernelServiceManager.registerKernelServiceObject(
+            name,
+            object,
+            options,
+          ),
+        ),
     );
   }
 
@@ -727,12 +717,18 @@ export class Kernel {
   }
 
   /**
-   * Clear the database. A failure partway rolls back its store writes and
-   * kills the run loop. Refused once `stop` is called or the run loop has
-   * died.
+   * Clear the database, in a crank of its own. A failure partway rolls back
+   * its store writes and kills the run loop. Refused once `stop` is called or
+   * the run loop has died.
    */
   async clearStorage(): Promise<void> {
-    await this.#kernelQueue.enqueueControl('clearStorage');
+    await this.#kernelQueue.enqueueInbox('clearStorage', () => {
+      this.#kernelStore.clear();
+      this.#abandonQueuedWork(
+        new Error('Kernel storage was cleared; queued work was abandoned'),
+      );
+      return { value: undefined };
+    });
   }
 
   /**
@@ -745,7 +741,7 @@ export class Kernel {
     this.#kernelQueue.discardArrivals();
     this.#kernelQueue.abandonSubscriptions(abandoned);
     this.#remoteManager.releaseRestartHolds();
-    this.#kernelQueue.discardHeldRequests(abandoned);
+    this.#kernelQueue.discardInbox(abandoned);
     this.#vatManager.abandonQueuedWork(abandoned);
   }
 
@@ -790,13 +786,20 @@ export class Kernel {
   }
 
   /**
-   * Revoke an exported object. Idempotent. Revoking promises is not supported.
+   * Revoke an exported object, in a crank of its own. Idempotent. Revoking
+   * promises is not supported.
    *
    * @param kref - The KRef of the object to revoke.
    * @throws If the object is a promise.
    */
-  revoke(kref: KRef): void {
-    this.#kernelStore.revoke(kref);
+  async revoke(kref: KRef): Promise<void> {
+    if (isPromiseRef(kref)) {
+      throw Error(`cannot revoke promise ${kref}`);
+    }
+    await this.#kernelQueue.enqueueInbox('revoke an object', () => {
+      this.#kernelStore.revoke(kref);
+      return { value: undefined };
+    });
   }
 
   /**
@@ -852,41 +855,55 @@ export class Kernel {
   }
 
   /**
-   * Reap vats that match the filter.
+   * Schedule a reap of the vats that match the filter, in a crank of its own.
    *
    * @param filter - A function that returns true if the vat should be reaped.
    */
-  reapVats(filter: (vatId: VatId) => boolean = () => true): void {
-    this.#vatManager.reapVats(filter);
+  async reapVats(
+    filter: (vatId: VatId) => boolean = () => true,
+  ): Promise<void> {
+    await this.#kernelQueue.enqueueInbox('reap vats', () => {
+      this.#vatManager.reapVats(filter);
+      return { value: undefined };
+    });
   }
 
   /**
-   * Reap remotes that match the filter.
-   * This is for debugging and testing purposes only.
+   * Schedule a reap of the remotes that match the filter, in a crank of its
+   * own. This is for debugging and testing purposes only.
    *
    * @param filter - A function that returns true if the remote should be reaped.
    */
-  reapRemotes(filter: (remoteId: RemoteId) => boolean = () => true): void {
-    this.#remoteManager.reapRemotes(filter);
+  async reapRemotes(
+    filter: (remoteId: RemoteId) => boolean = () => true,
+  ): Promise<void> {
+    await this.#kernelQueue.enqueueInbox('reap remotes', () => {
+      this.#remoteManager.reapRemotes(filter);
+      return { value: undefined };
+    });
   }
 
   /**
-   * Pin a vat root.
+   * Pin a vat root, in a crank of its own.
    *
    * @param vatId - The ID of the vat whose root to pin.
-   * @returns The KRef of the pinned vat root.
+   * @returns A promise for the KRef of the pinned vat root.
    */
-  pinVatRoot(vatId: VatId): KRef {
-    return this.#vatManager.pinVatRoot(vatId);
+  async pinVatRoot(vatId: VatId): Promise<KRef> {
+    return this.#kernelQueue.enqueueInbox('pin a vat root', async () =>
+      attempt(() => this.#vatManager.pinVatRoot(vatId)),
+    );
   }
 
   /**
-   * Unpin a vat root.
+   * Unpin a vat root, in a crank of its own.
    *
    * @param vatId - The ID of the vat whose root to unpin.
    */
-  unpinVatRoot(vatId: VatId): void {
-    this.#vatManager.unpinVatRoot(vatId);
+  async unpinVatRoot(vatId: VatId): Promise<void> {
+    await this.#kernelQueue.enqueueInbox('unpin a vat root', async () =>
+      attempt(() => this.#vatManager.unpinVatRoot(vatId)),
+    );
   }
 
   /**
@@ -932,7 +949,7 @@ export class Kernel {
   }
 
   /**
-   * Stop all running vats and reset the kernel state.
+   * Stop all running vats and reset the kernel state, in a crank of its own.
    * This is for debugging purposes only.
    *
    * A failure partway rolls back its store writes and kills the run loop.
@@ -940,18 +957,34 @@ export class Kernel {
    * loop has died is restarted instead, with `resetStorage` to clear its state.
    */
   async reset(): Promise<void> {
-    await this.#kernelQueue.enqueueControl('reset');
+    await this.#kernelQueue.enqueueInbox('reset', async () => {
+      if (this.#ioManager) {
+        await this.#ioManager.destroyAllChannels();
+      }
+      await this.#vatManager.terminateAllVats();
+      this.#subclusterManager.clearSystemSubclusters();
+      this.#resetKernelState();
+      // Last, after every await, so a request made during the reset is
+      // abandoned with the rest.
+      this.#abandonQueuedWork(
+        new Error('Kernel was reset; queued work was abandoned'),
+      );
+      return { value: undefined };
+    });
   }
 
   /**
-   * Terminate all vats and collect garbage.
+   * Terminate all vats and collect garbage, in a crank of its own.
    * This is for debugging purposes only.
    *
    * A failure partway rolls back its store writes and kills the run loop.
    * Refused once `stop` is called or the run loop has died.
    */
   async terminateAllVats(): Promise<void> {
-    await this.#kernelQueue.enqueueControl('terminateAllVats');
+    await this.#kernelQueue.enqueueInbox('terminateAllVats', async () => {
+      await this.#vatManager.terminateAllVats();
+      return { value: undefined };
+    });
   }
 
   /**
@@ -1027,11 +1060,14 @@ export class Kernel {
   }
 
   /**
-   * Collect garbage.
+   * Collect garbage, in a crank of its own.
    * This is for debugging purposes only.
    */
-  collectGarbage(): void {
-    this.#vatManager.collectGarbage();
+  async collectGarbage(): Promise<void> {
+    await this.#kernelQueue.enqueueInbox('collect garbage', () => {
+      this.#vatManager.collectGarbage();
+      return { value: undefined };
+    });
   }
 }
 harden(Kernel);

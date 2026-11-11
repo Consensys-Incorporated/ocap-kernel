@@ -21,13 +21,16 @@ export type RevokeHooks = {
 export const revokeHandler: Handler<
   'revoke',
   { kref: KRef },
-  null,
+  Promise<null>,
   RevokeHooks
 > = {
   ...revokeSpec,
   hooks: { kernel: true },
-  implementation: ({ kernel }, { kref }): null => {
-    kernel.revoke(kref);
+  implementation: async (
+    { kernel }: RevokeHooks,
+    { kref }: { kref: KRef },
+  ): Promise<null> => {
+    await kernel.revoke(kref);
     return null;
   },
 };

@@ -5,7 +5,7 @@ import { Logger } from '@metamask/logger';
 import type { IOManager } from '../io/IOManager.ts';
 import type { KernelQueue } from '../KernelQueue.ts';
 import type { VatManager } from './VatManager.ts';
-import { kslot, kunser, makeKernelError } from '../liveslots/kernel-marshal.ts';
+import { kslot, kunser } from '../liveslots/kernel-marshal.ts';
 import type { SlotValue } from '../liveslots/kernel-marshal.ts';
 import type { KernelStore } from '../store/index.ts';
 import type {
@@ -13,6 +13,7 @@ import type {
   KRef,
   SubclusterId,
   ClusterConfig,
+  InboxOutcome,
   Subcluster,
   SubclusterLaunchResult,
   SystemSubclusterConfig,
@@ -27,13 +28,21 @@ type SubclusterManagerOptions = {
   getKernelService: (
     name: string,
   ) => { kref: KRef; systemOnly: boolean } | undefined;
-  queueMessage: (
+  writeMessage: (
     target: KRef,
     method: string,
     args: unknown[],
   ) => Promise<CapData<KRef>>;
   ioManager?: IOManager;
   logger?: Logger;
+};
+
+/** What a subcluster's launch crank hands back, for the bootstrap's answer. */
+type Launched = {
+  subclusterId: SubclusterId;
+  rootKref: KRef;
+  vatRootKrefs: Record<string, KRef>;
+  answer: Promise<CapData<KRef>>;
 };
 
 /**
@@ -54,8 +63,11 @@ export class SubclusterManager {
     name: string,
   ) => { kref: KRef; systemOnly: boolean } | undefined;
 
-  /** Function to queue messages */
-  readonly #queueMessage: (
+  /**
+   * Writes a message from the kernel inside the open crank, for the run loop
+   * to deliver, and gives a promise for its answer.
+   */
+  readonly #writeMessage: (
     target: KRef,
     method: string,
     args: unknown[],
@@ -78,7 +90,8 @@ export class SubclusterManager {
    * @param options.kernelQueue - The kernel's message queue for scheduling deliveries.
    * @param options.vatManager - Manager for creating and managing vat instances.
    * @param options.getKernelService - Function to retrieve a kernel service by its kref.
-   * @param options.queueMessage - Function to queue messages for delivery to targets.
+   * @param options.writeMessage - Function that writes a message from the
+   * kernel inside the open crank and gives a promise for its answer.
    * @param options.ioManager - Optional IO manager for IO channel lifecycle.
    * @param options.logger - Optional logger for diagnostic output.
    */
@@ -87,7 +100,7 @@ export class SubclusterManager {
     kernelQueue,
     vatManager,
     getKernelService,
-    queueMessage,
+    writeMessage,
     ioManager,
     logger,
   }: SubclusterManagerOptions) {
@@ -95,36 +108,86 @@ export class SubclusterManager {
     this.#kernelQueue = kernelQueue;
     this.#vatManager = vatManager;
     this.#getKernelService = getKernelService;
-    this.#queueMessage = queueMessage;
+    this.#writeMessage = writeMessage;
     this.#ioManager = ioManager;
     this.#logger = logger ?? new Logger('SubclusterManager');
     harden(this);
   }
 
   /**
-   * Launches a sub-cluster of vats.
+   * Launches a sub-cluster of vats, in a crank of its own: its record, IO
+   * channels and vats are written together with the bootstrap message, and a
+   * vat that will not start rolls them all back. The bootstrap message is
+   * answered in a later crank, and a subcluster whose bootstrap fails is
+   * terminated.
    *
    * @param config - Configuration object for sub-cluster.
    * @param options - Launch options.
    * @param options.isSystem - Whether this is a system subcluster. System
    * subclusters may access restricted kernel services. Defaults to `false`.
+   * @param options.systemName - The name to record a system subcluster under,
+   * written with its record.
    * @returns A promise for the subcluster ID, bootstrap root kref, and
    * bootstrap result.
    */
   async launchSubcluster(
     config: ClusterConfig,
-    { isSystem = false }: { isSystem?: boolean } = {},
+    {
+      isSystem = false,
+      systemName,
+    }: { isSystem?: boolean; systemName?: string } = {},
   ): Promise<SubclusterLaunchResult> {
-    await this.#kernelQueue.waitForCrank();
-    // It would fail at the bootstrap message anyway, but only refusing here fails
-    // before spawning a worker per vat, which the catch below leaks.
-    this.#kernelQueue.assertRunLoopAlive('launch a subcluster');
     isClusterConfig(config) || Fail`invalid cluster config`;
     if (!config.vats[config.bootstrap]) {
       Fail`invalid bootstrap vat name ${config.bootstrap}`;
     }
-    const subclusterId = this.#kernelStore.addSubcluster(config);
+    for (const vatName of Object.keys(config.vats)) {
+      // Reject vat names that shadow Object.prototype built-ins (__proto__,
+      // constructor, etc.) before using them as property keys.
+      !(vatName in Object.prototype) || Fail`invalid vat name '${vatName}'`;
+    }
+    const { subclusterId, rootKref, vatRootKrefs, answer } =
+      await this.#kernelQueue.enqueueInbox('launch a subcluster', async () =>
+        this.#launch(config, { isSystem, systemName }),
+      );
+    let bootstrapResult: CapData<KRef>;
+    try {
+      bootstrapResult = await answer;
+      const unserialized = kunser(bootstrapResult);
+      if (unserialized instanceof Error) {
+        throw unserialized;
+      }
+    } catch (error) {
+      await this.terminateSubcluster(subclusterId).catch(
+        (teardownError: unknown) =>
+          this.#logger.error(
+            `Error terminating subcluster ${subclusterId} after its bootstrap failed:`,
+            teardownError,
+          ),
+      );
+      throw error;
+    }
+    return { subclusterId, rootKref, bootstrapResult, vatRootKrefs };
+  }
 
+  /**
+   * Carry out a subcluster's launch, in the crank the run loop opened for it.
+   *
+   * @param config - Configuration object for sub-cluster.
+   * @param options - Launch options.
+   * @param options.isSystem - Whether this is a system subcluster.
+   * @param options.systemName - The name to record a system subcluster under.
+   * @returns The crank's outcome: what was launched, or a failure that rolls
+   * the crank back, after every worker it started has been stopped.
+   */
+  async #launch(
+    config: ClusterConfig,
+    {
+      isSystem,
+      systemName,
+    }: { isSystem: boolean; systemName?: string | undefined },
+  ): Promise<InboxOutcome<Launched>> {
+    const subclusterId = this.#kernelStore.addSubcluster(config);
     try {
       // Create IO channels before validating services so that IO service
       // names are registered and discoverable by #validateServices.
@@ -136,111 +199,105 @@ export class SubclusterManager {
         }
         await this.#ioManager.createChannels(subclusterId, config.io);
       }
-
       this.#validateServices(config, isSystem);
-      const { rootKref, bootstrapResult, vatRootKrefs } =
-        await this.#launchVatsForSubcluster(subclusterId, config);
-      return { subclusterId, rootKref, bootstrapResult, vatRootKrefs };
+      const services = this.#serviceSlots(subclusterId, config);
+      const { rootKref, vatRootKrefs } = await this.#launchVats(
+        subclusterId,
+        config,
+      );
+      if (systemName !== undefined) {
+        this.#kernelStore.setSystemSubclusterMapping(systemName, subclusterId);
+      }
+      const roots = Object.fromEntries(
+        Object.entries(vatRootKrefs).map(([vatName, root]) => [
+          vatName,
+          kslot(root, 'vatRoot'),
+        ]),
+      );
+      // Last: a failure after it would leave the answer's subscription behind.
+      const answer = this.#writeMessage(rootKref, 'bootstrap', [
+        roots,
+        services,
+      ]);
+      // Awaited once the crank commits; a crank that dies first abandons the
+      // answer with nobody holding it.
+      answer.catch(() => undefined);
+      return { value: { subclusterId, rootKref, vatRootKrefs, answer } };
     } catch (error) {
-      // Roll back: terminate any vats that launched successfully, then clean
-      // up IO channels and the persisted subcluster record.
-      // Each step is best-effort — cleanup errors must not mask the original
-      // failure.
-      // Unknown if teardown itself threw, and then the record stays too.
-      let survivors: Map<VatId, unknown> | undefined;
+      // The rollback forgets the records; the workers and channels are the
+      // kernel's to stop. A store fault is reported to the caller the same way
+      // until the kernel can tell it from a vat's failure (#1291).
+      await this.#stopMembers(subclusterId);
       try {
-        survivors = await this.#terminateMembers(subclusterId);
-      } catch (vatCleanupError) {
+        await this.#ioManager?.destroyChannels(subclusterId);
+      } catch (cleanupError) {
         this.#logger.error(
-          'Error during vat cleanup on failed launch:',
-          vatCleanupError,
+          'Error during IO cleanup on failed launch:',
+          cleanupError,
         );
       }
-      if (survivors === undefined || survivors.size > 0) {
-        this.#logger.error(
-          `Keeping subcluster ${subclusterId} after its failed launch; vats not retired: ${survivors ? [...survivors.keys()].join(', ') : 'unknown'}`,
-        );
-      } else {
-        try {
-          if (this.#ioManager) {
-            await this.#ioManager.destroyChannels(subclusterId);
-          }
-        } catch (cleanupError) {
-          this.#logger.error(
-            'Error during IO cleanup on failed launch:',
-            cleanupError,
-          );
-        }
-        try {
-          await this.#kernelQueue.waitForCrank();
-          this.#kernelStore.deleteSubcluster(subclusterId);
-        } catch (cleanupError) {
-          this.#logger.error(
-            'Error deleting the subcluster record on failed launch:',
-            cleanupError,
-          );
-        }
-      }
-      throw error;
+      return {
+        abort: true,
+        failure: error instanceof Error ? error : new Error(String(error)),
+      };
     }
   }
 
   /**
-   * Terminate every member of a subcluster, last launched first, going on past
-   * any that will not die.
-   *
-   * Persisted membership, so a vat the kernel has no handle for is still
-   * retired. A vat with neither a handle nor a record is skipped: that covers a
-   * vat whose launch failed before either existed.
+   * Launch every vat of a subcluster, concurrently.
    *
    * @param subclusterId - The subcluster.
-   * @returns The members still there afterwards, each with what its
-   *   termination threw.
+   * @param config - Its configuration.
+   * @returns The bootstrap vat's root and every vat's, by name.
+   * @throws What the first vat that failed to launch threw, once every launch
+   * has settled, so that each worker that did start is there to be stopped.
    */
-  async #terminateMembers(
+  async #launchVats(
     subclusterId: SubclusterId,
-  ): Promise<Map<VatId, unknown>> {
-    const survivors = new Map<VatId, unknown>();
-    let vatIds: VatId[];
-    try {
-      vatIds = this.#kernelStore.getSubclusterVats(subclusterId);
-    } catch (error) {
-      // Collection drops a record with no members, as it can between a launch
-      // creating one and adding its first vat.
-      if (error instanceof SubclusterNotFoundError) {
-        return survivors;
-      }
-      throw error;
+    config: ClusterConfig,
+  ): Promise<{ rootKref: KRef; vatRootKrefs: Record<string, KRef> }> {
+    // `getNextVatId()` runs synchronously before each launch's first await, so
+    // vat-ID allocation order is deterministic.
+    const launches = await Promise.allSettled(
+      Object.entries(config.vats).map(
+        async ([vatName, vatConfig]): Promise<[string, KRef]> => [
+          vatName,
+          await this.#vatManager.launchVat(vatConfig, vatName, subclusterId),
+        ],
+      ),
+    );
+    const failed = launches.find((launch) => launch.status === 'rejected');
+    if (failed) {
+      throw failed.reason;
     }
-    for (const vatId of vatIds.reverse()) {
-      if (this.#isVatGone(vatId)) {
-        continue;
-      }
-      let failure: unknown;
-      try {
-        await this.#vatManager.terminateVat(vatId);
-      } catch (error) {
-        failure = error;
-        this.#logger.error(`Error terminating vat ${vatId}:`, error);
-      }
-      try {
-        this.#vatManager.collectGarbage();
-      } catch (error) {
-        this.#logger.error(
-          `Error collecting garbage after vat ${vatId}:`,
-          error,
-        );
-      }
-      // By what is left rather than what threw: a vat can be gone even though
-      // something after its death failed.
-      if (!this.#isVatGone(vatId)) {
-        survivors.set(
-          vatId,
-          failure ?? new Error(`Vat ${vatId} outlived its termination`),
-        );
+    const vatRootKrefs = Object.fromEntries(
+      launches.flatMap((launch) =>
+        launch.status === 'fulfilled' ? [launch.value] : [],
+      ),
+    );
+    const rootKref = vatRootKrefs[config.bootstrap];
+    if (rootKref === undefined) {
+      throw Fail`no launch result for bootstrap vat '${config.bootstrap}'`;
+    }
+    return { rootKref, vatRootKrefs };
+  }
+
+  /**
+   * Stop the worker of every member of a subcluster that has one, last
+   * launched first, inside a crank that is about to roll the members' records
+   * back.
+   *
+   * @param subclusterId - The subcluster.
+   */
+  async #stopMembers(subclusterId: SubclusterId): Promise<void> {
+    for (const vatId of this.#kernelStore
+      .getSubclusterVats(subclusterId)
+      .reverse()) {
+      // A vat that failed to start has no worker left to stop.
+      if (this.#vatManager.hasVat(vatId)) {
+        await this.#vatManager.stopVat(vatId, true);
       }
     }
-    return survivors;
   }
 
   /**
@@ -256,69 +313,38 @@ export class SubclusterManager {
   }
 
   /**
-   * Terminates a named sub-cluster of vats.
+   * Terminates a named sub-cluster of vats, in a crank of its own: every
+   * member is stopped and its death written, with the record's deletion.
    *
    * @param subclusterId - The id of the subcluster to terminate.
-   * @returns A promise that resolves when termination is complete.
+   * @returns A promise that resolves once the crank has committed.
    */
   async terminateSubcluster(subclusterId: SubclusterId): Promise<void> {
-    // A dead run loop ends no member, and the record must not go without them.
-    this.#kernelQueue.assertRunLoopAlive('terminate a subcluster');
-    const subcluster = this.#kernelStore.getSubcluster(subclusterId);
-    if (!subcluster) {
-      throw new SubclusterNotFoundError(subclusterId);
-    }
-    const bootstrapVatId = subcluster.vats[subcluster.config.bootstrap];
-
-    const survivors = await this.#terminateMembers(subclusterId);
-    if (survivors.size > 0) {
-      // The survivors keep their IO channels, and the system name, so the next
-      // boot removes a subcluster whose bootstrap vat is gone and launches it
-      // again; only a dead root is forgotten now. The record stays regardless:
-      // `deleteSubcluster` drops every member's vat-to-subcluster mapping, and
-      // `getVatSubcluster` is a `Fail`, so deleting it over a live member
-      // breaks `getStatus` for the whole kernel.
-      if (!bootstrapVatId || !survivors.has(bootstrapVatId)) {
-        this.#forgetSystemSubclusterRoot(subclusterId);
-      }
-      throw new AggregateError(
-        [...survivors.values()],
-        `subcluster ${subclusterId} still has vats: ${[...survivors.keys()].join(', ')}`,
-      );
-    }
-
-    // Destroy IO channels after terminating vats so that any queued
-    // messages targeting IO service krefs are drained first.
-    try {
-      if (this.#ioManager) {
-        await this.#ioManager.destroyChannels(subclusterId);
-      }
-    } catch (error) {
-      this.#logger.error('Error during IO cleanup on termination:', error);
-    }
-
-    // Resumes inside the next crank if more work is queued, where these writes
-    // roll back with it. The record goes anyway with the last member's
-    // collection, and boot drops a mapping to a subcluster that is gone.
-    await this.#kernelQueue.waitForCrank();
-    this.#dropSystemSubclusterMapping(subclusterId);
-    this.#kernelStore.deleteSubcluster(subclusterId);
-  }
-
-  /**
-   * Stop handing out the root of a system subcluster, keeping its name.
-   *
-   * @param subclusterId - The subcluster.
-   */
-  #forgetSystemSubclusterRoot(subclusterId: SubclusterId): void {
-    for (const [
-      name,
-      mappedSubclusterId,
-    ] of this.#kernelStore.getAllSystemSubclusterMappings()) {
-      if (mappedSubclusterId === subclusterId) {
-        this.#systemSubclusterRoots.delete(name);
-      }
-    }
+    await this.#kernelQueue.enqueueInbox(
+      'terminate a subcluster',
+      async (): Promise<InboxOutcome<undefined>> => {
+        const subcluster = this.#kernelStore.getSubcluster(subclusterId);
+        if (!subcluster) {
+          return { failure: new SubclusterNotFoundError(subclusterId) };
+        }
+        for (const vatId of Object.values(subcluster.vats).reverse()) {
+          // A member can be gone already: lost, and retired by a crank before
+          // this one.
+          if (!this.#isVatGone(vatId)) {
+            await this.#vatManager.stopVat(vatId, true);
+          }
+          this.#vatManager.collectGarbage();
+        }
+        try {
+          await this.#ioManager?.destroyChannels(subclusterId);
+        } catch (error) {
+          this.#logger.error('Error during IO cleanup on termination:', error);
+        }
+        this.#dropSystemSubclusterMapping(subclusterId);
+        this.#kernelStore.deleteSubcluster(subclusterId);
+        return { value: undefined };
+      },
+    );
   }
 
   /**
@@ -433,32 +459,24 @@ export class SubclusterManager {
   }
 
   /**
-   * Launches all vats for a subcluster and sets up their bootstrap connections.
+   * The services a subcluster's bootstrap vat is handed, as slots by name:
+   * the services its config names, and its IO channels.
    *
-   * @param subclusterId - The ID of the subcluster to launch vats for.
-   * @param config - The configuration for the subcluster.
-   * @returns A promise for the bootstrap root kref and bootstrap result.
+   * @param subclusterId - The subcluster.
+   * @param config - Its configuration.
+   * @returns The slots by name.
    */
-  async #launchVatsForSubcluster(
+  #serviceSlots(
     subclusterId: SubclusterId,
     config: ClusterConfig,
-  ): Promise<{
-    rootKref: KRef;
-    bootstrapResult: CapData<KRef> | undefined;
-    vatRootKrefs: Record<string, KRef>;
-  }> {
-    const vatEntries = Object.entries(config.vats);
-
+  ): Record<string, SlotValue> {
     const ioNames = config.io
       ? new Set(Object.keys(config.io))
       : new Set<string>();
-
-    // Collect all service names: explicit services plus IO channel names
     const allServiceNames = new Set([...(config.services ?? []), ...ioNames]);
-
     // Object.fromEntries so that a name like `__proto__` becomes an own
     // property instead of replacing the prototype.
-    const services: Record<string, SlotValue> = Object.fromEntries(
+    return Object.fromEntries(
       [...allServiceNames].map((name) => {
         // IO services are registered under scoped names to avoid collisions
         const lookupName = ioNames.has(name)
@@ -471,107 +489,6 @@ export class SubclusterManager {
         return [name, kslot(possibleService.kref)];
       }),
     );
-
-    // Launch all vats concurrently. getNextVatId() runs synchronously before
-    // each launchVat's first await, so vat-ID allocation order is deterministic.
-    const launchResults = await Promise.allSettled(
-      vatEntries.map(async ([vatName, vatConfig]) =>
-        this.#vatManager.launchVat(vatConfig, vatName, subclusterId),
-      ),
-    );
-
-    // If the bootstrap vat itself failed to launch, throw immediately.
-    const bootstrapIdx = vatEntries.findIndex(
-      ([name]) => name === config.bootstrap,
-    );
-    // bootstrapIdx is guaranteed ≥ 0 because launchSubcluster validates that
-    // config.vats[config.bootstrap] exists. The undefined guard satisfies tsc.
-    const bootstrapLaunchResult = launchResults[bootstrapIdx];
-    if (bootstrapLaunchResult === undefined) {
-      throw Fail`no launch result for bootstrap vat '${config.bootstrap}'`;
-    }
-    if (bootstrapLaunchResult.status === 'rejected') {
-      throw bootstrapLaunchResult.reason;
-    }
-    const rootKref = bootstrapLaunchResult.value;
-
-    // Each vat's root, or a failed peer's launch error, which the write below
-    // turns into an immediately-rejected kernel promise so bootstrap can
-    // observe the failure via E(roots.peer).method() pipelining.
-    const rootsEntries: [string, KRef | Error][] = [];
-    const vatRootKrefsEntries: [string, KRef][] = [];
-    let firstPeerFailure: Error | undefined;
-    for (let i = 0; i < vatEntries.length; i++) {
-      const vatEntry = vatEntries[i];
-      const result = launchResults[i];
-      if (vatEntry === undefined || result === undefined) {
-        throw Fail`missing entry at index ${i}`;
-      }
-      const [vatName] = vatEntry;
-      // Reject vat names that shadow Object.prototype built-ins (__proto__,
-      // constructor, etc.) before using them as property keys.
-      !(vatName in Object.prototype) || Fail`invalid vat name '${vatName}'`;
-      if (result.status === 'fulfilled') {
-        rootsEntries.push([vatName, result.value]);
-        vatRootKrefsEntries.push([vatName, result.value]);
-      } else {
-        // launchVat always wraps failures in new Error(...), so reason is an Error
-        const peerError =
-          result.reason instanceof Error
-            ? result.reason
-            : new Error(String(result.reason));
-        firstPeerFailure ??= peerError;
-        rootsEntries.push([vatName, peerError]);
-      }
-    }
-    const vatRootKrefs = Object.fromEntries(vatRootKrefsEntries);
-
-    // A failed peer's promise is made in the same write as the message, which
-    // `queueMessage` writes at once outside a crank: one made sooner, rejected
-    // and named by nothing else yet, would be collected by an open crank
-    // before the held message took its reference.
-    const { answer } = await this.#kernelQueue.writeOutsideCrank(() => {
-      const roots = Object.fromEntries(
-        rootsEntries.map(([vatName, root]): [string, SlotValue] => [
-          vatName,
-          root instanceof Error
-            ? this.#makeRejectedRoot(root)
-            : kslot(root, 'vatRoot'),
-        ]),
-      );
-      return {
-        answer: this.#queueMessage(rootKref, 'bootstrap', [roots, services]),
-      };
-    });
-    const bootstrapResult = await answer;
-    const unserialized = kunser(bootstrapResult);
-    if (unserialized instanceof Error) {
-      throw unserialized;
-    }
-
-    // If any peer vats failed to launch, propagate after bootstrap has had a
-    // chance to observe and handle the failures.
-    if (firstPeerFailure !== undefined) {
-      throw firstPeerFailure;
-    }
-
-    return { rootKref, bootstrapResult, vatRootKrefs };
-  }
-
-  /**
-   * Make the root a bootstrap vat is handed for a peer vat that failed to
-   * launch: a kernel promise rejected with the failure.
-   *
-   * @param peerError - Why the peer failed to launch.
-   * @returns The rejected promise, as a slot.
-   */
-  #makeRejectedRoot(peerError: Error): SlotValue {
-    const [kpid] = this.#kernelStore.initKernelPromise();
-    this.#kernelStore.setPromiseDecider(kpid, 'kernel');
-    this.#kernelQueue.resolvePromises('kernel', [
-      [kpid, true, makeKernelError('VAT_TERMINATED', peerError.message)],
-    ]);
-    return kslot(kpid);
   }
 
   /**
@@ -694,12 +611,11 @@ export class SubclusterManager {
     }
 
     for (const { name, config } of newConfigs) {
-      const result = await this.launchSubcluster(config, { isSystem: true });
+      const result = await this.launchSubcluster(config, {
+        isSystem: true,
+        systemName: name,
+      });
       this.#systemSubclusterRoots.set(name, result.rootKref);
-
-      // Persist the mapping
-      this.#kernelStore.setSystemSubclusterMapping(name, result.subclusterId);
-
       this.#logger.info(`Launched new system subcluster "${name}"`);
     }
   }

@@ -1,6 +1,6 @@
 import type { CapData } from '@endo/marshal';
 import { makePromiseKit } from '@endo/promise-kit';
-import { describe, it, expect, expectTypeOf, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Mock, MockInstance } from 'vitest';
 
 import * as gc from './garbage-collection/garbage-collection.ts';
@@ -240,68 +240,6 @@ describe('KernelQueue', () => {
       expect(order).toStrictEqual(['endCrank', 'afterCommit']);
     });
 
-    it('runs afterCommit before a held request that fails to be written kills the run loop', async () => {
-      (kernelStore.isInCrank as unknown as MockInstance).mockReturnValue(true);
-      (
-        kernelStore.runQueueLength as unknown as MockInstance
-      ).mockReturnValueOnce(1);
-      (kernelStore.dequeueRun as unknown as MockInstance).mockReturnValueOnce({
-        type: 'send',
-        target: 'ko123',
-        message: {} as KernelMessage,
-      });
-      const fault = new Error('SQLITE_FULL');
-      (
-        kernelStore.enqueueRun as unknown as MockInstance
-      ).mockImplementationOnce(() => {
-        throw fault;
-      });
-      const afterCommit = vi.fn(async () => undefined);
-      const deliver = vi.fn().mockImplementationOnce(async () => {
-        kernelQueue.enqueueRestartVat(v1);
-        return { afterCommit };
-      });
-
-      await expect(kernelQueue.run(deliver)).rejects.toBe(fault);
-
-      expect(afterCommit).toHaveBeenCalledOnce();
-    });
-
-    it('dies of the held request that failed to be written when afterCommit fails too', async () => {
-      (kernelStore.isInCrank as unknown as MockInstance).mockReturnValue(true);
-      (
-        kernelStore.runQueueLength as unknown as MockInstance
-      ).mockReturnValueOnce(1);
-      (kernelStore.dequeueRun as unknown as MockInstance).mockReturnValueOnce({
-        type: 'send',
-        target: 'ko123',
-        message: {} as KernelMessage,
-      });
-      const fault = new Error('SQLITE_FULL');
-      (
-        kernelStore.enqueueRun as unknown as MockInstance
-      ).mockImplementationOnce(() => {
-        throw fault;
-      });
-      const afterCommitFault = new Error('transmit failed');
-      const deliver = vi.fn().mockImplementationOnce(async () => {
-        kernelQueue.enqueueRestartVat(v1);
-        return {
-          afterCommit: async () => {
-            throw afterCommitFault;
-          },
-        };
-      });
-
-      await expect(kernelQueue.run(deliver)).rejects.toStrictEqual(
-        new AggregateError(
-          [fault, afterCommitFault],
-          "Run loop died writing a held request, and its crank's afterCommit failed: Error: transmit failed",
-          { cause: fault },
-        ),
-      );
-    });
-
     it('withholds afterCommit when the delivery threw', async () => {
       const mockItem: RunQueueItem = {
         type: 'send',
@@ -522,6 +460,9 @@ describe('KernelQueue', () => {
     });
 
     it('rejects messages queued after the run loop dies', async () => {
+      (makePromiseKit as unknown as MockInstance).mockImplementation(
+        makeRealPromiseKit,
+      );
       const failure = new Error('crank exploded');
       await killRunLoop(failure);
       await expect(
@@ -746,8 +687,6 @@ describe('KernelQueue', () => {
       });
       const deliver = vi.fn().mockReturnValue(new Promise(() => undefined));
       kernelQueue.run(deliver).catch(() => undefined);
-      await kernelQueue.enqueueMessage(asKRef('ko123'), 'method', []);
-      expect(kernelQueue.subscriptions.has(asKRef('kp1'))).toBe(true);
 
       await expect(kernelQueue.run(deliver)).rejects.toThrow(
         'run loop already started',
@@ -756,7 +695,7 @@ describe('KernelQueue', () => {
       expect(kernelQueue.getRunLoopStatus()).toStrictEqual({
         state: 'running',
       });
-      expect(kernelQueue.subscriptions.has(asKRef('kp1'))).toBe(true);
+      expect(deliver).toHaveBeenCalledOnce();
     });
   });
 
@@ -862,22 +801,22 @@ describe('KernelQueue', () => {
       expect(kernelQueue.subscriptions.size).toBe(0);
     });
 
-    it("rejects a held message's caller when held requests are discarded", async () => {
-      (makePromiseKit as unknown as MockInstance).mockReturnValueOnce(
-        makeRealPromiseKit(),
+    it("rejects a waiting message's caller when the inbox is discarded", async () => {
+      (makePromiseKit as unknown as MockInstance).mockImplementation(
+        makeRealPromiseKit,
       );
       const discarded = new Error('discarded');
       let answered: Promise<CapData<KRef>> | undefined;
       await runACrankWhile(() => {
         answered = kernelQueue.enqueueMessage(asKRef('ko123'), 'test', []);
-        kernelQueue.discardHeldRequests(discarded);
+        kernelQueue.discardInbox(discarded);
       });
 
       await expect(answered).rejects.toBe(discarded);
       expect(kernelStore.initKernelPromise).not.toHaveBeenCalled();
     });
 
-    it('rejects a held message whose target was deleted while it waited', async () => {
+    it('rejects a waiting message whose target was deleted while it waited', async () => {
       (makePromiseKit as unknown as MockInstance).mockReturnValueOnce(
         makeRealPromiseKit(),
       );
@@ -899,10 +838,10 @@ describe('KernelQueue', () => {
     });
 
     it.each(['kernelRefExists', 'initKernelPromise', 'enqueueRun'] as const)(
-      'kills the run loop when %s fails while writing a held message, and tells its caller',
+      'kills the run loop when %s fails while writing a waiting message, and tells its caller',
       async (method) => {
-        (makePromiseKit as unknown as MockInstance).mockReturnValueOnce(
-          makeRealPromiseKit(),
+        (makePromiseKit as unknown as MockInstance).mockImplementation(
+          makeRealPromiseKit,
         );
         const fault = new Error('SQLITE_FULL');
         (kernelStore[method] as unknown as MockInstance).mockImplementationOnce(
@@ -918,20 +857,20 @@ describe('KernelQueue', () => {
           { diesOf: fault },
         );
 
-        expect(
-          await answered?.catch((reason: unknown) => reason),
-        ).toStrictEqual(
-          new Error(
-            'Kernel run loop died; this message result will never be delivered',
-            { cause: fault },
-          ),
-        );
+        await expect(answered).rejects.toBe(fault);
+        expect(kernelQueue.subscriptions.size).toBe(0);
       },
     );
   });
 
-  describe('held requests', () => {
-    it('writes them in the order they were made', async () => {
+  describe('requests made while a crank is open', () => {
+    beforeEach(() => {
+      (makePromiseKit as unknown as MockInstance).mockImplementation(
+        makeRealPromiseKit,
+      );
+    });
+
+    it('are written in the order they were made, a crank each', async () => {
       const written: unknown[] = [];
       (kernelStore.enqueueRun as unknown as MockInstance).mockImplementation(
         (item: RunQueueItem) => written.push(item),
@@ -940,9 +879,12 @@ describe('KernelQueue', () => {
         kernelQueue
           .enqueueMessage(asKRef('ko123'), 'first', [])
           .catch(() => undefined);
-        kernelQueue.enqueueTerminateVat(v1);
+        kernelQueue.enqueueTerminateVat(v1).catch(() => undefined);
         kernelQueue
-          .writeOutsideCrank(() => written.push('write'))
+          .enqueueInbox('write', () => {
+            written.push('write');
+            return { value: undefined };
+          })
           .catch(() => undefined);
         kernelQueue
           .enqueueMessage(asKRef('ko123'), 'second', [])
@@ -963,6 +905,7 @@ describe('KernelQueue', () => {
           message: { methargs: kser(['second', []]), result: 'kp1' },
         },
       ]);
+      expect(kernelStore.incrementCrankNumber).toHaveBeenCalledTimes(6);
     });
 
     it.each([
@@ -970,20 +913,18 @@ describe('KernelQueue', () => {
         'message',
         async (queue: KernelQueue) =>
           queue.enqueueMessage(asKRef('ko123'), 'test', []),
-        'Kernel run loop died; this message result will never be delivered',
       ],
       [
         'write',
         async (queue: KernelQueue, write: () => void) =>
-          queue.writeOutsideCrank(write),
-        'Kernel run loop died; this work will never be carried out',
+          queue.enqueueInbox('write', () => {
+            write();
+            return { value: undefined };
+          }),
       ],
     ])(
-      'rejects a held %s when its crank kills the run loop',
-      async (_, request, reason) => {
-        (makePromiseKit as unknown as MockInstance).mockReturnValueOnce(
-          makeRealPromiseKit(),
-        );
+      'rejects a waiting %s when the crank before it kills the run loop',
+      async (_, request) => {
         const failure = new Error('crank exploded');
         const write = vi.fn();
         let result: Promise<unknown> | undefined;
@@ -995,18 +936,15 @@ describe('KernelQueue', () => {
           { diesOf: failure },
         );
 
-        await expect(result).rejects.toThrow(reason);
+        await expect(result).rejects.toThrow(
+          'Kernel run loop died; this work will never be carried out',
+        );
         expect(write).not.toHaveBeenCalled();
         expect(kernelStore.initKernelPromise).not.toHaveBeenCalled();
       },
     );
 
     it('tells the callers behind one whose write kills the run loop', async () => {
-      const messageKit = makeRealPromiseKit();
-      const writeKit = makeRealPromiseKit();
-      (makePromiseKit as unknown as MockInstance)
-        .mockReturnValueOnce(messageKit)
-        .mockReturnValueOnce(writeKit);
       const fault = new Error('SQLITE_FULL');
       (
         kernelStore.enqueueRun as unknown as MockInstance
@@ -1014,121 +952,41 @@ describe('KernelQueue', () => {
         throw fault;
       });
       const write = vi.fn();
+      let restarting: Promise<unknown> | undefined;
+      let answered: Promise<unknown> | undefined;
+      let written: Promise<unknown> | undefined;
       await runACrankWhile(
         () => {
-          kernelQueue.enqueueRestartVat(v1);
-          kernelQueue
-            .enqueueMessage(asKRef('ko123'), 'test', [])
-            .catch(() => undefined);
-          kernelQueue.writeOutsideCrank(write).catch(() => undefined);
+          restarting = kernelQueue.enqueueRestartVat(v1);
+          answered = kernelQueue.enqueueMessage(asKRef('ko123'), 'test', []);
+          written = kernelQueue.enqueueInbox('write', () => {
+            write();
+            return { value: undefined };
+          });
         },
         { diesOf: fault },
       );
 
-      await expect(messageKit.promise).rejects.toThrow(
-        'Kernel run loop died; this message result will never be delivered',
+      await expect(restarting).rejects.toBe(fault);
+      await expect(answered).rejects.toThrow(
+        'Kernel run loop died; this work will never be carried out',
       );
-      await expect(writeKit.promise).rejects.toThrow(
+      await expect(written).rejects.toThrow(
         'Kernel run loop died; this work will never be carried out',
       );
       expect(write).not.toHaveBeenCalled();
     });
 
-    // This and the next are outside `writeOutsideCrank`'s block, whose promise
-    // kit they would leave unused for a later test to take. This one's
-    // assertion is a type, checked by `test:types` rather than vitest.
-    // oxlint-disable-next-line vitest/expect-expect
-    it('refuses at compile time a write that returns a promise', () => {
-      expectTypeOf(kernelQueue.writeOutsideCrank<Promise<string>>)
-        .parameter(0)
-        .returns.toBeNever();
-    });
-
-    it('refuses a write once the run loop is dead', async () => {
+    it('are refused once the run loop is dead', async () => {
       await killRunLoop(new Error('crank exploded'));
       const write = vi.fn();
 
-      await expect(kernelQueue.writeOutsideCrank(write)).rejects.toThrow(
-        'Kernel run loop died; cannot write outside a crank',
-      );
-      expect(write).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('writeOutsideCrank', () => {
-    beforeEach(() => {
-      (makePromiseKit as unknown as MockInstance).mockReturnValueOnce(
-        makeRealPromiseKit(),
-      );
-    });
-
-    it('makes the write at once when no crank is open', async () => {
-      const write = vi.fn().mockReturnValue('written');
-
-      const result = kernelQueue.writeOutsideCrank(write);
-
-      expect(write).toHaveBeenCalledOnce();
-      expect(await result).toBe('written');
-    });
-
-    it('rejects with what the write throws', async () => {
-      const fault = new Error('SQLITE_FULL');
-
       await expect(
-        kernelQueue.writeOutsideCrank(() => {
-          throw fault;
+        kernelQueue.enqueueInbox('pin a vat root', () => {
+          write();
+          return { value: undefined };
         }),
-      ).rejects.toBe(fault);
-    });
-
-    it('holds the write until the open crank ends', async () => {
-      const write = vi.fn().mockReturnValue('written');
-      let result: Promise<unknown> | undefined;
-      let calledDuringCrank = true;
-      await runACrankWhile(() => {
-        result = kernelQueue.writeOutsideCrank(write);
-        calledDuringCrank = write.mock.calls.length > 0;
-      });
-
-      expect(calledDuringCrank).toBe(false);
-      expect(write).toHaveBeenCalledOnce();
-      expect(await result).toBe('written');
-    });
-
-    it("rejects with a peer's refusal that a held write throws, and the run loop goes on", async () => {
-      const refusal = new Error('invalid message seq: 0');
-      let result: Promise<unknown> | undefined;
-      await runACrankWhile(() => {
-        result = kernelQueue.writeOutsideCrank(() => {
-          throw refusal;
-        });
-      });
-
-      await expect(result).rejects.toBe(refusal);
-    });
-
-    it('rejects with what a held write throws, and the run loop goes on (gap, #1171)', async () => {
-      const fault = new Error('SQLITE_FULL');
-      let result: Promise<unknown> | undefined;
-      await runACrankWhile(() => {
-        result = kernelQueue.writeOutsideCrank(() => {
-          throw fault;
-        });
-      });
-
-      await expect(result).rejects.toBe(fault);
-    });
-
-    it('rejects a held write when held requests are discarded', async () => {
-      const write = vi.fn();
-      const discarded = new Error('discarded');
-      let result: Promise<unknown> | undefined;
-      await runACrankWhile(() => {
-        result = kernelQueue.writeOutsideCrank(write);
-        kernelQueue.discardHeldRequests(discarded);
-      });
-
-      await expect(result).rejects.toBe(discarded);
+      ).rejects.toThrow('Kernel run loop died; cannot pin a vat root');
       expect(write).not.toHaveBeenCalled();
     });
   });
@@ -1604,12 +1462,16 @@ describe('KernelQueue', () => {
   it.each([
     {
       what: 'restart',
-      enqueue: (queue: KernelQueue): void => queue.enqueueRestartVat(v1),
+      enqueue: (queue: KernelQueue): void => {
+        queue.enqueueRestartVat(v1).catch(() => undefined);
+      },
       item: { type: 'restartVat', vatId: 'v1' },
     },
     {
       what: 'termination',
-      enqueue: (queue: KernelQueue): void => queue.enqueueTerminateVat(v1),
+      enqueue: (queue: KernelQueue): void => {
+        queue.enqueueTerminateVat(v1).catch(() => undefined);
+      },
       item: { type: 'terminateVat', vatId: 'v1' },
     },
     {
@@ -1626,7 +1488,7 @@ describe('KernelQueue', () => {
       },
     },
   ])(
-    'holds a $what request made during a crank until that crank ends',
+    'writes a $what request made during a crank once that crank ends, in a crank of its own',
     async ({ enqueue, item }) => {
       const events: string[] = [];
       (kernelStore.isInCrank as unknown as MockInstance).mockReturnValue(true);
@@ -1668,8 +1530,8 @@ describe('KernelQueue', () => {
   );
 
   describe('enqueueRestartVat', () => {
-    it('enqueues a restart request', () => {
-      kernelQueue.enqueueRestartVat(v1);
+    it('enqueues a restart request', async () => {
+      await kernelQueue.enqueueRestartVat(v1);
 
       expect(kernelStore.enqueueRun).toHaveBeenCalledWith({
         type: 'restartVat',
@@ -1678,46 +1540,52 @@ describe('KernelQueue', () => {
     });
 
     it.each([
-      ['restart', (queue: KernelQueue) => queue.enqueueRestartVat(v1)],
-      ['termination', (queue: KernelQueue) => queue.enqueueTerminateVat(v1)],
-    ])(
-      'does not write a %s discarded before its crank ends',
-      async (_, request) => {
-        (kernelStore.isInCrank as unknown as MockInstance).mockReturnValue(
-          true,
-        );
-        (kernelStore.runQueueLength as unknown as MockInstance).mockReturnValue(
-          1,
-        );
-        (kernelStore.dequeueRun as unknown as MockInstance).mockReturnValue({
-          type: 'send',
-          target: 'ko123',
-          message: {} as KernelMessage,
-        });
-        const stop = new Error('test: kill run loop');
-        const deliver = vi
-          .fn()
-          .mockImplementationOnce(async () => {
-            request(kernelQueue);
-            kernelQueue.discardHeldRequests(new Error('discarded'));
-            return undefined;
-          })
-          .mockRejectedValueOnce(stop);
+      ['restart', async (queue: KernelQueue) => queue.enqueueRestartVat(v1)],
+      [
+        'termination',
+        async (queue: KernelQueue) => queue.enqueueTerminateVat(v1),
+      ],
+    ])('does not write a %s discarded before its crank', async (_, request) => {
+      (makePromiseKit as unknown as MockInstance).mockImplementation(
+        makeRealPromiseKit,
+      );
+      (kernelStore.runQueueLength as unknown as MockInstance).mockReturnValue(
+        1,
+      );
+      (kernelStore.dequeueRun as unknown as MockInstance).mockReturnValue({
+        type: 'send',
+        target: 'ko123',
+        message: {} as KernelMessage,
+      });
+      const stop = new Error('test: kill run loop');
+      const discarded = new Error('discarded');
+      let requested: Promise<void> | undefined;
+      const deliver = vi
+        .fn()
+        .mockImplementationOnce(async () => {
+          requested = request(kernelQueue);
+          kernelQueue.discardInbox(discarded);
+          return undefined;
+        })
+        .mockRejectedValueOnce(stop);
 
-        await expect(kernelQueue.run(deliver)).rejects.toBe(stop);
+      await expect(kernelQueue.run(deliver)).rejects.toBe(stop);
 
-        expect(kernelStore.enqueueRun).not.toHaveBeenCalled();
-      },
-    );
+      await expect(requested).rejects.toBe(discarded);
+      expect(kernelStore.enqueueRun).not.toHaveBeenCalled();
+    });
 
     it.each([
-      ['restart', (queue: KernelQueue) => queue.enqueueRestartVat(v1)],
-      ['termination', (queue: KernelQueue) => queue.enqueueTerminateVat(v1)],
+      ['restart', async (queue: KernelQueue) => queue.enqueueRestartVat(v1)],
+      [
+        'termination',
+        async (queue: KernelQueue) => queue.enqueueTerminateVat(v1),
+      ],
     ])(
-      'drops a %s held by a crank that kills the run loop',
+      'drops a %s waiting behind a crank that kills the run loop',
       async (_, request) => {
-        (kernelStore.isInCrank as unknown as MockInstance).mockReturnValue(
-          true,
+        (makePromiseKit as unknown as MockInstance).mockImplementation(
+          makeRealPromiseKit,
         );
         (kernelStore.runQueueLength as unknown as MockInstance).mockReturnValue(
           1,
@@ -1728,14 +1596,17 @@ describe('KernelQueue', () => {
           message: {} as KernelMessage,
         });
         const failure = new Error('crank exploded');
+        let requested: Promise<void> | undefined;
         const deliver = vi.fn().mockImplementationOnce(async () => {
-          request(kernelQueue);
+          requested = request(kernelQueue);
           throw failure;
         });
 
         await expect(kernelQueue.run(deliver)).rejects.toBe(failure);
 
-        // Its caller hears of the death through `onRunLoopDeath` instead.
+        await expect(requested).rejects.toThrow(
+          'Kernel run loop died; this work will never be carried out',
+        );
         expect(kernelStore.enqueueRun).not.toHaveBeenCalled();
       },
     );
@@ -1743,7 +1614,7 @@ describe('KernelQueue', () => {
     it('refuses once the run loop is dead', async () => {
       await killRunLoop(new Error('crank exploded'));
 
-      expect(() => kernelQueue.enqueueRestartVat(v1)).toThrow(
+      await expect(kernelQueue.enqueueRestartVat(v1)).rejects.toThrow(
         'Kernel run loop died; cannot restart a vat',
       );
       expect(kernelStore.enqueueRun).not.toHaveBeenCalled();
@@ -1751,10 +1622,10 @@ describe('KernelQueue', () => {
   });
 
   describe('enqueueTerminateVat', () => {
-    it('enqueues a termination request with its reason', () => {
+    it('enqueues a termination request with its reason', async () => {
       const reason = { body: 'because', slots: [] } as CapData<KRef>;
 
-      kernelQueue.enqueueTerminateVat(v1, reason);
+      await kernelQueue.enqueueTerminateVat(v1, reason);
 
       expect(kernelStore.enqueueRun).toHaveBeenCalledWith({
         type: 'terminateVat',
@@ -1763,8 +1634,8 @@ describe('KernelQueue', () => {
       });
     });
 
-    it('leaves the reason out when there is none', () => {
-      kernelQueue.enqueueTerminateVat(v1);
+    it('leaves the reason out when there is none', async () => {
+      await kernelQueue.enqueueTerminateVat(v1);
 
       // `toHaveBeenCalledWith` ignores an `undefined`-valued key, and the item
       // struct's `reason` is `exactOptional`, so the key has to be absent.
@@ -1773,10 +1644,10 @@ describe('KernelQueue', () => {
       ).toStrictEqual([[{ type: 'terminateVat', vatId: 'v1' }]]);
     });
 
-    it('refuses a reason that carries slots', () => {
+    it('refuses a reason that carries slots', async () => {
       const reason = { body: 'because', slots: ['ko1'] } as CapData<KRef>;
 
-      expect(() => kernelQueue.enqueueTerminateVat(v1, reason)).toThrow(
+      await expect(kernelQueue.enqueueTerminateVat(v1, reason)).rejects.toThrow(
         'a termination reason cannot carry slots',
       );
       expect(kernelStore.enqueueRun).not.toHaveBeenCalled();
@@ -1785,7 +1656,7 @@ describe('KernelQueue', () => {
     it('refuses once the run loop is dead', async () => {
       await killRunLoop(new Error('crank exploded'));
 
-      expect(() => kernelQueue.enqueueTerminateVat(v1)).toThrow(
+      await expect(kernelQueue.enqueueTerminateVat(v1)).rejects.toThrow(
         'Kernel run loop died; cannot terminate a vat',
       );
       expect(kernelStore.enqueueRun).not.toHaveBeenCalled();

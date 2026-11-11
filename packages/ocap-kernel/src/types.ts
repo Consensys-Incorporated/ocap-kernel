@@ -441,19 +441,8 @@ export type PeerArrival =
   | RunQueueItemRemoteInbound
   | RunQueueItemPeerIncarnation;
 
-/**
- * A host call the run loop carries out ahead of all other work, in a crank of
- * its own.
- */
-export type ControlOperation = 'clearStorage' | 'reset' | 'terminateAllVats';
-
-export type RunLoopItemControl = {
-  type: 'control';
-  operation: ControlOperation;
-};
-
-/** Everything the run loop takes a crank for. */
-export type RunLoopItem = RunQueueItem | PeerArrival | RunLoopItemControl;
+/** Everything the run loop takes a crank for, apart from its inbox. */
+export type RunLoopItem = RunQueueItem | PeerArrival;
 
 /**
  * Assert that a value is a valid kernel message.
@@ -988,6 +977,16 @@ export type CrankResult = {
    */
   afterCommit?: () => Promise<void>;
 };
+
+/**
+ * How work from the run loop's inbox ends: the crank's outcome, and what the
+ * caller is told once the crank has committed. A `failure` rejects the
+ * caller, and is for a caller's own error, such as naming a vat that does not
+ * exist; the crank still commits unless `abort` is set too. A kernel or store
+ * fault is thrown instead, which kills the run loop.
+ */
+export type InboxOutcome<Value> = CrankResult &
+  ({ value: Value } | { failure: Error });
 
 export type VatDeliveryResult = [VatCheckpoint, string | null];
 

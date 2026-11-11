@@ -2,6 +2,8 @@ import { Far } from '@endo/marshal';
 
 import { parseOcapURL } from './remote-comms.ts';
 import type { RemoteManager } from './RemoteManager.ts';
+import { attempt } from '../../KernelQueue.ts';
+import type { KernelQueue } from '../../KernelQueue.ts';
 import { kslot, krefOf } from '../../liveslots/kernel-marshal.ts';
 import type { SlotValue } from '../../liveslots/kernel-marshal.ts';
 import type { KernelStore } from '../../store/index.ts';
@@ -27,6 +29,7 @@ export type OcapURLRedemptionService = {
 type OcapURLManagerConstructorProps = {
   remoteManager: RemoteManager;
   kernelStore: KernelStore;
+  kernelQueue: KernelQueue;
 };
 
 /**
@@ -38,6 +41,9 @@ export class OcapURLManager {
 
   /** The kernel's store, for retaining the objects issued URLs name */
   readonly #kernelStore: KernelStore;
+
+  /** The kernel's run queue, whose inbox takes each issue's write */
+  readonly #kernelQueue: KernelQueue;
 
   /** OCAP URL issuer service object */
   readonly #ocapURLIssuerService: object;
@@ -51,10 +57,16 @@ export class OcapURLManager {
    * @param options - Constructor options.
    * @param options.remoteManager - The remote manager for handling cross-kernel communications.
    * @param options.kernelStore - The kernel's store.
+   * @param options.kernelQueue - The kernel's run queue.
    */
-  constructor({ remoteManager, kernelStore }: OcapURLManagerConstructorProps) {
+  constructor({
+    remoteManager,
+    kernelStore,
+    kernelQueue,
+  }: OcapURLManagerConstructorProps) {
     this.#remoteManager = remoteManager;
     this.#kernelStore = kernelStore;
+    this.#kernelQueue = kernelQueue;
 
     // Create the OCAP URL issuer service
     this.#ocapURLIssuerService = Far('ocapURLIssuerService', {
@@ -118,7 +130,9 @@ export class OcapURLManager {
   }
 
   /**
-   * Issue an OCAP URL for a kernel reference.
+   * Issue an OCAP URL for a kernel reference, in a crank of its own: the
+   * target is retained and the token minted together, so a mint that fails
+   * takes its retention back with it.
    *
    * @param kref - The kref of the object to issue an OCAP URL for.
    * @returns a promise for the OCAP URL.
@@ -126,22 +140,15 @@ export class OcapURLManager {
    */
   async issueOcapURL(kref: KRef): Promise<string> {
     const identity = this.#remoteManager.getRemoteIdentity();
-    // Before minting the token, not after: the URL is unretractable once it
-    // exists, so the target must already be retained. Minting also awaits, and
-    // a collection crank can run in that window. See `retainForOcapURL`.
-    this.#kernelStore.retainForOcapURL(kref);
-    try {
-      return await identity.issueOcapURL(kref);
-    } catch (error) {
-      // Nothing else undoes this. A rejected kernel-service call is reported to
-      // the caller rather than thrown out of the crank, so the crank commits
-      // and the pin outlives the kernel that took it, naming a URL that never
-      // existed. This unwinds exactly the one retention above took, so the
-      // retentions of URLs that were minted — including any issued for this
-      // same kref while this one was in flight — are left alone.
-      this.#kernelStore.undoOcapURLRetention(kref);
-      throw error;
-    }
+    return this.#kernelQueue.enqueueInbox('issue an ocap URL', async () =>
+      attempt(async () => {
+        // Before minting the token, not after: the URL is unretractable once
+        // it exists, so the target must already be retained. See
+        // `retainForOcapURL`.
+        this.#kernelStore.retainForOcapURL(kref);
+        return identity.issueOcapURL(kref);
+      }),
+    );
   }
 
   /**
@@ -160,12 +167,16 @@ export class OcapURLManager {
       return identity.redeemLocalOcapURL(url);
     }
 
-    // This is a remote OCAP URL — requires full remote comms
-    // Add relay hints to our own relay pool so future URLs embed them
-    identity.addKnownRelays(hints);
+    // This is a remote OCAP URL — requires full remote comms. Both writes
+    // belong to the crank `withRemote` opens: the relay hints, kept so that
+    // future URLs embed them, and the request the handle writes down before
+    // its first `await`.
     return this.#remoteManager.withRemote(host, {
       hints,
-      use: async (remote) => remote.redeemOcapURL(url),
+      use: async (remote) => {
+        identity.addKnownRelays(hints);
+        return remote.redeemOcapURL(url);
+      },
     });
   }
 }

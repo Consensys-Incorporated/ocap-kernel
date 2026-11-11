@@ -76,6 +76,7 @@ const RESET = 'Kernel was reset; queued work was abandoned';
 const CLEARED = 'Kernel storage was cleared; queued work was abandoned';
 const DEAD_RESULT =
   'Kernel run loop died; this message result will never be delivered';
+const DEAD_WORK = 'Kernel run loop died; this work will never be carried out';
 
 describe('a queueMessage caller the vat has not answered', () => {
   it.each([
@@ -166,7 +167,7 @@ describe('a restartVat or terminateVat caller the run loop has not reached', () 
 
 describe('a queueMessage caller whose message waits for the open crank', () => {
   it.each([
-    ['that crank kills the run loop', explodeStalledCrank, DEAD_RESULT],
+    ['that crank kills the run loop', explodeStalledCrank, DEAD_WORK],
     [
       'the kernel is reset',
       afterStalledCrank(async (kernel) => kernel.reset()),

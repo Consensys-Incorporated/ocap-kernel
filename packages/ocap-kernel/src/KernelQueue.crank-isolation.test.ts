@@ -406,8 +406,12 @@ describe('a writer acting while a crank aborts', () => {
 
   it('ocap URL redemption, new peer: the remote and its request are written once the aborted crank ends', async () => {
     const harness = await setUp();
-    const { kernelStore, remote, remoteManager } = harness;
-    const ocapURLManager = new OcapURLManager({ remoteManager, kernelStore });
+    const { kernelStore, kernelQueue, remote, remoteManager } = harness;
+    const ocapURLManager = new OcapURLManager({
+      remoteManager,
+      kernelStore,
+      kernelQueue,
+    });
     await abortACrankWhile(harness, async () => {
       ocapURLManager
         .redeemOcapURL(`ocap:token@${NEW_PEER_ID}`)
@@ -426,20 +430,31 @@ describe('a writer acting while a crank aborts', () => {
     });
   });
 
-  it('ocap URL redemption, known peer: its request is lost with the aborted crank (gap, #1171)', async () => {
+  it('ocap URL redemption, known peer: its request lands in a crank of its own', async () => {
     const harness = await setUp();
-    const { kernelStore, remote, remoteManager, persistedForPeer } = harness;
-    const ocapURLManager = new OcapURLManager({ remoteManager, kernelStore });
+    const {
+      kernelStore,
+      kernelQueue,
+      remote,
+      remoteManager,
+      persistedForPeer,
+    } = harness;
+    const ocapURLManager = new OcapURLManager({
+      remoteManager,
+      kernelStore,
+      kernelQueue,
+    });
     await abortACrankWhile(harness, async () => {
       ocapURLManager
         .redeemOcapURL(`ocap:token@${PEER_ID}`)
         .catch(() => undefined);
+      expect(kernelStore.getPendingMessage(remote.remoteId, 1)).toBeUndefined();
     });
     expect({
       request: kernelStore.getPendingMessage(remote.remoteId, 1),
       persistedForPeer,
     }).toStrictEqual({
-      request: undefined,
+      request: expect.stringContaining('redeemURL'),
       persistedForPeer: [['redeemURL', true]],
     });
   });

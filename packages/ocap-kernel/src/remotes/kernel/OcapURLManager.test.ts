@@ -1,4 +1,4 @@
-import { makePromiseKit } from '@endo/promise-kit';
+import { makeSQLKernelDatabase } from '@metamask/kernel-store/sqlite/nodejs';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { Mock } from 'vitest';
 
@@ -7,8 +7,10 @@ import type { RemoteHandle } from './RemoteHandle.ts';
 import type { RemoteManager } from './RemoteManager.ts';
 import { asKRef } from '../../../test/branded.ts';
 import { createMockRemotesFactory } from '../../../test/remotes-mocks.ts';
+import { KernelQueue } from '../../KernelQueue.ts';
 import type { SlotValue } from '../../liveslots/kernel-marshal.ts';
 import { kslot } from '../../liveslots/kernel-marshal.ts';
+import { makeKernelStore } from '../../store/index.ts';
 import type { KernelStore } from '../../store/index.ts';
 import type { KRef } from '../../types.ts';
 import type { RemoteComms } from '../types.ts';
@@ -63,8 +65,37 @@ describe('OcapURLManager', () => {
     ocapURLManager = new OcapURLManager({
       remoteManager: mockRemoteManager,
       kernelStore: mockKernelStore,
+      kernelQueue: mocks.kernelQueue,
     });
   });
+
+  /**
+   * An issuer over a real store and run loop, whose crank can roll a failed
+   * issuance back.
+   *
+   * @returns The issuer, its store, a kref to issue for, and a function that
+   * ends the run loop.
+   */
+  const setUpWithRunLoop = async () => {
+    const kdb = await makeSQLKernelDatabase({ dbFilename: ':memory:' });
+    const kernelStore = makeKernelStore(kdb);
+    const kernelQueue = new KernelQueue(kernelStore, async () => undefined);
+    const running = kernelQueue.run(async () => undefined);
+    const manager = new OcapURLManager({
+      remoteManager: mockRemoteManager,
+      kernelStore,
+      kernelQueue,
+    });
+    return {
+      manager,
+      kernelStore,
+      kref: kernelStore.initKernelObject('kernel'),
+      end: async () => {
+        await kernelQueue.endRunLoop();
+        await running;
+      },
+    };
+  };
 
   describe('service creation', () => {
     it('creates issuer and redemption services', () => {
@@ -133,59 +164,46 @@ describe('OcapURLManager', () => {
       });
     });
 
-    it('releases the retention when minting the URL fails', async () => {
+    it('rolls the retention back when minting the URL fails', async () => {
       // No URL exists to depend on the pin, and nothing else would ever release
       // it: the rejection is reported to the caller, not thrown out of a crank.
+      const { manager, kernelStore, kref, end } = await setUpWithRunLoop();
       vi.spyOn(mockRemoteComms, 'issueOcapURL').mockRejectedValue(
         new Error('Issue failed'),
       );
 
-      await expect(ocapURLManager.issueOcapURL(objectKRef)).rejects.toThrow(
-        'Issue failed',
-      );
+      await expect(manager.issueOcapURL(kref)).rejects.toThrow('Issue failed');
+      await end();
 
-      expect(mockKernelStore.isObjectPinned(objectKRef)).toBe(false);
-      expect(mockKernelStore.getOcapURLObjects()).toStrictEqual([]);
-      expect(mockKernelStore.getObjectRefCount(objectKRef)).toStrictEqual({
-        reachable: 0,
-        recognizable: 0,
+      expect({
+        pinned: kernelStore.isObjectPinned(kref),
+        retained: kernelStore.getOcapURLObjects(),
+        refCount: kernelStore.getObjectRefCount(kref),
+      }).toStrictEqual({
+        pinned: false,
+        retained: [],
+        refCount: { reachable: 0, recognizable: 0 },
       });
     });
 
     it('keeps the retention a URL already issued depends on', async () => {
-      await ocapURLManager.issueOcapURL(objectKRef);
+      const { manager, kernelStore, kref, end } = await setUpWithRunLoop();
+      await manager.issueOcapURL(kref);
       vi.spyOn(mockRemoteComms, 'issueOcapURL').mockRejectedValue(
         new Error('Issue failed'),
       );
 
-      await expect(ocapURLManager.issueOcapURL(objectKRef)).rejects.toThrow(
-        'Issue failed',
-      );
+      await expect(manager.issueOcapURL(kref)).rejects.toThrow('Issue failed');
+      await end();
 
-      expect(mockKernelStore.isObjectPinned(objectKRef)).toBe(true);
-      expect(mockKernelStore.getOcapURLObjects()).toStrictEqual([objectKRef]);
-    });
-
-    it('keeps the retention of a URL minted while a failing issuance was in flight', async () => {
-      // Minting awaits, so a second issuance for the same target can run to
-      // completion inside the first's window. The first's failure may only
-      // release its own retention, not the one the second's live URL needs.
-      const firstMint = makePromiseKit<string>();
-      vi.spyOn(mockRemoteComms, 'issueOcapURL')
-        .mockImplementationOnce(async () => await firstMint.promise)
-        .mockImplementationOnce(async () => 'ocap:def456@local-peer-id');
-
-      const failing = ocapURLManager.issueOcapURL(objectKRef);
-      const url = await ocapURLManager.issueOcapURL(objectKRef);
-      firstMint.reject(new Error('Issue failed'));
-
-      await expect(failing).rejects.toThrow('Issue failed');
-      expect(url).toBe('ocap:def456@local-peer-id');
-      expect(mockKernelStore.isObjectPinned(objectKRef)).toBe(true);
-      expect(mockKernelStore.getOcapURLObjects()).toStrictEqual([objectKRef]);
-      expect(mockKernelStore.getObjectRefCount(objectKRef)).toStrictEqual({
-        reachable: 1,
-        recognizable: 1,
+      expect({
+        pinned: kernelStore.isObjectPinned(kref),
+        retained: kernelStore.getOcapURLObjects(),
+        refCount: kernelStore.getObjectRefCount(kref),
+      }).toStrictEqual({
+        pinned: true,
+        retained: [kref],
+        refCount: { reachable: 1, recognizable: 1 },
       });
     });
 

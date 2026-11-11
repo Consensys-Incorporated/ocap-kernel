@@ -485,7 +485,9 @@ describe('a peer message during a control operation', () => {
       await setUp();
     startRunLoop().catch(() => undefined);
     const release = holdNextCrank(hooks);
-    const control = kernelQueue.enqueueControl('terminateAllVats');
+    const control = kernelQueue.enqueueInbox('terminateAllVats', () => ({
+      value: undefined,
+    }));
     await settle();
 
     await remoteManager.handleRemoteMessage(PEER_ID, emptyNotify(1));

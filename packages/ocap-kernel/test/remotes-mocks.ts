@@ -83,9 +83,14 @@ export class MockRemotesFactory {
       resolvePromises: vi.fn(),
       assertRunLoopAlive: vi.fn(),
       waitForCrank: vi.fn(),
-      writeOutsideCrank: vi.fn<KernelQueue['writeOutsideCrank']>(
-        async (write) => write(),
-      ),
+      // Runs the work at once, as the queue does before its run loop starts.
+      enqueueInbox: vi.fn<KernelQueue['enqueueInbox']>(async (_what, work) => {
+        const outcome = await work();
+        if ('failure' in outcome) {
+          throw outcome.failure;
+        }
+        return outcome.value;
+      }),
       run: vi.fn(),
     } as unknown as KernelQueue;
   }
@@ -174,6 +179,7 @@ export class MockRemotesFactory {
       remoteComms,
       remoteHandle,
       kernelStore: this.config.kernelStore as KernelStore,
+      kernelQueue: this.makeMockKernelQueue(),
     };
   }
 

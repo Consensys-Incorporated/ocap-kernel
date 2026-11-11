@@ -241,7 +241,9 @@ export class VatManager {
   }
 
   /**
-   * Launch a new vat.
+   * Launch a new vat, inside the crank of its subcluster's launch. One that
+   * fails leaves no worker running, and leaves what it wrote to that crank's
+   * rollback.
    *
    * @param vatConfig - Configuration for the new vat.
    * @param vatName - The name of the vat within the subcluster.
@@ -254,13 +256,6 @@ export class VatManager {
     subclusterId?: SubclusterId,
   ): Promise<KRef> {
     const vatId = this.#kernelStore.getNextVatId();
-    // Register the vat with its subcluster BEFORE awaiting its start, which
-    // yields to the kernel event loop (loading the bundle,
-    // negotiating with the vat worker); any crank that runs during that
-    // window ends with `collectGarbage()` → `clearEmptySubclusters()`,
-    // which would otherwise delete the just-created, still-empty
-    // subcluster out from under us. Associating the vat first makes the
-    // subcluster non-empty for GC.
     if (subclusterId) {
       this.#kernelStore.addSubclusterVat(subclusterId, vatName, vatId);
     }
@@ -285,37 +280,18 @@ export class VatManager {
         cause: error,
       });
     }
-    try {
-      this.#kernelStore.initEndpoint(vatId);
-      const rootRef = this.#kernelStore.exportFromEndpoint(
-        vatId,
-        ROOT_OBJECT_VREF,
-      );
-      // A root is addressable for as long as its vat lives, whether or not
-      // anyone currently imports it: the kernel's own API hands out root krefs
-      // and `getRootObject` resolves them through this c-list entry. Without a
-      // pin, GC would retire the entry the moment the last importer let go.
-      this.#kernelStore.pinObject(rootRef);
-      this.#kernelStore.setVatConfig(vatId, vatConfig);
-      return rootRef;
-    } catch (error) {
-      // No mark here: `stopVat` marks before `deleteVat`, so marking after it
-      // failed could schedule a cleanup for a vat `deleteVat` never reached.
-      let stopFailure: unknown;
-      try {
-        await this.stopVat(vatId, true);
-      } catch (caught) {
-        stopFailure = caught;
-        this.#logger.error(
-          `Failed to stop vat ${vatId} after incomplete launch; its worker may still be running:`,
-          caught,
-        );
-      }
-      throw new Error(
-        `Failed to launch vat ${vatId} (${vatName})${stopFailure ? ' (cleanup also failed)' : ''}`,
-        { cause: error },
-      );
-    }
+    this.#kernelStore.initEndpoint(vatId);
+    const rootRef = this.#kernelStore.exportFromEndpoint(
+      vatId,
+      ROOT_OBJECT_VREF,
+    );
+    // A root is addressable for as long as its vat lives, whether or not
+    // anyone currently imports it: the kernel's own API hands out root krefs
+    // and `getRootObject` resolves them through this c-list entry. Without a
+    // pin, GC would retire the entry the moment the last importer let go.
+    this.#kernelStore.pinObject(rootRef);
+    this.#kernelStore.setVatConfig(vatId, vatConfig);
+    return rootRef;
   }
 
   /**
@@ -692,10 +668,12 @@ export class VatManager {
     if (!this.#isVatKnown(vatId)) {
       throw new VatNotFoundError(vatId);
     }
-    // Only once the termination is queued: a refused one leaves the vat
+    // Only once the termination can be queued: a refused one leaves the vat
     // running and the restart still due.
-    await this.#awaitQueuedWork(this.#terminationWaiters, vatId, () => {
-      this.#kernelQueue.enqueueTerminateVat(vatId, reason);
+    this.#kernelQueue.assertRunLoopAlive('terminate a vat');
+    await this.#awaitQueuedWork(this.#terminationWaiters, vatId, async () => {
+      // Before the request is written, and so before any crank, since a
+      // restart asked for meanwhile must wait for the termination.
       this.#pendingTerminations.set(
         vatId,
         (this.#pendingTerminations.get(vatId) ?? 0) + 1,
@@ -705,7 +683,29 @@ export class VatManager {
         this.#restartWaiters.delete(vatId);
         this.#parkRestarts(vatId, overtaken);
       }
+      try {
+        await this.#kernelQueue.enqueueTerminateVat(vatId, reason);
+      } catch (error) {
+        // Refused, so no crank will carry it out: the run loop has died or is
+        // stopping, and the restarts it overtook are told so with the rest.
+        this.#forgetPendingTermination(vatId);
+        throw error;
+      }
     });
+  }
+
+  /**
+   * Count a pending termination of a vat as done, or as never written.
+   *
+   * @param vatId - The vat.
+   */
+  #forgetPendingTermination(vatId: VatId): void {
+    const pending = (this.#pendingTerminations.get(vatId) ?? 0) - 1;
+    if (pending > 0) {
+      this.#pendingTerminations.set(vatId, pending);
+    } else {
+      this.#pendingTerminations.delete(vatId);
+    }
   }
 
   /**
@@ -742,12 +742,7 @@ export class VatManager {
     // Not before the teardown ends: a restart asked for during it must still
     // wait for this crank, whose failure can leave the vat known.
     const answerOnceCrankEnds = (failure?: Error): void => {
-      const pending = (this.#pendingTerminations.get(vatId) ?? 0) - 1;
-      if (pending > 0) {
-        this.#pendingTerminations.set(vatId, pending);
-      } else {
-        this.#pendingTerminations.delete(vatId);
-      }
+      this.#forgetPendingTermination(vatId);
       const superseded = this.#takeWaiters(this.#supersededRestarts, vatId);
       taken.answerOnceCrankEnds(failure);
       superseded.answerOnceCrankEnds(
@@ -803,13 +798,15 @@ export class VatManager {
       // Answered by the termination's crank, with no item of its own: a
       // restart item still queued ahead of the termination would take this
       // caller and relaunch a vat about to die.
-      return await this.#awaitQueuedWork(this.#supersededRestarts, vatId, () =>
-        this.#kernelQueue.assertRunLoopAlive('restart a vat'),
+      return await this.#awaitQueuedWork(
+        this.#supersededRestarts,
+        vatId,
+        async () => this.#kernelQueue.assertRunLoopAlive('restart a vat'),
       );
     }
     // The handle this restart made, rather than whatever `#vats` holds once
     // the caller wakes: a later restart's crank may have started by then.
-    return await this.#awaitQueuedWork(this.#restartWaiters, vatId, () =>
+    return await this.#awaitQueuedWork(this.#restartWaiters, vatId, async () =>
       this.#kernelQueue.enqueueRestartVat(vatId),
     );
   }
@@ -819,19 +816,19 @@ export class VatManager {
    *
    * @param waiters - The per-vat waiter lists for this kind of work.
    * @param vatId - The vat the work concerns.
-   * @param enqueue - Puts the request on the run queue.
+   * @param enqueue - Has the request written to the run queue, and rejects if
+   * it is refused or never written.
    * @returns What the crank answered with.
    */
   async #awaitQueuedWork<Value>(
     waiters: Map<VatId, Waiter<Value>[]>,
     vatId: VatId,
-    enqueue: () => void,
+    enqueue: () => Promise<void>,
   ): Promise<Value> {
-    // Ahead of the waiter, so a refusal is this call's own rejection rather
-    // than an unhandled one from a waiter nothing will ever await.
-    enqueue();
     const { promise, resolve, reject } = makePromiseKit<Value>();
     const waiter: Waiter<Value> = { resolve, reject, answerDue: false };
+    // Before the request is written: the crank that carries it out can be the
+    // next one, and it answers only the callers it finds waiting.
     waiters.set(vatId, [...(waiters.get(vatId) ?? []), waiter]);
     // Not once a crank has promised an answer: it may have committed the work
     // before the loop died.
@@ -839,6 +836,18 @@ export class VatManager {
       if (!waiter.answerDue) {
         reject(error);
       }
+    });
+    // A request refused, or never written because the loop died first, answers
+    // its caller through the same promise, so that nothing waits on a crank
+    // that will not come.
+    enqueue().catch((error: unknown) => {
+      const others = (waiters.get(vatId) ?? []).filter((it) => it !== waiter);
+      if (others.length > 0) {
+        waiters.set(vatId, others);
+      } else {
+        waiters.delete(vatId);
+      }
+      reject(error as Error);
     });
     try {
       return await promise;

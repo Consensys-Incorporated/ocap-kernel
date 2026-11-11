@@ -28,7 +28,7 @@ describe('lms-sample vat', () => {
       chat,
       sample: makeMockSample(['The sky is blue.']),
     });
-    kernel.registerKernelServiceObject(name, service);
+    await kernel.registerKernelServiceObject(name, service);
 
     await runTestVats(kernel, {
       bootstrap: 'main',
