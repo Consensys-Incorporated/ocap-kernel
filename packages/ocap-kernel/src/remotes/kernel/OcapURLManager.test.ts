@@ -165,8 +165,6 @@ describe('OcapURLManager', () => {
     });
 
     it('rolls the retention back when minting the URL fails', async () => {
-      // No URL exists to depend on the pin, and nothing else would ever release
-      // it: the rejection is reported to the caller, not thrown out of a crank.
       const { manager, kernelStore, kref, end } = await setUpWithRunLoop();
       vi.spyOn(mockRemoteComms, 'issueOcapURL').mockRejectedValue(
         new Error('Issue failed'),

@@ -160,6 +160,7 @@ describe('VatManager', () => {
       ),
       onRunLoopDeath: vi.fn(() => () => undefined),
       assertRunLoopAlive: vi.fn(),
+      assertInboxOpen: vi.fn(),
     } as unknown as Mocked<KernelQueue>;
 
     mockLogger = new Logger('test');
@@ -467,6 +468,33 @@ describe('VatManager', () => {
       ).rejects.toThrow('Failed to launch vat v1 (bob)');
 
       expect(mockPlatformServices.terminate).toHaveBeenCalledWith('v1');
+    });
+
+    it('fails a vat whose worker does not start in time, stopping it', async () => {
+      vatManager = new VatManager({
+        platformServices: mockPlatformServices,
+        kernelStore: mockKernelStore,
+        kernelQueue: mockKernelQueue,
+        logger: mockLogger,
+        vatRelaunchTimeoutMs: 1,
+      });
+      makeVatHandleMock.mockReturnValueOnce(new Promise(() => undefined));
+
+      const launching = vatManager.launchVat(createMockVatConfig(), 'bob', s1);
+
+      await expect(launching).rejects.toThrow('Failed to launch vat v1 (bob)');
+      const { cause } = (await launching.catch((error: unknown) => error)) as {
+        cause: Error;
+      };
+      expect({
+        cause: cause.message,
+        stopped: mockPlatformServices.terminate.mock.calls,
+        vats: vatManager.getVatIds(),
+      }).toStrictEqual({
+        cause: 'Vat v1 did not start within 1 ms',
+        stopped: [['v1']],
+        vats: [],
+      });
     });
 
     it('stops no worker when there was never one to stop', async () => {
@@ -1037,6 +1065,41 @@ describe('VatManager', () => {
       await expect(restarting).rejects.toBe(death);
       await expect(terminating).rejects.toBe(death);
     });
+
+    it.each([
+      {
+        refusal: 'Kernel run loop is stopping',
+        reason: undefined,
+        refuse: (): void => {
+          mockKernelQueue.assertInboxOpen.mockImplementationOnce(() => {
+            throw new Error('Kernel run loop is stopping');
+          });
+        },
+      },
+      {
+        refusal: 'a termination reason cannot carry slots',
+        reason: { body: '#"bye"', slots: [asKRef('ko1')] },
+        refuse: (): void => undefined,
+      },
+    ])(
+      'leaves a queued restart in place when the termination is refused: $refusal',
+      async ({ refusal, reason, refuse }) => {
+        await vatManager.runVat(v1, createMockVatConfig());
+        mockKernelQueue.enqueueRestartVat.mockImplementationOnce(
+          async () => undefined,
+        );
+        const restarting = vatManager.restartVat(v1);
+        refuse();
+
+        await expect(vatManager.terminateVat(v1, reason)).rejects.toThrow(
+          refusal,
+        );
+
+        const crankResult = await vatManager.performVatRestart(v1);
+        await crankResult?.afterCommit?.();
+        expect(await restarting).toBe(vatHandles[1]);
+      },
+    );
 
     it('counts no termination as pending once the request is refused', async () => {
       await vatManager.runVat(v1, createMockVatConfig());
@@ -1805,6 +1868,16 @@ describe('VatManager', () => {
         config: config2,
         subclusterId: 's1',
       });
+    });
+
+    it('leaves out a running vat whose records a dying crank rolled back', async () => {
+      await vatManager.runVat(v1, createMockVatConfig());
+      mockKernelStore.isVatActive.mockReturnValue(false);
+      mockKernelStore.getVatSubcluster.mockImplementation(() => {
+        throw new Error('Vat v1 has no subcluster');
+      });
+
+      expect(vatManager.getVats()).toStrictEqual([]);
     });
   });
 

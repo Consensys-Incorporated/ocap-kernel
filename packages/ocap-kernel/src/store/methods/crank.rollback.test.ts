@@ -59,16 +59,57 @@ describe('what a crank rollback reverts beyond the database', () => {
     expect(read(kernelStore)).toStrictEqual([]);
   });
 
-  it('keeps the number of a crank that rolled back', () => {
-    crankThenRollBack(() => {
-      expect(kernelStore.incrementCrankNumber()).toBe(1);
-    });
+  it.each([
+    {
+      what: 'crank number',
+      take: (store: ReturnType<typeof makeKernelStore>) =>
+        store.incrementCrankNumber(),
+      taken: [1, 2],
+    },
+    {
+      what: 'vat ID',
+      take: (store: ReturnType<typeof makeKernelStore>) => store.getNextVatId(),
+      taken: ['v1', 'v2'],
+    },
+    {
+      what: 'subcluster ID',
+      take: (store: ReturnType<typeof makeKernelStore>) =>
+        store.addSubcluster({
+          bootstrap: 'a',
+          vats: { a: { sourceSpec: 'a' } },
+        }),
+      taken: ['s1', 's2'],
+    },
+    {
+      what: 'object ID',
+      take: (store: ReturnType<typeof makeKernelStore>) =>
+        store.initKernelObject(asVatId('v1')),
+      taken: ['ko1', 'ko2'],
+    },
+    {
+      what: 'promise ID',
+      take: (store: ReturnType<typeof makeKernelStore>) =>
+        store.initKernelPromise()[0],
+      taken: ['kp1', 'kp2'],
+    },
+    {
+      what: 'remote ID',
+      take: (store: ReturnType<typeof makeKernelStore>) =>
+        store.getNextRemoteId(),
+      taken: ['r1', 'r2'],
+    },
+  ])(
+    'gives no later crank the $what a rolled-back crank took',
+    ({ take, taken: [first, next] }) => {
+      crankThenRollBack(() => {
+        expect(take(kernelStore)).toBe(first);
+      });
 
-    expect(kernelStore.getCrankNumber()).toBe(1);
-    kernelStore.startCrank();
-    expect(kernelStore.incrementCrankNumber()).toBe(2);
-    kernelStore.endCrank();
-  });
+      kernelStore.startCrank();
+      expect(take(kernelStore)).toBe(next);
+      kernelStore.endCrank();
+    },
+  );
 
   it('drops a collection candidate the abandoned crank created', () => {
     crankThenRollBack(() => {

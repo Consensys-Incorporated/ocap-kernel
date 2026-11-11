@@ -34,8 +34,8 @@ type SubclusterManagerOptions = {
   logger?: Logger;
 };
 
-/** What a subcluster's launch crank hands back, for the bootstrap's answer. */
-type Launched = {
+/** What a launch's crank hands back, the bootstrap's answer still pending. */
+type LaunchedSubcluster = {
   subclusterId: SubclusterId;
   rootKref: KRef;
   vatRootKrefs: Record<string, KRef>;
@@ -169,7 +169,7 @@ export class SubclusterManager {
       isSystem,
       systemName,
     }: { isSystem: boolean; systemName?: string | undefined },
-  ): Promise<InboxOutcome<Launched>> {
+  ): Promise<InboxOutcome<LaunchedSubcluster>> {
     const subclusterId = this.#kernelStore.addSubcluster(config);
     const outcome = await attempt(async () => {
       // Create IO channels before validating services so that IO service
@@ -198,7 +198,7 @@ export class SubclusterManager {
         ]),
       );
       // Last: a failure after it would leave the answer's subscription behind.
-      const answer = this.#kernelQueue.writeMessage(rootKref, 'bootstrap', [
+      const { answer } = this.#kernelQueue.writeMessage(rootKref, 'bootstrap', [
         roots,
         services,
       ]);
@@ -211,7 +211,7 @@ export class SubclusterManager {
       // The rollback forgets the records; the workers and channels are the
       // kernel's to stop. A store fault is reported to the caller the same way
       // until the kernel can tell it from a vat's failure (#1291).
-      await this.#stopMembers(subclusterId);
+      await this.#stopMembers(subclusterId, outcome.failure);
       try {
         await this.#ioManager?.destroyChannels(subclusterId);
       } catch (cleanupError) {
@@ -264,20 +264,38 @@ export class SubclusterManager {
   }
 
   /**
-   * Stop the worker of every member of a subcluster that has one, last
-   * launched first, inside a crank that is about to roll the members' records
-   * back.
+   * Stop the worker of every member of a failed launch, last launched first,
+   * inside a crank that is about to roll the members' records back.
    *
    * @param subclusterId - The subcluster.
+   * @param failure - Why the launch failed.
+   * @throws Every member's stop failure, with the launch's failure as the
+   * cause, once each of the others has been tried.
    */
-  async #stopMembers(subclusterId: SubclusterId): Promise<void> {
+  async #stopMembers(
+    subclusterId: SubclusterId,
+    failure: Error,
+  ): Promise<void> {
+    const stopFailures: unknown[] = [];
     for (const vatId of this.#kernelStore
       .getSubclusterVats(subclusterId)
       .reverse()) {
-      // A vat that failed to start has no worker left to stop.
-      if (this.#vatManager.hasVat(vatId)) {
-        await this.#vatManager.stopVat(vatId, true);
+      // A vat that failed to start has nothing left to stop; one that lost
+      // its channel still has a worker.
+      if (!this.#isVatGone(vatId)) {
+        try {
+          await this.#vatManager.stopVat(vatId, true);
+        } catch (error) {
+          stopFailures.push(error);
+        }
       }
+    }
+    if (stopFailures.length > 0) {
+      throw new AggregateError(
+        stopFailures,
+        `Failed to stop the vats of subcluster ${subclusterId} after its launch failed`,
+        { cause: failure },
+      );
     }
   }
 

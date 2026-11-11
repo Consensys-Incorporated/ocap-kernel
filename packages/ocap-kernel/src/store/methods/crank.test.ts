@@ -4,7 +4,7 @@ import { expect, describe, it, vi, beforeEach } from 'vitest';
 import { getCrankMethods } from './crank.ts';
 import { asKRef } from '../../../test/branded.ts';
 import type { KRef } from '../../types.ts';
-import type { Savepoint, StoreContext } from '../types.ts';
+import type { Savepoint, StoreContext, StoredValue } from '../types.ts';
 
 /**
  * @param name - The savepoint's name.
@@ -23,15 +23,24 @@ describe('crank methods', () => {
 
   beforeEach(() => {
     mockCrankBuffer = [];
-    let crankNumber = '0';
+    const counter = (initial: string): StoredValue => {
+      let value = initial;
+      return {
+        get: () => value,
+        set: (newValue: string) => {
+          value = newValue;
+        },
+        delete: vi.fn(),
+      };
+    };
     context = {
       inCrank: false,
-      crankNumber: {
-        get: () => crankNumber,
-        set: (value: string) => {
-          crankNumber = value;
-        },
-      },
+      crankNumber: counter('0'),
+      nextVatId: counter('1'),
+      nextSubclusterId: counter('1'),
+      nextObjectId: counter('1'),
+      nextPromiseId: counter('1'),
+      nextRemoteId: counter('1'),
       savepoints: [],
       crankBuffer: mockCrankBuffer,
       maybeFreeKrefs: new Set(),

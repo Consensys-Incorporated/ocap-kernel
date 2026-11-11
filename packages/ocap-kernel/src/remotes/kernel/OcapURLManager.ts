@@ -142,9 +142,6 @@ export class OcapURLManager {
     const identity = this.#remoteManager.getRemoteIdentity();
     return this.#kernelQueue.enqueueInbox('issue an ocap URL', async () =>
       attempt(async () => {
-        // Before minting the token, not after: the URL is unretractable once
-        // it exists, so the target must already be retained. See
-        // `retainForOcapURL`.
         this.#kernelStore.retainForOcapURL(kref);
         return identity.issueOcapURL(kref);
       }),
@@ -167,10 +164,9 @@ export class OcapURLManager {
       return identity.redeemLocalOcapURL(url);
     }
 
-    // This is a remote OCAP URL — requires full remote comms. Both writes
-    // belong to the crank `withRemote` opens: the relay hints, kept so that
-    // future URLs embed them, and the request the handle writes down before
-    // its first `await`.
+    // This is a remote OCAP URL — requires full remote comms. The relay hints
+    // are added inside `use`, so they are written in the remote's crank along
+    // with the request, and future URLs embed them.
     return this.#remoteManager.withRemote(host, {
       hints,
       use: async (remote) => {

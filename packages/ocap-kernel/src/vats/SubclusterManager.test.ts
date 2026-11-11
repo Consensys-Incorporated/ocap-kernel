@@ -1,3 +1,5 @@
+import type { CapData } from '@endo/marshal';
+import { makePromiseKit } from '@endo/promise-kit';
 import { SubclusterNotFoundError } from '@metamask/kernel-errors';
 import { Logger } from '@metamask/logger';
 import type { Mock, Mocked } from 'vitest';
@@ -86,9 +88,9 @@ describe('SubclusterManager', () => {
       markVatAsTerminated: vi.fn(),
     } as unknown as Mocked<KernelStore>;
 
-    mockWriteMessage = vi
-      .fn<KernelQueue['writeMessage']>()
-      .mockResolvedValue({ body: '{"result":"ok"}', slots: [] });
+    mockWriteMessage = vi.fn<KernelQueue['writeMessage']>(() => ({
+      answer: Promise.resolve({ body: '{"result":"ok"}', slots: [] }),
+    }));
     mockKernelQueue = {
       writeMessage: mockWriteMessage,
       // Runs the work at once, as the queue does before its run loop starts,
@@ -165,9 +167,11 @@ describe('SubclusterManager', () => {
     it('launches a subcluster in a crank of its own', async () => {
       const config = createMockClusterConfig();
       let writtenInCrank: boolean | undefined;
-      mockWriteMessage.mockImplementation(async () => {
+      mockWriteMessage.mockImplementation(() => {
         writtenInCrank = inCrank;
-        return { body: '{"result":"ok"}', slots: [] };
+        return {
+          answer: Promise.resolve({ body: '{"result":"ok"}', slots: [] }),
+        };
       });
 
       const result = await subclusterManager.launchSubcluster(config);
@@ -195,20 +199,6 @@ describe('SubclusterManager', () => {
         bootstrapResult: { body: '{"result":"ok"}', slots: [] },
         vatRootKrefs: { testVat: 'ko1' },
       });
-    });
-
-    // Refused up front, before spawning a worker per vat in the config.
-    it('refuses to launch when the run loop has died', async () => {
-      vi.mocked(mockKernelQueue.enqueueInbox).mockRejectedValue(
-        new Error('Kernel run loop died; cannot launch a subcluster'),
-      );
-
-      await expect(
-        subclusterManager.launchSubcluster(createMockClusterConfig()),
-      ).rejects.toThrow('Kernel run loop died; cannot launch a subcluster');
-
-      expect(mockVatManager.launchVat).not.toHaveBeenCalled();
-      expect(mockKernelStore.addSubcluster).not.toHaveBeenCalled();
     });
 
     it('launches subcluster with multiple vats', async () => {
@@ -287,7 +277,7 @@ describe('SubclusterManager', () => {
       ]);
     });
 
-    it('lets a fault while stopping a started worker reach the run loop', async () => {
+    it("lets a fault in a failed launch's cleanup reach the run loop", async () => {
       mockVatManager.launchVat.mockRejectedValueOnce(new Error('boom'));
       mockKernelStore.getSubclusterVats.mockImplementation(() => {
         throw new Error('store unreadable');
@@ -298,6 +288,34 @@ describe('SubclusterManager', () => {
       ).rejects.toThrow('store unreadable');
 
       expect(outcomes).toStrictEqual([]);
+    });
+
+    it('stops every started member before a fault in stopping one reaches the run loop, naming the launch failure', async () => {
+      const launchFailure = new Error('carol exploded');
+      const stopFailure = new Error('SQLITE_FULL');
+      mockVatManager.launchVat.mockRejectedValueOnce(launchFailure);
+      mockKernelStore.getSubclusterVats.mockReturnValue([
+        'v1',
+        'v2',
+      ] as VatId[]);
+      vatsRunning = true;
+      mockVatManager.stopVat.mockRejectedValueOnce(stopFailure);
+
+      const error = (await subclusterManager
+        .launchSubcluster(createMockClusterConfig())
+        .catch((reason: unknown) => reason)) as AggregateError;
+
+      expect({
+        stopped: mockVatManager.stopVat.mock.calls.map(([vatId]) => vatId),
+        errors: error.errors,
+        cause: error.cause,
+        outcomes,
+      }).toStrictEqual({
+        stopped: ['v2', 'v1'],
+        errors: [stopFailure],
+        cause: launchFailure,
+        outcomes: [],
+      });
     });
 
     it("writes a system subcluster's name with its record", async () => {
@@ -532,7 +550,9 @@ describe('SubclusterManager', () => {
         body: '{"error":"Bootstrap failed"}',
         slots: [],
       };
-      mockWriteMessage.mockResolvedValue(bootstrapResult);
+      mockWriteMessage.mockReturnValue({
+        answer: Promise.resolve(bootstrapResult),
+      });
 
       // Note: We can't easily mock kunser since it's imported at module level
       // kunser doesn't return an Error for this body, so launchSubcluster succeeds
@@ -556,9 +576,12 @@ describe('SubclusterManager', () => {
 
       it('rejects with the underlying error when the bootstrap message rejects, and terminates the subcluster', async () => {
         const config = createMockClusterConfig();
-        mockWriteMessage.mockRejectedValue(
-          kser(new Error('vat failed to build root object')),
-        );
+        mockWriteMessage.mockImplementation(() => {
+          // The kernel rejects an answer with the serialized error.
+          const { promise, reject } = makePromiseKit<CapData<KRef>>();
+          reject(kser(new Error('vat failed to build root object')));
+          return { answer: promise };
+        });
 
         await expect(
           subclusterManager.launchSubcluster(config),
@@ -574,7 +597,9 @@ describe('SubclusterManager', () => {
 
       it('rethrows when the bootstrap message resolves to a serialized error', async () => {
         const config = createMockClusterConfig();
-        mockWriteMessage.mockResolvedValue(kser(new Error('bootstrap threw')));
+        mockWriteMessage.mockReturnValue({
+          answer: Promise.resolve(kser(new Error('bootstrap threw'))),
+        });
 
         await expect(
           subclusterManager.launchSubcluster(config),
@@ -585,7 +610,9 @@ describe('SubclusterManager', () => {
 
       it('reports the bootstrap failure when the termination fails too', async () => {
         const config = createMockClusterConfig();
-        mockWriteMessage.mockRejectedValue(new Error('bootstrap threw'));
+        mockWriteMessage.mockImplementation(() => ({
+          answer: Promise.reject(new Error('bootstrap threw')),
+        }));
         mockVatManager.stopVat.mockRejectedValue(new Error('SQLITE_FULL'));
 
         await expect(
@@ -667,7 +694,7 @@ describe('SubclusterManager', () => {
       expect(mockKernelStore.deleteSubcluster).not.toHaveBeenCalled();
     });
 
-    it('destroys the IO channels, logging a failure to', async () => {
+    it('destroys the IO channels, going on when that fails', async () => {
       const { manager, ioManager } = makeManagerWithIO();
       const subcluster = createMockSubcluster(s1, createMockClusterConfig());
       mockKernelStore.getSubcluster.mockReturnValue(subcluster);
@@ -677,19 +704,6 @@ describe('SubclusterManager', () => {
 
       expect(ioManager.destroyChannels).toHaveBeenCalledWith('s1');
       expect(mockKernelStore.deleteSubcluster).toHaveBeenCalledWith('s1');
-    });
-
-    it('refuses once the run loop is dead', async () => {
-      const subcluster = createMockSubcluster(s1, createMockClusterConfig());
-      mockKernelStore.getSubcluster.mockReturnValue(subcluster);
-      vi.mocked(mockKernelQueue.enqueueInbox).mockRejectedValueOnce(
-        new Error('Kernel run loop died; cannot terminate a subcluster'),
-      );
-
-      await expect(subclusterManager.terminateSubcluster(s1)).rejects.toThrow(
-        'cannot terminate a subcluster',
-      );
-      expect(mockKernelStore.deleteSubcluster).not.toHaveBeenCalled();
     });
 
     it('rejects a subcluster that is not found, with the crank committed', async () => {

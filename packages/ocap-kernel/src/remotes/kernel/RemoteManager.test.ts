@@ -709,6 +709,28 @@ describe('RemoteManager', () => {
         'new-peer',
         peerMessage(2),
       );
+      writeHeld();
+      await Promise.all([first, second]);
+
+      expect(
+        vi
+          .mocked(mockKernelQueue.acceptRemoteInbound)
+          .mock.calls.map(([{ seq }]) => seq),
+      ).toStrictEqual([1, 2]);
+    });
+
+    it("keeps a peer's message behind one of its own still in the inbox, once another crank has set the peer up", async () => {
+      const writeHeld = holdWrites();
+      const first = remoteManager.handleRemoteMessage(
+        'new-peer',
+        peerMessage(1),
+      );
+      remoteManager.establishRemote('new-peer');
+      const second = remoteManager.handleRemoteMessage(
+        'new-peer',
+        peerMessage(2),
+      );
+      writeHeld();
       await Promise.all([first, second]);
 
       expect(
@@ -768,9 +790,40 @@ describe('RemoteManager', () => {
         state: kernelQueue.getRunLoopStatus().state,
       }).toStrictEqual({
         remotes: [],
-        counter: counterBefore,
+        // The setup's ID is not given out again.
+        counter: String(Number(counterBefore) + 1),
         state: 'failed',
       });
+      manager.cleanup();
+    });
+
+    it("rejects a new peer's refused first message, keeping the run loop and the setup", async () => {
+      const kdb = await makeSQLKernelDatabase({ dbFilename: ':memory:' });
+      const realStore = makeKernelStore(kdb);
+      const kernelQueue = new KernelQueue(realStore, async () => undefined);
+      const running = kernelQueue.run(async () => undefined);
+      const manager = new RemoteManager({
+        platformServices: mockPlatformServices,
+        kernelStore: realStore,
+        kernelQueue,
+        logger,
+      });
+      vi.mocked(remoteComms.initRemoteComms).mockResolvedValue(mockRemoteComms);
+      manager.setMessageHandler(vi.fn());
+      await manager.initRemoteComms();
+
+      await expect(
+        manager.handleRemoteMessage('new-peer', peerMessage(0)),
+      ).rejects.toThrow('invalid message seq: 0');
+
+      expect({
+        state: kernelQueue.getRunLoopStatus().state,
+        peers: realStore
+          .getRemoteIDs()
+          .map((remoteId) => realStore.getRemoteInfo(remoteId)?.peerId),
+      }).toStrictEqual({ state: 'running', peers: ['new-peer'] });
+      await kernelQueue.endRunLoop();
+      await running;
       manager.cleanup();
     });
 
@@ -791,19 +844,6 @@ describe('RemoteManager', () => {
       const remote = await remoteFor(remoteManager, 'new-peer');
 
       expect(kernelStore.getRemoteIDs()).toStrictEqual([remote.remoteId]);
-    });
-
-    it('refuses to set up a remote once the run loop is dead', async () => {
-      vi.mocked(mockKernelQueue.enqueueInbox).mockImplementationOnce(
-        async (what) => {
-          throw new Error(`Kernel run loop died; cannot ${what}`);
-        },
-      );
-
-      await expect(remoteFor(remoteManager, 'new-peer')).rejects.toThrow(
-        'Kernel run loop died; cannot act on a remote',
-      );
-      expect(kernelStore.getRemoteIDs()).toStrictEqual([]);
     });
 
     it('costs no remote ID when remote comms are down', async () => {

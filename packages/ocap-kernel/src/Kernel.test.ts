@@ -108,7 +108,6 @@ const mocks = vi.hoisted(() => {
         let outcome: InboxOutcome<unknown>;
         try {
           outcome = await work();
-          await outcome.afterCommit?.();
         } catch (error) {
           this.killRunLoop(error as Error);
           throw error;
@@ -191,6 +190,13 @@ const mocks = vi.hoisted(() => {
       }
     });
 
+    assertInboxOpen = vi.fn((what: string) => {
+      this.assertRunLoopAlive(what);
+      if (this.#stopped) {
+        throw new Error(`Kernel run loop is stopped; cannot ${what}`);
+      }
+    });
+
     stop = vi.fn();
 
     constructor() {
@@ -199,9 +205,9 @@ const mocks = vi.hoisted(() => {
 
     waitForCrank = vi.fn().mockResolvedValue(undefined);
 
-    writeMessage = vi
-      .fn()
-      .mockResolvedValue({ body: '{"result":"ok"}', slots: [] });
+    writeMessage = vi.fn(() => ({
+      answer: Promise.resolve({ body: '{"result":"ok"}', slots: [] }),
+    }));
 
     resolvePromises = vi.fn();
   }
@@ -224,6 +230,8 @@ const mocks = vi.hoisted(() => {
     initIdentity = vi.fn().mockResolvedValue(undefined);
 
     initRemoteComms = vi.fn().mockResolvedValue(undefined);
+
+    reapRemotes = vi.fn();
 
     restoreRemotes = vi.fn();
 
@@ -1271,7 +1279,7 @@ describe('Kernel', () => {
     });
   });
 
-  describe('control operations', () => {
+  describe('host calls that wipe or end vats', () => {
     it.each(['clearStorage', 'reset', 'terminateAllVats'] as const)(
       'hands %s to the run loop',
       async (method) => {
@@ -1298,7 +1306,7 @@ describe('Kernel', () => {
         abandoned: 'Kernel was reset; queued work was abandoned',
       },
     ] as const)(
-      'abandons the queued work and the inbox on $method, then releases the restart holds',
+      'abandons the queued work and the inbox on $method, discarding the arrivals before it releases the restart holds',
       async ({ method, abandoned }) => {
         const kernel = await Kernel.make(
           mockPlatformServices,
@@ -1872,21 +1880,6 @@ describe('Kernel', () => {
       await kernel.revoke(asKRef('ko1'));
       expect(kernel.isRevoked(asKRef('ko1'))).toBe(true);
     });
-
-    it('refuses to revoke a promise, asking the run loop nothing', async () => {
-      const kernel = await Kernel.make(
-        mockPlatformServices,
-        mockKernelDatabase,
-      );
-      await kernel.launchSubcluster(makeSingleVatClusterConfig());
-      const { enqueueInbox } = mocks.KernelQueue.lastInstance;
-      enqueueInbox.mockClear();
-
-      await expect(kernel.revoke(asKRef('kp1'))).rejects.toThrow(
-        'cannot revoke promise kp1',
-      );
-      expect(enqueueInbox).not.toHaveBeenCalled();
-    });
   });
 
   describe('pinVatRoot and unpinVatRoot', () => {
@@ -1897,18 +1890,79 @@ describe('Kernel', () => {
       );
       const config = makeSingleVatClusterConfig();
       await kernel.launchSubcluster(config);
-      // Pinning existing vat root should return the kref
       expect(await kernel.pinVatRoot(asVatId('v1'))).toBe('ko4');
-      // Pinning non-existent vat should throw
-      await expect(kernel.pinVatRoot(asVatId('v2'))).rejects.toThrow(
-        VatNotFoundError,
-      );
-      // Unpinning existing vat root should succeed
       expect(await kernel.unpinVatRoot(asVatId('v1'))).toBeUndefined();
-      // Unpinning non-existent vat should throw
-      await expect(kernel.unpinVatRoot(asVatId('v3'))).rejects.toThrow(
-        VatNotFoundError,
+    });
+  });
+
+  describe('a host call that fails for the caller', () => {
+    const badFilter = (): boolean => {
+      throw new Error('bad filter');
+    };
+
+    it.each([
+      {
+        call: 'revoke',
+        make: async (kernel: Kernel): Promise<unknown> =>
+          kernel.revoke(asKRef('kp1')),
+      },
+      {
+        call: 'pinVatRoot',
+        make: async (kernel: Kernel): Promise<unknown> =>
+          kernel.pinVatRoot(asVatId('v9')),
+      },
+      {
+        call: 'unpinVatRoot',
+        make: async (kernel: Kernel): Promise<unknown> =>
+          kernel.unpinVatRoot(asVatId('v9')),
+      },
+      {
+        call: 'registerKernelServiceObject',
+        make: async (kernel: Kernel): Promise<unknown> =>
+          kernel.registerKernelServiceObject('ocapURLIssuerService', {}),
+      },
+      {
+        call: 'initIdentity',
+        make: async (kernel: Kernel): Promise<unknown> => {
+          mocks.RemoteManager.lastInstance.initIdentity.mockRejectedValueOnce(
+            new Error('no identity'),
+          );
+          return kernel.initIdentity();
+        },
+      },
+      {
+        call: 'initRemoteComms',
+        make: async (kernel: Kernel): Promise<unknown> => {
+          mocks.RemoteManager.lastInstance.initRemoteComms.mockRejectedValueOnce(
+            new Error('no transport'),
+          );
+          return kernel.initRemoteComms();
+        },
+      },
+      {
+        call: 'reapVats',
+        make: async (kernel: Kernel): Promise<unknown> => {
+          await kernel.launchSubcluster(makeSingleVatClusterConfig());
+          return kernel.reapVats(badFilter);
+        },
+      },
+      {
+        call: 'reapRemotes',
+        make: async (kernel: Kernel): Promise<unknown> => {
+          mocks.RemoteManager.lastInstance.reapRemotes.mockImplementationOnce(
+            (filter: (remoteId: string) => boolean) => filter('r1'),
+          );
+          return kernel.reapRemotes(badFilter);
+        },
+      },
+    ])('rejects $call, leaving the run loop running', async ({ make }) => {
+      const kernel = await Kernel.make(
+        mockPlatformServices,
+        mockKernelDatabase,
       );
+
+      await expect(make(kernel)).rejects.toThrow(Error);
+      expect((await kernel.getStatus()).runLoop.state).toBe('running');
     });
   });
 

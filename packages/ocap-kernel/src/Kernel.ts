@@ -476,7 +476,11 @@ export class Kernel {
    */
   async initRemoteComms(options?: RemoteCommsOptions): Promise<void> {
     await this.#kernelQueue.enqueueInbox('initialize remote comms', async () =>
-      attempt(async () => this.#remoteManager.initRemoteComms(options)),
+      // A failure keeps what was written: the transport may already be running
+      // under the identity this wrote.
+      attempt(async () => this.#remoteManager.initRemoteComms(options), {
+        rollback: false,
+      }),
     );
   }
 
@@ -843,10 +847,9 @@ export class Kernel {
   async reapVats(
     filter: (vatId: VatId) => boolean = () => true,
   ): Promise<void> {
-    await this.#kernelQueue.enqueueInbox('reap vats', () => {
-      this.#vatManager.reapVats(filter);
-      return { value: undefined };
-    });
+    await this.#kernelQueue.enqueueInbox('reap vats', async () =>
+      attempt(() => this.#vatManager.reapVats(filter)),
+    );
   }
 
   /**
@@ -858,10 +861,9 @@ export class Kernel {
   async reapRemotes(
     filter: (remoteId: RemoteId) => boolean = () => true,
   ): Promise<void> {
-    await this.#kernelQueue.enqueueInbox('reap remotes', () => {
-      this.#remoteManager.reapRemotes(filter);
-      return { value: undefined };
-    });
+    await this.#kernelQueue.enqueueInbox('reap remotes', async () =>
+      attempt(() => this.#remoteManager.reapRemotes(filter)),
+    );
   }
 
   /**
@@ -970,8 +972,8 @@ export class Kernel {
 
   /**
    * Gracefully stop the kernel without deleting vats. Waits for the open crank
-   * and any control operation queued before this; if one never ends, neither
-   * does this, and the embedder has to end the process. A later call settles as
+   * and every host call queued before this; if one never ends, neither does
+   * this, and the embedder has to end the process. A later call settles as
    * this one does.
    */
   async stop(): Promise<void> {

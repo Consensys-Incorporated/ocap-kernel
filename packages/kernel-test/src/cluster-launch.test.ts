@@ -128,7 +128,7 @@ describe('cluster initialization', () => {
   });
 });
 
-describe('peer rejection propagation', () => {
+describe('a launch whose peer vat fails', () => {
   let logger: Logger;
   let entries: LogEntry[];
   let kernel: Kernel;

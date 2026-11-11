@@ -38,6 +38,9 @@ export class RemoteManager {
   /** Currently active remote kernel connections, by remote Peer ID */
   readonly #remotesByPeer: Map<string, RemoteHandle> = new Map();
 
+  /** How many messages from each peer are waiting in the run loop's inbox. */
+  readonly #queuedFromPeer: Map<string, number> = new Map();
+
   /** Platform services for network operations */
   readonly #platformServices: PlatformServices;
 
@@ -552,7 +555,8 @@ export class RemoteManager {
     // A stored peer has a handle from boot, but until remote comms are up it
     // could not acknowledge or answer a message, nor send a redemption.
     this.getRemoteComms();
-    // Boxed, since the answer is the caller's to await, not the run loop's.
+    // Boxed, as `enqueueInbox` takes no promise for a value: the caller awaits
+    // the answer once the crank has committed.
     const { used } = await this.#kernelQueue.enqueueInbox(
       'act on a remote',
       () => {
@@ -616,7 +620,9 @@ export class RemoteManager {
    * handle at once, with no `await` before it: one microtask would let an idle
    * run loop record a restart of the peer ahead of a message read late off
    * the old incarnation's channel. A new peer's waits for the crank that sets
-   * the peer up.
+   * the peer up, and so does each later one while it waits: handed over
+   * first, a later message would have the handle drop the earlier one as a
+   * duplicate.
    *
    * @param from - The peer ID of the sender.
    * @param message - The message content.
@@ -629,13 +635,23 @@ export class RemoteManager {
   ): Promise<string | null> {
     this.getRemoteComms();
     const known = this.#remotesByPeer.get(from);
-    if (known) {
+    if (known && !this.#queuedFromPeer.has(from)) {
       known.receiveFromPeer(message);
       return null;
     }
-    await this.withRemote(from, {
-      use: (remote) => remote.receiveFromPeer(message),
-    });
+    this.#queuedFromPeer.set(from, (this.#queuedFromPeer.get(from) ?? 0) + 1);
+    try {
+      await this.withRemote(from, {
+        use: (remote) => remote.receiveFromPeer(message),
+      });
+    } finally {
+      const queued = (this.#queuedFromPeer.get(from) ?? 0) - 1;
+      if (queued > 0) {
+        this.#queuedFromPeer.set(from, queued);
+      } else {
+        this.#queuedFromPeer.delete(from);
+      }
+    }
     return null;
   }
 

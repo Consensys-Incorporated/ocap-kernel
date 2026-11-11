@@ -218,7 +218,7 @@ async function revokeCapability(capabilityId: string): Promise<void> {
   const record = capabilities.find((c) => c.id === capabilityId);
   if (!record) throw new Error('Capability not found');
 
-  kernel.revoke(record.kref);
+  await kernel.revoke(record.kref);
   await E(vendorAdminFacet).revokeCapability(capabilityId);
 }
 ```

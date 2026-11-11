@@ -54,6 +54,24 @@ test.describe('Object Registry', () => {
     return { button, output: page.locator('[data-testid="message-output"]') };
   };
 
+  /**
+   * Find Alice's root object, the one target named as hers. Looked up rather
+   * than hardcoded: the subcluster's vats start in parallel, so their roots
+   * are numbered in whatever order they finish starting.
+   *
+   * @param page - The page to look on.
+   * @returns Its kref.
+   */
+  const aliceRoot = async (page: Page): Promise<string> => {
+    const kref = await page
+      .locator('select[data-testid="message-target"] option', {
+        hasText: '(Alice)',
+      })
+      .getAttribute('value');
+    expect(kref).toBeTruthy();
+    return kref as string;
+  };
+
   test.beforeEach(async () => {
     const extension = await loadExtension();
     extensionContext = extension.browserContext;
@@ -77,10 +95,7 @@ test.describe('Object Registry', () => {
     ).toBeVisible();
     const targetSelect = popupPage.locator('[data-testid="message-target"]');
     await expect(targetSelect).toBeVisible();
-    const options = targetSelect.locator('option:not([value=""])');
-    await expect(options).toHaveCount(await options.count());
-    expect(await options.count()).toBeGreaterThan(0);
-    await targetSelect.selectOption({ index: 1 });
+    await targetSelect.selectOption(await aliceRoot(popupPage));
     await expect(targetSelect).not.toHaveValue('');
     const methodInput = popupPage.locator('[data-testid="message-method"]');
     await expect(methodInput).toHaveValue('__getMethodNames__');
@@ -108,8 +123,11 @@ test.describe('Object Registry', () => {
 
   test('should revoke an object', async () => {
     const owner = 'v1';
-    const v1Root = 'ko4';
-    const [target, method, params] = [v1Root, 'hello', '["Bob"]'];
+    const [target, method, params] = [
+      await aliceRoot(popupPage),
+      'hello',
+      '["Bob"]',
+    ];
 
     // Before revoking, we should be able to send a message to the object
     let response = await sendMessage(popupPage, target, method, params);

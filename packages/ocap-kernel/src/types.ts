@@ -979,14 +979,14 @@ export type CrankResult = {
 };
 
 /**
- * How work from the run loop's inbox ends: the crank's outcome, and what the
- * caller is told once the crank has committed. A `failure` rejects the
- * caller, and is for a caller's own error, such as naming a vat that does not
- * exist; the crank still commits unless `abort` is set too. A kernel or store
- * fault is thrown instead, which kills the run loop.
+ * How work from the run loop's inbox ends: what its caller is told once the
+ * crank has committed. A `failure` is for the caller's own error, such as
+ * naming a vat that does not exist; the crank still commits unless `abort`
+ * is set too.
  */
-export type InboxOutcome<Value> = CrankResult &
-  ({ value: Value } | { failure: Error });
+export type InboxOutcome<Value> =
+  | { value: Value; failure?: never; abort?: never }
+  | { failure: Error; value?: never; abort?: boolean };
 
 export type VatDeliveryResult = [VatCheckpoint, string | null];
 

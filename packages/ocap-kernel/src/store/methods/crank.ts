@@ -5,6 +5,20 @@ import type { KernelDatabase } from '@metamask/kernel-store';
 import type { CrankBufferItem, Savepoint, StoreContext } from '../types.ts';
 
 /**
+ * The counters a rollback leaves where the crank took them, so that no number
+ * the crank handed out, which a caller or another crank may have seen, is
+ * given out again.
+ */
+const KEPT_COUNTERS = [
+  'crankNumber',
+  'nextVatId',
+  'nextSubclusterId',
+  'nextObjectId',
+  'nextPromiseId',
+  'nextRemoteId',
+] as const;
+
+/**
  * Get the crank methods.
  *
  * @param ctx - The store context.
@@ -49,7 +63,9 @@ export function getCrankMethods(ctx: StoreContext, kdb: KernelDatabase) {
   function rollbackCrank(savepoint: string): void {
     ctx.inCrank || Fail`rollbackCrank outside of crank`;
     ctx.crankBuffer.length = 0; // Discard buffered outputs
-    const crankNumber = getCrankNumber();
+    const counters = KEPT_COUNTERS.map(
+      (field) => [field, ctx[field].get()] as const,
+    );
     for (const ordinal of ctx.savepoints.keys()) {
       const restored = ctx.savepoints[ordinal];
       if (restored?.name === savepoint) {
@@ -69,10 +85,10 @@ export function getCrankMethods(ctx: StoreContext, kdb: KernelDatabase) {
           throw error;
         }
         revertStateBeneathRollback(restored);
-        // The rollback undoes the crank's delivery, not the crank: it keeps
-        // the number it took, so no later crank gets the same one.
-        if (getCrankNumber() !== crankNumber) {
-          ctx.crankNumber.set(`${crankNumber}`);
+        for (const [field, value] of counters) {
+          if (value !== undefined && ctx[field].get() !== value) {
+            ctx[field].set(value);
+          }
         }
         return;
       }
