@@ -49,16 +49,11 @@ type Waiter<Value> = {
   reject: (error: Error) => void;
 };
 
-/** The callers a crank took, and the ways it can answer them. */
+/** The callers a crank took, and how to answer them. */
 type TakenWaiters<Value> = {
   count: number;
-  /** Answer now, from a crank's `afterCommit`. */
+  /** Called from a crank's `afterCommit`. */
   answer: (outcome: Value | Error) => void;
-  /**
-   * Answer once the crank commits, as `afterCommit` would, but after an abort
-   * too.
-   */
-  answerOnceCrankCommits: (outcome: Value | Error) => void;
 };
 
 /**
@@ -723,8 +718,6 @@ export class VatManager {
    * instruction, and one that outlived its process names a vat the boot has
    * just relaunched.
    *
-   * A failure to record the death is thrown, for the run loop to roll back.
-   *
    * @param vatId - The ID of the vat.
    * @param reason - The reason for the termination, if any.
    * @returns The crank outcome, carrying the callers' answer.
@@ -759,7 +752,11 @@ export class VatManager {
         `Carrying out a termination of vat ${vatId} nobody is waiting for`,
       );
     }
-    await this.stopVat(vatId, true, reason);
+    try {
+      await this.stopVat(vatId, true, reason);
+    } catch (error) {
+      throw new Error(`Termination of vat ${vatId} failed`, { cause: error });
+    }
     return crankResult;
   }
 
@@ -822,7 +819,7 @@ export class VatManager {
    *
    * @param waiters - The per-vat waiter lists for this kind of work.
    * @param vatId - The vat the work concerns.
-   * @returns The callers taken, and the ways to answer them.
+   * @returns The callers taken, and how to answer them.
    */
   #takeWaiters<Value>(
     waiters: Map<VatId, Waiter<Value>[]>,
@@ -839,10 +836,7 @@ export class VatManager {
         }
       }
     };
-    const answerOnceCrankCommits = (outcome: Value | Error): void => {
-      this.#kernelQueue.onCommit(() => answer(outcome));
-    };
-    return { count: taken.length, answer, answerOnceCrankCommits };
+    return { count: taken.length, answer };
   }
 
   /**
@@ -948,7 +942,8 @@ export class VatManager {
    * @param options.vatId - The ID of the vat.
    * @param options.taken - The restart's callers.
    * @param options.error - Why the restart failed.
-   * @returns The crank outcome: an abort and a termination.
+   * @returns The crank outcome: an abort, a termination and the callers'
+   *   answer.
    */
   #failRestart({
     vatId,
@@ -968,8 +963,6 @@ export class VatManager {
       { cause: error },
     );
     this.#logger.error(failure.message, error);
-    // Not from `afterCommit`, which an aborted crank skips.
-    taken.answerOnceCrankCommits(failure);
     // Through the crank result, so the run loop rolls back before retiring
     // the vat: what the new worker's `initVat` buffered would otherwise be
     // flushed on behalf of a vat that no longer exists. The rollback restores
@@ -983,6 +976,7 @@ export class VatManager {
           ? makeLostVatReason(vatId, error)
           : makeFatalKernelError('INTERNAL_ERROR', failure.message),
       },
+      afterCommit: async () => taken.answer(failure),
     });
   }
 
