@@ -69,9 +69,8 @@ export function getCrankMethods(ctx: StoreContext, kdb: KernelDatabase) {
           throw error;
         }
         revertStateBeneathRollback(restored);
-        // Keeps the number the crank took, so no later crank reuses it. After
-        // a rollback to `crank`, which ends the transaction, this write
-        // commits on its own.
+        // The rollback undoes the crank's delivery, not the crank: it keeps
+        // the number it took, so no later crank gets the same one.
         if (getCrankNumber() !== crankNumber) {
           ctx.crankNumber.set(`${crankNumber}`);
         }

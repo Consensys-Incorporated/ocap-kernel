@@ -231,8 +231,8 @@ export class SubclusterManager {
           error,
         );
       }
-      // By what is left rather than what threw: a reset that overtakes the
-      // termination rejects its caller and retires the vat.
+      // By what is left rather than what threw: a vat can be gone even though
+      // something after its death failed.
       if (!this.#isVatGone(vatId)) {
         survivors.set(
           vatId,
