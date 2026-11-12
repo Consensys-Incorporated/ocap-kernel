@@ -420,6 +420,30 @@ describe('the hold on a queueMessage result, adversarially', () => {
     });
   });
 
+  describe('6b. a kpid named by someone other than its caller', () => {
+    it('does not let one caller end the hold another caller was given', async () => {
+      const { kernelStore, kernelQueue, root, gift, start, stop, settle } =
+        await setUp({ onDeliver: answerWithGift });
+      start();
+      const first = await kernelQueue.enqueueMessage(root, 'fetch', []);
+      await settle('s6b');
+
+      // A second caller guesses the first caller's kpid, a sequential string.
+      const guessed = `kp${Number((first.kpid as string).slice(2))}` as KRef;
+      const forged = await kernelQueue.releaseResult(guessed).then(
+        () => 'accepted',
+        () => 'refused',
+      );
+      await settle('s6c');
+
+      expect({
+        forged,
+        giftStillCounted: kernelStore.kernelRefExists(gift),
+      }).toStrictEqual({ forged: 'refused', giftStillCounted: true });
+      await stop();
+    });
+  });
+
   describe('7. an answer whose slots include an unresolved promise', () => {
     it('keeps the promise until release, and lets it be collected after', async () => {
       let inner: KRef | undefined;
