@@ -441,19 +441,8 @@ export type PeerArrival =
   | RunQueueItemRemoteInbound
   | RunQueueItemPeerIncarnation;
 
-/**
- * A host call the run loop carries out ahead of all other work, in a crank of
- * its own.
- */
-export type ControlOperation = 'clearStorage' | 'reset' | 'terminateAllVats';
-
-export type RunLoopItemControl = {
-  type: 'control';
-  operation: ControlOperation;
-};
-
-/** Everything the run loop takes a crank for. */
-export type RunLoopItem = RunQueueItem | PeerArrival | RunLoopItemControl;
+/** Everything the run loop takes a crank for, apart from its inbox. */
+export type RunLoopItem = RunQueueItem | PeerArrival;
 
 /**
  * Assert that a value is a valid kernel message.
@@ -794,7 +783,7 @@ export type SubclusterLaunchResult = {
   rootKref: KRef;
   /** The CapData result of calling bootstrap() on the root object, if any. */
   bootstrapResult: CapData<KRef> | undefined;
-  /** Map from vat name to root kref for all successfully launched vats. */
+  /** Map from vat name to root kref, for every vat in the subcluster. */
   vatRootKrefs: Record<string, KRef>;
 };
 
@@ -988,6 +977,16 @@ export type CrankResult = {
    */
   afterCommit?: () => Promise<void>;
 };
+
+/**
+ * How work from the run loop's inbox ends: what its caller is told once the
+ * crank has committed. A `failure` is for the caller's own error, such as
+ * naming a vat that does not exist; the crank still commits unless `abort`
+ * is set too.
+ */
+export type InboxOutcome<Value> =
+  | { value: Value; failure?: never; abort?: never }
+  | { failure: Error; value?: never; abort?: boolean };
 
 export type VatDeliveryResult = [VatCheckpoint, string | null];
 

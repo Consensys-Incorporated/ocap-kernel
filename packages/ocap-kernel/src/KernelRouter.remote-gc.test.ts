@@ -39,7 +39,6 @@ describe('a GC action for a remote restored at boot', () => {
       restartVat: async () => undefined,
       terminateVat: async () => undefined,
       applyIncarnationChange: () => ({}),
-      performControl: async () => undefined,
     });
     const running = kernelQueue.run(kernelRouter.deliver.bind(kernelRouter));
     await waitUntilQuiescent();

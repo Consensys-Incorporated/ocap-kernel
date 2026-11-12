@@ -12,9 +12,9 @@ describe('revokeHandler', () => {
     } as unknown as Kernel;
   });
 
-  it('should revoke object and return null', async () => {
+  it('revokes the object and returns null', async () => {
     const kref = asKRef('ko1');
-    const result = revokeHandler.implementation(
+    const result = await revokeHandler.implementation(
       { kernel: mockKernel },
       { kref },
     );
@@ -22,14 +22,12 @@ describe('revokeHandler', () => {
     expect(result).toBeNull();
   });
 
-  it('should propagate errors from kernel.revoke', () => {
+  it('propagates errors from kernel.revoke', async () => {
     const error = new Error('Revoke failed');
-    vi.mocked(mockKernel.revoke).mockImplementation(() => {
-      throw error;
-    });
+    vi.mocked(mockKernel.revoke).mockRejectedValue(error);
     const kref = asKRef('ko1');
-    expect(() =>
+    await expect(
       revokeHandler.implementation({ kernel: mockKernel }, { kref }),
-    ).toThrow(error);
+    ).rejects.toThrow(error);
   });
 });

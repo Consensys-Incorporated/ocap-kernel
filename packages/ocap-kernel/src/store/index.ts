@@ -403,18 +403,10 @@ export function makeKernelStore(kdb: KernelDatabase, logger?: Logger) {
     // not running when it was issued.
     //
     // The ledger counts, per target, how many URLs name it, and holds one pin
-    // for as long as that count is nonzero. Counting is what makes overlapping
-    // issuances safe: minting awaits, so a second `issue` for the same target
-    // can run to completion while the first is still in flight, and the first's
-    // failure must then unwind its own issuance without disturbing the
-    // retention the second's live URL depends on.
-    //
-    // Ending a retention comes in two kinds, so it comes in two methods.
-    // `undoOcapURLRetention` unwinds one issuance whose URL was never minted
-    // and leaves the others standing; `releaseOcapURLRetentions` drops the
-    // target's whole retention at once, for disavowing every URL naming it.
-    // Revocation is neither: it writes only the revoked flag, so a revoked
-    // object's URLs stay retained, redeemable, and undeliverable.
+    // for as long as that count is nonzero. `releaseOcapURLRetentions` drops
+    // the target's whole retention at once, for disavowing every URL naming
+    // it. Revocation writes only the revoked flag, so a revoked object's URLs
+    // stay retained, redeemable, and undeliverable.
     getOcapURLObjects(): KRef[] {
       return [...getPrefixedKeys(OCAP_URL_PREFIX)].map(
         (key) => key.slice(OCAP_URL_PREFIX.length) as KRef,
@@ -434,16 +426,6 @@ export function makeKernelStore(kdb: KernelDatabase, logger?: Logger) {
         this.pinObject(kref);
       }
       kv.set(`${OCAP_URL_PREFIX}${kref}`, `${issuances + 1}`);
-    },
-    undoOcapURLRetention(kref: KRef): void {
-      const issuances = this.getOcapURLIssuanceCount(kref);
-      if (issuances > 1) {
-        kv.set(`${OCAP_URL_PREFIX}${kref}`, `${issuances - 1}`);
-        return;
-      }
-      // The last issuance, or none at all: either way, what is left of the
-      // retention is exactly what a release drops.
-      this.releaseOcapURLRetentions(kref);
     },
     releaseOcapURLRetentions(kref: KRef): void {
       if (this.getOcapURLIssuanceCount(kref) === 0) {

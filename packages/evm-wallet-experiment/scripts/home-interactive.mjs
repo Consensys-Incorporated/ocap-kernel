@@ -458,7 +458,7 @@ async function main() {
   // -----------------------------------------------------------------------
 
   info('Registering MetaMask signer as kernel service...');
-  const { kref: signerKref } = kernel.registerKernelServiceObject(
+  const { kref: signerKref } = await kernel.registerKernelServiceObject(
     'metamaskSigner',
     signer,
   );

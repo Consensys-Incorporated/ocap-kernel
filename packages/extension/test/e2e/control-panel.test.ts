@@ -299,8 +299,7 @@ test.describe('Control Panel', () => {
     await popupPage.click('button:text("Control Panel")');
     await popupPage.locator('[data-testid="accordion-header"]').first().click();
     await popupPage
-      .locator('[data-testid="terminate-vat-button"]')
-      .last()
+      .locator('tr[data-vat-id="v3"] [data-testid="terminate-vat-button"]')
       .click();
     await expect(
       popupPage.locator('[data-testid="message-output"]'),
@@ -360,8 +359,7 @@ test.describe('Control Panel', () => {
     await popupPage.locator('[data-testid="accordion-header"]').first().click();
     // delete v1
     await popupPage
-      .locator('[data-testid="terminate-vat-button"]')
-      .first()
+      .locator('tr[data-vat-id="v1"] [data-testid="terminate-vat-button"]')
       .click();
     await expect(
       popupPage.locator('[data-testid="message-output"]'),

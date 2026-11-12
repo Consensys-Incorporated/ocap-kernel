@@ -7,9 +7,9 @@ import { processGCActionSet } from './garbage-collection/garbage-collection.ts';
 import { kser, makeKernelError } from './liveslots/kernel-marshal.ts';
 import type { KernelStore } from './store/index.ts';
 import type {
-  ControlOperation,
   CrankResult,
   EndpointId,
+  InboxOutcome,
   KRef,
   KernelMessage,
   KernelOneResolution,
@@ -21,8 +21,6 @@ import type {
   RunQueueItemPeerIncarnation,
   RunQueueItemRemoteInbound,
   RunQueueItemNotify,
-  RunQueueItemRestartVat,
-  RunQueueItemTerminateVat,
   RunQueueItemSend,
   VatId,
 } from './types.ts';
@@ -43,29 +41,11 @@ type Subscription = {
   reject: (reason: unknown) => void;
 };
 
-type HeldMessage = {
-  type: 'queueMessage';
-  target: KRef;
-  methargs: CapData<KRef>;
-  subscription: Subscription;
-};
-
-type HeldWrite = {
-  type: 'write';
-  write: () => void;
-  reject: (error: Error) => void;
-};
-
-type HeldRequest =
-  | RunQueueItemRestartVat
-  | RunQueueItemTerminateVat
-  | HeldMessage
-  | HeldWrite;
-
-type ControlRequest = {
-  operation: ControlOperation;
-  resolve: () => void;
+type InboxItem = {
+  work: () => InboxOutcome<unknown> | Promise<InboxOutcome<unknown>>;
+  resolve: (value: unknown) => void;
   reject: (reason: unknown) => void;
+  queuedDuringInboxCrank: boolean;
 };
 
 type Deliver = (item: RunLoopItem) => Promise<CrankResult | undefined>;
@@ -78,6 +58,33 @@ const DEAD_RUN_LOOP_WORK =
 
 const DEAD_RUN_LOOP_RESULT =
   'Kernel run loop died; this message result will never be delivered';
+
+/**
+ * Carry out a host call's work for `enqueueInbox`, turning a throw into a
+ * failure that rejects the caller and, unless `rollback` is false, rolls the
+ * crank back. A store fault is reported the same way until the kernel can tell
+ * it from the caller's error, as #1288's `isStoreFault` will.
+ *
+ * @param work - The call's work.
+ * @param options - Options.
+ * @param options.rollback - Whether a failure rolls back what the work wrote
+ * before it. Defaults to `true`.
+ * @returns The outcome for the run loop.
+ */
+export async function attempt<Value>(
+  work: () => Promise<Value> | Value,
+  { rollback = true }: { rollback?: boolean } = {},
+): Promise<InboxOutcome<Value>> {
+  try {
+    return { value: await work() };
+  } catch (error) {
+    const failure =
+      error instanceof Error
+        ? error
+        : new Error(String(error), { cause: error });
+    return rollback ? { abort: true, failure } : { failure };
+  }
+}
 
 type RunLoopState =
   | Exclude<RunLoopStatus, { state: 'failed' }>
@@ -114,18 +121,16 @@ export class KernelQueue {
   readonly #pendingWorkWaiters: Set<(error: Error) => void> = new Set();
 
   /**
-   * Requests made while a crank was open, for the run loop to write once it
-   * ends, unless it ends by killing the loop. Written into the crank, they
-   * would be rolled back with it if it aborts, and their callers would wait on
-   * work nothing is going to do, or be left holding IDs the store gives out
-   * again.
+   * Work from outside the run loop. Written into whatever crank was open, a
+   * host call would be rolled back with that crank if it aborted, after its
+   * caller was told it was done.
    */
-  #heldRequests: HeldRequest[] = [];
+  readonly #inbox: InboxItem[] = [];
 
-  readonly #controlRequests: ControlRequest[] = [];
+  /** The inbox item whose crank is open, answered once it commits. */
+  #inboxInFlight: InboxItem | undefined;
 
-  /** The control operation whose crank is open, answered once it commits. */
-  #controlInFlight: ControlRequest | undefined;
+  #tookInboxLast = false;
 
   /** Set by `endRunLoop`, and resolved once the loop has ended. */
   #ending: PromiseKit<void> | undefined;
@@ -182,8 +187,8 @@ export class KernelQueue {
   }
 
   /**
-   * The kernel's run loop: take a control operation, or else an item off the
-   * run queue or from the peers' arrivals, deliver it, repeat, until
+   * The kernel's run loop: take an item from the inbox, or else off the run
+   * queue or from the peers' arrivals, carry it out, repeat, until
    * {@link endRunLoop} ends it. If it rejects with anything but `run loop
    * already started`, the kernel is dead — see {@link getRunLoopStatus}.
    *
@@ -210,19 +215,19 @@ export class KernelQueue {
    */
   async #runLoop(deliver: Deliver): Promise<void> {
     for (;;) {
-      // `endRunLoop` was called, and every control operation queued before it
-      // has run; `enqueueControl` refuses any after.
-      if (this.#ending && this.#controlRequests.length === 0) {
+      // `endRunLoop` was called, and everything put in the inbox before it has
+      // run; `enqueueInbox` refuses any after.
+      if (this.#ending && this.#inbox.length === 0) {
         this.#runLoopState = { state: 'stopped' };
         this.#ending.resolve();
         return;
       }
       let wakeUpPromise: Promise<void> | undefined;
       let afterCommit: (() => Promise<void>) | undefined;
+      let inboxOutcome: InboxOutcome<unknown> | undefined;
       // Boxed, so a crank that threw `undefined` stays distinguishable from one
       // that did not throw.
       let crankFailure: { error: unknown } | undefined;
-      let heldFailure: { error: unknown } | undefined;
 
       this.#kernelStore.startCrank();
       this.#deliveryRollbackAllowed = true;
@@ -241,14 +246,35 @@ export class KernelQueue {
         // stick, and promises resolved during it stay resolved while their
         // notifies die unflushed. A restart would resume from that.
         try {
-          const queueItem = this.#getNextRunQueueItem();
-          if (queueItem) {
+          // The inbox goes first, but an item queued during another's crank
+          // lets the rest have a crank before it, so that callers who keep
+          // calling cannot starve the run queue.
+          const letTheRestGo =
+            this.#tookInboxLast &&
+            this.#inbox[0]?.queuedDuringInboxCrank === true &&
+            !this.#ending;
+          let inbox = letTheRestGo ? undefined : this.#inbox.shift();
+          const queueItem = inbox
+            ? undefined
+            : this.#getNextRunQueueItem({ arrivals: !letTheRestGo });
+          inbox ??= queueItem ? undefined : this.#inbox.shift();
+          this.#tookInboxLast = inbox !== undefined;
+          // At the take, so a crank that dies before the work starts still
+          // answers its caller.
+          this.#inboxInFlight = inbox;
+          if (inbox || queueItem) {
             // Numbered here rather than in `startCrank`, so a pass that finds
             // nothing to do neither takes a number nor writes, and the number
             // commits with the crank instead of in a transaction of its own.
             this.#kernelStore.incrementCrankNumber();
             this.#kernelStore.nextTerminatedVatCleanup();
-            const crankResult = await deliver(queueItem);
+            let crankResult: CrankResult | undefined;
+            if (inbox) {
+              inboxOutcome = await inbox.work();
+              crankResult = inboxOutcome;
+            } else {
+              crankResult = await deliver(queueItem as RunLoopItem);
+            }
             await this.#processCrankResult(crankResult, queueItem);
             if (!crankResult?.abort) {
               afterCommit = crankResult?.afterCommit;
@@ -284,15 +310,7 @@ export class KernelQueue {
         throw error;
       } finally {
         this.#endCrank(crankFailure);
-        if (!crankFailure) {
-          try {
-            this.#writeHeldRequests();
-          } catch (error) {
-            // Rethrown once `afterCommit` has run: the crank has committed.
-            heldFailure = { error };
-          }
-        }
-        if (wakeUpPromise && !heldFailure) {
+        if (wakeUpPromise) {
           await wakeUpPromise;
         }
       }
@@ -300,56 +318,66 @@ export class KernelQueue {
       // writes this reports on are not there to report. Guarded rather than
       // `await afterCommit?.()`, which would yield a microtask on every crank.
       if (afterCommit) {
-        try {
-          await afterCommit();
-        } catch (error) {
-          if (!heldFailure) {
-            throw error;
-          }
-          throw new AggregateError(
-            [heldFailure.error, error],
-            `Run loop died writing a held request, and its crank's afterCommit failed: ${String(error)}`,
-            { cause: heldFailure.error },
-          );
+        await afterCommit();
+      }
+      const inbox = this.#inboxInFlight;
+      this.#inboxInFlight = undefined;
+      if (inbox && inboxOutcome) {
+        if ('failure' in inboxOutcome) {
+          inbox.reject(inboxOutcome.failure);
+        } else {
+          inbox.resolve(inboxOutcome.value);
         }
       }
-      const control = this.#controlInFlight;
-      this.#controlInFlight = undefined;
-      // Answered before a held request's failure is rethrown: its crank has
-      // committed.
-      control?.resolve();
-      if (heldFailure) {
-        throw heldFailure.error;
-      }
     }
   }
 
   /**
-   * Queue a control operation for the run loop to carry out ahead of all other
-   * work, in a crank of its own.
+   * Hand the run loop work from outside it: a host call, or a request the
+   * kernel's own code makes while a crank may be open. The loop takes it in a
+   * crank of its own and answers once that crank commits. Before the loop has
+   * started the work runs at once, as the kernel's boot writes do, with no
+   * crank to roll back.
    *
-   * @param operation - The operation.
-   * @returns A promise that resolves once the operation's crank commits. It
-   * rejects with what killed the run loop if that crank fails, with the
-   * dead-loop error if the loop dies before taking it, and at once if the loop
-   * has not started, has died or stopped, or is ending.
+   * @param what - What the work is, completing "cannot ..." when refused.
+   * @param work - The work. Its writes must be made by the time its promise
+   * settles, and a caller's own error returned as a failure: a throw is a
+   * kernel or store fault, which kills the run loop.
+   * @returns A promise for the outcome's `value`, given once the crank commits.
+   * It rejects with the outcome's `failure`; with what killed the run loop if
+   * its crank did; with the dead-loop error if the loop dies before taking it;
+   * with the error a `reset` or `clearStorage` discards it with; and at once if
+   * the loop has died or stopped, or is ending.
    */
-  async enqueueControl(operation: ControlOperation): Promise<void> {
-    this.#runLoopState.state === 'idle' && Fail`run loop has not started`;
-    this.assertRunLoopAlive(operation);
-    if (this.#ending) {
-      throw Error(`Kernel run loop is stopping; cannot ${operation}`);
+  async enqueueInbox<Value>(
+    what: string,
+    work: () =>
+      | InboxOutcome<NotThenable<Value>>
+      | Promise<InboxOutcome<NotThenable<Value>>>,
+  ): Promise<Value> {
+    if (this.#runLoopState.state === 'idle') {
+      const outcome = await work();
+      if ('failure' in outcome) {
+        throw outcome.failure;
+      }
+      return outcome.value;
     }
-    const { promise, resolve, reject } = makePromiseKit<void>();
-    this.#controlRequests.push({ operation, resolve, reject });
+    this.assertInboxOpen(what);
+    const { promise, resolve, reject } = makePromiseKit<unknown>();
+    this.#inbox.push({
+      work,
+      resolve,
+      reject,
+      queuedDuringInboxCrank: this.#inboxInFlight !== undefined,
+    });
     this.#wakeRunLoop();
-    return promise;
+    return promise as Promise<Value>;
   }
 
   /**
-   * End the run loop between cranks, once the control operations queued before
-   * this have been carried out. What is left on the run queue waits for the
-   * next start.
+   * End the run loop between cranks, once the inbox items queued before this
+   * have been carried out. What is left on the run queue waits for the next
+   * start.
    *
    * @returns A promise that resolves once the loop has ended, by this request
    * or by dying first.
@@ -378,6 +406,20 @@ export class KernelQueue {
   }
 
   /**
+   * Reject every inbox item waiting behind the open crank, for a kernel wiping
+   * its store in that crank. Carried out after the wipe, a request made during
+   * it would act on the fresh kernel: a termination asked for during a reset
+   * would kill the next vat launched under that id.
+   *
+   * @param error - What to tell their callers.
+   */
+  discardInbox(error: Error): void {
+    for (const { reject } of this.#inbox.splice(0)) {
+      reject(error);
+    }
+  }
+
+  /**
    * Fail every message-result subscription the kernel is holding.
    *
    * @param error - What to tell them.
@@ -393,9 +435,9 @@ export class KernelQueue {
 
   /**
    * Tell a caller waiting on queued work if the run loop dies before carrying
-   * it out. `subscriptions` and the held requests cover a message's result and
-   * a held write; a request with no kernel promise behind it — a vat restart
-   * or termination — has nothing else that would settle it.
+   * it out. `subscriptions` and the inbox cover a message's result and work
+   * yet to be taken; a request with no kernel promise behind it — a vat
+   * restart or termination — has nothing else that would settle it.
    *
    * @param reject - How to tell the caller.
    * @returns A function that unregisters it, for the caller's own `finally`.
@@ -413,10 +455,9 @@ export class KernelQueue {
 
   /**
    * Record the death of the run loop and fail everyone who would otherwise wait
-   * forever: the kernel's own message-result subscriptions, held requests,
-   * callers waiting on queued work, and queued control operations. Kernel
-   * promises in the store stay unresolved, so vats awaiting a notify the dead
-   * loop owed them are not rescued by this.
+   * forever: the kernel's own message-result subscriptions, callers waiting on
+   * queued work, and the inbox. Kernel promises in the store stay unresolved,
+   * so vats awaiting a notify the dead loop owed them are not rescued by this.
    *
    * @param error - The error that killed the run loop.
    * @returns The failure, as an `Error` whatever was thrown.
@@ -429,27 +470,15 @@ export class KernelQueue {
     this.#runLoopState = { state: 'failed', error: failure };
     this.abandonSubscriptions(this.#makeDeadRunLoopError(DEAD_RUN_LOOP_RESULT));
 
-    const held = this.#heldRequests;
-    this.#heldRequests = [];
-    for (const item of held) {
-      if (item.type === 'queueMessage') {
-        item.subscription.reject(
-          this.#makeDeadRunLoopError(DEAD_RUN_LOOP_RESULT),
-        );
-      } else if (item.type === 'write') {
-        item.reject(this.#makeDeadRunLoopError(DEAD_RUN_LOOP_WORK));
-      }
-    }
-
     const abandoned = [...this.#pendingWorkWaiters];
     this.#pendingWorkWaiters.clear();
     for (const reject of abandoned) {
       reject(this.#makeDeadRunLoopError(DEAD_RUN_LOOP_WORK));
     }
 
-    this.#controlInFlight?.reject(failure);
-    this.#controlInFlight = undefined;
-    for (const { reject } of this.#controlRequests.splice(0)) {
+    this.#inboxInFlight?.reject(failure);
+    this.#inboxInFlight = undefined;
+    for (const { reject } of this.#inbox.splice(0)) {
       reject(this.#makeDeadRunLoopError(DEAD_RUN_LOOP_WORK));
     }
     this.#ending?.resolve();
@@ -496,6 +525,19 @@ export class KernelQueue {
   }
 
   /**
+   * Refuse what {@link enqueueInbox} would refuse: the run loop has died or
+   * stopped, or is ending.
+   *
+   * @param what - What is being refused, completing "cannot ...".
+   */
+  assertInboxOpen(what: string): void {
+    this.assertRunLoopAlive(what);
+    if (this.#ending) {
+      throw Error(`Kernel run loop is stopping; cannot ${what}`);
+    }
+  }
+
+  /**
    * Report whether the kernel is able to process its run queue at all.
    *
    * @returns The current run loop status.
@@ -515,19 +557,20 @@ export class KernelQueue {
   }
 
   /**
-   * Take the next item for the run loop.
-   * **ATTN:** Removes it from the kernel store, the arrivals or the control
-   * requests.
+   * Take the next item for the run loop other than an inbox item.
+   * **ATTN:** Removes it from the kernel store or the arrivals.
    *
+   * @param options - Options.
+   * @param options.arrivals - Whether a peer's arrival may be taken. Not in a
+   * turn the inbox gives up: a peer's restart taken then could overtake an
+   * older message of that peer's still in the inbox.
    * @returns The next item, or undefined if nothing is waiting.
    */
-  #getNextRunQueueItem(): RunLoopItem | undefined {
-    const control = this.#controlRequests.shift();
-    if (control) {
-      this.#controlInFlight = control;
-      return { type: 'control', operation: control.operation };
-    }
-
+  #getNextRunQueueItem({
+    arrivals,
+  }: {
+    arrivals: boolean;
+  }): RunLoopItem | undefined {
     const gcAction = processGCActionSet(this.#kernelStore);
     if (gcAction) {
       return gcAction;
@@ -540,7 +583,7 @@ export class KernelQueue {
 
     // Arrivals and the run queue take turns, so a peer that sends faster than
     // cranks finish cannot hold up the kernel's own work.
-    const arrivalFirst = !this.#tookArrivalLast;
+    const arrivalFirst = arrivals && !this.#tookArrivalLast;
     this.#tookArrivalLast = false;
     if (arrivalFirst) {
       const arrival = this.#takeArrival();
@@ -555,7 +598,7 @@ export class KernelQueue {
         return item;
       }
     }
-    return this.#takeArrival();
+    return arrivals ? this.#takeArrival() : undefined;
   }
 
   /**
@@ -596,14 +639,15 @@ export class KernelQueue {
    * Process the results of a crank.
    *
    * @param crankResult - The crank result.
-   * @param queueItem - The run queue item that caused the crank result.
+   * @param queueItem - The run queue item that caused the crank result, if it
+   * was not an inbox item's.
    */
   async #processCrankResult(
     crankResult: CrankResult | undefined,
-    queueItem: RunLoopItem,
+    queueItem?: RunLoopItem,
   ): Promise<void> {
     if (crankResult?.abort) {
-      // Rollback the kernel state to before the failed delivery attempt.
+      // Roll back what the failed delivery, or an inbox item's work, wrote.
       // For active vats, this allows the message to be retried in a future crank.
       // For terminated vats, the message will just go splat.
       try {
@@ -621,7 +665,7 @@ export class KernelQueue {
       // and the vat won't be around to handle a retry.
       if (
         crankResult.terminate &&
-        queueItem.type === 'send' &&
+        queueItem?.type === 'send' &&
         queueItem.message.result
       ) {
         const subscription = this.subscriptions.get(queueItem.message.result);
@@ -760,8 +804,8 @@ export class KernelQueue {
   }
 
   /**
-   * Queue a message to be delivered from the kernel to an object in an endpoint.
-   * Held until the open crank, if any, has ended.
+   * Queue a message from the kernel to an object in an endpoint, for the run
+   * loop to write in a crank of its own.
    *
    * @param target - The object to which the message is directed.
    * @param method - The method to be invoked.
@@ -769,39 +813,66 @@ export class KernelQueue {
    *
    * @returns a promise for the (CapData encoded) result of the message
    * invocation. It rejects with `OBJECT_DELETED` if the kernel does not have
-   * the target or a kref in the arguments by the time the message is written.
+   * the target or a kref in the arguments by the time the message is written,
+   * and as `enqueueInbox` rejects if the message is never written.
    */
   async enqueueMessage(
     target: KRef,
     method: string,
     args: unknown[],
   ): Promise<CapData<KRef>> {
-    // Nothing is draining the run queue, so a returned promise could never settle.
-    this.assertRunLoopAlive('queue a message');
     insistKRef(target);
     // TODO(#562): Use logger instead.
     // oxlint-disable-next-line no-console
     console.debug('enqueueMessage', target, method, args);
+    const methargs = kser([method, args]);
     const { promise, resolve, reject } = makePromiseKit<CapData<KRef>>();
-    this.#enqueueRequest({
-      type: 'queueMessage',
-      target,
-      methargs: kser([method, args]),
-      subscription: { resolve, reject },
-    });
+    // One promise for the write and the answer, so that a run loop death
+    // between the two cannot leave the answer's rejection unhandled.
+    this.enqueueInbox('queue a message', () => {
+      this.#writeMessage(target, methargs, { resolve, reject });
+      return { value: undefined };
+    }).catch(reject);
     return promise;
   }
 
   /**
-   * Write a `queueMessage` call. A store fault is thrown; for a held message
-   * it kills the run loop, which tells the caller.
+   * Write a message from the kernel to an object in an endpoint now, and
+   * subscribe to its result. For the kernel's own code inside a crank, whose
+   * transaction the writes join; from outside the run loop, use
+   * `enqueueMessage`. A store fault is thrown, out of the caller's crank.
    *
-   * @param message - The call.
+   * @param target - The object to which the message is directed.
+   * @param method - The method to be invoked.
+   * @param args - Message arguments.
+   * @returns The `answer`: a promise for the (CapData encoded) result of the
+   * message invocation. It rejects with `OBJECT_DELETED` if the kernel does
+   * not have the target or a kref in the arguments.
    */
-  #writeMessage(message: HeldMessage): void {
-    const { target, methargs, subscription } = message;
-    // Checked first: outside a crank nothing rolls back, and `enqueueSend`
-    // refusing a missing kref partway would keep what it charged before it.
+  writeMessage(
+    target: KRef,
+    method: string,
+    args: unknown[],
+  ): { answer: Promise<CapData<KRef>> } {
+    const { promise, resolve, reject } = makePromiseKit<CapData<KRef>>();
+    this.#writeMessage(target, kser([method, args]), { resolve, reject });
+    return { answer: promise };
+  }
+
+  /**
+   * Write a message and subscribe to its result. A store fault is thrown.
+   *
+   * @param target - The object to which the message is directed.
+   * @param methargs - The method and arguments, serialized.
+   * @param subscription - How to answer the caller.
+   */
+  #writeMessage(
+    target: KRef,
+    methargs: CapData<KRef>,
+    subscription: Subscription,
+  ): void {
+    // Checked first, so that a missing kref rejects the answer with
+    // `OBJECT_DELETED` rather than throwing out of the crank.
     const missing = [target, ...methargs.slots].find(
       (kref) => !this.#kernelStore.kernelRefExists(kref),
     );
@@ -818,36 +889,6 @@ export class KernelQueue {
     this.enqueueSend(target, { methargs, result });
     // Last: a write that threw must leave no subscription behind.
     this.subscriptions.set(result, subscription);
-  }
-
-  /**
-   * Make a write now if no crank is open, or else once the open crank ends.
-   *
-   * @param write - The write. It must make every write before it returns:
-   * the run loop does not wait for a promise, so what it writes after an
-   * `await` lands in whichever crank is open by then. The type refuses a
-   * promise returned bare, not one inside an object.
-   * @returns A promise for what `write` returns or throws. It rejects if the
-   * run loop has stopped or dies first, or if a reset or `clearStorage`
-   * discards the write.
-   */
-  async writeOutsideCrank<Result>(
-    write: () => NotThenable<Result>,
-  ): Promise<Result> {
-    this.assertRunLoopAlive('write outside a crank');
-    const { promise, resolve, reject } = makePromiseKit<Result>();
-    this.#enqueueRequest({
-      type: 'write',
-      write: () => {
-        try {
-          resolve(write());
-        } catch (error) {
-          reject(error);
-        }
-      },
-      reject,
-    });
-    return promise;
   }
 
   /**
@@ -1035,98 +1076,42 @@ export class KernelQueue {
   }
 
   /**
-   * Enqueue a request to replace a vat's worker.
+   * Queue a request to replace a vat's worker, for the run loop to write in a
+   * crank of its own and carry out in a later one.
    *
    * @param vatId - The vat whose worker is to be replaced.
+   * @returns A promise that settles as `enqueueInbox` does, once the request
+   * is written.
    */
-  enqueueRestartVat(vatId: VatId): void {
-    this.assertRunLoopAlive('restart a vat');
-    this.#enqueueRequest({ type: 'restartVat', vatId });
+  async enqueueRestartVat(vatId: VatId): Promise<void> {
+    await this.enqueueInbox('restart a vat', () => {
+      this.#enqueueRun({ type: 'restartVat', vatId });
+      return { value: undefined };
+    });
   }
 
   /**
-   * Enqueue a request from outside the run loop, holding it until the open
-   * crank, if any, has ended.
-   *
-   * @param item - The item to add.
-   */
-  #enqueueRequest(item: HeldRequest): void {
-    if (this.#kernelStore.isInCrank()) {
-      this.#heldRequests.push(item);
-    } else {
-      this.#writeRequest(item);
-    }
-  }
-
-  /**
-   * Write a request now.
-   *
-   * @param item - The request.
-   */
-  #writeRequest(item: HeldRequest): void {
-    switch (item.type) {
-      case 'queueMessage':
-        this.#writeMessage(item);
-        break;
-      case 'write':
-        item.write();
-        break;
-      default:
-        this.#enqueueRun(item);
-    }
-  }
-
-  /**
-   * Forget the held requests, and reject the caller of each held message or
-   * write, for a kernel wiping its store: not in the store yet, they would
-   * outlive the wipe. A restart or termination's caller is told by
-   * `VatManager`.
-   *
-   * @param error - What to tell the caller of a forgotten message or write.
-   */
-  discardHeldRequests(error: Error): void {
-    const held = this.#heldRequests;
-    this.#heldRequests = [];
-    for (const item of held) {
-      if (item.type === 'queueMessage') {
-        item.subscription.reject(error);
-      } else if (item.type === 'write') {
-        item.reject(error);
-      }
-    }
-  }
-
-  /**
-   * Write the requests held while the crank that just ended was open.
-   */
-  #writeHeldRequests(): void {
-    // Each taken off only once written: one that throws kills the run loop,
-    // and `#failRunLoop` must still find it and the rest to tell their
-    // callers.
-    for (;;) {
-      const [item] = this.#heldRequests;
-      if (item === undefined) {
-        return;
-      }
-      this.#writeRequest(item);
-      this.#heldRequests.shift();
-    }
-  }
-
-  /**
-   * Enqueue a request to terminate a vat.
+   * Queue a request to terminate a vat, for the run loop to write in a crank
+   * of its own and carry out in a later one.
    *
    * @param vatId - The vat to terminate.
    * @param reason - The reason, if any. It must carry no slots.
+   * @returns A promise that settles as `enqueueInbox` does, once the request
+   * is written.
    */
-  enqueueTerminateVat(vatId: VatId, reason?: CapData<KRef>): void {
-    this.assertRunLoopAlive('terminate a vat');
+  async enqueueTerminateVat(
+    vatId: VatId,
+    reason?: CapData<KRef>,
+  ): Promise<void> {
     // A queued row takes no reference count on what it names.
     !reason?.slots.length || Fail`a termination reason cannot carry slots`;
-    this.#enqueueRequest({
-      type: 'terminateVat',
-      vatId,
-      ...(reason && { reason }),
+    await this.enqueueInbox('terminate a vat', () => {
+      this.#enqueueRun({
+        type: 'terminateVat',
+        vatId,
+        ...(reason && { reason }),
+      });
+      return { value: undefined };
     });
   }
 

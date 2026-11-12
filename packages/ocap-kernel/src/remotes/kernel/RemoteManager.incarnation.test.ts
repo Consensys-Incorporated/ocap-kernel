@@ -479,18 +479,20 @@ describe('a peer incarnation change on the run loop', () => {
   });
 });
 
-describe('a peer message during a control operation', () => {
+describe('a peer message during a host call', () => {
   it('is taken after it, so a later one cannot cover it', async () => {
     const { kernelQueue, remoteManager, hooks, taken, startRunLoop } =
       await setUp();
     startRunLoop().catch(() => undefined);
     const release = holdNextCrank(hooks);
-    const control = kernelQueue.enqueueControl('terminateAllVats');
+    const hostCall = kernelQueue.enqueueInbox('terminateAllVats', () => ({
+      value: undefined,
+    }));
     await settle();
 
     await remoteManager.handleRemoteMessage(PEER_ID, emptyNotify(1));
     release();
-    await control;
+    await hostCall;
     await remoteManager.handleRemoteMessage(PEER_ID, emptyNotify(2));
     await settle();
 

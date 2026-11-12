@@ -41,7 +41,7 @@ describe('Kernel service object invocation', () => {
     });
     const { logger, entries } = makeTestLogger();
     kernel = await makeKernel(kernelDatabase, true, logger);
-    kernel.registerKernelServiceObject('testService', testService);
+    await kernel.registerKernelServiceObject('testService', testService);
 
     await runTestVats(kernel, testSubcluster);
 
@@ -75,7 +75,7 @@ describe('Kernel service object invocation', () => {
     });
     const { logger, entries } = makeTestLogger();
     kernel = await makeKernel(kernelDatabase, true, logger);
-    kernel.registerKernelServiceObject('testService', testService);
+    await kernel.registerKernelServiceObject('testService', testService);
 
     await runTestVats(kernel, testSubcluster);
 

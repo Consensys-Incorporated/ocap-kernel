@@ -133,7 +133,7 @@ describe('Subcluster functionality', () => {
 
     // Terminate a vat
     await kernel.terminateVat('v2' as VatId);
-    kernel.collectGarbage();
+    await kernel.collectGarbage();
 
     // Verify vat is removed from subcluster
     const subclusterVats = kernel.getSubclusterVats('s1' as SubclusterId);

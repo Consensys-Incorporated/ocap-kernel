@@ -2,9 +2,9 @@ import { makeSQLKernelDatabase } from '@metamask/kernel-store/sqlite/nodejs';
 import { delay } from '@metamask/kernel-utils';
 import { describe, it, expect, vi } from 'vitest';
 
-import { KernelQueue } from './KernelQueue.ts';
+import { attempt, KernelQueue } from './KernelQueue.ts';
 import { makeKernelStore } from './store/index.ts';
-import type { RunLoopItem, RunQueueItem } from './types.ts';
+import type { RunQueueItem } from './types.ts';
 import { makeGCAction } from './types.ts';
 import { asRRef, asRemoteId, asVatId } from '../test/branded.ts';
 import { watch } from '../test/real-kernel.ts';
@@ -48,33 +48,43 @@ async function makeFixture(items: number): Promise<{
 type Fixture = Awaited<ReturnType<typeof makeFixture>>;
 
 /**
- * @param item - An item the run loop took.
- * @returns Its operation if it is a control operation, else its type.
+ * Inbox work that records its name as the run loop takes it.
+ *
+ * @param taken - Where the run loop's items are recorded.
+ * @param name - The work's name.
+ * @returns The work.
  */
-function nameOf(item: RunLoopItem): string {
-  return item.type === 'control' ? item.operation : item.type;
+function noting(taken: string[], name: string): () => { value: undefined } {
+  return () => {
+    taken.push(name);
+    return { value: undefined };
+  };
 }
 
 /**
  * Against a real store and real promise kits, which `KernelQueue.test.ts`
  * mocks.
  */
-describe('a control operation', () => {
+describe('an inbox item', () => {
   it('is taken ahead of the run queue, in the order asked for', async () => {
     const { kernelQueue } = await makeFixture(2);
     const taken: string[] = [];
     const running = kernelQueue.run(async (item) => {
-      taken.push(nameOf(item));
+      taken.push(item.type);
       if (taken.length === 1) {
-        kernelQueue.enqueueControl('reset').catch(() => undefined);
-        kernelQueue.enqueueControl('terminateAllVats').catch(() => undefined);
+        kernelQueue
+          .enqueueInbox('reset', noting(taken, 'reset'))
+          .catch(() => undefined);
+        kernelQueue
+          .enqueueInbox('pin', noting(taken, 'pin'))
+          .catch(() => undefined);
         kernelQueue.endRunLoop().catch(() => undefined);
       }
       return undefined;
     });
 
     await running;
-    expect(taken).toStrictEqual(['send', 'reset', 'terminateAllVats']);
+    expect(taken).toStrictEqual(['send', 'reset', 'pin']);
   });
 
   it.each([
@@ -106,11 +116,11 @@ describe('a control operation', () => {
     const fixture = await makeFixture(1);
     const taken: string[] = [];
     const running = fixture.kernelQueue.run(async (item) => {
-      taken.push(nameOf(item));
+      taken.push(item.type);
       if (taken.length === 1) {
         prepare(fixture);
         fixture.kernelQueue
-          .enqueueControl('terminateAllVats')
+          .enqueueInbox('terminateAllVats', noting(taken, 'terminateAllVats'))
           .catch(() => undefined);
         fixture.kernelQueue.endRunLoop().catch(() => undefined);
       }
@@ -121,15 +131,150 @@ describe('a control operation', () => {
     expect(taken).toStrictEqual(['send', 'terminateAllVats']);
   });
 
+  it('answers its caller with the value once its crank has committed', async () => {
+    const { kernelStore, kernelQueue } = await makeFixture(0);
+    const running = kernelQueue.run(async () => undefined);
+    const order: string[] = [];
+
+    const value = await kernelQueue.enqueueInbox('pin', () => {
+      kernelStore.setVatConfig(asVatId('v9'), { bundleName: 'pinned' });
+      order.push(`work, in crank: ${kernelStore.isInCrank()}`);
+      return { value: 'ko9' };
+    });
+    order.push(`answered, in crank: ${kernelStore.isInCrank()}`);
+    await kernelQueue.endRunLoop();
+    await running;
+
+    expect({
+      value,
+      order,
+      written: kernelStore.isVatActive(asVatId('v9')),
+    }).toStrictEqual({
+      value: 'ko9',
+      order: ['work, in crank: true', 'answered, in crank: false'],
+      written: true,
+    });
+  });
+
+  it.each([
+    { outcome: 'a failure, keeping its writes', abort: false, written: true },
+    {
+      outcome: 'a failure that aborts, rolling its writes back',
+      abort: true,
+      written: false,
+    },
+  ])(
+    'rejects its caller with $outcome, and the run loop goes on',
+    async ({ abort, written }) => {
+      const { kernelStore, kernelQueue } = await makeFixture(0);
+      const running = kernelQueue.run(async () => undefined);
+      const failure = new Error('worker would not start');
+
+      await expect(
+        kernelQueue.enqueueInbox('launch', () => {
+          kernelStore.setVatConfig(asVatId('v9'), { bundleName: 'written' });
+          return { abort, failure };
+        }),
+      ).rejects.toBe(failure);
+      await kernelQueue.endRunLoop();
+      await running;
+
+      expect({
+        written: kernelStore.isVatActive(asVatId('v9')),
+        state: kernelQueue.getRunLoopStatus().state,
+      }).toStrictEqual({ written, state: 'stopped' });
+    },
+  );
+
+  it.each([
+    { rollback: true, kept: false, verb: 'rolls back' },
+    { rollback: false, kept: true, verb: 'keeps' },
+  ])(
+    '$verb what an attempt wrote before it threw, given rollback: $rollback',
+    async ({ rollback, kept }) => {
+      const { kernelStore, kernelQueue } = await makeFixture(0);
+      const running = kernelQueue.run(async () => undefined);
+
+      await expect(
+        kernelQueue.enqueueInbox('launch', async () =>
+          attempt(
+            async () => {
+              kernelStore.setVatConfig(asVatId('v9'), { bundleName: 'kept' });
+              await delay(0);
+              throw new Error('worker would not start');
+            },
+            { rollback },
+          ),
+        ),
+      ).rejects.toThrow('worker would not start');
+      await kernelQueue.endRunLoop();
+      await running;
+
+      expect(kernelStore.isVatActive(asVatId('v9'))).toBe(kept);
+    },
+  );
+
+  it.each([
+    {
+      when: 'running',
+      after: 'one run-queue crank',
+      stopping: false,
+      expected: ['send', 'first', 'send', 'second'],
+    },
+    {
+      when: 'stopping',
+      after: 'nothing',
+      stopping: true,
+      expected: ['send', 'first', 'second'],
+    },
+  ])(
+    "takes an item asked for during another inbox crank after $after while $when, and never after a peer's arrival",
+    async ({ stopping, expected }) => {
+      const { kernelQueue } = await makeFixture(3);
+      const taken: string[] = [];
+      const ask = (name: string, then: () => void): void => {
+        kernelQueue
+          .enqueueInbox(name, () => {
+            taken.push(name);
+            then();
+            return { value: undefined };
+          })
+          .catch(() => undefined);
+      };
+      const running = kernelQueue.run(async (item) => {
+        taken.push(item.type);
+        if (taken.length === 1) {
+          ask('first', () => {
+            kernelQueue.acceptRemoteInbound(arrival);
+            ask('second', () => {
+              kernelQueue.endRunLoop().catch(() => undefined);
+            });
+            if (stopping) {
+              kernelQueue.endRunLoop().catch(() => undefined);
+            }
+          });
+        }
+        return undefined;
+      });
+
+      await running;
+      expect(taken).toStrictEqual(expected);
+    },
+  );
+
   it('keeps what it wrote when a later crank aborts', async () => {
     const { kernelStore, kernelQueue } = await makeFixture(2);
     const taken: string[] = [];
     const running = kernelQueue.run(async (item) => {
-      taken.push(nameOf(item));
+      taken.push(item.type);
       if (taken.length === 1) {
-        kernelQueue.enqueueControl('reset').catch(() => undefined);
-      } else if (item.type === 'control' && item.operation === 'reset') {
-        kernelStore.setVatConfig(asVatId('v9'), { bundleName: 'kept' });
+        kernelQueue
+          .enqueueInbox('reset', () => {
+            taken.push('reset');
+            kernelStore.setVatConfig(asVatId('v9'), { bundleName: 'kept' });
+            return { value: undefined };
+          })
+          .catch(() => undefined);
       } else if (taken.length === 3) {
         return { abort: true };
       } else if (taken.length === 4) {
@@ -151,14 +296,11 @@ describe('a control operation', () => {
   it('rolls back what it wrote if it throws, and kills the run loop', async () => {
     const { kernelStore, kernelQueue } = await makeFixture(0);
     const boom = new Error('wipe failed');
-    const running = kernelQueue.run(async (item) => {
-      if (item.type === 'control') {
-        kernelStore.setVatConfig(asVatId('v9'), { bundleName: 'rolled back' });
-        throw boom;
-      }
-      return undefined;
+    const running = kernelQueue.run(async () => undefined);
+    const asked = kernelQueue.enqueueInbox('clearStorage', () => {
+      kernelStore.setVatConfig(asVatId('v9'), { bundleName: 'rolled back' });
+      throw boom;
     });
-    const asked = kernelQueue.enqueueControl('clearStorage');
 
     await expect(running).rejects.toBe(boom);
     await expect(asked).rejects.toBe(boom);
@@ -174,18 +316,22 @@ describe('a control operation', () => {
       const { kdb, kernelStore, kernelQueue } = await makeFixture(2);
       kernelStore.setVatConfig(asVatId('v1'), { bundleName: 'before' });
       const boom = new Error('failed after the wipe');
-      const running = kernelQueue.run(async (item) => {
-        if (item.type === 'control') {
-          kernelStore[method]();
-          throw boom;
+      let delivered = 0;
+      const running = kernelQueue.run(async () => {
+        delivered += 1;
+        if (delivered === 1) {
+          // Taken ahead of the second send, while the first one's crank is open.
+          kernelQueue
+            .enqueueInbox('reset', () => {
+              kernelStore[method]();
+              throw boom;
+            })
+            .catch(() => undefined);
         }
         return undefined;
       });
-      // Taken ahead of the second send, while the first one's crank is open.
-      const asked = kernelQueue.enqueueControl('reset');
 
       await expect(running).rejects.toBe(boom);
-      await expect(asked).rejects.toBe(boom);
       const reopened = makeKernelStore(kdb);
       expect({
         cachedQueueLength: kernelStore.runQueueLength(),
@@ -199,34 +345,6 @@ describe('a control operation', () => {
     },
   );
 
-  it('is answered once its crank commits, even if a held write then kills the run loop', async () => {
-    const { kdb, kernelStore, kernelQueue } = await makeFixture(0);
-    const target = kernelStore.initKernelObject(asVatId('v1'));
-    const full = new Error('SQLITE_FULL');
-    let armed = false;
-    const set = kdb.kernelKVStore.set.bind(kdb.kernelKVStore);
-    // Fails the held message's write, which creates its result promise.
-    vi.spyOn(kdb.kernelKVStore, 'set').mockImplementation((key, value) => {
-      if (armed && key.endsWith('.state') && value === 'unresolved') {
-        throw full;
-      }
-      set(key, value);
-    });
-    let message: Promise<unknown> | undefined;
-    const running = kernelQueue.run(async (item) => {
-      if (item.type === 'control') {
-        message = kernelQueue.enqueueMessage(target, 'held', []);
-        message.catch(() => undefined);
-        armed = true;
-      }
-      return undefined;
-    });
-
-    await kernelQueue.enqueueControl('terminateAllVats');
-    await expect(running).rejects.toBe(full);
-    await expect(message).rejects.toThrow('Kernel run loop died');
-  });
-
   it('is rejected with what failed its commit', async () => {
     const { kdb, kernelQueue } = await makeFixture(0);
     const commit = new Error('RELEASE failed');
@@ -239,15 +357,33 @@ describe('a control operation', () => {
       }
       release(name);
     });
-    const running = kernelQueue.run(async (item) => {
-      armed = item.type === 'control';
-      return undefined;
-    });
+    const running = kernelQueue.run(async () => undefined);
     running.catch(() => undefined);
 
-    await expect(kernelQueue.enqueueControl('clearStorage')).rejects.toBe(
-      commit,
-    );
+    await expect(
+      kernelQueue.enqueueInbox('clearStorage', () => {
+        armed = true;
+        return { value: undefined };
+      }),
+    ).rejects.toBe(commit);
+  });
+
+  it('is rejected with what killed its crank before the work started', async () => {
+    const { kdb, kernelQueue } = await makeFixture(0);
+    const fault = new Error('SQLITE_FULL');
+    const set = kdb.kernelKVStore.set.bind(kdb.kernelKVStore);
+    vi.spyOn(kdb.kernelKVStore, 'set').mockImplementation((key, value) => {
+      if (key === 'crankNumber') {
+        throw fault;
+      }
+      set(key, value);
+    });
+    const running = kernelQueue.run(async () => undefined);
+    running.catch(() => undefined);
+
+    await expect(
+      kernelQueue.enqueueInbox('clearStorage', () => ({ value: undefined })),
+    ).rejects.toBe(fault);
   });
 
   it('is rejected, with any others queued, if the run loop dies first', async () => {
@@ -255,10 +391,10 @@ describe('a control operation', () => {
     const taken: string[] = [];
     const queued: Promise<void>[] = [];
     const running = kernelQueue.run(async (item) => {
-      taken.push(nameOf(item));
+      taken.push(item.type);
       queued.push(
-        kernelQueue.enqueueControl('reset'),
-        kernelQueue.enqueueControl('clearStorage'),
+        kernelQueue.enqueueInbox('reset', noting(taken, 'reset')),
+        kernelQueue.enqueueInbox('clearStorage', noting(taken, 'clearStorage')),
       );
       throw new Error('loop dies');
     });
@@ -289,9 +425,9 @@ describe('a control operation', () => {
       }),
     ).rejects.toThrow('loop dies');
 
-    await expect(kernelQueue.enqueueControl('reset')).rejects.toThrow(
-      'Kernel run loop died; cannot reset',
-    );
+    await expect(
+      kernelQueue.enqueueInbox('reset', () => ({ value: undefined })),
+    ).rejects.toThrow('Kernel run loop died; cannot reset');
   });
 
   it.each(['clear', 'reset'] as const)(
@@ -300,15 +436,16 @@ describe('a control operation', () => {
       const { kernelStore, kernelQueue } = await makeFixture(2);
       const taken: string[] = [];
       const running = kernelQueue.run(async (item) => {
-        taken.push(nameOf(item));
+        taken.push(item.type);
         if (taken.length === 1) {
-          kernelQueue.enqueueControl('clearStorage').catch(() => undefined);
+          kernelQueue
+            .enqueueInbox('clearStorage', () => {
+              taken.push('clearStorage');
+              kernelStore[method]();
+              return { value: undefined };
+            })
+            .catch(() => undefined);
           kernelQueue.endRunLoop().catch(() => undefined);
-        } else if (
-          item.type === 'control' &&
-          item.operation === 'clearStorage'
-        ) {
-          kernelStore[method]();
         }
         return undefined;
       });
@@ -326,12 +463,51 @@ describe('a control operation', () => {
     },
   );
 
-  it('is refused before the run loop has started', async () => {
-    const { kernelQueue } = await makeFixture(0);
+  it('is discarded with the rest queued behind the crank that wipes the store', async () => {
+    const { kernelStore, kernelQueue } = await makeFixture(0);
+    const running = kernelQueue.run(async () => undefined);
+    const abandoned = new Error('Kernel was reset; queued work was abandoned');
+    let later: Promise<void> | undefined;
+    const reset = kernelQueue.enqueueInbox('reset', async () => {
+      later = kernelQueue.enqueueInbox('terminate a vat', () => {
+        kernelStore.setVatConfig(asVatId('v9'), { bundleName: 'late' });
+        return { value: undefined };
+      });
+      await delay(0);
+      kernelQueue.discardInbox(abandoned);
+      return { value: undefined };
+    });
 
-    await expect(kernelQueue.enqueueControl('reset')).rejects.toThrow(
-      'run loop has not started',
-    );
+    await reset;
+    await expect(later).rejects.toBe(abandoned);
+    await kernelQueue.endRunLoop();
+    await running;
+    expect(kernelStore.isVatActive(asVatId('v9'))).toBe(false);
+  });
+
+  it('runs at once before the run loop has started, with no crank to roll back', async () => {
+    const { kernelStore, kernelQueue } = await makeFixture(0);
+
+    const value = await kernelQueue.enqueueInbox('pin', () => {
+      kernelStore.setVatConfig(asVatId('v9'), { bundleName: 'at once' });
+      return { value: 'ko9' };
+    });
+    await expect(
+      kernelQueue.enqueueInbox('launch', () => ({
+        abort: true,
+        failure: new Error('worker would not start'),
+      })),
+    ).rejects.toThrow('worker would not start');
+
+    expect({
+      value,
+      written: kernelStore.isVatActive(asVatId('v9')),
+      inCrank: kernelStore.isInCrank(),
+    }).toStrictEqual({
+      value: 'ko9',
+      written: true,
+      inCrank: false,
+    });
   });
 });
 
@@ -340,7 +516,7 @@ describe('ending the run loop', () => {
     const { kernelStore, kernelQueue } = await makeFixture(2);
     const taken: string[] = [];
     const running = kernelQueue.run(async (item) => {
-      taken.push(nameOf(item));
+      taken.push(item.type);
       return undefined;
     });
 
@@ -368,14 +544,14 @@ describe('ending the run loop', () => {
     expect([first(), second()]).toStrictEqual(['fulfilled', 'fulfilled']);
   });
 
-  it('waits for the control operations queued before it', async () => {
+  it('waits for the inbox items queued before it', async () => {
     const { kernelQueue } = await makeFixture(1);
     const taken: string[] = [];
     const running = kernelQueue.run(async (item) => {
-      taken.push(nameOf(item));
+      taken.push(item.type);
       return undefined;
     });
-    const asked = kernelQueue.enqueueControl('reset');
+    const asked = kernelQueue.enqueueInbox('reset', noting(taken, 'reset'));
 
     await kernelQueue.endRunLoop();
     await asked;
@@ -383,50 +559,34 @@ describe('ending the run loop', () => {
     expect(taken).toStrictEqual(['send', 'reset']);
   });
 
-  it('writes a request made during the last crank, for the next start', async () => {
+  it('refuses a request made during the last crank', async () => {
     const { kernelStore, kernelQueue } = await makeFixture(1);
+    let refused: (() => string) | undefined;
     const running = kernelQueue.run(async () => {
       kernelQueue.endRunLoop().catch(() => undefined);
-      kernelQueue.enqueueTerminateVat(asVatId('v1'));
+      refused = watch(kernelQueue.enqueueTerminateVat(asVatId('v1')));
       return undefined;
-    });
-
-    await running;
-    expect(kernelStore.dequeueRun()).toStrictEqual({
-      type: 'terminateVat',
-      vatId: 'v1',
-    });
-  });
-
-  it('writes at once a request made during the afterCommit of the last crank', async () => {
-    const { kernelQueue } = await makeFixture(1);
-    let written: (() => string) | undefined;
-    const running = kernelQueue.run(async () => {
-      kernelQueue.endRunLoop().catch(() => undefined);
-      return {
-        afterCommit: async () => {
-          written = watch(kernelQueue.writeOutsideCrank(() => 'written'));
-          await delay(0);
-        },
-      };
     });
 
     await running;
     await delay(0);
     expect({
-      written: written?.(),
-      state: kernelQueue.getRunLoopStatus().state,
-    }).toStrictEqual({ written: 'fulfilled', state: 'stopped' });
+      refused: refused?.(),
+      queued: kernelStore.runQueueLength(),
+    }).toStrictEqual({
+      refused: 'Kernel run loop is stopping; cannot terminate a vat',
+      queued: 0,
+    });
   });
 
-  it('refuses a control operation asked for after it', async () => {
+  it('refuses an inbox item asked for after it', async () => {
     const { kernelQueue } = await makeFixture(0);
     const running = kernelQueue.run(async () => undefined);
     const ending = kernelQueue.endRunLoop();
 
-    await expect(kernelQueue.enqueueControl('reset')).rejects.toThrow(
-      'Kernel run loop is stopping; cannot reset',
-    );
+    await expect(
+      kernelQueue.enqueueInbox('reset', () => ({ value: undefined })),
+    ).rejects.toThrow('Kernel run loop is stopping; cannot reset');
     await ending;
     await running;
   });
@@ -443,12 +603,9 @@ describe('ending the run loop', () => {
     expect(() => kernelQueue.acceptRemoteInbound(arrival)).toThrow(
       'Kernel run loop is stopped',
     );
-    await expect(kernelQueue.writeOutsideCrank(vi.fn())).rejects.toThrow(
-      'Kernel run loop is stopped',
-    );
-    await expect(kernelQueue.enqueueControl('reset')).rejects.toThrow(
-      'Kernel run loop is stopped; cannot reset',
-    );
+    await expect(
+      kernelQueue.enqueueInbox('reset', () => ({ value: undefined })),
+    ).rejects.toThrow('Kernel run loop is stopped; cannot reset');
   });
 
   it('is done once the run loop dies first', async () => {
