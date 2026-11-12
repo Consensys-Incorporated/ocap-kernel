@@ -378,6 +378,31 @@ describe('handleDaemonQueueMessage', () => {
     expect(stdoutSpy).toHaveBeenCalledWith('"<ko7>"\n');
   });
 
+  it('prints the kpid with raw output for a result that carries krefs', async () => {
+    const { sendCommand } = await import('./daemon-client.ts');
+    const rawResult = {
+      body: '#"$0.Alleged: token"',
+      slots: ['ko7'],
+      kpid: 'kp3',
+    };
+    vi.mocked(sendCommand).mockResolvedValueOnce({
+      jsonrpc: '2.0',
+      id: '1',
+      result: rawResult,
+    });
+    const stdoutSpy = vi.spyOn(process.stdout, 'write').mockReturnValue(true);
+
+    await handleDaemonQueueMessage({
+      target: 'ko1',
+      method: 'fetch',
+      args: [],
+      socketPath,
+      raw: true,
+    });
+
+    expect(stdoutSpy).toHaveBeenCalledWith(`${JSON.stringify(rawResult)}\n`);
+  });
+
   it('prints raw CapData when raw is true', async () => {
     const { sendCommand } = await import('./daemon-client.ts');
     const rawResult = { body: '#"hello"', slots: [] };
