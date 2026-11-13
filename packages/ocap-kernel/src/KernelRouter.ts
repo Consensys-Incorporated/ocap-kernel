@@ -421,10 +421,9 @@ export class KernelRouter {
             endpoint.deliverMessage(endpointTarget, endpointMessage),
           );
         } catch (error) {
-          // A remote's failure, but for a store fault, is taken for the peer's,
-          // and a peer must not be able to stop the kernel. A vat's worker
-          // failures end in its termination before here, so what a vat's
-          // delivery throws is the kernel's.
+          // A peer must not be able to stop the kernel. A vat's worker
+          // failures are crank results by the time they get here, so what a
+          // vat's delivery throws is the kernel's.
           if (!isRemoteId(eid) || isStoreFault(error)) {
             throw error;
           }
