@@ -1,8 +1,13 @@
-import type { KVStore } from '@metamask/kernel-store';
+import type { KVStore, RecordStore } from '@metamask/kernel-store';
 import type { Logger } from '@metamask/logger';
 import { object, string, number, boolean, refine } from '@metamask/superstruct';
 
-import type { KRef, RunQueueItemNotify, RunQueueItemSend } from '../types.ts';
+import type {
+  DeliveryContext,
+  KRef,
+  RunQueueItemNotify,
+  RunQueueItemSend,
+} from '../types.ts';
 
 export type CrankBufferItem = RunQueueItemSend | RunQueueItemNotify;
 
@@ -22,6 +27,8 @@ export type StoreContext = {
   reapQueue: StoredValue; // Holds ReapAction[]
   terminatedVats: StoredValue; // Holds VatId[]
   inCrank: boolean;
+  /** How the crank in progress hands out references, if it does. */
+  currentDelivery?: DeliveryContext | undefined;
   crankSettled?: Promise<void>;
   resolveCrank?: (() => void) | undefined;
   savepoints: Savepoint[];
@@ -30,6 +37,8 @@ export type StoreContext = {
   nextSubclusterId: StoredValue; // Holds string
   vatToSubclusterMap: StoredValue; // Holds Record<VatId, SubclusterId>
   auditRefCounts: boolean; // If set, verify refcounts against ground truth every crank
+  records: RecordStore; // The accountability records table
+  recordIntroductions: boolean; // If set, record each endpoint's first acquisition of each object
   logger?: Logger | undefined;
 };
 

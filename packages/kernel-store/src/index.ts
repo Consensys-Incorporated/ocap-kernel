@@ -4,4 +4,7 @@ export type {
   KernelDatabase,
   VatKVStore,
   VatCheckpoint,
+  RecordFilter,
+  RecordRow,
+  RecordStore,
 } from './types.ts';

@@ -5,6 +5,7 @@ import * as clistModule from './clist.ts';
 import * as objectModule from './object.ts';
 import * as promiseModule from './promise.ts';
 import * as reachableModule from './reachable.ts';
+import * as recordsModule from './records.ts';
 import * as refCountModule from './refcount.ts';
 import { getVatMethods } from './vat.ts';
 import { asVRef } from '../../../test/branded.ts';
@@ -69,6 +70,10 @@ vi.mock('./refcount.ts', () => ({
   getRefCountMethods: vi.fn(),
 }));
 
+vi.mock('./records.ts', () => ({
+  getRecordMethods: vi.fn(),
+}));
+
 describe('vat store methods', () => {
   let mockKV: Map<string, string>;
   let mockGetPrefixedKeys = vi.fn();
@@ -107,6 +112,8 @@ describe('vat store methods', () => {
   const mockInitKernelObject = vi.fn();
   const mockAddCListEntry = vi.fn();
   const mockIncrementRefCount = vi.fn();
+  const mockUntrackAll = vi.fn();
+  const mockUntrackEndpoint = vi.fn();
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -162,6 +169,13 @@ describe('vat store methods', () => {
     ).mockReturnValue({
       decrementRefCount: mockDecrementRefCount,
       incrementRefCount: mockIncrementRefCount,
+    });
+
+    (
+      recordsModule.getRecordMethods as ReturnType<typeof vi.fn>
+    ).mockReturnValue({
+      untrackAll: mockUntrackAll,
+      untrackEndpoint: mockUntrackEndpoint,
     });
 
     context = {
@@ -318,6 +332,15 @@ describe('vat store methods', () => {
       expect(() => vatMethods.deleteEndpoint(endpointId)).not.toThrow();
 
       expect(mockGetPrefixedKeys).toHaveBeenCalledWith(`${endpointId}.c.`);
+    });
+
+    it('untracks whatever the endpoint tracked', () => {
+      const endpointId = 'e1' as EndpointId;
+      mockGetPrefixedKeys.mockReturnValue([]);
+
+      vatMethods.deleteEndpoint(endpointId);
+
+      expect(mockUntrackEndpoint).toHaveBeenCalledWith(endpointId);
     });
   });
 

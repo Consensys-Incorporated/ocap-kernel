@@ -1305,6 +1305,7 @@ export class RemoteHandle implements RemoteEndpointHandle {
         this.#kernelQueue.enqueueSend(
           this.#kernelStore.translateRefEtoK(this.remoteId, target),
           this.#kernelStore.translateMessageEtoK(this.remoteId, message),
+          { sender: this.remoteId },
         );
         break;
       }

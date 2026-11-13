@@ -87,7 +87,10 @@ export class VatSyscall {
    */
   #handleSyscallSend(target: KRef, message: KernelMessage): void {
     const immediate = !this.#kernelStore.isInCrank();
-    this.#kernelQueue.enqueueSend(target, message, immediate);
+    this.#kernelQueue.enqueueSend(target, message, {
+      sender: this.vatId,
+      immediate,
+    });
   }
 
   /**

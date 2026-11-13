@@ -68,11 +68,10 @@ describe('VatSyscall', () => {
     } as KernelMessage;
     const vso = ['send', target, message] as VatSyscallObject;
     vatSys.handleSyscall(vso);
-    expect(kernelQueue.enqueueSend).toHaveBeenCalledWith(
-      target,
-      message,
-      false,
-    );
+    expect(kernelQueue.enqueueSend).toHaveBeenCalledWith(target, message, {
+      sender: 'v1',
+      immediate: false,
+    });
   });
 
   it('calls resolvePromises for resolve syscall', async () => {
@@ -94,7 +93,10 @@ describe('VatSyscall', () => {
     } as KernelMessage;
     const vso = ['send', target, message] as VatSyscallObject;
     vatSys.handleSyscall(vso);
-    expect(kernelQueue.enqueueSend).toHaveBeenCalledWith(target, message, true);
+    expect(kernelQueue.enqueueSend).toHaveBeenCalledWith(target, message, {
+      sender: 'v1',
+      immediate: true,
+    });
   });
 
   it('resolves promises immediately when outside a crank', () => {

@@ -124,10 +124,14 @@ async function setUp({
     },
     /** Queue a send whose crank stays open, and wait until it is. */
     openACrank: async () => {
-      kernelQueue.enqueueSend(gate, {
-        methargs: kser(['hold', []]),
-        result: null,
-      });
+      kernelQueue.enqueueSend(
+        gate,
+        {
+          methargs: kser(['hold', []]),
+          result: null,
+        },
+        { sender: 'kernel' },
+      );
       await crankOpen.promise;
     },
     openGate: () => gateKit.resolve(),

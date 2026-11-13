@@ -28,6 +28,7 @@ describe('object-methods', () => {
     objectStore = getObjectMethods({
       kv,
       nextObjectId,
+      crankNumber: { get: () => '7' },
     } as StoreContext);
   });
 
@@ -142,13 +143,28 @@ describe('object-methods', () => {
     });
   });
 
+  describe('getObjectCreationCrank', () => {
+    it('reports the crank an object was created in', () => {
+      const koId = objectStore.initKernelObject(v1);
+      expect(objectStore.getObjectCreationCrank(koId)).toBe(7);
+    });
+
+    it('reports nothing for an unknown object', () => {
+      expect(
+        objectStore.getObjectCreationCrank(asKRef('ko99')),
+      ).toBeUndefined();
+    });
+  });
+
   describe('deleteKernelObject', () => {
     it('removes a kernel object from storage', () => {
       const koId = objectStore.initKernelObject(v1);
 
+      kv.set(`tracked.${koId}`, '{"v1":{}}');
       // Object exists before deletion
       expect(kv.get(`${koId}.owner`)).toBeDefined();
       expect(kv.get(`${koId}.refCount`)).toBeDefined();
+      expect(kv.get(`${koId}.created`)).toBeDefined();
 
       // Delete the object
       objectStore.deleteKernelObject(koId);
@@ -156,6 +172,8 @@ describe('object-methods', () => {
       // Object should be gone
       expect(kv.get(`${koId}.owner`)).toBeUndefined();
       expect(kv.get(`${koId}.refCount`)).toBeUndefined();
+      expect(kv.get(`${koId}.created`)).toBeUndefined();
+      expect(kv.get(`tracked.${koId}`)).toBeUndefined();
 
       // getOwner should throw
       expect(objectStore.getOwner(koId)).toBeUndefined();
