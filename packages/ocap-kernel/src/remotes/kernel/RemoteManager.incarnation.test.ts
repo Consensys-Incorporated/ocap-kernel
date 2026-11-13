@@ -5,6 +5,7 @@ import { describe, it, expect, onTestFinished, vi } from 'vitest';
 
 import { initRemoteComms } from './remote-comms.ts';
 import { RemoteManager } from './RemoteManager.ts';
+import { KernelRouter } from '../../KernelRouter.ts';
 import { asRRef } from '../../../test/branded.ts';
 import { KernelQueue } from '../../KernelQueue.ts';
 import { makeKernelStore } from '../../store/index.ts';
@@ -37,9 +38,10 @@ type Hooks = {
  * @returns The pieces a test drives.
  */
 async function setUp() {
-  const kernelStore = makeKernelStore(
-    await makeSQLKernelDatabase({ dbFilename: ':memory:' }),
-  );
+  const kernelDatabase = await makeSQLKernelDatabase({
+    dbFilename: ':memory:',
+  });
+  const kernelStore = makeKernelStore(kernelDatabase);
   const kernelQueue = new KernelQueue(kernelStore, async () => undefined);
   const logger = new Logger('test');
   for (const level of ['log', 'warn', 'error', 'debug'] as const) {
@@ -102,6 +104,7 @@ async function setUp() {
   };
 
   return {
+    kernelDatabase,
     kernelStore,
     kernelQueue,
     remoteManager,
@@ -495,5 +498,69 @@ describe('a peer message during a control operation', () => {
     await settle();
 
     expect(taken).toStrictEqual([1, 2]);
+  });
+});
+
+describe('a store fault while taking a peer message', () => {
+  it('stops the kernel, and the message stays unacknowledged', async () => {
+    const harness = await setUp();
+    const {
+      kernelDatabase,
+      kernelStore,
+      kernelQueue,
+      remoteManager,
+      remote,
+      onIncarnationChange,
+      sent,
+    } = harness;
+    const kernelRouter = new KernelRouter({
+      kernelStore,
+      kernelQueue,
+      getEndpoint: () => remote,
+      invokeKernelService: () => undefined,
+      restartVat: async () => undefined,
+      terminateVat: async () => undefined,
+      applyIncarnationChange: (item) =>
+        remoteManager.applyIncarnationChange(item),
+      performControl: async () => undefined,
+    });
+    kernelQueue
+      .run(kernelRouter.deliver.bind(kernelRouter))
+      .catch(() => undefined);
+    expect(await onIncarnationChange(PEER_ID, 'incarnation-A')).toBe(false);
+    await remoteManager.handleRemoteMessage(PEER_ID, emptyNotify(1));
+    await settle();
+    const fault = new Error('database or disk is full');
+    const receiptKey = `remoteSeq.${remote.remoteId}.highestReceivedSeq`;
+    const set = kernelDatabase.kernelKVStore.set.bind(
+      kernelDatabase.kernelKVStore,
+    );
+    vi.spyOn(kernelDatabase.kernelKVStore, 'set').mockImplementation(
+      (key: string, value: string) => {
+        if (key === receiptKey) {
+          throw fault;
+        }
+        set(key, value);
+      },
+    );
+
+    await remoteManager.handleRemoteMessage(PEER_ID, emptyNotify(2));
+    await settle();
+    // Outlasts the delayed standalone ACK armed when the message arrived.
+    await delay(100);
+
+    expect({
+      runLoop: kernelQueue.getRunLoopStatus(),
+      received: kernelDatabase.kernelKVStore.get(receiptKey),
+      acks: [...new Set(sent.filter((message) => message.includes('"ack"')))],
+    }).toStrictEqual({
+      runLoop: {
+        state: 'failed',
+        error: fault.message,
+        detail: expect.any(String),
+      },
+      received: '1',
+      acks: ['{"ack":1}'],
+    });
   });
 });
