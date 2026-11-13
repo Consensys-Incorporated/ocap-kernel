@@ -58,20 +58,16 @@ export const makeDiscoverableExo = <
   interfaceGuard: InterfaceGuard = makeDefaultInterface(name),
 ): DiscoverableExo<Interface, Schema> => {
   try {
+    const discoverableMethods = mergeDisjointRecords(methods, {
+      /**
+       * Describe the methods of the discoverable.
+       *
+       * @returns A schema of the methods.
+       */
+      [GET_DESCRIPTION]: () => schema,
+    });
     // @ts-expect-error We're intentionally not specifying method-specific interface guards.
-    return makeExo(
-      name,
-      interfaceGuard,
-      // @ts-expect-error We're intentionally not specifying method-specific interface guards.
-      mergeDisjointRecords(methods, {
-        /**
-         * Describe the methods of the discoverable.
-         *
-         * @returns A schema of the methods.
-         */
-        [GET_DESCRIPTION]: () => schema,
-      }),
-    );
+    return makeExo(name, interfaceGuard, discoverableMethods);
   } catch (error) {
     if (
       error instanceof Error &&

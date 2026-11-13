@@ -123,7 +123,7 @@ describe('isVatConfig', () => {
       config: {
         bundleSpec: 'bundle.js',
         platformConfig: {
-          fs: { rootDir: '/tmp' },
+          fs: { root: ['tmp'] },
         },
       },
       expected: true,
@@ -135,17 +135,19 @@ describe('isVatConfig', () => {
         creationOptions: { foo: 'bar' },
         parameters: { baz: 123 },
         platformConfig: {
-          fs: { rootDir: '/tmp', existsSync: true },
+          fs: { root: ['tmp'], methods: ['readFile'] },
         },
       },
       expected: true,
     },
     {
-      name: 'with valid network config',
+      name: 'with http platform config',
       config: {
         bundleSpec: 'bundle.js',
-        globals: ['fetch'],
-        network: { allowedHosts: ['api.github.com'] },
+        globals: ['URL', 'Request', 'Headers', 'Response'],
+        platformConfig: {
+          http: { allow: [{ host: 'api.github.com' }] },
+        },
       },
       expected: true,
     },
@@ -159,22 +161,22 @@ describe('isVatConfig', () => {
       config: {
         bundleSpec: 'bundle.js',
         platformConfig: {
-          fs: { rootDir: 123 },
+          fs: { root: 123 },
         },
       },
     },
     {
-      name: 'network.allowedHosts not an array',
+      name: 'the removed network config',
       config: {
         bundleSpec: 'bundle.js',
-        network: { allowedHosts: 'not-an-array' },
+        network: { allowedHosts: ['api.github.com'] },
       },
     },
     {
-      name: 'network.allowedHosts contains non-strings',
+      name: 'the removed fetch global',
       config: {
         bundleSpec: 'bundle.js',
-        network: { allowedHosts: ['ok.test', 123] },
+        globals: ['fetch'],
       },
     },
   ])('rejects configs with $name', ({ config }) => {

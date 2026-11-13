@@ -6,15 +6,27 @@ runs:
   steps:
     - name: Cache Playwright browsers
       id: playwright-cache
-      uses: actions/cache@v4
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
       with:
         path: ~/.cache/ms-playwright
         key: playwright-${{ runner.os }}-${{ hashFiles('yarn.lock') }}
     - name: Install Playwright browsers
       if: steps.playwright-cache.outputs.cache-hit != 'true'
-      run: yarn playwright install --with-deps chromium
+      run: yarn playwright install chromium
       shell: bash
-    - name: Install Playwright system dependencies
-      if: steps.playwright-cache.outputs.cache-hit == 'true'
-      run: yarn playwright install-deps chromium
+    # The runner image ships Google Chrome, so Chromium's shared libraries are
+    # usually present. Skip apt unless a library is missing, because the
+    # Ubuntu mirror is sometimes slow enough to stall the job for minutes.
+    - name: Install Playwright system dependencies if missing
+      run: |
+        missing=$(find ~/.cache/ms-playwright -type f \
+          \( -name chrome -o -name chrome-headless-shell -o -name headless_shell \) \
+          -exec ldd {} + | grep 'not found' | sort -u || true)
+        if [ -n "$missing" ]; then
+          echo "Missing shared libraries:"
+          echo "$missing"
+          yarn playwright install-deps chromium
+        else
+          echo "All Chromium shared libraries are present; skipping apt."
+        fi
       shell: bash

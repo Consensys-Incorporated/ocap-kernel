@@ -3,11 +3,8 @@
   "compilerOptions": {
     "rootDir": "../..",
     "allowJs": true,
-    "baseUrl": "./",
-    "checkJs": true,
-    "outDir": "./dist"
+    "checkJs": true
   },
-  "references": [{ "path": "../repo-tools" }],
   "include": [
     "../../vitest.config.ts",
     "./src",

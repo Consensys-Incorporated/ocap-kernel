@@ -44,9 +44,6 @@ node_modules/
 # Optional npm cache directory
 .npm
 
-# Optional eslint cache
-.eslintcache
-
 # Microbundle cache
 .rpt2_cache/
 .rts2_cache_cjs/
@@ -82,9 +79,6 @@ node_modules/
 # Bundle files
 *.bundle
 
-# Generated per-package patches dirs (populated by scripts/copy-patches.cjs at publish time)
-packages/*/patches/
-
 # Playwright reports
 playwright-report
 
@@ -96,4 +90,6 @@ test-results
 
 # Claude
 **/.claude/settings.local.json
+**/.claude/.cc-writes/
+/.claude/worktrees/
 .playwright-mcp/

@@ -14,6 +14,7 @@ import {
   unknown,
 } from '@metamask/superstruct';
 import type { Infer } from '@metamask/superstruct';
+import type { SignedAuthorization } from 'viem';
 
 // ---------------------------------------------------------------------------
 // Hex string helpers
@@ -143,14 +144,7 @@ export type TransactionRequest = Infer<typeof TransactionRequestStruct> & {
    * serialized as a type-4 (EIP-7702) transaction instead of EIP-1559.
    * Not struct-validated; only flows internally.
    */
-  authorizationList?: readonly {
-    contractAddress: Address;
-    chainId: number;
-    nonce: number;
-    r?: Hex;
-    s?: Hex;
-    yParity?: number;
-  }[];
+  authorizationList?: readonly SignedAuthorization[];
 };
 
 // ---------------------------------------------------------------------------

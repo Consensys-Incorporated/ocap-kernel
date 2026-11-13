@@ -7,7 +7,7 @@
     "properties": {
       "ocapCliPath": {
         "type": "string",
-        "description": "Absolute path to the ocap CLI entry point (.mjs file or binary). Default: 'ocap' from PATH."
+        "description": "Absolute path to the ocap CLI entry point (.js file or binary). Default: 'ocap' from PATH."
       },
       "walletKref": {
         "type": "string",
@@ -26,7 +26,7 @@
     },
     "ocapCliPath": {
       "label": "OCAP CLI Path",
-      "placeholder": "~/ocap-kernel/packages/kernel-cli/dist/app.mjs"
+      "placeholder": "~/ocap-kernel/packages/kernel-cli/dist/app.js"
     },
     "timeoutMs": {
       "label": "Timeout (ms)",

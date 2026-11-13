@@ -68,7 +68,7 @@ export async function spawnTestDaemon({
   await chmod(ocapHome, 0o755);
 
   const packageRoot = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
-  const entryPath = join(packageRoot, 'dist/commands/daemon-entry.mjs');
+  const entryPath = join(packageRoot, 'dist/commands/daemon-entry.js');
 
   const child = spawn(process.execPath, [entryPath], {
     detached: true,
@@ -96,9 +96,8 @@ export async function spawnTestDaemon({
     pid,
     cleanup: async () => {
       try {
-        const { sendCommand } = await import(
-          '../../src/commands/daemon-client.ts'
-        );
+        const { sendCommand } =
+          await import('../../src/commands/daemon-client.ts');
         await sendCommand({
           socketPath,
           method: 'shutdown',

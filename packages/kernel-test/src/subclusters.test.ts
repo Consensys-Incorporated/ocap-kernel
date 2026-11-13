@@ -1,6 +1,6 @@
 import { makeSQLKernelDatabase } from '@metamask/kernel-store/sqlite/nodejs';
 import { Kernel } from '@metamask/ocap-kernel';
-import type { ClusterConfig } from '@metamask/ocap-kernel';
+import type { ClusterConfig, SubclusterId, VatId } from '@metamask/ocap-kernel';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import {
@@ -71,12 +71,12 @@ describe('Subcluster functionality', () => {
     const vats = kernel.getVats();
     expect(vats).toHaveLength(4); // 2 vats per subcluster
 
-    const subcluster1Vats = kernel.getSubclusterVats('s1');
+    const subcluster1Vats = kernel.getSubclusterVats('s1' as SubclusterId);
     expect(subcluster1Vats).toHaveLength(2);
     expect(subcluster1Vats).toContain('v1');
     expect(subcluster1Vats).toContain('v2');
 
-    const subcluster2Vats = kernel.getSubclusterVats('s2');
+    const subcluster2Vats = kernel.getSubclusterVats('s2' as SubclusterId);
     expect(subcluster2Vats).toHaveLength(2);
     expect(subcluster2Vats).toContain('v3');
     expect(subcluster2Vats).toContain('v4');
@@ -92,12 +92,12 @@ describe('Subcluster functionality', () => {
     expect(kernel.getVats()).toHaveLength(2);
 
     // Terminate subcluster
-    await kernel.terminateSubcluster('s1');
+    await kernel.terminateSubcluster('s1' as SubclusterId);
 
     // Verify subcluster and its vats are gone
     expect(kernel.getSubclusters()).toHaveLength(0);
     expect(kernel.getVats()).toHaveLength(0);
-    expect(kernel.getSubcluster('s1')).toBeUndefined();
+    expect(kernel.getSubcluster('s1' as SubclusterId)).toBeUndefined();
   });
 
   it('can check if a vat belongs to a subcluster', async () => {
@@ -106,18 +106,24 @@ describe('Subcluster functionality', () => {
     await runTestVats(kernel, subcluster);
 
     // Verify vat membership
-    expect(kernel.isVatInSubcluster('v1', 's1')).toBe(true);
-    expect(kernel.isVatInSubcluster('v2', 's1')).toBe(true);
-    expect(kernel.isVatInSubcluster('v1', 's2')).toBe(false);
+    expect(kernel.isVatInSubcluster('v1' as VatId, 's1' as SubclusterId)).toBe(
+      true,
+    );
+    expect(kernel.isVatInSubcluster('v2' as VatId, 's1' as SubclusterId)).toBe(
+      true,
+    );
+    expect(kernel.isVatInSubcluster('v1' as VatId, 's2' as SubclusterId)).toBe(
+      false,
+    );
   });
 
   it('can handle subcluster operations with non-existent subclusters', async () => {
-    expect(() => kernel.getSubclusterVats('nonexistent')).toThrow(
-      'Subcluster does not exist',
-    );
-    await expect(kernel.terminateSubcluster('nonexistent')).rejects.toThrow(
-      'Subcluster does not exist',
-    );
+    expect(() =>
+      kernel.getSubclusterVats('nonexistent' as SubclusterId),
+    ).toThrow('Subcluster does not exist');
+    await expect(
+      kernel.terminateSubcluster('nonexistent' as SubclusterId),
+    ).rejects.toThrow('Subcluster does not exist');
   });
 
   it('can handle subcluster operations with terminated vats', async () => {
@@ -126,11 +132,11 @@ describe('Subcluster functionality', () => {
     await runTestVats(kernel, subcluster);
 
     // Terminate a vat
-    await kernel.terminateVat('v2');
+    await kernel.terminateVat('v2' as VatId);
     kernel.collectGarbage();
 
     // Verify vat is removed from subcluster
-    const subclusterVats = kernel.getSubclusterVats('s1');
+    const subclusterVats = kernel.getSubclusterVats('s1' as SubclusterId);
     expect(subclusterVats).toHaveLength(1);
     expect(subclusterVats).not.toContain('v2');
   });

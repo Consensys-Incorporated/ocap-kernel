@@ -60,6 +60,10 @@ export class ConnectionFactory {
 
   readonly #maxRetryAttempts: number;
 
+  readonly #reconnectionBaseDelayMs: number | undefined;
+
+  readonly #reconnectionMaxDelayMs: number | undefined;
+
   readonly #maxDataLength: number;
 
   readonly #directTransports: DirectTransport[];
@@ -90,17 +94,21 @@ export class ConnectionFactory {
    * @param options.logger - The logger to use for the libp2p node.
    * @param options.signal - The signal to use for the libp2p node.
    * @param options.maxRetryAttempts - Maximum number of reconnection attempts. 0 = infinite (default).
+   * @param options.reconnectionBaseDelayMs - Base delay of the dial retry's backoff.
+   * @param options.reconnectionMaxDelayMs - Maximum delay of the dial retry's backoff.
    * @param options.maxMessageSizeBytes - Maximum inbound message size in bytes, used as `maxDataLength` on every `lpStream`. Defaults to 1 MB.
    * @param options.directTransports - Optional direct transports (e.g. QUIC, TCP) with listen addresses.
    * @param options.allowedWsHosts - Hostnames/IPs allowed for plain ws:// connections beyond private ranges.
    */
-  // eslint-disable-next-line no-restricted-syntax
+  // oxlint-disable-next-line ocap/no-restricted-syntax
   private constructor(options: ConnectionFactoryOptions) {
     this.#keySeed = options.keySeed;
     this.#knownRelays = options.knownRelays;
     this.#logger = options.logger;
     this.#signal = options.signal;
     this.#maxRetryAttempts = options.maxRetryAttempts ?? 0;
+    this.#reconnectionBaseDelayMs = options.reconnectionBaseDelayMs;
+    this.#reconnectionMaxDelayMs = options.reconnectionMaxDelayMs;
     this.#maxDataLength =
       options.maxMessageSizeBytes ?? DEFAULT_MAX_MESSAGE_SIZE_BYTES;
     this.#directTransports = options.directTransports ?? [];
@@ -459,6 +467,12 @@ export class ConnectionFactory {
   ): Promise<Channel> {
     const retryOptions: Parameters<typeof retryWithBackoff>[1] = {
       maxAttempts: this.#maxRetryAttempts,
+      ...(this.#reconnectionBaseDelayMs !== undefined && {
+        baseDelayMs: this.#reconnectionBaseDelayMs,
+      }),
+      ...(this.#reconnectionMaxDelayMs !== undefined && {
+        maxDelayMs: this.#reconnectionMaxDelayMs,
+      }),
       jitter: true,
       shouldRetry: isRetryableNetworkError,
       onRetry: ({ attempt, maxAttempts, delayMs }) => {

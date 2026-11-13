@@ -14,7 +14,7 @@ let logger = new Logger(LOG_TAG);
 // Read a `Request`'s URL the way a real `fetch` does, without `new Request()`,
 // which would consume the caller's body as a side effect. Deliberately
 // unbound: applied to whichever `Request` this fetch is handed.
-// eslint-disable-next-line @typescript-eslint/unbound-method
+// oxlint-disable-next-line typescript/unbound-method
 const getRequestUrl = Object.getOwnPropertyDescriptor(
   Object.getPrototypeOf(new Request('http://x.test')) as Request,
   'url',
@@ -53,7 +53,7 @@ main().catch((reason) => logger.error('main exited with error', reason));
  * The main function for the vat worker.
  */
 async function main(): Promise<void> {
-  // eslint-disable-next-line n/no-process-env
+  // oxlint-disable-next-line node/no-process-env
   const vatId = process.env.NODE_VAT_ID as VatId;
   if (!vatId) {
     throw new Error('no vatId set for env variable NODE_VAT_ID');

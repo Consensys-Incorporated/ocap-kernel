@@ -45,7 +45,7 @@ It holds two things together:
   in effect. Unlike raw `caveats` (which are opaque encoded calldata passed to
   enforcer contracts), `caveatSpecs` name the constraint and its parameters in
   terms the application can reason about: `{ type: 'cumulativeSpend', token,
-max }`, `{ type: 'allowedCalldata', dataStart, value }`, etc.
+  max }`, `{ type: 'allowedCalldata', dataStart, value }`, etc.
 
 Grants are what get stored and transmitted. They can be reconstructed into
 twins whenever a live capability is needed.

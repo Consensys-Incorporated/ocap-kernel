@@ -67,7 +67,7 @@ const REFCOUNT_KEY = /^(k[op]\d+)\.refCount$/u;
  * @param ctx - The store context.
  * @returns The reference count audit methods.
  */
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+// oxlint-disable-next-line typescript/explicit-function-return-type
 export function getRefCountAuditMethods(ctx: StoreContext) {
   const { getPrefixedKeys, refCountKey } = getBaseMethods(ctx.kv);
   const { getPinCount, getPinnedObjects } = getPinMethods(ctx);
@@ -251,6 +251,20 @@ export function getRefCountAuditMethods(ctx: StoreContext) {
         }
       }
     }
+
+    // A buffered send or notify holds its references already: `enqueueSend`
+    // and `enqueueNotify` charge for the target, the result and every slot as
+    // they buffer it, and the run queue row those units belong to appears only
+    // when `flushCrankBuffer` moves the item across. Uncredited, every crank
+    // that buffers anything reads as a leak.
+    ctx.crankBuffer.forEach((item, index) => {
+      if (item.type === 'send') {
+        credit(item.target, `crank buffer #${index} send target`);
+        creditMessage(item.message, `crank buffer #${index} send`);
+      } else {
+        credit(item.kpid, `crank buffer #${index} notify`);
+      }
+    });
 
     for (const kref of getPinnedObjects()) {
       // One unit per pin: each `pinObject` call increments once, and the

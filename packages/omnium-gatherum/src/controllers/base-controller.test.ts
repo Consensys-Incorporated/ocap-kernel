@@ -36,7 +36,7 @@ class TestController extends Controller<
   TestState,
   TestMethods
 > {
-  // eslint-disable-next-line no-restricted-syntax -- TypeScript doesn't support # for constructors
+  // oxlint-disable-next-line ocap/no-restricted-syntax -- TypeScript doesn't support # for constructors
   private constructor(storage: ControllerStorage<TestState>, logger: Logger) {
     super('TestController', storage, logger);
     harden(this);

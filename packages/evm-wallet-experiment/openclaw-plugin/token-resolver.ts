@@ -36,7 +36,7 @@ export type TokenResolution = {
   resolved: boolean;
   name?: string;
   symbol?: string;
-  decimals?: number;
+  decimals?: number | undefined;
 };
 
 /**
@@ -142,7 +142,8 @@ export async function resolveTokenParam(options: {
     chainId: options.chainId,
   });
 
-  if (matches.length === 0) {
+  const [firstMatch] = matches;
+  if (firstMatch === undefined) {
     throw new Error(
       `No token found matching "${options.token}" on chain ${String(options.chainId)}. ` +
         'Please provide the contract address directly.',
@@ -159,7 +160,7 @@ export async function resolveTokenParam(options: {
   }
 
   const exactMatch = exactMatches[0];
-  const best = exactMatch ?? matches[0];
+  const best = exactMatch ?? firstMatch;
 
   // If multiple distinct tokens match and no exact symbol match, ask user
   if (!exactMatch && matches.length > 1) {

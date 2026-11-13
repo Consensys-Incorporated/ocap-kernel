@@ -44,7 +44,8 @@ describe('lib/bundler', () => {
 
   beforeEach(() => {
     fetchSpy = vi.fn();
-    vi.spyOn(globalThis, 'fetch').mockImplementation(fetchSpy);
+    // The mocks resolve to partial `Response`s that carry only what the code reads.
+    vi.spyOn(globalThis, 'fetch').mockImplementation(fetchSpy as typeof fetch);
   });
 
   const mockFetchResponse = (result: unknown) => {

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING:** Upgrade `ses` to 2.x, so `endoify` no longer makes `Float16Array`, `Float32Array`, and `Float64Array` available in compartments the caller creates ([#1112](https://github.com/MetaMask/ocap-kernel/pull/1112))
+  - They remain on the start compartment, so only compartment code is affected, and they can still be endowed explicitly — at the cost of reopening the `NaN` bit-pattern side channel SES withholds them to close
+  - `lockdown()` now repairs `DataView.prototype.setFloat*` to write only canonical `NaN`s, making `DataView` the safe alternative
+
 ## [0.5.0]
 
 ### Changed

@@ -123,7 +123,7 @@ const makeCaptor = (
   const namespace = names.join(',');
   // We use eval safely by constructing the function with care and only
   // ever evaluating it in a compartment.
-  // eslint-disable-next-line @typescript-eslint/no-implied-eval, no-new-func
+  // oxlint-disable-next-line typescript/no-implied-eval, no-new-func
   const captor = Function(
     $value,
     `return (${namespace}) => void Object.assign(${$value}, { ${namespace} });`,

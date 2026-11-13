@@ -13,7 +13,7 @@ import {
 } from './messages.ts';
 import { RETURN } from './symbols.ts';
 
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+// oxlint-disable-next-line typescript/explicit-function-return-type
 const transcribeCapabilities = (capabilities: CapabilityRecord) => [
   ImportMessage.fromNames(Object.keys(capabilities)),
   new ResultMessage(
@@ -21,8 +21,6 @@ const transcribeCapabilities = (capabilities: CapabilityRecord) => [
     { compress: false },
   ),
 ];
-
-/* eslint-disable no-tabs */
 
 const treeSearchTask: ReplTranscript = [
   ...transcribeCapabilities({ end, search }),
@@ -84,7 +82,7 @@ const multiStepCalculation: ReplTranscript = [
     '// The answer will be the product of the length of the word "piano" and the length of the word "guitar".',
   ),
   new EvaluationMessage(
-    // eslint-disable-next-line no-template-curly-in-string
+    // oxlint-disable-next-line no-template-curly-in-string
     'const response = `Such a matrix would have ${"piano".length * "guitar".length} elements.`;',
   ),
   new ResultMessage({
@@ -132,8 +130,6 @@ const functionDefinition: ReplTranscript = [
   new ResultMessage({ value: { averageDepth: 2 } }),
   new EvaluationMessage('await end({ final: String(averageDepth) });'),
 ];
-
-/* eslint-enable no-tabs */
 
 export const exampleTranscripts = [
   simpleSemanticTask,

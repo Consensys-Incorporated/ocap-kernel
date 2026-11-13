@@ -20,7 +20,7 @@ const PIN_PREFIX = 'pinned.';
  * @param ctx - The store context.
  * @returns A pinned store with functions for pinning/unpinning objects and managing pinned objects.
  */
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+// oxlint-disable-next-line typescript/explicit-function-return-type
 export function getPinMethods(ctx: StoreContext) {
   const { incrementRefCount, decrementRefCount } = getRefCountMethods(ctx);
   const { getPrefixedKeys } = getBaseMethods(ctx.kv);

@@ -1,7 +1,7 @@
 import { chromium, test } from '@playwright/test';
 import type { BrowserContext, ConsoleMessage, Page } from '@playwright/test';
 import { appendFileSync } from 'node:fs';
-import { mkdir, rm, readFile, access } from 'node:fs/promises';
+import { mkdir, rm, readFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -40,6 +40,31 @@ type Options = {
   contextId?: string | undefined;
   extensionPath: string;
   onPageLoad?: (popupPage: Page) => Promise<void> | undefined;
+};
+
+/**
+ * Turn on Developer Mode, without which Chrome disables unpacked extensions
+ * when they reload (e.g. via `chrome.runtime.reload()`). Chrome resets this
+ * setting if it is written to the profile's `Preferences` file directly.
+ *
+ * @param browserContext - The browser context to configure.
+ */
+const enableDeveloperMode = async (
+  browserContext: BrowserContext,
+): Promise<void> => {
+  const page = await browserContext.newPage();
+  await page.goto('chrome://extensions');
+  await page.evaluate(
+    async () =>
+      new Promise<void>((resolve) => {
+        // @ts-expect-error developerPrivate is only exposed on chrome://extensions
+        chrome.developerPrivate.updateProfileConfiguration(
+          { inDeveloperMode: true },
+          resolve,
+        );
+      }),
+  );
+  await page.close();
 };
 
 /**
@@ -85,16 +110,19 @@ export const makeLoadExtension = async ({
    * to include console logs in the Playwright HTML report.
    */
   const attachLogs = async (): Promise<void> => {
+    let content: string;
     try {
-      await access(logFilePath);
-      const content = await readFile(logFilePath, 'utf-8');
-      await test.info().attach('console-logs', {
-        body: content,
-        contentType: 'text/plain',
-      });
-    } catch {
-      // File doesn't exist, nothing to attach
+      content = await readFile(logFilePath, 'utf-8');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        return;
+      }
+      throw error;
     }
+    await test.info().attach('console-logs', {
+      body: content,
+      contentType: 'text/plain',
+    });
   };
 
   /**
@@ -106,7 +134,7 @@ export const makeLoadExtension = async ({
    */
   const writeRawLog = (source: string, type: string, text: string): void => {
     const logTimestamp = new Date().toISOString().slice(0, -5);
-    // eslint-disable-next-line n/no-sync
+    // oxlint-disable-next-line node/no-sync
     appendFileSync(
       logFilePath,
       `[${logTimestamp}] [${source}] [${type}] ${text}\n`,
@@ -118,7 +146,6 @@ export const makeLoadExtension = async ({
   };
 
   const browserArgs = [
-    `--disable-features=ExtensionDisableUnsupportedDeveloper`,
     `--disable-extensions-except=${extensionPath}`,
     `--load-extension=${extensionPath}`,
     '--lang=en-US',
@@ -161,10 +188,12 @@ export const makeLoadExtension = async ({
     // Set up CDP to capture iframe console logs (vat iframes)
     // We need to do this because Playwright doesn't have frame.on('console')
     setupCdpForIframeConsoleLogs(page, writeRawLog).catch(
-      // eslint-disable-next-line no-console
+      // oxlint-disable-next-line no-console
       (error) => console.warn('Failed to set up CDP for iframe logs:', error),
     );
   });
+
+  await enableDeveloperMode(browserContext);
 
   // Wait for the extension to be loaded
   await new Promise((resolve) => setTimeout(resolve, 1000));

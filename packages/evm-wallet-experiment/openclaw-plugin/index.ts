@@ -27,7 +27,7 @@ import type {
 } from './types.ts';
 
 const pluginDir = dirname(fileURLToPath(import.meta.url));
-const DEFAULT_CLI = resolvePath(pluginDir, '../../kernel-cli/dist/app.mjs');
+const DEFAULT_CLI = resolvePath(pluginDir, '../../kernel-cli/dist/app.js');
 const DEFAULT_TIMEOUT_MS = 60_000;
 
 const KNOWN_KEYS = new Set(['ocapCliPath', 'walletKref', 'timeoutMs']);
@@ -86,7 +86,7 @@ const configSchema: PluginConfigSchema = {
       ocapCliPath: {
         type: 'string',
         description:
-          'Absolute path to the ocap CLI entry point (.mjs file or binary).',
+          'Absolute path to the ocap CLI entry point (.js file or binary).',
       },
       walletKref: {
         type: 'string',

@@ -1,11 +1,13 @@
 import type { CapData } from '@endo/marshal';
 import { passStyleOf } from '@endo/marshal';
+import type { Json } from '@metamask/utils';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import { queueMessageSpec, queueMessageHandler } from './queue-message.ts';
 import type { Kernel } from '../../Kernel.ts';
 import { krefOf } from '../../liveslots/kernel-marshal.ts';
 import type { SlotValue } from '../../liveslots/kernel-marshal.ts';
+import type { KRef } from '../../types.ts';
 
 describe('queueMessageSpec', () => {
   it('should define the correct method name', () => {
@@ -51,10 +53,10 @@ describe('queueMessageHandler', () => {
   });
 
   it('should correctly forward arguments to kernel.queueMessage', async () => {
-    const target = 'targetId';
+    const target = 'targetId' as KRef;
     const method = 'methodName';
     const args = [1, 'string', { key: 'value' }];
-    const expectedResult: CapData<string> = { body: 'result', slots: [] };
+    const expectedResult: CapData<KRef> = { body: 'result', slots: [] };
 
     vi.mocked(mockKernel.queueMessage).mockResolvedValueOnce(expectedResult);
 
@@ -73,7 +75,7 @@ describe('queueMessageHandler', () => {
 
     await expect(
       queueMessageHandler.implementation({ kernel: mockKernel }, [
-        'target',
+        'target' as KRef,
         'method',
         [],
       ]),
@@ -87,13 +89,13 @@ describe('queueMessageHandler', () => {
      * @param args - The args to send through the handler.
      * @returns The args as kernel.queueMessage saw them.
      */
-    async function forward(args: unknown[]): Promise<unknown[]> {
+    async function forward(args: Json[]): Promise<unknown[]> {
       vi.mocked(mockKernel.queueMessage).mockResolvedValueOnce({
         body: 'r',
         slots: [],
       });
       await queueMessageHandler.implementation({ kernel: mockKernel }, [
-        'target',
+        'target' as KRef,
         'method',
         args,
       ]);
@@ -155,7 +157,7 @@ describe('queueMessageHandler', () => {
       });
       await expect(
         queueMessageHandler.implementation({ kernel: mockKernel }, [
-          'target',
+          'target' as KRef,
           'method',
           ['@@notakref'],
         ]),

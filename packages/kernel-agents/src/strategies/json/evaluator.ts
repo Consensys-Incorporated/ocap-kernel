@@ -16,9 +16,6 @@ export const makeEvaluator =
     history: Transcript,
     message: AssistantMessage,
   ): Promise<CapabilityResultMessage | null> => {
-    logger?.info('history:', history);
-    logger?.info('message:', message.toJSON());
-
     // Validate the message.
     const invocations = message.messageBody.invoke;
     if (!invocations) {

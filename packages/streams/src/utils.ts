@@ -1,4 +1,3 @@
-import type { Reader, Writer } from '@endo/stream';
 import {
   isMarshaledError,
   marshalError,
@@ -14,14 +13,25 @@ import {
   UnsafeJsonStruct,
 } from '@metamask/utils';
 
-export type { Reader, Writer };
+/**
+ * An async iterator that does not conflate its read and write types. Matches the
+ * `Stream` type of `@endo/stream`.
+ */
+type Stream<Read, Write> = {
+  next(value: Write): Promise<IteratorResult<Read, undefined>>;
+  return(): Promise<IteratorResult<Read, undefined>>;
+  throw(error: Error): Promise<IteratorResult<Read, undefined>>;
+  [Symbol.asyncIterator](): Stream<Read, Write>;
+};
+
+export type Reader<Read> = Stream<Read, undefined>;
+
+export type Writer<Write> = Stream<undefined, Write>;
 
 export const StreamSentinel = {
   Error: '@@StreamError',
   Done: '@@StreamDone',
 } as const;
-
-export const StreamDoneSymbol = Symbol('StreamDone');
 
 const StreamDoneStruct = object({
   [StreamSentinel.Done]: literal(true),
@@ -53,11 +63,21 @@ export const makeStreamDoneSignal = (): StreamDone => ({
 });
 
 /**
- * A value that can be written to a stream.
+ * Parses a stream signal.
  *
- * @template Yield - The type of the values yielded by the iterator.
+ * @param signal - The signal to parse.
+ * @returns The error carried by an error signal, or `undefined` for a done signal.
+ * @throws If the value is not a valid stream signal.
  */
-export type Writable<Yield> = Yield | Error | typeof StreamDoneSymbol;
+export const parseSignal = (signal: StreamSignal): Error | undefined => {
+  if (is(signal, StreamDoneStruct)) {
+    return undefined;
+  }
+  if (is(signal, StreamErrorStruct) && isMarshaledError(signal.error)) {
+    return unmarshalError(signal.error);
+  }
+  throw new Error(`Invalid stream signal: ${stringify(signal)}`);
+};
 
 /**
  * A value that can be dispatched to the internal transport mechanism of a stream.
@@ -65,44 +85,6 @@ export type Writable<Yield> = Yield | Error | typeof StreamDoneSymbol;
  * @template Yield - The type of the values yielded by the stream.
  */
 export type Dispatchable<Yield> = Yield | StreamSignal;
-
-/**
- * Marshals a {@link Writable} into a {@link Dispatchable}.
- *
- * @param value - The value to marshal.
- * @returns The marshaled value.
- */
-export function marshal<Yield>(value: Writable<Yield>): Dispatchable<Yield> {
-  if (value === StreamDoneSymbol) {
-    return { [StreamSentinel.Done]: true };
-  }
-  if (value instanceof Error) {
-    return {
-      [StreamSentinel.Error]: true,
-      error: marshalError(value),
-    };
-  }
-  return value;
-}
-
-/**
- * Unmarshals a {@link Dispatchable} into a {@link Writable}.
- *
- * @param value - The value to unmarshal.
- * @returns The unmarshaled value.
- */
-export function unmarshal<Yield>(value: Dispatchable<Yield>): Writable<Yield> {
-  if (isSignalLike(value)) {
-    if (is(value, StreamDoneStruct)) {
-      return StreamDoneSymbol;
-    }
-    if (is(value, StreamErrorStruct) && isMarshaledError(value.error)) {
-      return unmarshalError(value.error);
-    }
-    throw new Error(`Invalid stream signal: ${stringify(value)}`);
-  }
-  return value;
-}
 
 /**
  * Creates a {@link IteratorResult} with `{ done: true, value: undefined }`.

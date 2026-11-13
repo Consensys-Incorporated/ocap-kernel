@@ -16,7 +16,7 @@ import type { Config } from '../config.ts';
  * @returns An object with a `listen` method that returns a promise that
  * resolves when the server is listening.
  */
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+// oxlint-disable-next-line typescript/explicit-function-return-type
 export function getServer(config: Config, logger?: Logger) {
   if (!config.dir) {
     throw new Error(`Config option 'dir' must be specified.`);
@@ -91,7 +91,7 @@ export function getServer(config: Config, logger?: Logger) {
    * the `config.server.port` is `0`, the OS will choose a random port for us,
    * so we need to get the port from the server after it starts.
    */
-  // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+  // oxlint-disable-next-line typescript/explicit-function-return-type
   const listen = async (port = config.server.port) => {
     return new Promise<{
       port: number;

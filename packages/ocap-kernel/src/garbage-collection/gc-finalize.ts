@@ -50,6 +50,11 @@ export function makeGCAndFinalize(logger?: Logger): () => Promise<void> {
       const gcFunction = await gcFunctionPromise;
 
       if (gcFunction) {
+        // A pending continuation still holds its closure's objects, so a sweep
+        // with work outstanding finds them reachable. Twice: a drained turn can
+        // schedule the next.
+        await delay(0);
+        await delay(0);
         // First GC pass
         gcFunction();
         // Allow finalization callbacks to run

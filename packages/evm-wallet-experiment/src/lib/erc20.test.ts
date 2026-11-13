@@ -58,7 +58,7 @@ describe('erc20', () => {
     it('encodes the correct spender and amount', () => {
       const data = encodeApprove(BOB, 42000n);
       // Decode the params portion (skip 4-byte selector)
-      const params = `0x${data.slice(10)}`;
+      const params = `0x${data.slice(10)}` as const;
       const [spender, amount] = decodeAbiParameters(
         parseAbiParameters('address, uint256'),
         params,
@@ -230,7 +230,7 @@ describe('erc20', () => {
 
     it('encodes the correct owner and spender', () => {
       const data = encodeAllowance(ALICE, BOB);
-      const params = `0x${data.slice(10)}`;
+      const params = `0x${data.slice(10)}` as const;
       const [owner, spender] = decodeAbiParameters(
         parseAbiParameters('address, address'),
         params,

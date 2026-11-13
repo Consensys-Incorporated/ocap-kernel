@@ -5,11 +5,18 @@ import type {
   ChatParams,
   ChatResult,
   ChatService,
-  ChatStreamChunk,
   SampleParams,
   SampleResult,
   SampleService,
 } from './types.ts';
+
+/**
+ * Parameters accepted by `makeChatClient`'s `create`. Streaming is not
+ * offered: a stream cannot be passed across the kernel marshal boundary.
+ */
+export type ChatClientParams = Omit<ChatParams, 'model' | 'stream'> & {
+  model?: string;
+};
 
 /**
  * Wraps a remote service reference with Open /v1-style chat completion ergonomics.
@@ -18,7 +25,6 @@ import type {
  * ```ts
  * const client = makeChatClient(lmsRef, 'gpt-4o');
  * const result = await client.chat.completions.create({ messages });
- * const stream = await client.chat.completions.create({ messages, stream: true });
  * ```
  *
  * @param lmsRef - Reference to a service with a `chat` method.
@@ -31,45 +37,20 @@ export const makeChatClient = (
 ): {
   chat: {
     completions: {
-      create(
-        params: Omit<ChatParams, 'model'> & { model?: string; stream: true },
-      ): Promise<AsyncIterable<ChatStreamChunk>>;
-      create(
-        params: Omit<ChatParams, 'model'> & { model?: string; stream?: false },
-      ): Promise<ChatResult>;
+      create(params: ChatClientParams): Promise<ChatResult>;
     };
   };
 } => {
-  type BaseParams = Omit<ChatParams, 'model'> & { model?: string };
-
-  /**
-   * @param params - Chat completion parameters with `stream: true`.
-   * @returns A promise resolving to an async iterable of stream chunks.
-   */
-  function create(
-    params: BaseParams & { stream: true },
-  ): Promise<AsyncIterable<ChatStreamChunk>>;
   /**
    * @param params - Chat completion parameters.
    * @returns A promise resolving to the full chat result.
    */
-  function create(params: BaseParams & { stream?: false }): Promise<ChatResult>;
-  /**
-   * @param params - Chat completion parameters.
-   * @returns A promise resolving to a stream or full result depending on `stream`.
-   */
-  async function create(
-    params: BaseParams,
-  ): Promise<AsyncIterable<ChatStreamChunk> | ChatResult> {
+  async function create(params: ChatClientParams): Promise<ChatResult> {
     const model = params.model ?? defaultModel;
     if (!model) {
       throw new Error('model is required');
     }
-    const fullParams = harden({ ...params, model });
-    if (fullParams.stream === true) {
-      return E(lmsRef).chat(fullParams as ChatParams & { stream: true });
-    }
-    return E(lmsRef).chat(fullParams as ChatParams & { stream?: false });
+    return E(lmsRef).chat(harden({ ...params, model }));
   }
 
   return harden({ chat: { completions: { create } } });

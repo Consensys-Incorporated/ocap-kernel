@@ -1,4 +1,4 @@
-import type { ClusterConfig } from '@metamask/ocap-kernel';
+import type { ClusterConfig, VatConfig } from '@metamask/ocap-kernel';
 
 /**
  * Options for creating a wallet cluster configuration.
@@ -8,6 +8,7 @@ export type WalletClusterConfigOptions = {
   role?: 'home' | 'away';
   forceReset?: boolean;
   services?: string[];
+  // Each admits its subdomains too.
   allowedHosts?: string[];
 };
 
@@ -27,23 +28,26 @@ export function makeWalletClusterConfig(
     allowedHosts,
   } = options;
 
+  // An empty list grants nothing, as it always has: no rule would admit a host.
+  const grantsHttp = allowedHosts !== undefined && allowedHosts.length > 0;
+
   const coordinatorBundle =
     role === 'home'
       ? `${bundleBaseUrl}/home-coordinator.bundle`
       : `${bundleBaseUrl}/away-coordinator.bundle`;
 
-  const auxiliaryVat =
+  const auxiliaryVat: Record<string, VatConfig> =
     role === 'home'
       ? {
           delegator: {
             bundleSpec: `${bundleBaseUrl}/delegator-vat.bundle`,
-            globals: ['TextEncoder', 'TextDecoder', 'crypto'],
+            globals: ['crypto'],
           },
         }
       : {
           redeemer: {
             bundleSpec: `${bundleBaseUrl}/redeemer-vat.bundle`,
-            globals: ['TextEncoder', 'TextDecoder'],
+            globals: [],
           },
         };
 
@@ -54,25 +58,20 @@ export function makeWalletClusterConfig(
     vats: {
       coordinator: {
         bundleSpec: coordinatorBundle,
-        globals: ['TextEncoder', 'TextDecoder', 'Date', 'setTimeout'],
+        globals: ['Date', 'setTimeout'],
       },
       keyring: {
         bundleSpec: `${bundleBaseUrl}/keyring-vat.bundle`,
-        globals: ['TextEncoder', 'TextDecoder', 'crypto'],
+        globals: ['crypto'],
       },
       provider: {
         bundleSpec: `${bundleBaseUrl}/provider-vat.bundle`,
-        globals: allowedHosts
-          ? [
-              'TextEncoder',
-              'TextDecoder',
-              'fetch',
-              'Request',
-              'Headers',
-              'Response',
-            ]
-          : ['TextEncoder', 'TextDecoder'],
-        ...(allowedHosts ? { network: { allowedHosts } } : {}),
+        globals: grantsHttp ? ['URL', 'Request', 'Headers', 'Response'] : [],
+        ...(grantsHttp && {
+          platformConfig: {
+            http: { allow: allowedHosts.map((host) => ({ host })) },
+          },
+        }),
       },
       ...auxiliaryVat,
     },

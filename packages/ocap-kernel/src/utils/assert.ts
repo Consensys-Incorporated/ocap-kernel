@@ -12,7 +12,7 @@
 //
 //   throw Fail`whatever`;
 //
-// If we do this using `Fail` out of the box, it will trip over the eslint rule
+// If we do this using `Fail` out of the box, it will trip over the lint rule
 // that requires things that are thrown to be Errors, which, of course, `never`
 // is not. However, what `Fail` does is throw an Error, so the spirit of the
 // rule is maintained, i.e., the consequence of `throw Fail...` is to throw an

@@ -9,6 +9,6 @@
     ]
   },
   "dependencies": {
-    "@metamask/superstruct": "^3.2.1"
+    "@metamask/superstruct": "^3.4.1"
   }
 }

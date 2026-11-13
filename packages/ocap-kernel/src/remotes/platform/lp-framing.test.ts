@@ -1,4 +1,4 @@
-import type { Stream } from '@libp2p/interface';
+import type { Stream, StreamOptions } from '@libp2p/interface';
 import { lpStream, streamPair } from '@libp2p/utils';
 import { fromString, toString as bufToString } from 'uint8arrays';
 import { describe, expect, it } from 'vitest';
@@ -29,10 +29,11 @@ describe('lpStream framing over a chunked transport', () => {
   async function chunkedStreamPair(
     chunkSize: number,
   ): Promise<[Stream, Stream]> {
-    return streamPair({
-      outbound: { maxMessageSize: chunkSize },
-      inbound: { maxMessageSize: chunkSize },
-    });
+    // The streams honor `maxMessageSize`, which `StreamOptions` does not declare.
+    const options: StreamOptions & { maxMessageSize: number } = {
+      maxMessageSize: chunkSize,
+    };
+    return streamPair({ outbound: options, inbound: options });
   }
 
   it('reassembles a single payload that the transport splits into many frames', async () => {

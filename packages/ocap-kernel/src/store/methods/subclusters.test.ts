@@ -3,6 +3,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import { getBaseMethods } from './base.ts';
 import { getSubclusterMethods } from './subclusters.ts';
+import { asSubclusterId, asVatId } from '../../../test/branded.ts';
 import type {
   ClusterConfig,
   Subcluster,
@@ -174,7 +175,7 @@ describe('getSubclusterMethods', () => {
 
   describe('addSubclusterVat', () => {
     let scId: SubclusterId;
-    const vatId1: VatId = 'v1';
+    const vatId1 = asVatId('v1');
 
     beforeEach(() => {
       scId = subclusterMethods.addSubcluster(mockClusterConfig1);
@@ -244,8 +245,8 @@ describe('getSubclusterMethods', () => {
 
   describe('getSubclusterVats', () => {
     let scId: SubclusterId;
-    const vatId1: VatId = 'v1';
-    const vatId2: VatId = 'v2';
+    const vatId1 = asVatId('v1');
+    const vatId2 = asVatId('v2');
 
     beforeEach(() => {
       scId = subclusterMethods.addSubcluster(mockClusterConfig1);
@@ -286,8 +287,8 @@ describe('getSubclusterMethods', () => {
 
   describe('deleteSubclusterVat', () => {
     let scId1: SubclusterId;
-    const vatId1: VatId = 'v1';
-    const vatId2: VatId = 'v2';
+    const vatId1 = asVatId('v1');
+    const vatId2 = asVatId('v2');
 
     beforeEach(() => {
       scId1 = subclusterMethods.addSubcluster(mockClusterConfig1);
@@ -336,8 +337,8 @@ describe('getSubclusterMethods', () => {
     });
 
     it('should clear map entry if vat is mapped to a subclusterId being deleted from, but subcluster is not found in main list', () => {
-      const vatX: VatId = 'v100';
-      const scGhostId: SubclusterId = 's100';
+      const vatX = asVatId('v100');
+      const scGhostId = asSubclusterId('s100');
       mockVatToSubclusterMapStorage.set(JSON.stringify({ [vatX]: scGhostId }));
 
       subclusterMethods.deleteSubclusterVat(scGhostId, vatX);
@@ -350,8 +351,8 @@ describe('getSubclusterMethods', () => {
 
   describe('deleteSubcluster', () => {
     let scId1: SubclusterId;
-    const vatId1: VatId = 'v1';
-    const vatId2: VatId = 'v2';
+    const vatId1 = asVatId('v1');
+    const vatId2 = asVatId('v2');
 
     beforeEach(() => {
       scId1 = subclusterMethods.addSubcluster(mockClusterConfig1);
@@ -416,7 +417,7 @@ describe('getSubclusterMethods', () => {
   describe('getVatSubcluster', () => {
     it('should return the subcluster ID for a given vat', () => {
       const scId = subclusterMethods.addSubcluster(mockClusterConfig1);
-      const vatId: VatId = 'vTest';
+      const vatId = 'vTest' as VatId;
       subclusterMethods.addSubclusterVat(scId, 'test', vatId);
       expect(subclusterMethods.getVatSubcluster(vatId)).toBe(scId);
     });
@@ -473,8 +474,8 @@ describe('getSubclusterMethods', () => {
 
   describe('removeVatFromSubcluster', () => {
     let scId: SubclusterId;
-    const vatId1: VatId = 'v1';
-    const vatId2: VatId = 'v2';
+    const vatId1 = asVatId('v1');
+    const vatId2 = asVatId('v2');
 
     beforeEach(() => {
       scId = subclusterMethods.addSubcluster(mockClusterConfig1);
@@ -495,11 +496,16 @@ describe('getSubclusterMethods', () => {
       expect(map[vatId2]).toBe(scId);
     });
 
-    it('should throw an error if the vat is not in any subcluster', () => {
+    it('leaves a vat that is in no subcluster alone', () => {
       const nonMappedVat = 'vNonMapped' as VatId;
+
       expect(() =>
         subclusterMethods.removeVatFromSubcluster(nonMappedVat),
-      ).toThrow('Vat "vNonMapped" has no subcluster');
+      ).not.toThrow();
+      expect(subclusterMethods.getSubcluster(scId)?.vats).toStrictEqual({
+        vat1: vatId1,
+        vat2: vatId2,
+      });
     });
 
     it('should handle removing the last vat from a subcluster', () => {

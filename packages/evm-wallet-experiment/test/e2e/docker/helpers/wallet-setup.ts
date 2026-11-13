@@ -22,7 +22,7 @@ const ANVIL_FUNDER = '0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266';
  * @param options - Subcluster configuration.
  * @param options.role - Whether this is a 'home' or 'away' coordinator.
  * @param options.contracts - Deployed contract addresses.
- * @param options.allowedHosts - Hostnames the provider vat may fetch from.
+ * @param options.allowedHosts - Hostnames the provider vat may fetch from, with their subdomains.
  * @returns The root coordinator kref (e.g. 'ko4').
  */
 export function launchWalletSubcluster(
@@ -45,13 +45,13 @@ export function launchWalletSubcluster(
       ? {
           delegator: {
             bundleSpec: `${BUNDLE_BASE}/delegator-vat.bundle`,
-            globals: ['TextEncoder', 'TextDecoder', 'crypto'],
+            globals: ['crypto'],
           },
         }
       : {
           redeemer: {
             bundleSpec: `${BUNDLE_BASE}/redeemer-vat.bundle`,
-            globals: ['TextEncoder', 'TextDecoder'],
+            globals: [],
           },
         };
 
@@ -62,23 +62,18 @@ export function launchWalletSubcluster(
     vats: {
       coordinator: {
         bundleSpec: coordinatorBundle,
-        globals: ['TextEncoder', 'TextDecoder', 'Date', 'setTimeout'],
+        globals: ['Date', 'setTimeout'],
       },
       keyring: {
         bundleSpec: `${BUNDLE_BASE}/keyring-vat.bundle`,
-        globals: ['TextEncoder', 'TextDecoder', 'crypto'],
+        globals: ['crypto'],
       },
       provider: {
         bundleSpec: `${BUNDLE_BASE}/provider-vat.bundle`,
-        globals: [
-          'TextEncoder',
-          'TextDecoder',
-          'fetch',
-          'Request',
-          'Headers',
-          'Response',
-        ],
-        network: { allowedHosts },
+        globals: ['URL', 'Request', 'Headers', 'Response'],
+        platformConfig: {
+          http: { allow: allowedHosts.map((host) => ({ host })) },
+        },
       },
       ...auxiliaryVat,
     },

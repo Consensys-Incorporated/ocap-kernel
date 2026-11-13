@@ -9,6 +9,10 @@ import type {
   TransferNativeGrant,
 } from '../types.ts';
 import { makeDelegationTwin } from './delegation-twin.ts';
+import type {
+  TransferFungibleFacet,
+  TransferNativeFacet,
+} from './delegation-twin.ts';
 
 let lastInterfaceGuard: unknown;
 
@@ -89,10 +93,7 @@ describe('makeDelegationTwin', () => {
         grant: makeTransferNativeGrant({ maxAmount: 10000n }),
         redeemFn,
       });
-      const exo = section.exo as Record<
-        string,
-        (...args: unknown[]) => Promise<Hex>
-      >;
+      const exo = section.exo as TransferNativeFacet & TransferFungibleFacet;
 
       const result = await exo.transferNative(BOB, 100n);
       expect(result).toBe(TX_HASH);
@@ -110,10 +111,7 @@ describe('makeDelegationTwin', () => {
         grant: makeTransferNativeGrant({ maxAmount: 100n }),
         redeemFn,
       });
-      const exo = section.exo as Record<
-        string,
-        (...args: unknown[]) => Promise<Hex>
-      >;
+      const exo = section.exo as TransferNativeFacet & TransferFungibleFacet;
 
       await expect(exo.transferNative(BOB, 101n)).rejects.toThrow(
         /exceeds limit/u,
@@ -135,7 +133,7 @@ describe('makeDelegationTwin', () => {
         },
         redeemFn,
       });
-      expect(section.token).toBe(CHECKSUMMED_TOKEN.toLowerCase());
+      expect(section).toHaveProperty('token', CHECKSUMMED_TOKEN.toLowerCase());
     });
 
     it('exposes transferFungible method', () => {
@@ -155,10 +153,7 @@ describe('makeDelegationTwin', () => {
         grant: makeTransferFungibleGrant({ totalLimit: 1000n }),
         redeemFn,
       });
-      const exo = section.exo as Record<
-        string,
-        (...args: unknown[]) => Promise<Hex>
-      >;
+      const exo = section.exo as TransferNativeFacet & TransferFungibleFacet;
 
       await exo.transferFungible(TOKEN, BOB, 600n);
       await exo.transferFungible(TOKEN, BOB, 300n);
@@ -173,10 +168,7 @@ describe('makeDelegationTwin', () => {
         grant: makeTransferFungibleGrant({ totalLimit: 1000n }),
         redeemFn,
       });
-      const exo = section.exo as Record<
-        string,
-        (...args: unknown[]) => Promise<Hex>
-      >;
+      const exo = section.exo as TransferNativeFacet & TransferFungibleFacet;
 
       await expect(exo.transferFungible(TOKEN, BOB, 500n)).rejects.toThrow(
         'tx reverted',
@@ -202,10 +194,7 @@ describe('makeDelegationTwin', () => {
         grant: makeTransferFungibleGrant({ totalLimit: 5n }),
         redeemFn,
       });
-      const exo = section.exo as Record<
-        string,
-        (...args: unknown[]) => Promise<Hex>
-      >;
+      const exo = section.exo as TransferNativeFacet & TransferFungibleFacet;
 
       const first = exo.transferFungible(TOKEN, BOB, 3n);
       await expect(exo.transferFungible(TOKEN, BOB, 3n)).rejects.toThrow(
@@ -221,10 +210,7 @@ describe('makeDelegationTwin', () => {
         grant: makeTransferFungibleGrant(),
         redeemFn,
       });
-      const exo = section.exo as Record<
-        string,
-        (...args: unknown[]) => Promise<Hex>
-      >;
+      const exo = section.exo as TransferNativeFacet & TransferFungibleFacet;
 
       // Very large amount — should succeed (no cap enforced locally)
       await exo.transferFungible(TOKEN, BOB, 10n ** 30n);

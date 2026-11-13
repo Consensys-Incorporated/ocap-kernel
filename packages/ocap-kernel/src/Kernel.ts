@@ -34,6 +34,7 @@ import type {
   SubclusterLaunchResult,
   EndpointHandle,
   SystemSubclusterConfig,
+  ControlOperation,
 } from './types.ts';
 import { isVatId, isRemoteId } from './types.ts';
 import type { AllowedGlobalName } from './vats/endowments.ts';
@@ -96,6 +97,8 @@ export class Kernel {
 
   readonly #onRunLoopFailure: OnRunLoopFailure | undefined;
 
+  #stopping: Promise<void> | undefined;
+
   /**
    * Construct a new kernel instance.
    *
@@ -109,12 +112,15 @@ export class Kernel {
    * @param options.ioListenerFactory - Optional factory for creating IO listeners.
    * @param options.allowedGlobalNames - Optional list of allowed global names for vat endowments.
    * @param options.onRunLoopFailure - Optional handler called if the run loop dies.
+   * @param options.vatRelaunchTimeoutMs - How long a persisted vat's start at boot, or a vat's restart, waits for its worker before terminating the vat.
    * @param options.auditRefCounts - If true, verify every kref's reference
    * counts against the references the kernel actually holds at the end of each
    * crank, and throw on any mismatch. Intended for tests and debugging; the
    * audit walks the whole store.
+   * @param options.kernelServices - Kernel services to register before the run
+   * loop starts.
    */
-  // eslint-disable-next-line no-restricted-syntax
+  // oxlint-disable-next-line ocap/no-restricted-syntax
   private constructor(
     platformServices: PlatformServices,
     kernelDatabase: KernelDatabase,
@@ -126,7 +132,9 @@ export class Kernel {
       ioListenerFactory?: IOListenerFactory;
       allowedGlobalNames?: AllowedGlobalName[];
       onRunLoopFailure?: OnRunLoopFailure;
+      vatRelaunchTimeoutMs?: number;
       auditRefCounts?: boolean;
+      kernelServices?: { name: string; service: object }[];
     } = {},
   ) {
     this.#platformServices = platformServices;
@@ -147,14 +155,12 @@ export class Kernel {
       this.#resetKernelState({ resetIdentity: Boolean(options.mnemonic) });
     }
 
-    // Bypass VatManager.terminateVat() here because it calls waitForCrank(),
-    // which would deadlock — this callback is invoked from within a crank.
+    // `stopVat`, not `terminateVat`: this runs inside a crank, and
+    // `terminateVat` would wait for a crank that cannot start until it ends.
     this.#kernelQueue = new KernelQueue(
       this.#kernelStore,
-      async (vatId, reason) => {
-        await this.#vatManager.stopVat(vatId, true, reason);
-        this.#kernelStore.markVatAsTerminated(vatId);
-      },
+      async (vatId, reason) =>
+        await this.#vatManager.stopVat(vatId, true, reason),
     );
 
     this.#vatManager = new VatManager({
@@ -163,6 +169,7 @@ export class Kernel {
       kernelQueue: this.#kernelQueue,
       logger: this.#logger.subLogger({ tags: ['VatManager'] }),
       allowedGlobalNames: options.allowedGlobalNames,
+      vatRelaunchTimeoutMs: options.vatRelaunchTimeoutMs,
     });
 
     this.#remoteManager = new RemoteManager({
@@ -219,15 +226,23 @@ export class Kernel {
       logger: this.#logger.subLogger({ tags: ['SubclusterManager'] }),
     });
 
-    this.#kernelRouter = new KernelRouter(
-      this.#kernelStore,
-      this.#kernelQueue,
-      this.#getEndpoint.bind(this),
-      this.#kernelServiceManager.invokeKernelService.bind(
+    this.#kernelRouter = new KernelRouter({
+      kernelStore: this.#kernelStore,
+      kernelQueue: this.#kernelQueue,
+      getEndpoint: this.#getEndpoint.bind(this),
+      invokeKernelService: this.#kernelServiceManager.invokeKernelService.bind(
         this.#kernelServiceManager,
       ),
-      this.#logger,
-    );
+      restartVat: this.#vatManager.performVatRestart.bind(this.#vatManager),
+      terminateVat: this.#vatManager.performVatTermination.bind(
+        this.#vatManager,
+      ),
+      applyIncarnationChange: this.#remoteManager.applyIncarnationChange.bind(
+        this.#remoteManager,
+      ),
+      performControl: this.#performControl.bind(this),
+      logger: this.#logger,
+    });
 
     // Register OCAP URL services
     const { issuerService, redemptionService } =
@@ -240,6 +255,9 @@ export class Kernel {
       redemptionService.name,
       redemptionService.service,
     );
+    for (const { name, service } of options.kernelServices ?? []) {
+      this.#kernelServiceManager.registerKernelServiceObject(name, service);
+    }
 
     harden(this);
   }
@@ -258,8 +276,12 @@ export class Kernel {
    * @param options.systemSubclusters - Optional array of system subcluster configurations.
    * @param options.allowedGlobalNames - Optional list of allowed global names for vat endowments. When set, only these names from the `VatSupervisor`'s configured endowments (see `createDefaultEndowments`) are available to vats.
    * @param options.onRunLoopFailure - Optional handler called if the run loop dies. The kernel must be restarted after that, so an embedder that outlives it (e.g. a daemon) should use this to terminate or restart.
+   * @param options.vatRelaunchTimeoutMs - How long a persisted vat's start at boot, or a vat's restart, waits for its worker before terminating the vat, in milliseconds: more than 0 and at most 2^31 - 1. Defaults to 30 seconds.
    * @param options.auditRefCounts - If true, verify reference counts against
    * ground truth at the end of each crank and throw on any mismatch.
+   * @param options.kernelServices - Kernel services to register before the run
+   * loop starts. Registering one later writes the store into whatever crank is
+   * open (#1171).
    * @returns A promise for the new kernel instance.
    */
   static async make(
@@ -274,7 +296,9 @@ export class Kernel {
       systemSubclusters?: SystemSubclusterConfig[];
       allowedGlobalNames?: AllowedGlobalName[];
       onRunLoopFailure?: OnRunLoopFailure;
+      vatRelaunchTimeoutMs?: number;
       auditRefCounts?: boolean;
+      kernelServices?: { name: string; service: object }[];
     } = {},
   ): Promise<Kernel> {
     const kernel = new Kernel(platformServices, kernelDatabase, options);
@@ -326,9 +350,17 @@ export class Kernel {
       );
     }
 
+    // Before the vats start, so a throw leaves no worker running, and before
+    // the run loop, which may find a delivery to any remote already queued.
+    this.#remoteManager.restoreRemotes();
+
     // Restore persisted system subclusters and delete ones that no
     // longer have a config, to ensure that orphaned vats aren't started
     this.#subclusterManager.initSystemSubclusters(configs);
+    // Before the vats start, for a bootstrap vat lost before this boot, so the
+    // other vats of its subcluster are not started only to be stopped; again
+    // below, for one whose worker this boot could not start.
+    await this.#subclusterManager.removeSystemSubclustersWithoutBootstrapVat();
 
     // Re-create IO channels for persisted subclusters whose configs
     // declare them. This must happen before `initializeAllVats` so
@@ -338,7 +370,21 @@ export class Kernel {
 
     // Start all vats that were previously running before starting the queue
     // This ensures that any messages in the queue have their target vats ready
-    await this.#vatManager.initializeAllVats();
+    try {
+      await this.#vatManager.initializeAllVats();
+      await this.#subclusterManager.removeSystemSubclustersWithoutBootstrapVat();
+    } catch (error) {
+      this.#vatManager.expectWorkersToStop();
+      await this.#platformServices
+        .terminateAll()
+        .catch((stopError: unknown) =>
+          this.#logger.error(
+            'Failed to stop the vat workers of a kernel that did not start:',
+            stopError,
+          ),
+        );
+      throw error;
+    }
 
     // Start the kernel queue processing (non-blocking)
     // This runs for the entire lifetime of the kernel
@@ -348,6 +394,42 @@ export class Kernel {
 
     // Launch new system subclusters (requires queue to be running)
     await this.#subclusterManager.launchNewSystemSubclusters(configs);
+  }
+
+  /**
+   * Carry out a control operation, in the crank the run loop opened for it.
+   *
+   * @param operation - The operation.
+   */
+  async #performControl(operation: ControlOperation): Promise<void> {
+    switch (operation) {
+      case 'clearStorage':
+        this.#kernelStore.clear();
+        this.#abandonQueuedWork(
+          new Error('Kernel storage was cleared; queued work was abandoned'),
+        );
+        return;
+      case 'reset':
+        if (this.#ioManager) {
+          await this.#ioManager.destroyAllChannels();
+        }
+        await this.#vatManager.terminateAllVats();
+        this.#subclusterManager.clearSystemSubclusters();
+        this.#resetKernelState();
+        // Last, after every await, so a request made during the reset is
+        // abandoned with the rest.
+        this.#abandonQueuedWork(
+          new Error('Kernel was reset; queued work was abandoned'),
+        );
+        return;
+      case 'terminateAllVats':
+        await this.#vatManager.terminateAllVats();
+        return;
+      default:
+        throw new Error(
+          `unknown control operation ${String(operation satisfies never)}`,
+        );
+    }
   }
 
   /**
@@ -542,7 +624,9 @@ export class Kernel {
   }
 
   /**
-   * Terminates a named sub-cluster of vats.
+   * Terminates a named sub-cluster of vats, each by way of `terminateVat`.
+   * Refused on a dead run loop. A member that survives keeps the subcluster
+   * and its IO channels, and makes this reject.
    *
    * @param subclusterId - The id of the subcluster to terminate.
    * @returns A promise that resolves when termination is complete.
@@ -616,7 +700,9 @@ export class Kernel {
   }
 
   /**
-   * Restarts a vat.
+   * Restarts a vat. The run loop carries the restart out, so this waits behind
+   * the run queue and rejects if the run loop dies. A vat whose relaunch fails
+   * is terminated.
    *
    * @param vatId - The ID of the vat to restart.
    * @returns A promise for the restarted vat handle.
@@ -626,10 +712,14 @@ export class Kernel {
   }
 
   /**
-   * Terminate a vat with extreme prejudice.
+   * Terminate a vat with extreme prejudice. The run loop carries it out in a
+   * crank of its own, so this waits behind the run queue, and rejects if the
+   * run loop dies or the kernel is stopped, reset or has its storage cleared
+   * first.
    *
    * @param vatId - The ID of the vat to terminate.
-   * @param reason - The reason for the termination, if any.
+   * @param reason - The reason for the termination, if any. It must carry no
+   *   slots.
    * @returns A promise that resolves when the vat has been terminated.
    */
   async terminateVat(vatId: VatId, reason?: CapData<KRef>): Promise<void> {
@@ -637,11 +727,26 @@ export class Kernel {
   }
 
   /**
-   * Clear the database.
+   * Clear the database. A failure partway rolls back its store writes and
+   * kills the run loop. Refused once `stop` is called or the run loop has
+   * died.
    */
   async clearStorage(): Promise<void> {
-    await this.#kernelQueue.waitForCrank();
-    this.#kernelStore.clear();
+    await this.#kernelQueue.enqueueControl('clearStorage');
+  }
+
+  /**
+   * Reject everyone waiting on queued work and drop it, for a kernel wiping its
+   * store.
+   *
+   * @param abandoned - What to tell them.
+   */
+  #abandonQueuedWork(abandoned: Error): void {
+    this.#kernelQueue.discardArrivals();
+    this.#kernelQueue.abandonSubscriptions(abandoned);
+    this.#remoteManager.releaseRestartHolds();
+    this.#kernelQueue.discardHeldRequests(abandoned);
+    this.#vatManager.abandonQueuedWork(abandoned);
   }
 
   /**
@@ -658,7 +763,7 @@ export class Kernel {
     if (isRemoteId(endpointId)) {
       return this.#remoteManager.getRemote(endpointId);
     }
-    // eslint-disable-next-line @typescript-eslint/restrict-template-expressions
+    // oxlint-disable-next-line typescript/restrict-template-expressions
     throw Error(`invalid endpoint ID ${endpointId}`);
   }
 
@@ -830,43 +935,95 @@ export class Kernel {
    * Stop all running vats and reset the kernel state.
    * This is for debugging purposes only.
    *
-   * Does not revive a kernel whose run loop has died: this clears state, it does
-   * not restart the loop, so `getStatus` still reports `failed` afterwards and
-   * the queue still refuses new work.
+   * A failure partway rolls back its store writes and kills the run loop.
+   * Refused once `stop` is called or the run loop has died: a kernel whose run
+   * loop has died is restarted instead, with `resetStorage` to clear its state.
    */
   async reset(): Promise<void> {
-    await this.#kernelQueue.waitForCrank();
-    try {
-      if (this.#ioManager) {
-        await this.#ioManager.destroyAllChannels();
-      }
-      await this.terminateAllVats();
-      this.#subclusterManager.clearSystemSubclusters();
-      this.#resetKernelState();
-    } catch (error) {
-      this.#logger.error('Error resetting kernel:', error);
-      throw error;
-    }
+    await this.#kernelQueue.enqueueControl('reset');
   }
 
   /**
    * Terminate all vats and collect garbage.
    * This is for debugging purposes only.
+   *
+   * A failure partway rolls back its store writes and kills the run loop.
+   * Refused once `stop` is called or the run loop has died.
    */
   async terminateAllVats(): Promise<void> {
-    await this.#vatManager.terminateAllVats();
+    await this.#kernelQueue.enqueueControl('terminateAllVats');
   }
 
   /**
-   * Gracefully stop the kernel without deleting vats.
+   * Gracefully stop the kernel without deleting vats. Waits for the open crank
+   * and any control operation queued before this; if one never ends, neither
+   * does this, and the embedder has to end the process. A later call settles as
+   * this one does.
    */
   async stop(): Promise<void> {
-    await this.#kernelQueue.waitForCrank();
-    this.#kernelStore.recordLastActiveTime();
-    await this.#platformServices.stopRemoteComms();
-    this.#remoteManager.cleanup();
-    await this.#platformServices.terminateAll();
-    this.#kernelDatabase.close();
+    this.#stopping ??= this.#stop();
+    await this.#stopping;
+  }
+
+  /**
+   * End the run loop, then let go of everything the kernel holds.
+   */
+  async #stop(): Promise<void> {
+    await this.#kernelQueue.endRunLoop();
+    try {
+      // Not before the loop has ended: a vat lost in its last crank must still
+      // fail the delivery waiting on it.
+      this.#vatManager.expectWorkersToStop();
+      try {
+        this.#kernelStore.recordLastActiveTime();
+      } catch (error) {
+        this.#logger.error('could not record last active time', error);
+      }
+      this.#kernelQueue.discardArrivals();
+      this.#kernelQueue.abandonSubscriptions(
+        new Error(
+          'Kernel was stopped before this message was answered; one still queued is delivered on its next start',
+        ),
+      );
+      this.#vatManager.abandonQueuedWork(
+        new Error(
+          'Kernel was stopped before answering; terminations already queued still take effect on its next start, restarts do not',
+        ),
+      );
+    } finally {
+      await this.#tearDown();
+    }
+  }
+
+  /**
+   * Stop remote comms and the vat workers, and close the database.
+   */
+  async #tearDown(): Promise<void> {
+    // Each step runs even if an earlier one failed: a remote's timers left
+    // armed would fire against the closed database, and a worker left running
+    // would outlive the kernel.
+    const failures: { step: string; error: unknown }[] = [];
+    for (const [step, run] of [
+      ['stopRemoteComms', async () => this.#platformServices.stopRemoteComms()],
+      ['remote cleanup', async () => this.#remoteManager.cleanup()],
+      ['terminateAll', async () => this.#platformServices.terminateAll()],
+      ['closing the database', async () => this.#kernelDatabase.close()],
+    ] as const) {
+      try {
+        await run();
+      } catch (error) {
+        failures.push({ step, error });
+      }
+    }
+    if (failures.length > 1) {
+      throw new AggregateError(
+        failures.map(({ error }) => error),
+        `Kernel stop failed in ${failures.map(({ step }) => step).join(', ')}`,
+      );
+    }
+    if (failures.length === 1) {
+      throw failures[0]?.error;
+    }
   }
 
   /**

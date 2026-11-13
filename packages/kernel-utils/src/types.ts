@@ -1,4 +1,4 @@
-import type { Primitive } from '@endo/captp';
+import type { JSPrimitive } from '@endo/pass-style';
 import type { PromiseKit } from '@endo/promise-kit';
 import type { Infer, Struct } from '@metamask/superstruct';
 import { array, empty, is, object, string, union } from '@metamask/superstruct';
@@ -17,9 +17,9 @@ import type {
 
 export type TypeGuard<Type> = (value: unknown) => value is Type;
 
-export type ExtractGuardType<Guard, Bound = unknown> = Guard extends (
+export type ExtractGuardType<Guard, Bound = unknown> = Guard extends ((
   value: unknown,
-) => value is infer Type
+) => value is infer Type)
   ? Type extends Bound
     ? Type
     : never
@@ -35,7 +35,7 @@ const primitives = new Set([
   'undefined',
 ]);
 
-export const isPrimitive = (value: unknown): value is Primitive =>
+export const isPrimitive = (value: unknown): value is JSPrimitive =>
   value === null || primitives.has(typeof value);
 
 export const isTypedArray = <ElementType>(

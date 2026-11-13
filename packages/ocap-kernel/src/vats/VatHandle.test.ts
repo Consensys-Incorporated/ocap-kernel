@@ -1,4 +1,5 @@
 import type { VatOneResolution } from '@agoric/swingset-liveslots';
+import { makeSQLKernelDatabase } from '@metamask/kernel-store/sqlite/nodejs';
 import type { JsonRpcMessage } from '@metamask/kernel-utils';
 import { isJsonRpcMessage } from '@metamask/kernel-utils';
 import type { Logger } from '@metamask/logger';
@@ -8,7 +9,9 @@ import { TestDuplexStream } from '@ocap/repo-tools/test-utils/streams';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { MockInstance } from 'vitest';
 
+import { asERef, asSubclusterId, asVatId } from '../../test/branded.ts';
 import type { KernelQueue } from '../KernelQueue.ts';
+import { makeFatalKernelError } from '../liveslots/kernel-marshal.ts';
 import { makeKernelStore } from '../store/index.ts';
 import type { KernelStore } from '../store/index.ts';
 import type {
@@ -17,6 +20,7 @@ import type {
   EndpointMessage,
   VatDeliveryResult,
 } from '../types.ts';
+import { MAX_VAT_MESSAGE_LENGTH } from './vat-limits.ts';
 import { VatHandle } from './VatHandle.ts';
 import { makeMapKernelDatabase } from '../../test/storage.ts';
 
@@ -33,9 +37,11 @@ let mockKernelStore: KernelStore;
 const makeVat = async ({
   logger,
   dispatch,
+  onStreamFailure = () => undefined,
 }: {
   logger?: Logger;
   dispatch?: (input: unknown) => void | Promise<void>;
+  onStreamFailure?: (error: Error) => void;
 } = {}): Promise<{
   vat: VatHandle;
   stream: TestDuplexStream<JsonRpcMessage, JsonRpcMessage>;
@@ -50,10 +56,11 @@ const makeVat = async ({
     vat: await VatHandle.make({
       kernelQueue: null as unknown as KernelQueue,
       kernelStore: mockKernelStore,
-      vatId: 'v0',
+      vatId: asVatId('v0'),
       vatConfig: { sourceSpec: 'not-really-there.js' },
       vatStream,
       logger,
+      onStreamFailure,
     }),
     stream: vatStream,
   };
@@ -85,40 +92,112 @@ describe('VatHandle', () => {
       });
     });
 
-    it('throws if the stream throws', async () => {
-      const logger = {
-        error: vi.fn(),
-        subLogger: vi.fn(() => logger),
-      } as unknown as Logger;
-      const { stream } = await makeVat({ logger });
-      await stream.receiveInput(NaN);
+    it.each([
+      ['the stream throws', NaN, /Message failed type validation/u],
+      [
+        'handleMessage throws',
+        { id: 'v0:1', method: 'ping', params: [], jsonrpc: '2.0' },
+        /^Received unexpected message/u,
+      ],
+      [
+        'a syscall is over the size limit',
+        {
+          jsonrpc: '2.0',
+          method: 'syscall',
+          params: [
+            'exit',
+            false,
+            { body: 'x'.repeat(MAX_VAT_MESSAGE_LENGTH), slots: [] },
+          ],
+        },
+        /^Vat v0 sent a syscall over 12000000 characters$/u,
+      ],
+    ])('reports the failure if %s', async (_case, input, cause) => {
+      const onStreamFailure = vi.fn();
+      const { stream } = await makeVat({ onStreamFailure });
+
+      await stream.receiveInput(input);
       await delay(10);
-      expect(logger.error).toHaveBeenCalledWith(
-        'Unexpected read error',
+
+      expect(onStreamFailure).toHaveBeenCalledWith(
         expect.objectContaining({
-          message: expect.stringMatching(/Message failed type validation/u),
+          message: 'Unexpected stream read error.',
+          cause: expect.objectContaining({
+            message: expect.stringMatching(cause),
+          }),
         }),
       );
     });
 
-    it('throws if handleMessage throws', async () => {
-      const logger = {
-        error: vi.fn(),
-        subLogger: vi.fn(() => logger),
-      } as unknown as Logger;
-      const { stream } = await makeVat({ logger });
-      await stream.receiveInput({
-        id: 'v0:1',
-        method: 'ping',
-        params: [],
-        jsonrpc: '2.0',
-      });
+    it('reports a channel that closes with no error', async () => {
+      const onStreamFailure = vi.fn();
+      const { stream } = await makeVat({ onStreamFailure });
+
+      await stream.return();
       await delay(10);
-      expect(logger.error).toHaveBeenCalledWith(
-        'Unexpected read error',
+
+      expect(onStreamFailure).toHaveBeenCalledOnce();
+      expect(onStreamFailure).toHaveBeenCalledWith(
         expect.objectContaining({
-          message: expect.stringMatching(/^Received unexpected message/u),
+          message: 'Unexpected stream read error.',
+          cause: expect.objectContaining({ message: 'vat channel closed' }),
         }),
+      );
+    });
+
+    it('fails a pending command when the channel closes', async () => {
+      const { vat, stream } = await makeVat({ onStreamFailure: vi.fn() });
+      sendVatCommandMock.mockRestore();
+      const pinging = vat.sendVatCommand({
+        method: 'ping' as const,
+        params: [],
+      });
+
+      await stream.return();
+
+      await expect(pinging).rejects.toThrow('Unexpected stream read error.');
+    });
+
+    it('says nothing when it closes its own channel', async () => {
+      const onStreamFailure = vi.fn();
+      const { vat } = await makeVat({ onStreamFailure });
+
+      await vat.terminate(true);
+      await delay(10);
+
+      expect(onStreamFailure).not.toHaveBeenCalled();
+    });
+
+    it('leaves a pending command waiting once the kernel will close the channel', async () => {
+      const onStreamFailure = vi.fn();
+      const { vat, stream } = await makeVat({ onStreamFailure });
+      sendVatCommandMock.mockRestore();
+      const settled = vi.fn();
+      vat
+        .sendVatCommand({ method: 'ping' as const, params: [] })
+        .then(settled)
+        .catch(settled);
+
+      vat.expectClose();
+      await stream.return();
+      await delay(10);
+
+      expect(settled).not.toHaveBeenCalled();
+      expect(onStreamFailure).not.toHaveBeenCalled();
+    });
+
+    it('rejects pending commands when the channel dies', async () => {
+      const { vat, stream } = await makeVat();
+      sendVatCommandMock.mockRestore();
+      const messagePromise = vat.sendVatCommand({
+        method: 'ping' as const,
+        params: [],
+      });
+
+      await stream.receiveInput(NaN);
+
+      await expect(messagePromise).rejects.toThrow(
+        'Unexpected stream read error.',
       );
     });
   });
@@ -190,7 +269,7 @@ describe('VatHandle', () => {
       sendVatCommandMock.mockReset();
       const mockResult: VatDeliveryResult = [[[], []], null];
       sendVatCommandMock.mockResolvedValueOnce(mockResult);
-      const vrefs: VRef[] = ['kp123', 'kp456'];
+      const vrefs: VRef[] = ['kp123' as VRef, 'kp456' as VRef];
       await vat.deliverDropExports(vrefs);
       expect(sendVatCommandMock).toHaveBeenCalledTimes(1);
       expect(sendVatCommandMock).toHaveBeenCalledWith({
@@ -206,7 +285,7 @@ describe('VatHandle', () => {
       sendVatCommandMock.mockReset();
       const mockResult: VatDeliveryResult = [[[], []], null];
       sendVatCommandMock.mockResolvedValueOnce(mockResult);
-      const vrefs: VRef[] = ['kp123', 'kp456'];
+      const vrefs: VRef[] = ['kp123' as VRef, 'kp456' as VRef];
       await vat.deliverRetireExports(vrefs);
       expect(sendVatCommandMock).toHaveBeenCalledTimes(1);
       expect(sendVatCommandMock).toHaveBeenCalledWith({
@@ -222,7 +301,7 @@ describe('VatHandle', () => {
       sendVatCommandMock.mockReset();
       const mockResult: VatDeliveryResult = [[[], []], null];
       sendVatCommandMock.mockResolvedValueOnce(mockResult);
-      const vrefs: VRef[] = ['kp123', 'kp456'];
+      const vrefs: VRef[] = ['kp123' as VRef, 'kp456' as VRef];
       await vat.deliverRetireImports(vrefs);
       expect(sendVatCommandMock).toHaveBeenCalledTimes(1);
       expect(sendVatCommandMock).toHaveBeenCalledWith({
@@ -270,6 +349,108 @@ describe('VatHandle', () => {
 
       expect(await sendVatCommandPromise).toBe('test-response');
     });
+
+    it.each([
+      [
+        'a state entry over the size limit',
+        [
+          [
+            [
+              ['small', 'value'],
+              ['big', 'x'.repeat(MAX_VAT_MESSAGE_LENGTH)],
+            ],
+            [],
+          ],
+          null,
+        ],
+        `Vat v0 wrote a state entry over ${MAX_VAT_MESSAGE_LENGTH} characters`,
+      ],
+      [
+        'a delivery error over 10,000 characters',
+        [[[['small', 'value']], []], 'x'.repeat(10_005)],
+        `${'x'.repeat(10_000)}… (5 more characters)`,
+      ],
+    ])(
+      'terminates a vat whose delivery reply has %s, writing none of its state',
+      async (_what, reply, reason) => {
+        const kdb = await makeSQLKernelDatabase({ dbFilename: ':memory:' });
+        mockKernelStore = makeKernelStore(kdb);
+        const { vat, stream } = await makeVat();
+        const delivering = vat.deliverMessage(asERef('o+0'), {
+          methargs: { body: '#["hello",[]]', slots: [] },
+          result: null,
+        });
+        await delay(10);
+
+        await stream.receiveInput({
+          id: 'v0:1',
+          result: reply,
+          jsonrpc: '2.0',
+        });
+
+        expect({
+          crank: await delivering,
+          state: kdb.makeVatStore('v0').getKVData(),
+        }).toStrictEqual({
+          crank: {
+            didDelivery: 'v0',
+            abort: true,
+            terminate: {
+              vatId: 'v0',
+              reject: true,
+              info: makeFatalKernelError('INTERNAL_ERROR', reason),
+            },
+          },
+          state: [],
+        });
+      },
+    );
+
+    it('refuses a vat whose initVat reply has a state entry over the size limit, writing none of it', async () => {
+      sendVatCommandMock.mockRestore();
+      const kdb = await makeSQLKernelDatabase({ dbFilename: ':memory:' });
+      kdb.makeVatStore('v0').updateKVData([['kept', 'old']], []);
+      const holder: {
+        stream?: TestDuplexStream<JsonRpcMessage, JsonRpcMessage>;
+      } = {};
+      const vatStream = await TestDuplexStream.make<
+        JsonRpcMessage,
+        JsonRpcMessage
+      >(
+        () => {
+          setTimeout(() => {
+            holder.stream
+              ?.receiveInput({
+                jsonrpc: '2.0',
+                id: 'v0:1',
+                result: [
+                  [[['big', 'x'.repeat(MAX_VAT_MESSAGE_LENGTH)]], ['kept']],
+                  null,
+                ],
+              })
+              .catch(() => undefined);
+          }, 0);
+        },
+        { validateInput: isJsonRpcMessage },
+      );
+      holder.stream = vatStream;
+
+      const making = VatHandle.make({
+        kernelQueue: null as unknown as KernelQueue,
+        kernelStore: makeKernelStore(kdb),
+        vatId: asVatId('v0'),
+        vatConfig: { sourceSpec: 'not-really-there.js' },
+        vatStream,
+        onStreamFailure: () => undefined,
+      });
+
+      await expect(making).rejects.toThrow(
+        `Failed to initialize vat v0: Vat v0 wrote a state entry over ${MAX_VAT_MESSAGE_LENGTH} characters`,
+      );
+      expect(kdb.makeVatStore('v0').getKVData()).toStrictEqual([
+        ['kept', 'old'],
+      ]);
+    });
   });
 
   describe('terminate', () => {
@@ -278,7 +459,11 @@ describe('VatHandle', () => {
       // terminate will remove the vat from the subcluster
       // so we need to add the vat to a subcluster
       mockKernelStore.addSubcluster({ bootstrap: 'test', vats: {} });
-      mockKernelStore.addSubclusterVat('s1', 'test', 'v0');
+      mockKernelStore.addSubclusterVat(
+        asSubclusterId('s1'),
+        'test',
+        asVatId('v0'),
+      );
 
       // Create a pending message that should be rejected on terminate
       const messagePromise = vat.sendVatCommand({
@@ -294,6 +479,56 @@ describe('VatHandle', () => {
         done: true,
         value: undefined,
       });
+    });
+
+    it('rejects pending commands before closing the channel', async () => {
+      const inner = await TestDuplexStream.make<JsonRpcMessage, JsonRpcMessage>(
+        () => undefined,
+        { validateInput: isJsonRpcMessage },
+      );
+      let releaseEnd = (): void => undefined;
+      const stalling = new Promise<void>((resolve) => {
+        releaseEnd = resolve;
+      });
+      const vat = await VatHandle.make({
+        kernelQueue: null as unknown as KernelQueue,
+        kernelStore: mockKernelStore,
+        vatId: asVatId('v0'),
+        vatConfig: { sourceSpec: 'not-really-there.js' },
+        // `end` never settles until released, so a rejection that arrives
+        // before then is one that did not wait for the channel to close.
+        vatStream: {
+          drain: inner.drain.bind(inner),
+          write: inner.write.bind(inner),
+          end: async () => stalling,
+        } as unknown as typeof inner,
+        onStreamFailure: () => undefined,
+      });
+      sendVatCommandMock.mockRestore();
+      const messagePromise = vat.sendVatCommand({
+        method: 'ping' as const,
+        params: [],
+      });
+
+      const terminating = vat.terminate(true);
+
+      await expect(messagePromise).rejects.toThrow('Vat was deleted.');
+      releaseEnd();
+      await terminating;
+    });
+
+    it('leaves pending commands alone across a restart', async () => {
+      const { vat } = await makeVat();
+      const settled = vi.fn();
+      // oxlint-disable-next-line promise/catch-or-return
+      vat
+        .sendVatCommand({ method: 'ping' as const, params: [] })
+        .then(settled, settled);
+
+      await vat.terminate(false);
+      await delay(10);
+
+      expect(settled).not.toHaveBeenCalled();
     });
   });
 });

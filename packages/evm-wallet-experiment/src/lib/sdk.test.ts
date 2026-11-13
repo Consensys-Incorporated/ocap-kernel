@@ -86,11 +86,13 @@ describe('lib/sdk', () => {
       expect(sdkDelegation.salt).toBe(delegation.salt);
       expect(sdkDelegation.signature).toBe(delegation.signature);
       expect(sdkDelegation.caveats).toHaveLength(1);
-      expect(sdkDelegation.caveats[0].enforcer).toBe(
-        delegation.caveats[0].enforcer,
+      expect(sdkDelegation.caveats[0]?.enforcer).toBe(
+        delegation.caveats[0]?.enforcer,
       );
-      expect(sdkDelegation.caveats[0].terms).toBe(delegation.caveats[0].terms);
-      expect(sdkDelegation.caveats[0].args).toBe('0x');
+      expect(sdkDelegation.caveats[0]?.terms).toBe(
+        delegation.caveats[0]?.terms,
+      );
+      expect(sdkDelegation.caveats[0]?.args).toBe('0x');
     });
 
     it('defaults signature to 0x for unsigned delegations', () => {

@@ -1,4 +1,4 @@
-/* eslint-disable jsdoc/require-description, jsdoc/require-param-description, jsdoc/require-param-type, jsdoc/require-returns, n/no-process-exit, n/no-sync, no-plusplus, no-empty-function, no-negated-condition, no-unused-vars, id-denylist, require-unicode-regexp, import-x/no-unresolved */
+/* oxlint-disable jsdoc/require-param-description, jsdoc/require-param-type, jsdoc/require-returns, node/no-sync, no-plusplus, no-empty-function, no-negated-condition, no-unused-vars, id-denylist, require-unicode-regexp */
 /**
  * Interactive home wallet — MetaMask Mobile signs everything.
  *
@@ -297,9 +297,8 @@ async function main() {
   // -----------------------------------------------------------------------
 
   info('Connecting to MetaMask Mobile (scan the QR code)...');
-  const { connectMetaMaskSigner } = await import(
-    '../src/lib/metamask-signer.ts'
-  );
+  const { connectMetaMaskSigner } =
+    await import('../src/lib/metamask-signer.ts');
   const signer = await connectMetaMaskSigner({
     dappMetadata: { name: 'OCAP Wallet', url: 'https://ocap.metamask.io' },
     infuraAPIKey: args.infuraKey,
@@ -338,15 +337,13 @@ async function main() {
   await import('@metamask/kernel-shims/endoify-node');
   ok('SES lockdown active');
 
-  const { makeSQLKernelDatabase } = await import(
-    '@metamask/kernel-store/sqlite/nodejs'
-  );
+  const { makeSQLKernelDatabase } =
+    await import('@metamask/kernel-store/sqlite/nodejs');
   const { waitUntilQuiescent } = await import('@metamask/kernel-utils');
   const { Kernel, kunser, kslot } = await import('@metamask/ocap-kernel');
   const { Logger } = await import('@metamask/logger');
-  const { NodejsPlatformServices } = await import(
-    '@metamask/kernel-node-runtime'
-  );
+  const { NodejsPlatformServices } =
+    await import('@metamask/kernel-node-runtime');
   const { makeWalletClusterConfig } = await import('../src/cluster-config.ts');
 
   // -----------------------------------------------------------------------

@@ -1,9 +1,11 @@
+import type { CapData } from '@endo/marshal';
+import { VatNotFoundError } from '@metamask/kernel-errors';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { MockInstance } from 'vitest';
+import type { Mock, MockInstance } from 'vitest';
 
 import { KernelQueue } from './KernelQueue.ts';
 import { KernelRouter } from './KernelRouter.ts';
-import { kser, kslot } from './liveslots/kernel-marshal.ts';
+import { kser, kslot, makeKernelError } from './liveslots/kernel-marshal.ts';
 import type { KernelStore } from './store/index.ts';
 import type {
   KernelMessage,
@@ -12,11 +14,20 @@ import type {
   RunQueueItemNotify,
   RunQueueItemGCAction,
   RunQueueItemBringOutYourDead,
+  RunQueueItemRemoteInbound,
+  RunQueueItemPeerIncarnation,
+  ControlOperation,
   EndpointId,
   GCRunQueueType,
   CrankResult,
   EndpointHandle,
+  RemoteId,
+  VatId,
+  KRef,
 } from './types.ts';
+import { asKRef, asRemoteId, asVatId } from '../test/branded.ts';
+
+const v1 = asVatId('v1');
 
 describe('KernelRouter', () => {
   // Mock dependencies
@@ -25,10 +36,18 @@ describe('KernelRouter', () => {
   let getEndpoint: (endpointId: EndpointId) => EndpointHandle;
   let endpointHandle: EndpointHandle;
   let kernelRouter: KernelRouter;
+  let mockRestartVat: Mock<(vatId: VatId) => Promise<CrankResult | undefined>>;
+  let mockTerminateVat: Mock<
+    (vatId: VatId, reason?: CapData<KRef>) => Promise<CrankResult | undefined>
+  >;
+  let mockApplyIncarnationChange: Mock<
+    (item: RunQueueItemPeerIncarnation) => CrankResult
+  >;
+  let mockPerformControl: Mock<(operation: ControlOperation) => Promise<void>>;
 
   beforeEach(() => {
     // Mock EndpointHandle with more detailed return values
-    const mockCrankResult: CrankResult = { didDelivery: 'v1' };
+    const mockCrankResult: CrankResult = { didDelivery: v1 };
 
     endpointHandle = {
       deliverMessage: vi.fn().mockResolvedValue(mockCrankResult),
@@ -46,7 +65,9 @@ describe('KernelRouter', () => {
     kernelStore = {
       getOwner: vi.fn(),
       isRevoked: vi.fn(),
-      getKernelPromise: vi.fn(),
+      // Unresolved is the default so that reading a promise's state is never
+      // a `TypeError` in a test that does not care about it.
+      getKernelPromise: vi.fn().mockReturnValue({ state: 'unresolved' }),
       decrementRefCount: vi.fn(),
       setPromiseDecider: vi.fn(),
       translateRefKtoE: vi.fn(
@@ -59,12 +80,19 @@ describe('KernelRouter', () => {
       erefToKref: vi.fn() as unknown as MockInstance,
       krefToEref: vi.fn() as unknown as MockInstance,
       getKpidsToRetire: vi.fn().mockReturnValue([]),
+      getCrankNumber: vi.fn().mockReturnValue(1),
       translateCapDataKtoE: vi.fn(),
       krefsToErefs: vi.fn((_endpointId: string, krefs: string[]) =>
         krefs.map((kref: string) => `translated-${kref}`),
       ) as unknown as MockInstance,
+      invertRRef: vi.fn((rref: string) =>
+        rref.replace(/[+-]/u, (sign) => (sign === '+' ? '-' : '+')),
+      ) as unknown as MockInstance,
       clearReachableFlag: vi.fn(),
       deleteCListEntry: vi.fn(),
+      isVatTerminated: vi.fn().mockReturnValue(false),
+      isVatActive: vi.fn().mockReturnValue(true),
+      orphanKernelObject: vi.fn(),
       forgetKref: vi.fn(),
       createCrankSavepoint: vi.fn(),
     } as unknown as KernelStore;
@@ -75,22 +103,30 @@ describe('KernelRouter', () => {
     } as unknown as KernelQueue;
 
     const mockInvokeKernelService = vi.fn();
+    mockRestartVat = vi.fn(async () => undefined);
+    mockTerminateVat = vi.fn(async () => undefined);
+    mockApplyIncarnationChange = vi.fn(() => ({}));
+    mockPerformControl = vi.fn(async () => undefined);
 
     // Create the router to test
-    kernelRouter = new KernelRouter(
+    kernelRouter = new KernelRouter({
       kernelStore,
       kernelQueue,
       getEndpoint,
-      mockInvokeKernelService,
-    );
+      invokeKernelService: mockInvokeKernelService,
+      restartVat: mockRestartVat,
+      terminateVat: mockTerminateVat,
+      applyIncarnationChange: mockApplyIncarnationChange,
+      performControl: mockPerformControl,
+    });
   });
 
   describe('deliver', () => {
     describe('send', () => {
       it('delivers a send message to a vat with an object target and returns crank results', async () => {
         // Setup the kernel store to return an owner for the target
-        const endpointId = 'v1';
-        const target = 'ko123';
+        const endpointId = v1;
+        const target = asKRef('ko123');
         (kernelStore.getOwner as unknown as MockInstance).mockReturnValueOnce(
           endpointId,
         );
@@ -106,8 +142,11 @@ describe('KernelRouter', () => {
 
         // Create a send message
         const message: KernelMessage = {
-          methargs: { body: 'method args', slots: ['ko1', 'ko2'] },
-          result: 'kp1',
+          methargs: {
+            body: 'method args',
+            slots: [asKRef('ko1'), asKRef('ko2')],
+          },
+          result: asKRef('kp1'),
         };
         const sendItem: RunQueueItemSend = {
           type: 'send',
@@ -149,10 +188,13 @@ describe('KernelRouter', () => {
         );
 
         // Create a send message
-        const target = 'ko123';
+        const target = asKRef('ko123');
         const message: KernelMessage = {
-          methargs: { body: 'method args', slots: ['ko1', 'ko2'] },
-          result: 'kp1',
+          methargs: {
+            body: 'method args',
+            slots: [asKRef('ko1'), asKRef('ko2')],
+          },
+          result: asKRef('kp1'),
         };
         const sendItem: RunQueueItemSend = {
           type: 'send',
@@ -206,10 +248,13 @@ describe('KernelRouter', () => {
         );
 
         // Create a send message
-        const target = 'ko123';
+        const target = asKRef('ko123');
         const message: KernelMessage = {
-          methargs: { body: 'method args', slots: ['ko1', 'ko2'] },
-          result: 'kp1',
+          methargs: {
+            body: 'method args',
+            slots: [asKRef('ko1'), asKRef('ko2')],
+          },
+          result: asKRef('kp1'),
         };
         const sendItem: RunQueueItemSend = {
           type: 'send',
@@ -258,7 +303,7 @@ describe('KernelRouter', () => {
 
       it('enqueues a message on an unresolved promise and returns undefined', async () => {
         // Setup a promise reference and unresolved promise in the kernel store
-        const target = 'kp123';
+        const target = asKRef('kp123');
         (
           kernelStore.getKernelPromise as unknown as MockInstance
         ).mockReturnValueOnce({
@@ -294,13 +339,16 @@ describe('KernelRouter', () => {
       });
 
       it('hands over every reference a requeued message carries', async () => {
-        const target = 'kp123';
+        const target = asKRef('kp123');
         (
           kernelStore.getKernelPromise as unknown as MockInstance
         ).mockReturnValueOnce({ state: 'unresolved' });
         const message: KernelMessage = {
-          methargs: { body: 'method args', slots: ['ko1', 'ko2'] },
-          result: 'kp9',
+          methargs: {
+            body: 'method args',
+            slots: [asKRef('ko1'), asKRef('ko2')],
+          },
+          result: asKRef('kp9'),
         };
         await kernelRouter.deliver({ type: 'send', target, message });
 
@@ -322,8 +370,8 @@ describe('KernelRouter', () => {
         // The one delivery where the two differ: the message was queued against
         // the promise, so the promise is what `enqueueSend` charged, while the
         // object it fulfilled to is held by the resolution instead.
-        const target = 'kp123';
-        const routedTarget = 'ko99';
+        const target = asKRef('kp123');
+        const routedTarget = asKRef('ko99');
         (
           kernelStore.getKernelPromise as unknown as MockInstance
         ).mockReturnValueOnce({
@@ -351,7 +399,7 @@ describe('KernelRouter', () => {
 
       it('splats message when promise resolves to a non-object', async () => {
         // Setup a fulfilled promise that doesn't resolve to an object
-        const promiseId = 'kp123';
+        const promiseId = asKRef('kp123');
 
         (
           kernelStore.getKernelPromise as unknown as MockInstance
@@ -366,7 +414,7 @@ describe('KernelRouter', () => {
         // Create a send message to the promise
         const message: KernelMessage = {
           methargs: { body: 'method args', slots: [] },
-          result: 'kp2',
+          result: asKRef('kp2'),
         };
         const sendItem: RunQueueItemSend = {
           type: 'send',
@@ -400,7 +448,7 @@ describe('KernelRouter', () => {
 
       it('splats message when promise is rejected', async () => {
         // Setup a rejected promise
-        const promiseId = 'kp123';
+        const promiseId = asKRef('kp123');
         const rejection = {
           body: JSON.stringify({ error: 'rejection reason' }),
           slots: [],
@@ -416,7 +464,7 @@ describe('KernelRouter', () => {
         // Create a send message to the promise
         const message: KernelMessage = {
           methargs: { body: 'method args', slots: [] },
-          result: 'kp2',
+          result: asKRef('kp2'),
         };
         const sendItem: RunQueueItemSend = {
           type: 'send',
@@ -441,8 +489,8 @@ describe('KernelRouter', () => {
       });
 
       it('splats message with ENDPOINT_UNREACHABLE when endpoint vanishes', async () => {
-        const endpointId = 'v1';
-        const target = 'ko123';
+        const endpointId = v1;
+        const target = asKRef('ko123');
         (kernelStore.getOwner as unknown as MockInstance).mockReturnValueOnce(
           endpointId,
         );
@@ -454,14 +502,14 @@ describe('KernelRouter', () => {
           kernelStore.getKernelPromise as unknown as MockInstance
         ).mockReturnValueOnce({ decider: endpointId });
 
-        const message: Message = {
+        const message: KernelMessage = {
           methargs: { body: 'method args', slots: [] },
-          result: 'kp1',
+          result: asKRef('kp1'),
         };
         const sendItem: RunQueueItemSend = {
           type: 'send',
           target,
-          message: message as unknown as SwingsetMessage,
+          message,
         };
 
         const result = await kernelRouter.deliver(sendItem);
@@ -481,47 +529,47 @@ describe('KernelRouter', () => {
         );
       });
 
-      it('rejects with DELIVERY_FAILED when endpoint.deliverMessage throws', async () => {
-        const endpointId = 'v1';
-        const target = 'ko123';
-        (kernelStore.getOwner as unknown as MockInstance).mockReturnValueOnce(
-          endpointId,
-        );
-        (
-          endpointHandle.deliverMessage as unknown as MockInstance
-        ).mockRejectedValueOnce(new Error('queue full'));
+      it.each([
+        ['a short error', 'queue full', 'queue full'],
+        [
+          'an error over 10,000 characters',
+          'x'.repeat(10_005),
+          `${'x'.repeat(10_000)}… (5 more characters)`,
+        ],
+      ])(
+        'rejects with DELIVERY_FAILED when endpoint.deliverMessage throws %s',
+        async (_what, thrown, detail) => {
+          const endpointId = v1;
+          const target = asKRef('ko123');
+          (kernelStore.getOwner as unknown as MockInstance).mockReturnValueOnce(
+            endpointId,
+          );
+          (
+            endpointHandle.deliverMessage as unknown as MockInstance
+          ).mockRejectedValueOnce(new Error(thrown));
+          const message: KernelMessage = {
+            methargs: { body: 'method args', slots: [] },
+            result: asKRef('kp1'),
+          };
+          const sendItem: RunQueueItemSend = {
+            type: 'send',
+            target,
+            message,
+          };
 
-        const message: Message = {
-          methargs: { body: 'method args', slots: [] },
-          result: 'kp1',
-        };
-        const sendItem: RunQueueItemSend = {
-          type: 'send',
-          target,
-          message: message as unknown as SwingsetMessage,
-        };
+          await kernelRouter.deliver(sendItem);
 
-        await kernelRouter.deliver(sendItem);
-
-        expect(kernelQueue.resolvePromises).toHaveBeenCalledWith(
-          endpointId,
-          expect.arrayContaining([
-            expect.arrayContaining([
-              'kp1',
-              true,
-              expect.objectContaining({
-                body: expect.stringContaining('[KERNEL:DELIVERY_FAILED]'),
-              }),
-            ]),
-          ]),
-        );
-      });
+          expect(kernelQueue.resolvePromises).toHaveBeenCalledWith(endpointId, [
+            ['kp1', true, makeKernelError('DELIVERY_FAILED', detail)],
+          ]);
+        },
+      );
     });
 
     describe('notify', () => {
       it('delivers a notify to a vat and returns crank results', async () => {
-        const endpointId = 'v1';
-        const kpid = 'kp123';
+        const endpointId = v1;
+        const kpid = asKRef('kp123');
         const notifyItem: RunQueueItemNotify = {
           type: 'notify',
           endpointId,
@@ -582,8 +630,8 @@ describe('KernelRouter', () => {
       });
 
       it('returns didDelivery when promise is not in vat clist', async () => {
-        const endpointId = 'v1';
-        const kpid = 'kp123';
+        const endpointId = v1;
+        const kpid = asKRef('kp123');
         const notifyItem: RunQueueItemNotify = {
           type: 'notify',
           endpointId,
@@ -620,8 +668,8 @@ describe('KernelRouter', () => {
       });
 
       it('returns didDelivery when no kpids to retire', async () => {
-        const endpointId = 'v1';
-        const kpid = 'kp123';
+        const endpointId = v1;
+        const kpid = asKRef('kp123');
         const notifyItem: RunQueueItemNotify = {
           type: 'notify',
           endpointId,
@@ -661,8 +709,8 @@ describe('KernelRouter', () => {
       });
 
       it('releases only the notified promise when others are retired with it', async () => {
-        const endpointId = 'v1';
-        const kpid = 'kp123';
+        const endpointId = v1;
+        const kpid = asKRef('kp123');
         const alsoRetired = 'kp456';
         const resolved = {
           state: 'fulfilled',
@@ -688,8 +736,8 @@ describe('KernelRouter', () => {
       });
 
       it('throws if notification is for an unresolved promise', async () => {
-        const endpointId = 'v1';
-        const kpid = 'kp123';
+        const endpointId = v1;
+        const kpid = asKRef('kp123');
         const notifyItem: RunQueueItemNotify = {
           type: 'notify',
           endpointId,
@@ -719,8 +767,8 @@ describe('KernelRouter', () => {
       ])(
         'delivers %s to a vat and returns crank results',
         async (actionType, deliverMethod) => {
-          const endpointId = 'v1';
-          const krefs = ['ko1', 'ko2'];
+          const endpointId = v1;
+          const krefs = ['ko1', 'ko2'].map(asKRef);
           const gcAction: RunQueueItemGCAction = {
             type: actionType as GCRunQueueType,
             endpointId,
@@ -747,11 +795,56 @@ describe('KernelRouter', () => {
         },
       );
 
+      it.each([
+        {
+          type: 'dropExports',
+          deliverMethod: 'deliverDropExports',
+          deleted: [],
+        },
+        {
+          type: 'retireExports',
+          deliverMethod: 'deliverRetireExports',
+          deleted: [
+            ['r1', 'ko1', 'ro-1'],
+            ['r1', 'ko2', 'ro+2'],
+          ],
+        },
+        {
+          type: 'retireImports',
+          deliverMethod: 'deliverRetireImports',
+          deleted: [
+            ['r1', 'ko1', 'ro-1'],
+            ['r1', 'ko2', 'ro+2'],
+          ],
+        },
+      ] as const)(
+        'names the refs of a $type to a remote in its frame and tears its c-list down by its own',
+        async ({ type, deliverMethod, deleted }) => {
+          (
+            kernelStore.krefsToErefs as unknown as MockInstance
+          ).mockReturnValueOnce(['ro-1', 'ro+2']);
+
+          await kernelRouter.deliver({
+            type,
+            endpointId: asRemoteId('r1'),
+            krefs: [asKRef('ko1'), asKRef('ko2')],
+          });
+
+          expect({
+            delivered: (
+              endpointHandle[deliverMethod] as unknown as MockInstance
+            ).mock.calls,
+            deleted: (kernelStore.deleteCListEntry as unknown as MockInstance)
+              .mock.calls,
+          }).toStrictEqual({ delivered: [[['ro+1', 'ro-2']]], deleted });
+        },
+      );
+
       it('clears the reachable flag when delivering dropExports', async () => {
         await kernelRouter.deliver({
           type: 'dropExports',
-          endpointId: 'v1',
-          krefs: ['ko1', 'ko2'],
+          endpointId: v1,
+          krefs: [asKRef('ko1'), asKRef('ko2')],
         });
 
         expect(
@@ -769,8 +862,8 @@ describe('KernelRouter', () => {
         async (actionType) => {
           await kernelRouter.deliver({
             type: actionType,
-            endpointId: 'v1',
-            krefs: ['ko1', 'ko2'],
+            endpointId: v1,
+            krefs: [asKRef('ko1'), asKRef('ko2')],
           });
 
           expect(
@@ -782,11 +875,40 @@ describe('KernelRouter', () => {
           ]);
         },
       );
+
+      it('orphans the object when delivering retireExports', async () => {
+        await kernelRouter.deliver({
+          type: 'retireExports',
+          endpointId: v1,
+          krefs: [asKRef('ko1'), asKRef('ko2')],
+        });
+
+        expect(
+          (kernelStore.orphanKernelObject as unknown as MockInstance).mock
+            .calls,
+        ).toStrictEqual([
+          ['ko1', 'v1'],
+          ['ko2', 'v1'],
+        ]);
+      });
+
+      it.each(['dropExports', 'retireImports'] as const)(
+        'leaves the owner mapping alone when delivering %s',
+        async (actionType) => {
+          await kernelRouter.deliver({
+            type: actionType,
+            endpointId: v1,
+            krefs: [asKRef('ko1'), asKRef('ko2')],
+          });
+
+          expect(kernelStore.orphanKernelObject).not.toHaveBeenCalled();
+        },
+      );
     });
 
     describe('bringOutYourDead', () => {
       it('delivers bringOutYourDead to a vat and returns crank results', async () => {
-        const endpointId = 'v1';
+        const endpointId = v1;
         const bringOutYourDeadItem: RunQueueItemBringOutYourDead = {
           type: 'bringOutYourDead',
           endpointId,
@@ -808,12 +930,558 @@ describe('KernelRouter', () => {
       });
     });
 
+    describe('remoteInbound', () => {
+      const remoteId = 'r1' as RemoteId;
+
+      /**
+       * An inbound message from the peer `peer1`.
+       *
+       * @param message - The message, as it arrived.
+       * @returns The run loop item.
+       */
+      const inbound = (message = '{"seq":1}'): RunQueueItemRemoteInbound => ({
+        type: 'remoteInbound',
+        remoteId,
+        peerId: 'peer1',
+        seq: 1,
+        message,
+      });
+
+      /**
+       * Have `getEndpoint` return a remote for a peer.
+       *
+       * @param options - Options bag.
+       * @param options.deliverInbound - Its `deliverInbound`.
+       * @param options.peerId - The peer it is the remote for.
+       */
+      const routeToRemote = ({
+        deliverInbound,
+        peerId = 'peer1',
+      }: {
+        deliverInbound: MockInstance;
+        peerId?: string;
+      }): void => {
+        vi.mocked(getEndpoint).mockReturnValue({
+          ...endpointHandle,
+          peerId,
+          deliverInbound,
+        } as unknown as EndpointHandle);
+      };
+
+      it('takes delivery of an inbound message on the remote it names', async () => {
+        const mockCrankResult: CrankResult = { didDelivery: remoteId };
+        const deliverInbound = vi.fn().mockResolvedValue(mockCrankResult);
+        routeToRemote({ deliverInbound });
+
+        const result = await kernelRouter.deliver(inbound());
+
+        expect(getEndpoint).toHaveBeenCalledWith(remoteId);
+        expect(deliverInbound).toHaveBeenCalledWith('{"seq":1}');
+        expect(result).toStrictEqual(mockCrankResult);
+      });
+
+      it('drops a message for a remote that is gone', async () => {
+        vi.mocked(getEndpoint).mockImplementation(() => {
+          throw Error(`unknown remote ${remoteId}`);
+        });
+
+        const result = await kernelRouter.deliver(inbound());
+
+        expect(result).toStrictEqual({ didDelivery: remoteId });
+      });
+
+      it('drops a message held under a remote ID that has gone to another peer', async () => {
+        const deliverInbound = vi.fn();
+        routeToRemote({ deliverInbound, peerId: 'peer2' });
+
+        const result = await kernelRouter.deliver(inbound());
+
+        expect(deliverInbound).not.toHaveBeenCalled();
+        expect(result).toStrictEqual({ didDelivery: remoteId });
+      });
+
+      it('discards a message it cannot deliver rather than dying of it', async () => {
+        const deliverInbound = vi
+          .fn()
+          .mockRejectedValue(Error('unknown remote message type bogus'));
+        routeToRemote({ deliverInbound });
+
+        const result = await kernelRouter.deliver(
+          inbound('{"seq":1,"method":"bogus"}'),
+        );
+
+        expect(result).toStrictEqual({ didDelivery: remoteId, abort: true });
+      });
+    });
+
+    /**
+     * A notify whose promise is resolved and still in the endpoint's c-list,
+     * so delivery is reached rather than short-circuited.
+     *
+     * @param endpointId - The endpoint the notify is addressed to.
+     * @returns The notify item to deliver.
+     */
+    const makeLiveNotify = (endpointId: EndpointId): RunQueueItemNotify => {
+      const kpid = asKRef('kp123');
+      (kernelStore.getKernelPromise as unknown as MockInstance).mockReturnValue(
+        {
+          state: 'fulfilled',
+          value: { body: JSON.stringify({ value: 'v' }), slots: [] },
+        },
+      );
+      (kernelStore.krefToEref as unknown as MockInstance).mockReturnValue(
+        'p+123',
+      );
+      (kernelStore.getKpidsToRetire as unknown as MockInstance).mockReturnValue(
+        [kpid],
+      );
+      return { type: 'notify', endpointId, kpid };
+    };
+
+    describe('a vat that has ended', () => {
+      const endpointId = asVatId('v2');
+
+      beforeEach(() => {
+        (getEndpoint as unknown as MockInstance).mockImplementation(
+          (requested: EndpointId) => {
+            if (requested === endpointId) {
+              throw new VatNotFoundError(requested);
+            }
+            return endpointHandle;
+          },
+        );
+        (
+          kernelStore.isVatTerminated as unknown as MockInstance
+        ).mockReturnValue(true);
+      });
+
+      it.each([
+        [
+          'notify',
+          (): RunQueueItem => makeLiveNotify(endpointId),
+          'deliverNotify',
+        ],
+        [
+          'dropExports',
+          (): RunQueueItem => ({
+            type: 'dropExports',
+            endpointId,
+            krefs: [asKRef('ko1')],
+          }),
+          'deliverDropExports',
+        ],
+        [
+          'bringOutYourDead',
+          (): RunQueueItem => ({ type: 'bringOutYourDead', endpointId }),
+          'deliverBringOutYourDead',
+        ],
+      ] as const)(
+        'skips a %s addressed to it instead of throwing out of the crank',
+        async (_what, makeItem, deliverMethod) => {
+          const result = await kernelRouter.deliver(makeItem());
+
+          expect(result).toStrictEqual({ didDelivery: endpointId });
+          expect(endpointHandle[deliverMethod]).not.toHaveBeenCalled();
+        },
+      );
+
+      it.each([
+        {
+          type: 'dropExports',
+          cleared: [[endpointId, 'ko1']],
+          deleted: [],
+          orphaned: [],
+        },
+        {
+          type: 'retireExports',
+          cleared: [],
+          deleted: [[endpointId, 'ko1', 'translated-ko1']],
+          orphaned: [['ko1', endpointId]],
+        },
+        {
+          type: 'retireImports',
+          cleared: [],
+          deleted: [[endpointId, 'ko1', 'translated-ko1']],
+          orphaned: [],
+        },
+      ] as const)(
+        "still does the kernel's half of a skipped $type",
+        async ({ type, cleared, deleted, orphaned }) => {
+          await kernelRouter.deliver({
+            type,
+            endpointId,
+            krefs: [asKRef('ko1')],
+          });
+
+          expect({
+            cleared: (kernelStore.clearReachableFlag as unknown as MockInstance)
+              .mock.calls,
+            deleted: (kernelStore.deleteCListEntry as unknown as MockInstance)
+              .mock.calls,
+            orphaned: (
+              kernelStore.orphanKernelObject as unknown as MockInstance
+            ).mock.calls,
+          }).toStrictEqual({ cleared, deleted, orphaned });
+        },
+      );
+
+      it.each(['dropExports', 'retireExports', 'retireImports'] as const)(
+        'skips a %s to a vat cleaned up whole without touching its c-list',
+        async (type) => {
+          (
+            kernelStore.isVatTerminated as unknown as MockInstance
+          ).mockReturnValue(false);
+
+          const result = await kernelRouter.deliver({
+            type,
+            endpointId,
+            krefs: [asKRef('ko1')],
+          });
+
+          expect(result).toStrictEqual({ didDelivery: endpointId });
+          expect(kernelStore.krefsToErefs).not.toHaveBeenCalled();
+          expect(kernelStore.clearReachableFlag).not.toHaveBeenCalled();
+          expect(kernelStore.deleteCListEntry).not.toHaveBeenCalled();
+          expect(kernelStore.orphanKernelObject).not.toHaveBeenCalled();
+        },
+      );
+
+      it('releases the skipped notify’s own reference', async () => {
+        const item = makeLiveNotify(endpointId);
+
+        await kernelRouter.deliver(item);
+
+        expect(kernelStore.decrementRefCount).toHaveBeenCalledWith(
+          item.kpid,
+          'deliver|notify',
+        );
+      });
+
+      it('allocates nothing in the c-list of a vat it is skipping', async () => {
+        await kernelRouter.deliver(makeLiveNotify(endpointId));
+
+        expect(kernelStore.translateRefKtoE).not.toHaveBeenCalled();
+        expect(kernelStore.translateCapDataKtoE).not.toHaveBeenCalled();
+      });
+
+      it('throws for an endpoint id that is neither a vat nor a remote', async () => {
+        (getEndpoint as unknown as MockInstance).mockImplementation(
+          (requested: EndpointId) => {
+            throw new Error(`invalid endpoint ID ${requested}`);
+          },
+        );
+
+        await expect(
+          kernelRouter.deliver({
+            type: 'bringOutYourDead',
+            endpointId: 'bogus' as EndpointId,
+          }),
+        ).rejects.toThrow('invalid endpoint ID bogus');
+      });
+
+      it('still delivers to endpoints that are running', async () => {
+        const result = await kernelRouter.deliver({
+          type: 'bringOutYourDead',
+          endpointId: v1,
+        });
+
+        expect(endpointHandle.deliverBringOutYourDead).toHaveBeenCalled();
+        expect(result).toStrictEqual({ didDelivery: 'v1' });
+      });
+    });
+
+    describe('a remote with no handle', () => {
+      const remoteId = 'r1' as EndpointId;
+
+      beforeEach(() => {
+        (getEndpoint as unknown as MockInstance).mockImplementation(() => {
+          throw new Error(`Remote not found: ${remoteId}`);
+        });
+      });
+
+      it('lets a reap addressed to it go', async () => {
+        const result = await kernelRouter.deliver({
+          type: 'bringOutYourDead',
+          endpointId: remoteId,
+        });
+
+        expect(result).toStrictEqual({ didDelivery: remoteId });
+      });
+
+      it('keeps a notify addressed to it loud', async () => {
+        await expect(
+          kernelRouter.deliver(makeLiveNotify(remoteId)),
+        ).rejects.toThrow('Remote not found');
+      });
+
+      it.each(['dropExports', 'retireExports', 'retireImports'] as const)(
+        'keeps a %s addressed to it loud',
+        async (type) => {
+          await expect(
+            kernelRouter.deliver({
+              type,
+              endpointId: remoteId,
+              krefs: [asKRef('ko1')],
+            }),
+          ).rejects.toThrow('Remote not found');
+        },
+      );
+    });
+
+    it.each(['v1', 'r1'] as EndpointId[])(
+      'rethrows a GC delivery that %s fails',
+      async (endpointId) => {
+        (
+          endpointHandle.deliverRetireImports as unknown as MockInstance
+        ).mockRejectedValue(new Error('disk I/O error'));
+
+        await expect(
+          kernelRouter.deliver({
+            type: 'retireImports',
+            endpointId,
+            krefs: [asKRef('ko1')],
+          }),
+        ).rejects.toThrow('disk I/O error');
+      },
+    );
+
+    describe('a vat lost while a delivery is in flight', () => {
+      const endpointId = 'v2' as EndpointId;
+
+      it.each([
+        [
+          'send',
+          'deliverMessage' as const,
+          (): RunQueueItem => {
+            (
+              kernelStore.getOwner as unknown as MockInstance
+            ).mockReturnValueOnce(endpointId);
+            return {
+              type: 'send',
+              target: asKRef('ko123'),
+              message: {
+                methargs: { body: 'method args', slots: [] },
+                result: asKRef('kp1'),
+              },
+            };
+          },
+        ],
+        [
+          'notify',
+          'deliverNotify' as const,
+          (): RunQueueItem => makeLiveNotify(endpointId),
+        ],
+        [
+          'dropExports',
+          'deliverDropExports' as const,
+          (): RunQueueItem => ({
+            type: 'dropExports' as GCRunQueueType,
+            endpointId,
+            krefs: [asKRef('ko1')],
+          }),
+        ],
+        [
+          'bringOutYourDead',
+          'deliverBringOutYourDead' as const,
+          (): RunQueueItem => ({ type: 'bringOutYourDead', endpointId }),
+        ],
+      ])(
+        'rolls back a %s whose vat dies under it, and terminates the vat',
+        async (_what, deliverMethod, makeItem) => {
+          (
+            endpointHandle[deliverMethod] as unknown as MockInstance
+          ).mockImplementationOnce(async () => {
+            (getEndpoint as unknown as MockInstance).mockImplementation(
+              (requested: EndpointId) => {
+                throw new VatNotFoundError(requested as VatId);
+              },
+            );
+            throw new Error('Unexpected stream read error.', {
+              cause: new Error('Worker v2 exited with code 1'),
+            });
+          });
+
+          expect(await kernelRouter.deliver(makeItem())).toStrictEqual({
+            didDelivery: endpointId,
+            abort: true,
+            terminate: {
+              vatId: endpointId,
+              reject: true,
+              info: makeKernelError(
+                'VAT_TERMINATED',
+                'Vat v2 lost its channel: Worker v2 exited with code 1',
+              ),
+            },
+          });
+          expect(kernelQueue.resolvePromises).not.toHaveBeenCalled();
+        },
+      );
+
+      it('commits a delivery to a vat the kernel retired during it', async () => {
+        (
+          endpointHandle.deliverBringOutYourDead as unknown as MockInstance
+        ).mockImplementationOnce(async () => {
+          (getEndpoint as unknown as MockInstance).mockImplementation(
+            (requested: EndpointId) => {
+              throw new VatNotFoundError(requested as VatId);
+            },
+          );
+          (kernelStore.isVatActive as unknown as MockInstance).mockReturnValue(
+            false,
+          );
+          throw new Error('Unexpected stream read error.');
+        });
+
+        expect(
+          await kernelRouter.deliver({ type: 'bringOutYourDead', endpointId }),
+        ).toStrictEqual({ didDelivery: endpointId });
+      });
+
+      it('still throws when the vat is running', async () => {
+        (
+          endpointHandle.deliverBringOutYourDead as unknown as MockInstance
+        ).mockRejectedValueOnce(new Error('kernel fault'));
+
+        await expect(
+          kernelRouter.deliver({ type: 'bringOutYourDead', endpointId }),
+        ).rejects.toThrow('kernel fault');
+      });
+
+      it('still throws when looking the vat up fails for another reason', async () => {
+        (
+          endpointHandle.deliverBringOutYourDead as unknown as MockInstance
+        ).mockImplementationOnce(async () => {
+          (getEndpoint as unknown as MockInstance).mockImplementation(() => {
+            throw new Error('store fault');
+          });
+          throw new Error('Unexpected stream read error.');
+        });
+
+        await expect(
+          kernelRouter.deliver({ type: 'bringOutYourDead', endpointId }),
+        ).rejects.toThrow('store fault');
+      });
+
+      it('still throws for a remote', async () => {
+        (
+          endpointHandle.deliverNotify as unknown as MockInstance
+        ).mockImplementationOnce(async () => {
+          (getEndpoint as unknown as MockInstance).mockImplementation(
+            (requested: EndpointId) => {
+              throw new VatNotFoundError(requested as VatId);
+            },
+          );
+          throw new Error('transport failed');
+        });
+
+        await expect(
+          kernelRouter.deliver(makeLiveNotify('r1' as EndpointId)),
+        ).rejects.toThrow('transport failed');
+      });
+    });
+
     it('throws on unknown run queue item type', async () => {
       // @ts-expect-error - deliberately using an invalid type
       const invalidItem: RunQueueItem = { type: 'invalid' };
       await expect(kernelRouter.deliver(invalidItem)).rejects.toThrow(
         'unsupported or unknown run queue item type',
       );
+    });
+
+    describe('restartVat', () => {
+      it('hands a queued restart request to the vat manager', async () => {
+        const crankResult = { abort: true };
+        mockRestartVat.mockResolvedValueOnce(crankResult);
+
+        const result = await kernelRouter.deliver({
+          type: 'restartVat',
+          vatId: v1,
+        });
+
+        expect(mockRestartVat).toHaveBeenCalledWith('v1');
+        expect(result).toBe(crankResult);
+      });
+    });
+
+    describe('terminateVat', () => {
+      it('hands a queued termination request to the vat manager', async () => {
+        const reason = kser('because');
+        const crankResult = { irrevocable: true };
+        mockTerminateVat.mockResolvedValueOnce(crankResult);
+
+        const result = await kernelRouter.deliver({
+          type: 'terminateVat',
+          vatId: v1,
+          reason,
+        });
+
+        expect(mockTerminateVat).toHaveBeenCalledWith('v1', reason);
+        expect(result).toBe(crankResult);
+      });
+
+      it('passes no reason on when the request carried none', async () => {
+        await kernelRouter.deliver({
+          type: 'terminateVat',
+          vatId: v1,
+        });
+
+        expect(mockTerminateVat).toHaveBeenCalledWith('v1', undefined);
+      });
+    });
+
+    describe('peerIncarnation', () => {
+      it('hands a queued incarnation change to the remote manager', async () => {
+        const item: RunQueueItemPeerIncarnation = {
+          type: 'peerIncarnation',
+          peerId: 'peer-1',
+          incarnation: 'incarnation-B',
+          restart: true,
+        };
+        const crankResult = { afterCommit: async () => undefined };
+        mockApplyIncarnationChange.mockReturnValueOnce(crankResult);
+
+        const result = await kernelRouter.deliver(item);
+
+        expect(mockApplyIncarnationChange).toHaveBeenCalledWith(item);
+        expect(result).toBe(crankResult);
+      });
+
+      it('lets a failure to record the change reach the run loop', async () => {
+        const failure = new Error('refcount underflow');
+        mockApplyIncarnationChange.mockImplementationOnce(() => {
+          throw failure;
+        });
+
+        await expect(
+          kernelRouter.deliver({
+            type: 'peerIncarnation',
+            peerId: 'peer-1',
+            incarnation: 'incarnation-B',
+            restart: true,
+          }),
+        ).rejects.toThrow(failure);
+      });
+    });
+
+    describe('control', () => {
+      it('hands a control operation to the kernel', async () => {
+        const result = await kernelRouter.deliver({
+          type: 'control',
+          operation: 'reset',
+        });
+
+        expect(mockPerformControl).toHaveBeenCalledWith('reset');
+        expect(result).toBeUndefined();
+      });
+
+      it('lets a failure reach the run loop', async () => {
+        const failure = new Error('clear failed');
+        mockPerformControl.mockRejectedValueOnce(failure);
+
+        await expect(
+          kernelRouter.deliver({ type: 'control', operation: 'clearStorage' }),
+        ).rejects.toThrow(failure);
+      });
     });
   });
 });

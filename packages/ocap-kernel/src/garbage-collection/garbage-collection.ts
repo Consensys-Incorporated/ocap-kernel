@@ -93,7 +93,7 @@ function filterActionsForProcessing(
   endpointId: EndpointId,
   actions: Set<GCAction>,
   allActionsSet: Set<GCAction>,
-): { krefs: KRef[]; actionSetUpdated: boolean } {
+): { krefs: readonly KRef[]; actionSetUpdated: boolean } {
   const krefs: KRef[] = [];
   let actionSetUpdated = false;
 
@@ -106,6 +106,8 @@ function filterActionsForProcessing(
     actionSetUpdated = true;
   }
 
+  // `harden` freezes `krefs`, so it has to be sorted first.
+  krefs.sort();
   return harden({ krefs, actionSetUpdated });
 }
 
@@ -174,16 +176,13 @@ export function processGCActionSet(
         actionSetUpdated = actionSetUpdated || updated;
 
         if (krefs.length > 0) {
-          // We found actions to process
-          krefs.sort();
-
           // Update the durable set before returning
           storage.setGCActions(allActionsSet);
 
           const queueType = queueTypeFromActionType.get(type);
           assert(queueType !== undefined, `Unknown action type: ${type}`);
 
-          return harden({ type: queueType, endpointId, krefs });
+          return harden({ type: queueType, endpointId, krefs: [...krefs] });
         }
       }
     }

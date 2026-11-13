@@ -18,7 +18,7 @@ import {
  * @param ctx - The store context.
  * @returns The c-list store.
  */
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+// oxlint-disable-next-line typescript/explicit-function-return-type
 export function getCListMethods(ctx: StoreContext) {
   const { getSlotKey } = getBaseMethods(ctx.kv);
   const { clearReachableFlag } = getReachableMethods(ctx);

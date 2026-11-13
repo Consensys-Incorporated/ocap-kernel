@@ -1,7 +1,13 @@
 import { AbortError } from '@metamask/kernel-errors';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-import { abortableDelay, delay, ifDefined, makeCounter } from './misc.ts';
+import {
+  abortableDelay,
+  delay,
+  ifDefined,
+  makeCounter,
+  raceAbort,
+} from './misc.ts';
 
 describe('ifDefined', () => {
   it('removes undefined values', () => {
@@ -70,6 +76,41 @@ describe('misc utilities', () => {
       const delayP = delay();
       vi.advanceTimersByTime(1);
       expect(await delayP).toBeUndefined();
+    });
+  });
+
+  describe('raceAbort', () => {
+    it.each([
+      ['no signal', undefined],
+      ['a signal that never aborts', new AbortController().signal],
+    ])('settles as the promise does given %s', async (_, signal) => {
+      expect(await raceAbort(Promise.resolve('done'), signal)).toBe('done');
+      await expect(
+        raceAbort(Promise.reject(new Error('failed')), signal),
+      ).rejects.toThrow('failed');
+    });
+
+    it('rejects with the reason of a signal already aborted', async () => {
+      await expect(
+        raceAbort(
+          Promise.resolve('done'),
+          AbortSignal.abort(new Error('gave up')),
+        ),
+      ).rejects.toThrow('gave up');
+    });
+
+    it('rejects with the reason when the signal aborts first', async () => {
+      const controller = new AbortController();
+      const raced = raceAbort(new Promise(() => undefined), controller.signal);
+      controller.abort(new Error('gave up'));
+      await expect(raced).rejects.toThrow('gave up');
+    });
+
+    it('stops listening once the promise settles', async () => {
+      const controller = new AbortController();
+      const remove = vi.spyOn(controller.signal, 'removeEventListener');
+      await raceAbort(Promise.resolve('done'), controller.signal);
+      expect(remove).toHaveBeenCalledWith('abort', expect.any(Function));
     });
   });
 

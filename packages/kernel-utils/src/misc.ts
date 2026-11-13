@@ -7,7 +7,7 @@ import { AbortError } from '@metamask/kernel-errors';
  * @param record - The record to filter.
  * @returns The new object with the undefined values removed.
  */
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+// oxlint-disable-next-line typescript/explicit-function-return-type
 export const ifDefined = (record: Record<string, unknown>) =>
   Object.fromEntries(
     Object.entries(record).filter(([_, value]) => value !== undefined),
@@ -64,3 +64,31 @@ export async function abortableDelay(
     }
   });
 }
+
+/**
+ * Settle as `promise` does, or reject with `signal`'s reason if it aborts
+ * first. The operation itself carries on; only the wait ends.
+ *
+ * @param promise - The operation to wait for.
+ * @param signal - The signal that may cut the wait short, if any.
+ * @returns What `promise` settles with.
+ */
+export const raceAbort = async <Value>(
+  promise: Promise<Value>,
+  signal?: AbortSignal | null,
+): Promise<Value> => {
+  if (!signal) {
+    return promise;
+  }
+  signal.throwIfAborted();
+  let onAbort = (): void => undefined;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    onAbort = () => reject(signal.reason as Error);
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
+  try {
+    return await Promise.race([promise, aborted]);
+  } finally {
+    signal.removeEventListener('abort', onAbort);
+  }
+};

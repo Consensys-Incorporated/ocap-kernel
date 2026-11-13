@@ -1,5 +1,19 @@
 export { prettifySmallcaps } from './prettify-smallcaps.ts';
 export { makeDefaultInterface, makeDefaultExo } from './exo.ts';
+export {
+  asyncifyMethodGuards,
+  buildMethodGuard,
+  getGuardAt,
+  getInterfaceMethodGuards,
+  getMethodPayload,
+} from './guard-algebra.ts';
+export type {
+  BuildMethodGuardOptions,
+  MethodGuardPayload,
+} from './guard-algebra.ts';
+export type { NarrowingDelta } from './narrow-interface-guard.ts';
+export { join, narrow, pathUnder } from './narrowing.ts';
+export type { JoinOptions, NarrowOptions } from './narrowing.ts';
 export { GET_DESCRIPTION, makeDiscoverableExo } from './discoverable.ts';
 export type { DiscoverableExo } from './discoverable.ts';
 export { S } from './described.ts';
@@ -20,7 +34,13 @@ export { resolveFetchInput } from './fetch-input.ts';
 export type { FetchInput, ResolvedFetchInput } from './fetch-input.ts';
 export { makeGuardedFetch } from './guarded-fetch.ts';
 export type { FetchGuard } from './guarded-fetch.ts';
-export { abortableDelay, delay, ifDefined, makeCounter } from './misc.ts';
+export {
+  abortableDelay,
+  delay,
+  ifDefined,
+  makeCounter,
+  raceAbort,
+} from './misc.ts';
 export { stringify } from './stringify.ts';
 export { installWakeDetector } from './wake-detector.ts';
 export type { WakeDetectorOptions } from './wake-detector.ts';

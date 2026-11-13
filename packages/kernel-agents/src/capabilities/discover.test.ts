@@ -53,8 +53,10 @@ describe('makeInternalCapabilities', () => {
   });
 
   it('maps the named-args object to positional args and invokes the method', async () => {
-    expect(await capabilities.count.func({ word: 'abcdefg' })).toBe(7);
-    expect(await capabilities.add.func({ summands: [1, 2, 3, 4] })).toBe(10);
+    expect(await capabilities.count.func({ word: 'abcdefg' } as never)).toBe(7);
+    expect(
+      await capabilities.add.func({ summands: [1, 2, 3, 4] } as never),
+    ).toBe(10);
   });
 
   it('rejects a mistyped argument at the exo membrane', async () => {

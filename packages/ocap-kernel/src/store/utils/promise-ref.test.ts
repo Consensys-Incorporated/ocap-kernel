@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 
 import { isPromiseRef } from './promise-ref.ts';
+import type { KRef } from '../../types.ts';
 
 describe('promise-ref', () => {
   describe('isPromiseRef', () => {
@@ -17,7 +18,7 @@ describe('promise-ref', () => {
       ['abc', false, 'string without p as second character'],
       ['a', false, 'single character string'],
     ])('returns %s for %s', (ref, expected) => {
-      expect(isPromiseRef(ref)).toBe(expected);
+      expect(isPromiseRef(ref as KRef)).toBe(expected);
     });
   });
 });

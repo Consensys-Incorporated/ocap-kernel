@@ -2,22 +2,12 @@
   "extends": "../../tsconfig.packages.json",
   "compilerOptions": {
     "allowJs": true,
-    "baseUrl": "./",
     "isolatedModules": true,
     "lib": ["ES2022"],
     "types": ["node", "ses", "vitest"]
   },
-  "references": [
-    { "path": "../kernel-platforms" },
-    { "path": "../ocap-kernel" },
-    { "path": "../logger" },
-    { "path": "../streams" },
-    { "path": "../kernel-utils" },
-    { "path": "../repo-tools" },
-    { "path": "../kernel-store" }
-  ],
   "include": [
-    "../../vitest.config.packages.ts",
+    "../../vitest.config.ts",
     "./src/**/*.ts",
     "./src/**/*-trusted-prelude.js",
     "./test/**/*.ts",

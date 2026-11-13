@@ -1,4 +1,4 @@
-// eslint-disable-next-line @typescript-eslint/no-unused-vars
+// oxlint-disable-next-line typescript/no-unused-vars
 import type { makeExoGenerator } from './exo-generator.ts';
 // This type is used in the docs.
 import { makeRefIterator } from './ref-reader.ts';

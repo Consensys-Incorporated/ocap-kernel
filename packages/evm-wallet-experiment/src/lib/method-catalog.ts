@@ -1,3 +1,5 @@
+import type { MethodSchema } from '@metamask/kernel-utils';
+
 const harden = globalThis.harden ?? (<T>(value: T): T => value);
 
 export const METHOD_CATALOG = harden({
@@ -24,6 +26,6 @@ export const METHOD_CATALOG = harden({
     },
     returns: { type: 'string', description: 'Transaction hash.' },
   },
-});
+} satisfies Record<string, MethodSchema>);
 
 export type CatalogMethodName = keyof typeof METHOD_CATALOG;

@@ -9,9 +9,12 @@ import type { Policy, Provider } from './types.ts';
 
 // Thin cast for calling exo methods directly in tests without going through
 // HandledPromise (which is not available in the test environment).
-// eslint-disable-next-line id-length
+// oxlint-disable-next-line id-length
 const E = (obj: unknown) =>
-  obj as Record<string, (...args: unknown[]) => Promise<unknown>>;
+  obj as Record<
+    'getBalance' | 'swap' | 'transfer',
+    (...args: unknown[]) => Promise<unknown>
+  >;
 
 // Sheafify and build a section over the union guard of all providers. Used by
 // tests that exercise dispatch behavior without caring which guard variant is
@@ -450,11 +453,7 @@ describe('scenario: callable metadata — cost varies with invocation args', () 
       },
     ];
 
-    const facade = buildUnionSection(
-      'Swap',
-      providers,
-      cheapest,
-    ) as unknown as Record<string, (...args: unknown[]) => Promise<unknown>>;
+    const facade = E(buildUnionSection('Swap', providers, cheapest));
 
     // swap(50): A costs 6, B costs 10.05 → A wins
     await facade.swap(50, 'FUZ', 'BIZ');

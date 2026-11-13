@@ -242,7 +242,7 @@ export class VatSyscall {
         }
         default:
           // Compile-time exhaustiveness check
-          // eslint-disable-next-line @typescript-eslint/restrict-template-expressions
+          // oxlint-disable-next-line typescript/restrict-template-expressions
           this.#logger?.warn(`vat ${vatId} issued unknown syscall ${op} `, vso);
           break;
       }

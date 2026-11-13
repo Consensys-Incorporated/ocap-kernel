@@ -48,8 +48,6 @@ describe('createDefaultEndowments', () => {
       'Request',
       'Response',
       'SubtleCrypto',
-      'TextDecoder',
-      'TextEncoder',
       'URL',
       'URLSearchParams',
       'atob',
@@ -57,10 +55,14 @@ describe('createDefaultEndowments', () => {
       'clearInterval',
       'clearTimeout',
       'crypto',
-      'fetch',
       'setInterval',
       'setTimeout',
     ]);
+  });
+
+  it('returns the network fetch for the http capability', () => {
+    const endowments = createDefaultEndowments({ logger: makeLogger() });
+    expect(typeof endowments.fetch).toBe('function');
   });
 
   it('does not leak teardownFunction into globals', () => {
@@ -163,14 +165,17 @@ describe('createDefaultEndowments', () => {
       // silence test output
     });
     let capturedNotify:
-      | ((n: { method: string; params: unknown }) => Promise<void>)
+      | ((notification: { method: string; params: unknown }) => Promise<void>)
       | undefined;
 
     state.override = [
       {
         names: ['fetch'],
         factory: (options?: {
-          notify?: (n: { method: string; params: unknown }) => Promise<void>;
+          notify?: (notification: {
+            method: string;
+            params: unknown;
+          }) => Promise<void>;
         }) => {
           capturedNotify = options?.notify;
           return { fetch: () => undefined };
@@ -199,14 +204,17 @@ describe('createDefaultEndowments', () => {
       .spyOn(console, 'error')
       .mockImplementation(() => undefined);
     let capturedNotify:
-      | ((n: { method: string; params: unknown }) => Promise<void>)
+      | ((notification: { method: string; params: unknown }) => Promise<void>)
       | undefined;
 
     state.override = [
       {
         names: ['fetch'],
         factory: (options?: {
-          notify?: (n: { method: string; params: unknown }) => Promise<void>;
+          notify?: (notification: {
+            method: string;
+            params: unknown;
+          }) => Promise<void>;
         }) => {
           capturedNotify = options?.notify;
           return { fetch: () => undefined };
@@ -248,12 +256,11 @@ describe('createDefaultEndowments', () => {
         })) as typeof fetch,
     );
 
-    const { globals, teardown } = createDefaultEndowments({
+    const { fetch: fetchFn, teardown } = createDefaultEndowments({
       logger: makeLogger(),
     });
-    const fetchFn = globals.fetch as typeof fetch;
 
-    const inFlight = fetchFn('https://example.test/slow');
+    const inFlight = fetchFn!('https://example.test/slow');
     // Suppress unhandled-rejection noise — the Snaps factory drops this
     // promise on teardown (neither resolves nor rejects it).
     inFlight.catch(() => undefined);

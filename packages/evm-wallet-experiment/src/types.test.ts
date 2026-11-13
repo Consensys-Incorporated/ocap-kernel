@@ -32,7 +32,7 @@ describe('makeChainConfig', () => {
   it('throws for invalid chainId type', () => {
     expect(() =>
       makeChainConfig({
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        // oxlint-disable-next-line typescript/no-explicit-any
         chainId: 'one' as any,
         rpcUrl: 'https://eth.example.com',
       }),
@@ -43,7 +43,7 @@ describe('makeChainConfig', () => {
     expect(() =>
       makeChainConfig({
         chainId: 1,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        // oxlint-disable-next-line typescript/no-explicit-any
         rpcUrl: 123 as any,
       }),
     ).toThrow('Expected a string');

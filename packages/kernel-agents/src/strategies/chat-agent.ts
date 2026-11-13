@@ -1,10 +1,10 @@
-import type { Logger } from '@metamask/logger';
 import type {
   ChatMessage,
   ChatResult,
   Tool,
-} from '@ocap/kernel-language-model-service';
-import { parseToolArguments } from '@ocap/kernel-language-model-service/utils/parse-tool-arguments';
+} from '@metamask/kernel-language-model-service';
+import { parseToolArguments } from '@metamask/kernel-language-model-service/utils/parse-tool-arguments';
+import type { Logger } from '@metamask/logger';
 
 import { extractCapabilitySchemas } from '../capabilities/capability.ts';
 import type { Agent } from '../types/agent.ts';
@@ -115,7 +115,7 @@ export const makeChatAgent = ({
       }: { invocationBudget?: number; logger?: Logger } = {},
     ): Promise<Result> => {
       const effectiveJudgment =
-        judgment ?? ((result: unknown): result is Result => true);
+        judgment ?? ((_result: unknown): _result is Result => true);
       const objective = { intent, judgment: effectiveJudgment };
       const context = { capabilities: agentCapabilities };
 

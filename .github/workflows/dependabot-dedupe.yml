@@ -3,46 +3,36 @@ name: Dependabot Dedupe
 on:
   pull_request:
 
-permissions:
-  contents: write
-  pull-requests: write
+concurrency:
+  group: dependabot-dedupe-${{ github.head_ref }}
+  cancel-in-progress: true
 
 jobs:
   dependabot-dedupe:
+    name: Dedupe yarn.lock
     runs-on: ubuntu-latest
-    # Run this job only if it's Dependabot creating or updating the PR
     if: ${{ github.actor == 'dependabot[bot]' }}
+    permissions:
+      contents: write
     steps:
-      - name: Check out repo
-        uses: actions/checkout@v7
+      # Skip the install so no dependency code runs while the token can push.
+      - name: Checkout and setup environment
+        uses: MetaMask/action-checkout-and-setup@097d47e741dfa9c09ee779a020b8851875e72904 # v3
         with:
+          is-high-risk-environment: true
           ref: ${{ github.head_ref }}
-          fetch-depth: 0
-      - name: Configure Git
-        run: |
-          git config user.name "GitHub Actions"
-          git config user.email "actions@github.com"
+          skip-install: true
+          persist-credentials: true
 
-      - name: Set up Node
-        uses: actions/setup-node@v7
-        with:
-          node-version: 24
-      - name: Install Yarn
-        run: corepack enable
-      - name: Restore Yarn cache
-        uses: actions/setup-node@v7
-        with:
-          node-version: 24
-          cache: yarn
-      - run: PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 yarn --immutable
-
-      - name: Run yarn dedupe
+      - name: Dedupe and push
         run: |
-          yarn dedupe
+          yarn dedupe --mode=update-lockfile
           git add yarn.lock
           if git diff --staged --quiet; then
             echo "No deduplication needed"
           else
+            git config user.name "GitHub Actions"
+            git config user.email "actions@github.com"
             git commit -m "chore: dedupe yarn.lock"
             git push
           fi

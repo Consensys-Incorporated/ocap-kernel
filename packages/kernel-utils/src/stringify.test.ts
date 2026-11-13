@@ -86,6 +86,31 @@ describe('stringify', () => {
     );
   });
 
+  it('handles aggregate errors, each with its own cause', () => {
+    const error = new AggregateError(
+      [
+        new Error('First'),
+        new Error('Second', { cause: new Error('Root cause error') }),
+        'not an error',
+      ],
+      'Both failed',
+    );
+
+    expect(JSON.parse(stringify(error))).toMatchObject({
+      name: 'AggregateError',
+      message: 'Both failed',
+      errors: [
+        { name: 'Error', message: 'First' },
+        {
+          name: 'Error',
+          message: 'Second',
+          cause: { name: 'Error', message: 'Root cause error' },
+        },
+        '"not an error"',
+      ],
+    });
+  });
+
   it('handles ocap errors', () => {
     const error = new VatNotFoundError('v1');
     const result = stringify(error, 2);

@@ -1,6 +1,6 @@
 import '@metamask/kernel-shims/endoify-node';
 
-import { makeOpenV1NodejsService } from '@ocap/kernel-language-model-service';
+import { makeOpenV1NodejsService } from '@metamask/kernel-language-model-service';
 import { fetchMock } from '@ocap/repo-tools/test-utils/fetch-mock';
 import { afterAll, beforeAll, describe, it } from 'vitest';
 
@@ -16,7 +16,7 @@ describe('lms-kernel (e2e)', () => {
     fetchMock.enableMocks();
   });
 
-  // eslint-disable-next-line vitest/expect-expect
+  // oxlint-disable-next-line vitest/expect-expect
   it(
     'sends a chat message through the kernel and receives a response',
     { timeout: 60_000 },

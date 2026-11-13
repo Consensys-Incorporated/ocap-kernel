@@ -1,4 +1,4 @@
-/* eslint-disable n/no-process-exit, import-x/no-unresolved, n/no-process-env */
+/* oxlint-disable node/no-process-env */
 /**
  * Sepolia E2E: stateless7702 delegation redemption via direct EIP-1559 tx (no bundler).
  *

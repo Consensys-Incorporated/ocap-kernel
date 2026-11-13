@@ -14,48 +14,48 @@ describe('keyring-vat', () => {
 
   beforeEach(() => {
     baggage = makeMockBaggage();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    // oxlint-disable-next-line typescript/no-explicit-any
     root = buildRootObject({}, undefined, baggage as any);
   });
 
   describe('bootstrap', () => {
     it('completes without error', async () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       expect(await (root as any).bootstrap()).toBeUndefined();
     });
   });
 
   describe('initialize', () => {
     it('initializes with SRP mnemonic', async () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       await (root as any).initialize({ type: 'srp', mnemonic: TEST_MNEMONIC });
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       const hasKeys = await (root as any).hasKeys();
       expect(hasKeys).toBe(true);
     });
 
     it('initializes with throwaway key', async () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       await (root as any).initialize({ type: 'throwaway' });
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       const hasKeys = await (root as any).hasKeys();
       expect(hasKeys).toBe(true);
     });
 
     it('throws if already initialized', async () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       await (root as any).initialize({ type: 'throwaway' });
 
       await expect(
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        // oxlint-disable-next-line typescript/no-explicit-any
         (root as any).initialize({ type: 'throwaway' }),
       ).rejects.toThrow('Keyring already initialized');
     });
 
     it('persists init options in baggage', async () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       await (root as any).initialize({ type: 'srp', mnemonic: TEST_MNEMONIC });
 
       expect(baggage.has('keyringInit')).toBe(true);
@@ -64,16 +64,16 @@ describe('keyring-vat', () => {
 
   describe('getAccounts', () => {
     it('returns empty array when not initialized', async () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       const accounts = await (root as any).getAccounts();
       expect(accounts).toStrictEqual([]);
     });
 
     it('returns accounts after SRP initialization', async () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       await (root as any).initialize({ type: 'srp', mnemonic: TEST_MNEMONIC });
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       const accounts = await (root as any).getAccounts();
       expect(accounts).toHaveLength(1);
       expect(accounts[0]).toMatch(/^0x[\da-f]{40}$/iu);
@@ -82,21 +82,21 @@ describe('keyring-vat', () => {
 
   describe('deriveAccount', () => {
     it('derives a new account at a given index', async () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       await (root as any).initialize({ type: 'srp', mnemonic: TEST_MNEMONIC });
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       const address = await (root as any).deriveAccount(1);
       expect(address).toMatch(/^0x[\da-f]{40}$/iu);
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       const accounts = await (root as any).getAccounts();
       expect(accounts).toHaveLength(2);
     });
 
     it('throws when not initialized', async () => {
       await expect(
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        // oxlint-disable-next-line typescript/no-explicit-any
         (root as any).deriveAccount(0),
       ).rejects.toThrow('Keyring not initialized');
     });
@@ -104,13 +104,13 @@ describe('keyring-vat', () => {
 
   describe('signTransaction', () => {
     it('signs a transaction', async () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       await (root as any).initialize({ type: 'srp', mnemonic: TEST_MNEMONIC });
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       const accounts = await (root as any).getAccounts();
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       const signed = await (root as any).signTransaction({
         from: accounts[0],
         to: '0x70997970c51812dc3a010c7d01b50e0d17dc79c8',
@@ -125,11 +125,11 @@ describe('keyring-vat', () => {
     });
 
     it('throws for unknown account', async () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       await (root as any).initialize({ type: 'srp', mnemonic: TEST_MNEMONIC });
 
       await expect(
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        // oxlint-disable-next-line typescript/no-explicit-any
         (root as any).signTransaction({
           from: '0x0000000000000000000000000000000000000000',
           to: '0x70997970c51812dc3a010c7d01b50e0d17dc79c8',
@@ -142,26 +142,26 @@ describe('keyring-vat', () => {
 
   describe('signHash', () => {
     it('signs a raw hash without EIP-191 prefix', async () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       await (root as any).initialize({ type: 'srp', mnemonic: TEST_MNEMONIC });
 
       const hash =
         '0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890';
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       const signature = await (root as any).signHash(hash);
       expect(signature).toMatch(/^0x/u);
       expect(signature).toHaveLength(132);
     });
 
     it('produces a different signature than signMessage for the same input', async () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       await (root as any).initialize({ type: 'srp', mnemonic: TEST_MNEMONIC });
 
       const input =
         '0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890';
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       const hashSig = await (root as any).signHash(input);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       const msgSig = await (root as any).signMessage(input);
 
       expect(hashSig).not.toBe(msgSig);
@@ -169,7 +169,7 @@ describe('keyring-vat', () => {
 
     it('throws when not initialized', async () => {
       await expect(
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        // oxlint-disable-next-line typescript/no-explicit-any
         (root as any).signHash('0xabcd'),
       ).rejects.toThrow('Keyring not initialized');
     });
@@ -177,10 +177,10 @@ describe('keyring-vat', () => {
 
   describe('signMessage', () => {
     it('signs a personal message', async () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       await (root as any).initialize({ type: 'srp', mnemonic: TEST_MNEMONIC });
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       const signature = await (root as any).signMessage('Hello, world!');
       expect(signature).toMatch(/^0x/u);
       expect(signature).toHaveLength(132);
@@ -189,10 +189,10 @@ describe('keyring-vat', () => {
 
   describe('signAuthorization', () => {
     it('signs an EIP-7702 authorization', async () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       await (root as any).initialize({ type: 'srp', mnemonic: TEST_MNEMONIC });
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       const auth = await (root as any).signAuthorization({
         contractAddress: '0x63c0c19a282a1B52b07dD5a65b58948A07DAE32B',
         chainId: 11155111,
@@ -207,7 +207,7 @@ describe('keyring-vat', () => {
 
     it('throws when not initialized', async () => {
       await expect(
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        // oxlint-disable-next-line typescript/no-explicit-any
         (root as any).signAuthorization({
           contractAddress: '0x63c0c19a282a1B52b07dD5a65b58948A07DAE32B',
           chainId: 11155111,
@@ -219,17 +219,17 @@ describe('keyring-vat', () => {
   describe('resuscitation from baggage', () => {
     it('restores keyring from persisted init options', async () => {
       // Initialize and persist
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       await (root as any).initialize({ type: 'srp', mnemonic: TEST_MNEMONIC });
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       const accountsBefore = await (root as any).getAccounts();
 
       // Create a new root object with the same baggage (simulates resuscitation)
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       const restoredRoot = buildRootObject({}, undefined, baggage as any);
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       const accountsAfter = await (restoredRoot as any).getAccounts();
       expect(accountsAfter).toStrictEqual(accountsBefore);
     });
@@ -237,15 +237,15 @@ describe('keyring-vat', () => {
     it('rebuilds throwaway keyrings with a new address after resuscitation', async () => {
       // Throwaway keys are intentionally ephemeral — baggage only stores
       // `{ type: 'throwaway' }`, so restart produces a fresh random key.
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       await (root as any).initialize({ type: 'throwaway' });
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       const accountsBefore = await (root as any).getAccounts();
       expect(accountsBefore).toHaveLength(1);
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       const restoredRoot = buildRootObject({}, undefined, baggage as any);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       const accountsAfter = await (restoredRoot as any).getAccounts();
 
       expect(accountsAfter).toHaveLength(1);
@@ -259,7 +259,7 @@ describe('keyring-vat', () => {
     const TEST_SALT = 'aabbccddaabbccddaabbccddaabbccdd';
 
     it('stores encrypted data in baggage when password provided', async () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       await (root as any).initialize(
         { type: 'srp', mnemonic: TEST_MNEMONIC },
         TEST_PASSWORD,
@@ -278,7 +278,7 @@ describe('keyring-vat', () => {
     });
 
     it('stores plaintext in baggage when no password provided', async () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       await (root as any).initialize({
         type: 'srp',
         mnemonic: TEST_MNEMONIC,
@@ -291,7 +291,7 @@ describe('keyring-vat', () => {
 
     it('requires salt when password is provided', async () => {
       await expect(
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        // oxlint-disable-next-line typescript/no-explicit-any
         (root as any).initialize(
           { type: 'srp', mnemonic: TEST_MNEMONIC },
           TEST_PASSWORD,
@@ -300,7 +300,7 @@ describe('keyring-vat', () => {
     });
 
     it('ignores password for throwaway keyrings', async () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       await (root as any).initialize(
         { type: 'throwaway' },
         TEST_PASSWORD,
@@ -314,7 +314,7 @@ describe('keyring-vat', () => {
     });
 
     it('resuscitates encrypted baggage into locked state', async () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       await (root as any).initialize(
         { type: 'srp', mnemonic: TEST_MNEMONIC },
         TEST_PASSWORD,
@@ -323,17 +323,17 @@ describe('keyring-vat', () => {
       );
 
       // Simulate resuscitation
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       const restored = buildRootObject({}, undefined, baggage as any);
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       expect(await (restored as any).isLocked()).toBe(true);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       expect(await (restored as any).hasKeys()).toBe(false);
     });
 
     it('unlocks with correct password and restores keyring', async () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       await (root as any).initialize(
         { type: 'srp', mnemonic: TEST_MNEMONIC },
         TEST_PASSWORD,
@@ -341,27 +341,27 @@ describe('keyring-vat', () => {
         TEST_PBKDF2_ITERATIONS,
       );
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       const accountsBefore = await (root as any).getAccounts();
 
       // Simulate resuscitation
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       const restored = buildRootObject({}, undefined, baggage as any);
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       await (restored as any).unlock(TEST_PASSWORD, TEST_PBKDF2_ITERATIONS);
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       expect(await (restored as any).isLocked()).toBe(false);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       expect(await (restored as any).hasKeys()).toBe(true);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       const accountsAfter = await (restored as any).getAccounts();
       expect(accountsAfter).toStrictEqual(accountsBefore);
     });
 
     it('throws on unlock with wrong password', async () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       await (root as any).initialize(
         { type: 'srp', mnemonic: TEST_MNEMONIC },
         TEST_PASSWORD,
@@ -369,30 +369,30 @@ describe('keyring-vat', () => {
         TEST_PBKDF2_ITERATIONS,
       );
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       const restored = buildRootObject({}, undefined, baggage as any);
 
       await expect(
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        // oxlint-disable-next-line typescript/no-explicit-any
         (restored as any).unlock('wrong-password', TEST_PBKDF2_ITERATIONS),
       ).rejects.toThrow(/invalid.*tag|decrypt/iu);
     });
 
     it('throws on unlock when not locked', async () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       await (root as any).initialize({
         type: 'srp',
         mnemonic: TEST_MNEMONIC,
       });
 
       await expect(
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        // oxlint-disable-next-line typescript/no-explicit-any
         (root as any).unlock(TEST_PASSWORD),
       ).rejects.toThrow('Keyring is not locked');
     });
 
     it('throws on signing while locked', async () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       await (root as any).initialize(
         { type: 'srp', mnemonic: TEST_MNEMONIC },
         TEST_PASSWORD,
@@ -400,49 +400,49 @@ describe('keyring-vat', () => {
         TEST_PBKDF2_ITERATIONS,
       );
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       const restored = buildRootObject({}, undefined, baggage as any);
 
       await expect(
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        // oxlint-disable-next-line typescript/no-explicit-any
         (restored as any).signMessage('hello'),
       ).rejects.toThrow('Keyring is locked');
 
       await expect(
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        // oxlint-disable-next-line typescript/no-explicit-any
         (restored as any).signHash('0xabcd'),
       ).rejects.toThrow('Keyring is locked');
 
       await expect(
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        // oxlint-disable-next-line typescript/no-explicit-any
         (restored as any).deriveAccount(1),
       ).rejects.toThrow('Keyring is locked');
     });
 
     it('re-derives additional accounts after unlock', async () => {
       // Initialize and derive extra accounts
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       await (root as any).initialize(
         { type: 'srp', mnemonic: TEST_MNEMONIC },
         TEST_PASSWORD,
         TEST_SALT,
         TEST_PBKDF2_ITERATIONS,
       );
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       await (root as any).deriveAccount(1);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       await (root as any).deriveAccount(2);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       const accountsBefore = await (root as any).getAccounts();
       expect(accountsBefore).toHaveLength(3);
 
       // Resuscitate and unlock
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       const restored = buildRootObject({}, undefined, baggage as any);
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       await (restored as any).unlock(TEST_PASSWORD, TEST_PBKDF2_ITERATIONS);
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      // oxlint-disable-next-line typescript/no-explicit-any
       const accountsAfter = await (restored as any).getAccounts();
       expect(accountsAfter).toStrictEqual(accountsBefore);
     });

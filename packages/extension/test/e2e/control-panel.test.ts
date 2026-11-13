@@ -1,4 +1,4 @@
-import minimalClusterConfig from '@ocap/kernel-test/minimal-cluster' assert { type: 'json' };
+import minimalClusterConfig from '@ocap/kernel-test/minimal-cluster' with { type: 'json' };
 import { test, expect } from '@playwright/test';
 import type { Page, BrowserContext } from '@playwright/test';
 

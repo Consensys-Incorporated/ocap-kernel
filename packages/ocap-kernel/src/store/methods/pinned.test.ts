@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 import { getPinMethods } from './pinned.ts';
 import { getRefCountMethods } from './refcount.ts';
+import { asKRef } from '../../../test/branded.ts';
 
 // Mock the dependencies
 vi.mock('./refcount.ts', () => ({
@@ -62,15 +63,15 @@ describe('getPinMethods', () => {
 
   describe('pinObject', () => {
     it('records a pin on the object and takes a reference', () => {
-      methods.pinObject('ko4');
+      methods.pinObject(asKRef('ko4'));
       expect(mockIncrementRefCount).toHaveBeenCalledWith('ko4', 'pin');
       expect(mockKv.get('pinned.ko4')).toBe('1');
     });
 
     it('pins and increments again for an object already pinned', () => {
-      methods.pinObject('ko2');
+      methods.pinObject(asKRef('ko2'));
       expect(mockIncrementRefCount).toHaveBeenCalledWith('ko2', 'pin');
-      expect(methods.getPinCount('ko2')).toBe(2);
+      expect(methods.getPinCount(asKRef('ko2'))).toBe(2);
       expect(methods.getPinnedObjects()).toStrictEqual(['ko1', 'ko2', 'ko3']);
     });
 
@@ -78,32 +79,32 @@ describe('getPinMethods', () => {
       mockIncrementRefCount.mockImplementation(() => {
         throw Error('deleted kref');
       });
-      expect(() => methods.pinObject('ko4')).toThrow('deleted kref');
-      expect(methods.getPinCount('ko4')).toBe(0);
+      expect(() => methods.pinObject(asKRef('ko4'))).toThrow('deleted kref');
+      expect(methods.getPinCount(asKRef('ko4'))).toBe(0);
     });
   });
 
   describe('unpinObject', () => {
     it('drops the object from the pinned objects and releases its reference', () => {
-      methods.unpinObject('ko2');
+      methods.unpinObject(asKRef('ko2'));
       expect(mockDecrementRefCount).toHaveBeenCalledWith('ko2', 'unpin');
       expect(methods.getPinnedObjects()).toStrictEqual(['ko1', 'ko3']);
     });
 
     it('spends one pin of several, leaving the object pinned', () => {
-      methods.pinObject('ko2');
+      methods.pinObject(asKRef('ko2'));
 
-      methods.unpinObject('ko2');
+      methods.unpinObject(asKRef('ko2'));
 
       expect(mockDecrementRefCount).toHaveBeenCalledWith('ko2', 'unpin');
-      expect(methods.getPinCount('ko2')).toBe(1);
-      expect(methods.isObjectPinned('ko2')).toBe(true);
+      expect(methods.getPinCount(asKRef('ko2'))).toBe(1);
+      expect(methods.isObjectPinned(asKRef('ko2'))).toBe(true);
     });
 
     it('does not release a reference for an object that is not pinned', () => {
-      methods.unpinObject('ko4');
+      methods.unpinObject(asKRef('ko4'));
       expect(mockDecrementRefCount).not.toHaveBeenCalled();
-      expect(methods.getPinCount('ko4')).toBe(0);
+      expect(methods.getPinCount(asKRef('ko4'))).toBe(0);
     });
   });
 
@@ -119,21 +120,21 @@ describe('getPinMethods', () => {
     });
 
     it('names an object once however many pins it holds', () => {
-      methods.pinObject('ko2');
-      methods.pinObject('ko2');
+      methods.pinObject(asKRef('ko2'));
+      methods.pinObject(asKRef('ko2'));
 
       expect(methods.getPinnedObjects()).toStrictEqual(['ko1', 'ko2', 'ko3']);
-      expect(methods.getPinCount('ko2')).toBe(3);
+      expect(methods.getPinCount(asKRef('ko2'))).toBe(3);
     });
   });
 
   describe('isObjectPinned', () => {
     it('returns true if the object is pinned', () => {
-      expect(methods.isObjectPinned('ko2')).toBe(true);
+      expect(methods.isObjectPinned(asKRef('ko2'))).toBe(true);
     });
 
     it('returns false if the object is not pinned', () => {
-      expect(methods.isObjectPinned('ko4')).toBe(false);
+      expect(methods.isObjectPinned(asKRef('ko4'))).toBe(false);
     });
   });
 });

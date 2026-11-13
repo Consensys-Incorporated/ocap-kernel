@@ -1,3 +1,11 @@
+import type {
+  ChatParams,
+  ChatResult,
+} from '@metamask/kernel-language-model-service';
+import {
+  LANGUAGE_MODEL_SERVICE_NAME,
+  makeKernelLanguageModelService,
+} from '@metamask/kernel-language-model-service';
 import { NodejsPlatformServices } from '@metamask/kernel-node-runtime';
 import { makeSQLKernelDatabase } from '@metamask/kernel-store/sqlite/nodejs';
 import { waitUntilQuiescent } from '@metamask/kernel-utils';
@@ -8,14 +16,6 @@ import {
 } from '@metamask/logger';
 import type { LogEntry } from '@metamask/logger';
 import { Kernel } from '@metamask/ocap-kernel';
-import type {
-  ChatParams,
-  ChatResult,
-} from '@ocap/kernel-language-model-service';
-import {
-  LANGUAGE_MODEL_SERVICE_NAME,
-  makeKernelLanguageModelService,
-} from '@ocap/kernel-language-model-service';
 import { expect } from 'vitest';
 
 import { LMS_CHAT_MODEL } from './constants.ts';
@@ -47,7 +47,7 @@ export const runLmsChatKernelTest = async (
     logger,
   });
 
-  const { name, service } = makeKernelLanguageModelService(chat);
+  const { name, service } = makeKernelLanguageModelService({ chat });
   kernel.registerKernelServiceObject(name, service);
 
   await kernel.launchSubcluster({

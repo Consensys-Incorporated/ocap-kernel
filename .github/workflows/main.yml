@@ -18,13 +18,13 @@ jobs:
       skip-merge-queue: ${{ steps.check-skip-merge-queue.outputs.up-to-date }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         if: github.event_name == 'merge_group'
 
       - name: Check pull request merge queue status
         id: check-skip-merge-queue
         if: github.event_name == 'merge_group'
-        uses: MetaMask/github-tools/.github/actions/check-skip-merge-queue@v1
+        uses: MetaMask/github-tools/.github/actions/check-skip-merge-queue@93edec1bb8b415968cef809d8607bdddcd639cc3 # v1
 
   detect-changes:
     name: Detect changes
@@ -34,7 +34,7 @@ jobs:
       has-ci: ${{ steps.changes.outputs.has-ci }}
       has-lint-targets: ${{ steps.changes.outputs.has-lint-targets }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
       - name: Detect change categories
@@ -69,7 +69,7 @@ jobs:
             [[ -z "$file" ]] && continue
 
             case "$file" in
-              # CI workflow files (also lint-worthy for prettier on .yml)
+              # CI workflow files (also lint-worthy for oxfmt on .yml)
               .github/workflows/*)
                 HAS_CI=true
                 HAS_LINT_TARGETS=true
@@ -80,12 +80,13 @@ jobs:
                 HAS_CODE=true
                 HAS_LINT_TARGETS=true
                 ;;
-              # Documentation (lint-worthy for prettier, but not code)
+              # Documentation (lint-worthy for oxfmt, but not code)
               *.md|*.txt|docs/*|LICENSE*)
                 HAS_LINT_TARGETS=true
                 ;;
-              # Config/tooling (lint-worthy but not code)
-              .eslintrc*|.prettierrc*|.editorconfig|.gitignore|.gitattributes|.nvmrc|.yarnrc*)
+              # Config/tooling (lint-worthy but not code). The oxfmt config is
+              # a build input (repo-tools formats HTML with it), so it counts as code.
+              .oxlintrc*|oxlint.config.*|.editorconfig|.gitignore|.gitattributes|.nvmrc|.yarnrc*)
                 HAS_LINT_TARGETS=true
                 ;;
               # Everything else is code (source, tests, package.json, tsconfig, lockfile, etc.)
@@ -121,7 +122,7 @@ jobs:
       (github.event_name != 'merge_group' || needs.check-skip-merge-queue.outputs.skip-merge-queue != 'true')
       && (needs.detect-changes.outputs.has-ci == 'true' || needs.detect-changes.outputs.has-code == 'true')
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Download actionlint
         id: download-actionlint
         run: bash <(curl https://raw.githubusercontent.com/rhysd/actionlint/7fdc9630cc360ea1a469eed64ac6d78caeda1234/scripts/download-actionlint.bash) 1.6.25
@@ -133,8 +134,9 @@ jobs:
   lint-build-test:
     name: Lint, build, and test
     needs: [check-skip-merge-queue, check-workflows, detect-changes]
+    # Not always(): that would keep superseded runs going after cancel-in-progress.
     if: |
-      always()
+      !cancelled()
       && needs.check-skip-merge-queue.outputs.skip-merge-queue != 'true'
       && needs.detect-changes.outputs.has-code == 'true'
       && needs.check-workflows.result != 'failure'
@@ -150,7 +152,7 @@ jobs:
         node-version: [24.x]
     steps:
       - name: Checkout and setup environment
-        uses: MetaMask/action-checkout-and-setup@v3
+        uses: MetaMask/action-checkout-and-setup@097d47e741dfa9c09ee779a020b8851875e72904 # v3
         with:
           is-high-risk-environment: false
           node-version: ${{ matrix.node-version }}
@@ -194,7 +196,7 @@ jobs:
       IS_RELEASE: ${{ steps.is-release.outputs.IS_RELEASE }}
     steps:
       - id: is-release
-        uses: MetaMask/action-is-release@v2
+        uses: MetaMask/action-is-release@3cd51b98fa98d1347d06f5961299b0172ee31ae8 # v2
         with:
           commit-starts-with: 'Release [version],Release v[version],Release/[version],Release/v[version],Release `[version]`'
 

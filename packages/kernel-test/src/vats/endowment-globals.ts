@@ -9,7 +9,7 @@ import type { TestPowers } from '../test-powers.ts';
  * @param vatPowers - The powers of the vat.
  * @returns The root object.
  */
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+// oxlint-disable-next-line typescript/explicit-function-return-type
 export function buildRootObject(vatPowers: TestPowers) {
   const tlog = unwrapTestLogger(vatPowers, 'endowment-globals');
 
@@ -87,7 +87,6 @@ export function buildRootObject(vatPowers: TestPowers) {
       // A 16-byte buffer makes the all-zero coincidence vanishingly small
       // (2^-128); a 4-byte buffer has a ~1-in-4-billion false-negative rate.
       const buffer = new Uint8Array(16);
-      // eslint-disable-next-line n/no-unsupported-features/node-builtins -- `crypto` here is the vat endowment, not the Node global; the rule's engines check does not apply inside a SES Compartment.
       crypto.getRandomValues(buffer);
       const hasRandomBytes = buffer.some((byte) => byte !== 0);
       tlog(`crypto: hasRandomBytes=${String(hasRandomBytes)}`);
@@ -105,7 +104,7 @@ export function buildRootObject(vatPowers: TestPowers) {
       // In a SES compartment, globalThis points to the compartment's own
       // global object, so this correctly detects whether an endowment was
       // provided. Intrinsics (e.g. ArrayBuffer) are always present;
-      // host/Web APIs (e.g. TextEncoder) are only present if endowed.
+      // host/Web APIs (e.g. URL) are only present if endowed.
       const exists = name in globalThis;
       tlog(`checkGlobal: ${name}=${String(exists)}`);
       return exists;

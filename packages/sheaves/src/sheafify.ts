@@ -16,10 +16,10 @@ import { makeExo } from '@endo/exo';
 import { M } from '@endo/patterns';
 import type { InterfaceGuard } from '@endo/patterns';
 import type { MethodSchema } from '@metamask/kernel-utils';
+import { asyncifyMethodGuards } from '@metamask/kernel-utils';
 import { makeDiscoverableExo } from '@metamask/kernel-utils';
 import { stringify } from '@metamask/kernel-utils';
 
-import { asyncifyMethodGuards } from './guard.ts';
 import { getMatchingProviders } from './match.ts';
 import { evaluateMetadata } from './metadata.ts';
 import type {

@@ -1,11 +1,11 @@
 import { M, matches } from '@endo/patterns';
-import { describe, it, expect } from 'vitest';
-
 import {
-  collectSheafGuard,
   getInterfaceMethodGuards,
   getMethodPayload,
-} from './guard.ts';
+} from '@metamask/kernel-utils';
+import { describe, it, expect } from 'vitest';
+
+import { collectSheafGuard } from './guard.ts';
 import { guardCoversPoint } from './match.ts';
 import { makeSection } from './section.ts';
 import type { Section } from './types.ts';

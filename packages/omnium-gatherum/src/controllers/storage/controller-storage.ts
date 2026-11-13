@@ -74,7 +74,7 @@ export class ControllerStorage<State extends Record<string, Json>> {
    *
    * @param options - Configuration including initial loaded state.
    */
-  // eslint-disable-next-line no-restricted-syntax -- TypeScript doesn't support # for constructors
+  // oxlint-disable-next-line ocap/no-restricted-syntax -- TypeScript doesn't support # for constructors
   private constructor(options: ControllerStorageOptions<State>) {
     this.#adapter = options.adapter;
     this.#prefix = `${options.namespace}.`;
@@ -232,12 +232,9 @@ export class ControllerStorage<State extends Record<string, Json>> {
       return;
     }
 
-    if (this.#pendingPersist === null) {
-      this.#pendingPersist = setTimeout(() => {
-        this.#flushPendingWrites();
-      }, this.#debounceMs);
-    }
-    // else: timer already running, just accumulate keys, don't reset
+    this.#pendingPersist ??= setTimeout(() => {
+      this.#flushPendingWrites();
+    }, this.#debounceMs);
   }
 
   /**
@@ -270,7 +267,7 @@ export class ControllerStorage<State extends Record<string, Json>> {
       Array.from(keys).map(async (key) => {
         const storageKey = this.#buildKey(key);
         // Correct use of the controller API guarantees that the key is defined.
-        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
+        // oxlint-disable-next-line typescript/no-non-null-assertion
         const value = state[key]!;
         await this.#adapter.set(storageKey, value);
       }),

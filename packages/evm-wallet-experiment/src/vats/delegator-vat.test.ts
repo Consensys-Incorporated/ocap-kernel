@@ -20,6 +20,7 @@ type DelegatorVat = {
     delegate: Address;
     to?: Address;
     maxAmount?: bigint;
+    totalLimit?: bigint;
     chainId: number;
   }): Promise<TransferNativeGrant>;
   buildTransferFungibleGrant(opts: {
@@ -27,7 +28,7 @@ type DelegatorVat = {
     delegate: Address;
     token: Address;
     to?: Address;
-    maxAmount?: bigint;
+    totalLimit?: bigint;
     chainId: number;
   }): Promise<TransferFungibleGrant>;
   storeGrant(grant: DelegationGrant): Promise<void>;

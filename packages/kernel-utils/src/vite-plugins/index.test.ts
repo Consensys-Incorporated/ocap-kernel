@@ -14,8 +14,10 @@ const mockBundle: VatBundle = {
   external: [],
 };
 
+type VatEntry = Parameters<typeof bundleVats>[0]['vats'][number];
+
 describe('bundleVats', () => {
-  const vats = [
+  const vats: [VatEntry, VatEntry] = [
     {
       source: '/absolute/path/to/echo-caplet.js',
       output: 'echo/echo-caplet.bundle',
@@ -31,7 +33,9 @@ describe('bundleVats', () => {
   it('registers vat sources for watch mode in buildStart', () => {
     const plugin = bundleVats({ vats });
     const context = { addWatchFile: vi.fn() };
-    (plugin.buildStart as (this: typeof context) => void).call(context);
+    (plugin.buildStart as unknown as (this: typeof context) => void).call(
+      context,
+    );
 
     expect(context.addWatchFile).toHaveBeenCalledTimes(2);
     expect(context.addWatchFile).toHaveBeenCalledWith(vats[0].source);
@@ -43,7 +47,9 @@ describe('bundleVats', () => {
     const plugin = bundleVats({ vats });
     const context = { emitFile: vi.fn() };
     await (
-      plugin.generateBundle as (this: typeof context) => Promise<void>
+      plugin.generateBundle as unknown as (
+        this: typeof context,
+      ) => Promise<void>
     ).call(context);
 
     expect(bundleVat).toHaveBeenCalledTimes(2);

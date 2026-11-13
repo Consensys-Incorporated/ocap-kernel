@@ -8,7 +8,7 @@ import type { StoreContext } from '../types.ts';
  * @param ctx - The store context.
  * @returns The ID store.
  */
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+// oxlint-disable-next-line typescript/explicit-function-return-type
 export function getIdMethods(ctx: StoreContext) {
   const { kv } = ctx;
   const { incCounter } = getBaseMethods(kv);

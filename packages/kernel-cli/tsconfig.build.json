@@ -1,17 +1,16 @@
 {
   "extends": "../../tsconfig.packages.build.json",
   "compilerOptions": {
-    "baseUrl": "./",
     "lib": ["ES2022"],
     "outDir": "./dist",
-    "emitDeclarationOnly": false,
     "rootDir": "./src",
     "types": ["ses", "node"],
     "paths": {}
   },
   "references": [
     { "path": "../logger/tsconfig.build.json" },
-    { "path": "../kernel-utils/tsconfig.build.json" }
+    { "path": "../kernel-utils/tsconfig.build.json" },
+    { "path": "../kernel-language-model-service/tsconfig.build.json" }
   ],
   "files": [],
   "include": ["./src"]

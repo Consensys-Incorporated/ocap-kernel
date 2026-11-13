@@ -140,7 +140,7 @@ export function decodeTransferCalldata(data: Hex): {
       `Expected transfer selector ${ERC20_TRANSFER_SELECTOR}, got ${selector}`,
     );
   }
-  const params = `0x${data.slice(10)}`;
+  const params = `0x${data.slice(10)}` as const;
   const [to, amount] = decodeAbiParameters(
     parseAbiParameters('address, uint256'),
     params,

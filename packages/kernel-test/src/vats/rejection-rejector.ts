@@ -10,7 +10,7 @@ import type { TestPowers } from '../test-powers.ts';
  * @param vatPowers.logger - The logger for this vat.
  * @returns The root object for this vat.
  */
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+// oxlint-disable-next-line typescript/explicit-function-return-type
 export function buildRootObject({ logger }: TestPowers) {
   const { log } = logger.subLogger({ tags: ['test'] });
   return makeDefaultExo('root', {

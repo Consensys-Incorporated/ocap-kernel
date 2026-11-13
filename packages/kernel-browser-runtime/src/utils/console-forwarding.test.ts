@@ -1,7 +1,9 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import type { Mock } from 'vitest';
 
 import {
   isConsoleForwardMessage,
+  isIframeWindow,
   setupConsoleForwarding,
   handleConsoleForwardMessage,
 } from './console-forwarding.ts';
@@ -96,13 +98,41 @@ describe('console-forwarding', () => {
     });
   });
 
+  describe('isIframeWindow', () => {
+    const iframeWindow = {} as Window;
+
+    beforeEach(() => {
+      vi.stubGlobal('document', {
+        querySelectorAll: vi.fn(() => [
+          { contentWindow: null },
+          { contentWindow: iframeWindow },
+        ]),
+      });
+    });
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    it('returns true for the window of an iframe in the document', () => {
+      expect(isIframeWindow(iframeWindow)).toBe(true);
+    });
+
+    it.each([
+      { name: 'null', source: null },
+      { name: 'an unknown window', source: {} as Window },
+    ])('returns false for $name', ({ source }) => {
+      expect(isIframeWindow(source)).toBe(false);
+    });
+  });
+
   describe('setupConsoleForwarding', () => {
     let originalConsole: typeof console;
-    let mockOnMessage: ReturnType<typeof vi.fn>;
+    let mockOnMessage: Mock<(message: ConsoleForwardMessage) => void>;
 
     beforeEach(() => {
       originalConsole = { ...console };
-      mockOnMessage = vi.fn();
+      mockOnMessage = vi.fn<(message: ConsoleForwardMessage) => void>();
     });
 
     afterEach(() => {
@@ -166,7 +196,7 @@ describe('console-forwarding', () => {
 
       console.log('test');
 
-      const sentMessage = mockOnMessage.mock.calls[0][0];
+      const sentMessage = mockOnMessage.mock.calls[0]?.[0];
       expect(isConsoleForwardMessage(sentMessage)).toBe(true);
     });
 

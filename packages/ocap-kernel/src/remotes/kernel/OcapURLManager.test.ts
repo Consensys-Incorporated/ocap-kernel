@@ -5,6 +5,7 @@ import type { Mock } from 'vitest';
 import { OcapURLManager } from './OcapURLManager.ts';
 import type { RemoteHandle } from './RemoteHandle.ts';
 import type { RemoteManager } from './RemoteManager.ts';
+import { asKRef } from '../../../test/branded.ts';
 import { createMockRemotesFactory } from '../../../test/remotes-mocks.ts';
 import type { SlotValue } from '../../liveslots/kernel-marshal.ts';
 import { kslot } from '../../liveslots/kernel-marshal.ts';
@@ -53,10 +54,10 @@ describe('OcapURLManager', () => {
       async (): Promise<string> => 'ocap:abc123@local-peer-id',
     );
     vi.spyOn(mockRemoteComms, 'redeemLocalOcapURL').mockImplementation(
-      async (): Promise<string> => 'ko123',
+      async (): Promise<KRef> => asKRef('ko123'),
     );
     vi.spyOn(mockRemoteHandle, 'redeemOcapURL').mockImplementation(
-      async (): Promise<string> => 'ko456',
+      async (): Promise<KRef> => asKRef('ko456'),
     );
 
     ocapURLManager = new OcapURLManager({
@@ -210,9 +211,9 @@ describe('OcapURLManager', () => {
         throw new Error('Remote identity not initialized');
       });
 
-      await expect(ocapURLManager.issueOcapURL('ko123')).rejects.toThrow(
-        'Remote identity not initialized',
-      );
+      await expect(
+        ocapURLManager.issueOcapURL(asKRef('ko123')),
+      ).rejects.toThrow('Remote identity not initialized');
     });
   });
 
@@ -223,7 +224,7 @@ describe('OcapURLManager', () => {
 
       expect(kref).toBe('ko123');
       expect(mockRemoteComms.redeemLocalOcapURL).toHaveBeenCalledWith(url);
-      expect(mockRemoteManager.remoteFor).not.toHaveBeenCalled();
+      expect(mockRemoteManager.withRemote).not.toHaveBeenCalled();
     });
 
     it('redeems remote OCAP URL', async () => {
@@ -232,21 +233,21 @@ describe('OcapURLManager', () => {
 
       expect(kref).toBe('ko456');
       expect(mockRemoteComms.redeemLocalOcapURL).not.toHaveBeenCalled();
-      expect(mockRemoteManager.remoteFor).toHaveBeenCalledWith(
+      expect(mockRemoteManager.withRemote).toHaveBeenCalledWith(
         'remote-peer-id',
-        [],
+        { hints: [], use: expect.any(Function) },
       );
       expect(mockRemoteHandle.redeemOcapURL).toHaveBeenCalledWith(url);
     });
 
-    it('passes parsed hints to remoteFor for remote OCAP URL', async () => {
+    it('passes parsed hints to withRemote for remote OCAP URL', async () => {
       const url = 'ocap:def456@remote-peer-id,relay1,relay2';
       const kref = await ocapURLManager.redeemOcapURL(url);
 
       expect(kref).toBe('ko456');
-      expect(mockRemoteManager.remoteFor).toHaveBeenCalledWith(
+      expect(mockRemoteManager.withRemote).toHaveBeenCalledWith(
         'remote-peer-id',
-        ['relay1', 'relay2'],
+        { hints: ['relay1', 'relay2'], use: expect.any(Function) },
       );
       expect(mockRemoteHandle.redeemOcapURL).toHaveBeenCalledWith(url);
     });
@@ -366,7 +367,7 @@ describe('OcapURLManager', () => {
       const slotValue = await redemptionService.redeem(url);
 
       // kslot('ko123') creates a slot value for the kref
-      expect(slotValue).toStrictEqual(kslot('ko123'));
+      expect(slotValue).toStrictEqual(kslot(asKRef('ko123')));
       expect(mockRemoteComms.redeemLocalOcapURL).toHaveBeenCalledWith(url);
     });
 
@@ -378,7 +379,7 @@ describe('OcapURLManager', () => {
       const url = 'ocap:def456@remote-peer-id';
       const slotValue = await redemptionService.redeem(url);
 
-      expect(slotValue).toStrictEqual(kslot('ko456'));
+      expect(slotValue).toStrictEqual(kslot(asKRef('ko456')));
       expect(mockRemoteHandle.redeemOcapURL).toHaveBeenCalledWith(url);
     });
 

@@ -16,10 +16,7 @@ import { isJsonRpcNotification, isJsonRpcResponse } from '@metamask/utils';
 import type { JsonRpcNotification, JsonRpcResponse } from '@metamask/utils';
 
 import type { KernelQueue } from '../KernelQueue.ts';
-import {
-  makeKernelError,
-  makeFatalKernelError,
-} from '../liveslots/kernel-marshal.ts';
+import { makeFatalKernelError } from '../liveslots/kernel-marshal.ts';
 import { vatMethodSpecs, vatSyscallHandlers } from '../rpc/index.ts';
 import type { PingVatResult, VatMethod } from '../rpc/index.ts';
 import type { KernelStore } from '../store/index.ts';
@@ -33,6 +30,11 @@ import type {
   EndpointHandle,
 } from '../types.ts';
 import type { AllowedGlobalName } from './endowments.ts';
+import {
+  MAX_VAT_MESSAGE_LENGTH,
+  capReasonText,
+  fitsVatStateLimit,
+} from './vat-limits.ts';
 import { VatSyscall } from './VatSyscall.ts';
 
 type MessageFromVat = JsonRpcResponse | JsonRpcNotification;
@@ -47,6 +49,8 @@ type VatConstructorProps = {
   kernelQueue: KernelQueue;
   logger?: Logger | undefined;
   allowedGlobalNames?: AllowedGlobalName[] | undefined;
+  /** Called when the channel ends before `terminate` or `expectClose`. */
+  onStreamFailure: (error: Error) => void;
 };
 
 /**
@@ -68,17 +72,17 @@ export class VatHandle implements EndpointHandle {
   /** Optional list of allowed global names for vat endowments */
   readonly #allowedGlobalNames: AllowedGlobalName[] | undefined;
 
-  /** Storage holding the kernel's persistent state */
-  readonly #kernelStore: KernelStore;
-
   /** Storage holding this vat's persistent state */
   readonly #vatStore: VatStore;
 
   /** The vat's syscall */
   readonly #vatSyscall: VatSyscall;
 
-  /** The kernel's queue */
-  readonly #kernelQueue: KernelQueue;
+  /** Told when the channel ends before `terminate` or `expectClose` */
+  readonly #onStreamFailure: (error: Error) => void;
+
+  /** Whether the kernel is closing the channel itself */
+  #closing: boolean = false;
 
   readonly #rpcClient: RpcClient<typeof vatMethodSpecs>;
 
@@ -95,8 +99,10 @@ export class VatHandle implements EndpointHandle {
    * @param params.kernelQueue - The kernel's queue.
    * @param params.logger - Optional logger for error and diagnostic output.
    * @param params.allowedGlobalNames - Optional list of allowed global names for vat endowments.
+   * @param params.onStreamFailure - Called when the channel ends before
+   * `terminate` or `expectClose`.
    */
-  // eslint-disable-next-line no-restricted-syntax
+  // oxlint-disable-next-line ocap/no-restricted-syntax
   private constructor({
     vatId,
     vatConfig,
@@ -105,15 +111,15 @@ export class VatHandle implements EndpointHandle {
     kernelQueue,
     logger,
     allowedGlobalNames,
+    onStreamFailure,
   }: VatConstructorProps) {
     this.vatId = vatId;
     this.config = vatConfig;
     this.#logger = logger;
     this.#allowedGlobalNames = allowedGlobalNames;
     this.#vatStream = vatStream;
-    this.#kernelStore = kernelStore;
+    this.#onStreamFailure = onStreamFailure;
     this.#vatStore = kernelStore.makeVatStore(vatId);
-    this.#kernelQueue = kernelQueue;
     this.#vatSyscall = new VatSyscall({
       vatId,
       kernelQueue,
@@ -149,7 +155,8 @@ export class VatHandle implements EndpointHandle {
    */
   static async make(params: VatConstructorProps): Promise<VatHandle> {
     const vat = new VatHandle(params);
-    const [, deliveryError] = await vat.#init();
+    await vat.#init();
+    const { deliveryError } = vat.#vatSyscall;
     if (deliveryError) {
       throw new Error(
         `Failed to initialize vat ${vat.vatId}: ${deliveryError}`,
@@ -164,15 +171,17 @@ export class VatHandle implements EndpointHandle {
    * @returns A promise for the vat's initial delivery result.
    */
   async #init(): Promise<VatDeliveryResult> {
-    Promise.all([this.#vatStream.drain(this.#handleMessage.bind(this))]).catch(
-      async (error) => {
-        this.#logger?.error(`Unexpected read error`, error);
-        await this.terminate(
-          true,
-          new StreamReadError({ vatId: this.vatId }, error),
-        );
-      },
-    );
+    this.#vatStream
+      .drain(this.#handleMessage.bind(this))
+      .then(() => {
+        // A runtime may close an exited worker's channel rather than fail it,
+        // so a clean end is a lost vat too.
+        this.#reportStreamFailure(new Error('vat channel closed'));
+        return undefined;
+      })
+      .catch((error: Error) => {
+        this.#reportStreamFailure(error);
+      });
 
     return await this.sendVatCommand({
       method: 'initVat',
@@ -184,6 +193,33 @@ export class VatHandle implements EndpointHandle {
           : {}),
       },
     });
+  }
+
+  /**
+   * Fail the commands waiting on a channel that has gone, and tell the
+   * manager, unless `terminate` or `expectClose` came first.
+   *
+   * @param error - What the channel ended with.
+   */
+  #reportStreamFailure(error: Error): void {
+    if (this.#closing) {
+      return;
+    }
+    const streamError = new StreamReadError(
+      { vatId: this.vatId },
+      { cause: error },
+    );
+    // Here, not left to the manager, which ignores a handle it does not hold:
+    // one still shaking hands, or one a termination or restart has let go.
+    this.#rpcClient.rejectAll(streamError);
+    try {
+      this.#onStreamFailure(streamError);
+    } catch (reportError) {
+      this.#logger?.error(
+        `Failed to report the dead channel of vat ${this.vatId}`,
+        reportError,
+      );
+    }
   }
 
   /**
@@ -207,13 +243,20 @@ export class VatHandle implements EndpointHandle {
    */
   async #handleMessage(message: JsonRpcMessage): Promise<void> {
     if (isJsonRpcResponse(message)) {
+      // A reply is not measured whole: it carries all of a delivery's state
+      // changes, so `sendVatCommand` checks each entry.
       this.#rpcClient.handleResponse(message.id as string, message);
     } else if (isJsonRpcNotification(message)) {
+      if (JSON.stringify(message).length > MAX_VAT_MESSAGE_LENGTH) {
+        throw new Error(
+          `Vat ${this.vatId} sent a syscall over ${MAX_VAT_MESSAGE_LENGTH} characters`,
+        );
+      }
       this.#rpcService.assertHasMethod(message.method);
       await this.#rpcService.execute(message.method, message.params);
     } else {
       // We don't expect any JSON-RPC requests from the vat, but the stream may permit them
-      // eslint-disable-next-line @typescript-eslint/restrict-template-expressions
+      // oxlint-disable-next-line typescript/restrict-template-expressions
       throw new Error(`Received unexpected message: ${message}`);
     }
   }
@@ -306,27 +349,29 @@ export class VatHandle implements EndpointHandle {
   }
 
   /**
-   * Terminates the vat.
+   * Treat the channel's end as the kernel's own doing, for a kernel about to
+   * stop every worker. A command still waiting on the channel, such as a ping,
+   * is left waiting rather than failed. None is a delivery: the run loop has
+   * made its last one by then.
+   */
+  expectClose(): void {
+    this.#closing = true;
+  }
+
+  /**
+   * Closes this handle's channel to the vat worker. The store side of a vat's
+   * death is `VatManager`'s.
    *
-   * @param terminating - If true, the vat is being killed permanently, so clean
-   *   up its state and reject any promises that would be left dangling.
+   * @param terminating - If true, the vat is being killed permanently.
    * @param error - The error to terminate the vat with.
    */
   async terminate(terminating: boolean, error?: Error): Promise<void> {
-    await this.#vatStream.end(error);
-    const terminationError = error ?? new VatDeletedError(this.vatId);
+    this.#closing = true;
     if (terminating) {
-      // Reject promises exported to other vats for which this vat is the decider
-      const failure = makeKernelError(
-        'VAT_TERMINATED',
-        terminationError.message,
-      );
-      for (const kpid of this.#kernelStore.getPromisesByDecider(this.vatId)) {
-        this.#kernelQueue.resolvePromises(this.vatId, [[kpid, true, failure]]);
-      }
-      this.#rpcClient.rejectAll(terminationError);
-      this.#kernelStore.deleteVat(this.vatId);
+      // Before `end`, which may never settle.
+      this.#rpcClient.rejectAll(error ?? new VatDeletedError(this.vatId));
     }
+    await this.#vatStream.end(error);
   }
 
   /**
@@ -346,8 +391,14 @@ export class VatHandle implements EndpointHandle {
   }): Promise<ExtractResult<Method, typeof vatMethodSpecs>> {
     const result = await this.#rpcClient.call(method, params);
     if (method === 'initVat' || method === 'deliver') {
-      const [[sets, deletes], deliveryError] = result as VatDeliveryResult;
-      this.#vatSyscall.deliveryError = deliveryError ?? undefined;
+      const [[sets, deletes], vatError] = result as VatDeliveryResult;
+      let deliveryError = vatError;
+      if (!deliveryError && !fitsVatStateLimit([sets, deletes])) {
+        deliveryError = `Vat ${this.vatId} wrote a state entry over ${MAX_VAT_MESSAGE_LENGTH} characters`;
+      }
+      this.#vatSyscall.deliveryError = deliveryError
+        ? capReasonText(deliveryError)
+        : undefined;
       const noErrors = !deliveryError && !this.#vatSyscall.illegalSyscall;
       // On errors, we neither update this vat's KV data nor rollback previous changes.
       // This is safe because vats are always terminated when errors occur

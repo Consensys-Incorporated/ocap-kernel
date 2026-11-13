@@ -1,15 +1,19 @@
+import type { Logger } from '@metamask/logger';
 import { describe, it, expect, beforeEach, vi } from 'vitest';
+import type { Mock } from 'vitest';
 
 import { PeerStateManager } from './peer-state-manager.ts';
 import type { Channel } from '../types.ts';
 
 describe('PeerStateManager', () => {
   let manager: PeerStateManager;
-  let mockLogger: { log: ReturnType<typeof vi.fn> };
+  let mockLogger: { log: Mock<Logger['log']> };
+  let logger: Logger;
 
   beforeEach(() => {
     mockLogger = { log: vi.fn() };
-    manager = new PeerStateManager(mockLogger);
+    logger = mockLogger as unknown as Logger;
+    manager = new PeerStateManager(logger);
   });
 
   describe('getState', () => {
@@ -39,7 +43,7 @@ describe('PeerStateManager', () => {
 
     it('initializes lastConnectionTime on first access', async () => {
       // Use very short timeout for testing
-      const shortTimeoutManager = new PeerStateManager(mockLogger, 10);
+      const shortTimeoutManager = new PeerStateManager(logger, 10);
       shortTimeoutManager.getState('peer1');
 
       // Wait for timeout
@@ -86,7 +90,7 @@ describe('PeerStateManager', () => {
   describe('updateConnectionTime', () => {
     it('updates connection time for peer', async () => {
       // Use very short timeout for testing
-      const shortTimeoutManager = new PeerStateManager(mockLogger, 50);
+      const shortTimeoutManager = new PeerStateManager(logger, 50);
       shortTimeoutManager.getState('peer1');
 
       // Wait a bit, then update connection time
@@ -259,7 +263,7 @@ describe('PeerStateManager', () => {
 
     it('returns empty array when peers have active channels', () => {
       // Use a very short timeout for testing
-      const shortTimeoutManager = new PeerStateManager(mockLogger, 1);
+      const shortTimeoutManager = new PeerStateManager(logger, 1);
       const state = shortTimeoutManager.getState('peer1');
       state.channel = { peerId: 'peer1' } as Channel;
 
@@ -269,7 +273,7 @@ describe('PeerStateManager', () => {
 
     it('returns stale peers without channels after timeout', async () => {
       // Use a very short timeout (10ms) for testing
-      const shortTimeoutManager = new PeerStateManager(mockLogger, 10);
+      const shortTimeoutManager = new PeerStateManager(logger, 10);
       shortTimeoutManager.getState('peer1');
 
       // Wait for timeout
@@ -288,7 +292,7 @@ describe('PeerStateManager', () => {
 
     it('respects custom stale timeout', async () => {
       // Use a very short timeout (10ms)
-      const customManager = new PeerStateManager(mockLogger, 10);
+      const customManager = new PeerStateManager(logger, 10);
       customManager.getState('peer1');
 
       // Wait for timeout

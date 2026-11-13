@@ -7,64 +7,44 @@ import { superstructValidationError } from '../../../test/utils.ts';
 describe('fs types', () => {
   describe('fsConfigStruct', () => {
     it.each([
-      { name: 'minimal config with rootDir', config: { rootDir: '/root' } },
+      { name: 'minimal config with root', config: { root: ['root'] } },
       {
-        name: 'config with rootDir and existsSync enabled',
-        config: { rootDir: '/root', existsSync: true },
+        name: 'config with a multi-segment root',
+        config: { root: ['srv', 'data'] },
       },
       {
-        name: 'config with rootDir and promises.readFile enabled',
-        config: { rootDir: '/root', promises: { readFile: true } },
+        name: 'config with one method',
+        config: { root: ['root'], methods: ['readFile'] },
       },
       {
-        name: 'config with rootDir and promises.access enabled',
-        config: { rootDir: '/root', promises: { access: true } },
+        name: 'config with every method',
+        config: { root: ['root'], methods: ['readFile', 'access'] },
       },
       {
-        name: 'config with all operations enabled',
-        config: {
-          rootDir: '/root',
-          existsSync: true,
-          promises: {
-            readFile: true,
-            access: true,
-          },
-        },
+        name: 'config with an empty method list',
+        config: { root: ['root'], methods: [] },
       },
-      {
-        name: 'config with some operations disabled',
-        config: {
-          rootDir: '/root',
-          existsSync: false,
-          promises: {
-            readFile: true,
-            access: false,
-          },
-        },
-      },
-      { name: 'config with empty string rootDir', config: { rootDir: '' } },
     ])('validates $name', ({ config }) => {
       expect(() => fsConfigStruct.create(config)).not.toThrow();
     });
 
     it.each([
-      { name: 'config without rootDir', config: {} },
-      { name: 'config with non-string rootDir', config: { rootDir: 123 } },
+      { name: 'config without root', config: {} },
+      { name: 'config with a non-array root', config: { root: 123 } },
+      { name: 'config with a non-string segment', config: { root: [123] } },
+      // An empty root would denote the whole filesystem.
+      { name: 'config with an empty root', config: { root: [] } },
       {
-        name: 'config with non-boolean existsSync',
-        config: { rootDir: '/root', existsSync: 'true' },
+        name: 'config with an unknown method',
+        config: { root: ['root'], methods: ['writeFile'] },
       },
       {
-        name: 'config with non-boolean promises.readFile',
-        config: { rootDir: '/root', promises: { readFile: 'true' } },
-      },
-      {
-        name: 'config with non-boolean promises.access',
-        config: { rootDir: '/root', promises: { access: 'true' } },
+        name: 'config with a non-array methods',
+        config: { root: ['root'], methods: 'readFile' },
       },
       {
         name: 'config with additional properties',
-        config: { rootDir: '/root', extraProp: 'value' },
+        config: { root: ['root'], extraProp: 'value' },
       },
     ])('rejects $name', ({ config }) => {
       expect(() => fsConfigStruct.create(config)).toThrow(
@@ -73,31 +53,20 @@ describe('fs types', () => {
     });
 
     it('allows undefined properties', () => {
-      const config: FsConfig = { rootDir: '/root' };
+      const config: FsConfig = { root: ['root'] };
       const validated = fsConfigStruct.create(config);
 
-      expect(validated.rootDir).toBe('/root');
-      // eslint-disable-next-line n/no-sync
-      expect(validated.existsSync).toBeUndefined();
-      expect(validated.promises).toBeUndefined();
+      expect(validated).toStrictEqual({ root: ['root'] });
     });
 
-    it('preserves boolean values', () => {
-      const config: FsConfig = {
-        rootDir: '/root',
-        existsSync: true,
-        promises: {
-          readFile: false,
-          access: true,
-        },
-      };
+    it('preserves the method list', () => {
+      const config: FsConfig = { root: ['root'], methods: ['readFile'] };
       const validated = fsConfigStruct.create(config);
 
-      expect(validated.rootDir).toBe('/root');
-      // eslint-disable-next-line n/no-sync
-      expect(validated.existsSync).toBe(true);
-      expect(validated.promises?.readFile).toBe(false);
-      expect(validated.promises?.access).toBe(true);
+      expect(validated).toStrictEqual({
+        root: ['root'],
+        methods: ['readFile'],
+      });
     });
   });
 });

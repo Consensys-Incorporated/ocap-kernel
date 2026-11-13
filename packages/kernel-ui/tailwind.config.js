@@ -4,13 +4,16 @@ import { brandColor } from '@metamask/design-tokens';
 module.exports = {
   darkMode: 'class',
   presets: [
-    // eslint-disable-next-line n/global-require
+    // oxlint-disable-next-line node/global-require
     require('@metamask/design-system-tailwind-preset'),
   ],
   content: [
     './src/**/*.{js,jsx,ts,tsx}',
-    // Ensures tailwind classnames are generated for design system components
+    // Ensures tailwind classnames are generated for design system components.
+    // The class-name maps live in `design-system-shared`, which the React
+    // components look up at runtime, so both have to be scanned.
     '../../node_modules/@metamask/design-system-react/**/*.{js,mjs,cjs}',
+    '../../node_modules/@metamask/design-system-shared/**/*.{js,mjs,cjs}',
   ],
   theme: {
     colors: {

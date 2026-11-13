@@ -30,7 +30,7 @@ export type SendMessage = (
 export class RpcClient<
   // The class picks up its type from the `methods` argument,
   // so using `any` in this constraint is safe.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  // oxlint-disable-next-line typescript/no-explicit-any
   Methods extends MethodSpecRecord<MethodSpec<string, any, any>>,
 > {
   readonly #methods: Methods;

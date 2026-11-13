@@ -10,7 +10,7 @@ export const ECHO_SERVICE_DESCRIPTION =
  *
  * @returns A discoverable exo with an `echo` method.
  */
-// eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+// oxlint-disable-next-line typescript/explicit-function-return-type
 export function makeEchoService() {
   return makeDiscoverableExo(
     'EchoService',

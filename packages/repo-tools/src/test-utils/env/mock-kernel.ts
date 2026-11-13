@@ -48,6 +48,7 @@ export const setupOcapKernelMock = (): {
     const RunLoopStatusStruct = union([
       type({ state: literal('idle') }),
       type({ state: literal('running') }),
+      type({ state: literal('stopped') }),
       type({ state: literal('failed'), error: string(), detail: string() }),
     ]);
 

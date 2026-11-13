@@ -87,6 +87,7 @@ describe('RunLoopBanner', () => {
   it.each([
     { name: 'running', runLoop: { state: 'running' } as const },
     { name: 'idle', runLoop: { state: 'idle' } as const },
+    { name: 'stopped', runLoop: { state: 'stopped' } as const },
   ])('renders nothing when the run loop is $name', ({ runLoop }) => {
     mockUsePanelContext.mockReturnValue(
       makeMockPanelContext(makeMockStatus(runLoop)),

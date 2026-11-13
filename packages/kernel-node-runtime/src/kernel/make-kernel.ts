@@ -10,6 +10,7 @@ import type {
 
 import { NodejsPlatformServices } from './PlatformServices.ts';
 import { makeIOListenerFactory } from '../io/index.ts';
+import { assertSupportedPlatform } from '../platform.ts';
 
 /**
  * Result of {@link makeKernel}.
@@ -32,7 +33,10 @@ export type MakeKernelResult = {
  * @param options.systemSubclusters - Optional system subcluster configurations.
  * @param options.onRunLoopFailure - Optional handler called if the kernel's run
  * loop dies, after which the kernel must be restarted.
+ * @param options.kernelServices - Kernel services to register before the run
+ * loop starts.
  * @returns The kernel and its database.
+ * @throws If the kernel does not support the current platform.
  */
 export async function makeKernel({
   workerFilePath,
@@ -43,6 +47,7 @@ export async function makeKernel({
   ioListenerFactory,
   systemSubclusters,
   onRunLoopFailure,
+  kernelServices,
 }: {
   workerFilePath?: string;
   resetStorage?: boolean;
@@ -52,7 +57,10 @@ export async function makeKernel({
   ioListenerFactory?: IOListenerFactory;
   systemSubclusters?: SystemSubclusterConfig[];
   onRunLoopFailure?: OnRunLoopFailure;
+  kernelServices?: { name: string; service: object }[];
 }): Promise<MakeKernelResult> {
+  assertSupportedPlatform();
+
   const rootLogger = logger ?? new Logger('kernel-worker');
   const platformServicesClient = new NodejsPlatformServices({
     workerFilePath,
@@ -60,7 +68,10 @@ export async function makeKernel({
   });
 
   // Initialize kernel store.
-  const kernelDatabase = await makeSQLKernelDatabase({ dbFilename });
+  const kernelDatabase = await makeSQLKernelDatabase({
+    dbFilename,
+    logger: rootLogger.subLogger({ tags: ['kernel-store'] }),
+  });
 
   // Create and start kernel.
   const kernel = await Kernel.make(platformServicesClient, kernelDatabase, {
@@ -70,6 +81,7 @@ export async function makeKernel({
     ioListenerFactory: ioListenerFactory ?? makeIOListenerFactory(),
     ...(systemSubclusters ? { systemSubclusters } : {}),
     ...(onRunLoopFailure ? { onRunLoopFailure } : {}),
+    ...(kernelServices ? { kernelServices } : {}),
   });
 
   return { kernel, kernelDatabase };

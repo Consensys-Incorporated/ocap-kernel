@@ -12,7 +12,7 @@ import {
 
 describe('rejection', () => {
   it('throwing from remotable method rejects result', async () => {
-    const vatIds: VatId[] = ['v1', 'v2'];
+    const vatIds: VatId[] = ['v1' as VatId, 'v2' as VatId];
     const { logger, entries } = makeTestLogger();
     const database = await makeSQLKernelDatabase({});
     const kernel = await makeKernel(database, true, logger);

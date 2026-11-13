@@ -1,4 +1,4 @@
-/* eslint-disable no-lonely-if, no-else-return */
+/* oxlint-disable no-lonely-if, no-else-return */
 import type { VatKVStore, VatCheckpoint } from '@metamask/kernel-store';
 
 import { keySearch } from '../utils/key-search.ts';

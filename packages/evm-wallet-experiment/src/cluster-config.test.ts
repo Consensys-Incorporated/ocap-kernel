@@ -96,33 +96,53 @@ describe('cluster-config', () => {
       ]);
     });
 
+    it('grants the provider vat http scoped to allowedHosts', () => {
+      const config = makeWalletClusterConfig({
+        bundleBaseUrl: BUNDLE_BASE_URL,
+        allowedHosts: ['mainnet.infura.io', 'bundler'],
+      });
+
+      expect(config.vats.provider).toStrictEqual({
+        bundleSpec: `${BUNDLE_BASE_URL}/provider-vat.bundle`,
+        globals: ['URL', 'Request', 'Headers', 'Response'],
+        platformConfig: {
+          http: {
+            allow: [{ host: 'mainnet.infura.io' }, { host: 'bundler' }],
+          },
+        },
+      });
+    });
+
+    it.each([
+      { name: 'no allowedHosts', allowedHosts: undefined },
+      { name: 'an empty allowedHosts', allowedHosts: [] },
+    ])('grants the provider vat no http with $name', ({ allowedHosts }) => {
+      const config = makeWalletClusterConfig({
+        bundleBaseUrl: BUNDLE_BASE_URL,
+        ...(allowedHosts && { allowedHosts }),
+      });
+
+      expect(config.vats.provider).toStrictEqual({
+        bundleSpec: `${BUNDLE_BASE_URL}/provider-vat.bundle`,
+        globals: [],
+      });
+    });
+
     it('requests required globals for all vats', () => {
       const config = makeWalletClusterConfig({
         bundleBaseUrl: BUNDLE_BASE_URL,
       });
 
       const providerConfig = config.vats.provider as { globals?: string[] };
-      expect(providerConfig.globals).toStrictEqual([
-        'TextEncoder',
-        'TextDecoder',
-      ]);
+      expect(providerConfig.globals).toStrictEqual([]);
 
       for (const vatName of ['keyring', 'delegator']) {
         const vatConfig = config.vats[vatName] as { globals?: string[] };
-        expect(vatConfig.globals).toStrictEqual([
-          'TextEncoder',
-          'TextDecoder',
-          'crypto',
-        ]);
+        expect(vatConfig.globals).toStrictEqual(['crypto']);
       }
 
       const coordConfig = config.vats.coordinator as { globals?: string[] };
-      expect(coordConfig.globals).toStrictEqual([
-        'TextEncoder',
-        'TextDecoder',
-        'Date',
-        'setTimeout',
-      ]);
+      expect(coordConfig.globals).toStrictEqual(['Date', 'setTimeout']);
     });
 
     it('defaults forceReset to false', () => {

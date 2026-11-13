@@ -4,6 +4,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 
 import { makeReconnectionLifecycle } from './reconnection-lifecycle.ts';
 import type { ReconnectionLifecycleDeps } from './reconnection-lifecycle.ts';
+import { ReconnectionManager } from './reconnection.ts';
 import type { Channel } from '../types.ts';
 
 // Mock kernel-utils for abortableDelay
@@ -261,6 +262,186 @@ describe('reconnection-lifecycle', () => {
         expect.stringContaining('non-retryable'),
         expect.any(Error),
       );
+    });
+
+    it('closes channel and re-dials when the handshake reports a restart', async () => {
+      (deps.reconnectionManager.isReconnecting as ReturnType<typeof vi.fn>)
+        .mockReturnValueOnce(true)
+        .mockReturnValueOnce(true)
+        .mockReturnValueOnce(false);
+      (deps.doOutboundHandshake as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce({
+          success: true,
+          incarnationChanged: true,
+          remoteIncarnationId: 'incarnation-B',
+        })
+        .mockResolvedValueOnce({ success: true, incarnationChanged: false });
+
+      const lifecycle = makeReconnectionLifecycle(deps);
+
+      await lifecycle.attemptReconnection('peer1');
+
+      expect(deps.closeChannel).toHaveBeenCalledTimes(1);
+      expect(deps.closeChannel).toHaveBeenCalledWith(mockChannel, 'peer1');
+      expect(deps.dialPeer).toHaveBeenCalledTimes(2);
+      expect(deps.registerChannel).toHaveBeenCalledTimes(1);
+      // Once for the restart, once on success.
+      expect(deps.reconnectionManager.resetBackoff).toHaveBeenCalledTimes(2);
+    });
+
+    it('reconnects to a peer that restarts on the last attempt', async () => {
+      const reconnectionManager = new ReconnectionManager();
+      reconnectionManager.startReconnection('peer1');
+      deps.reconnectionManager = reconnectionManager;
+      const attemptsAtDial: number[] = [];
+      vi.spyOn(deps, 'dialPeer').mockImplementation(async () => {
+        attemptsAtDial.push(reconnectionManager.getAttemptCount('peer1'));
+        if (attemptsAtDial.length <= 2) {
+          throw new Error('Connection failed');
+        }
+        return mockChannel;
+      });
+      (
+        deps.doOutboundHandshake as ReturnType<typeof vi.fn>
+      ).mockResolvedValueOnce({
+        success: true,
+        incarnationChanged: true,
+        remoteIncarnationId: 'incarnation-B',
+      });
+
+      const lifecycle = makeReconnectionLifecycle(deps);
+
+      await lifecycle.attemptReconnection('peer1');
+
+      expect(attemptsAtDial).toStrictEqual([1, 2, 3, 1]);
+      expect(deps.registerChannel).toHaveBeenCalledTimes(1);
+      expect(deps.onRemoteGiveUp).not.toHaveBeenCalled();
+    });
+
+    it('gives up on a peer that reports a restart on every handshake', async () => {
+      const reconnectionManager = new ReconnectionManager();
+      reconnectionManager.startReconnection('peer1');
+      deps.reconnectionManager = reconnectionManager;
+      let incarnation = 0;
+      vi.spyOn(deps, 'doOutboundHandshake').mockImplementation(async () => {
+        incarnation += 1;
+        return {
+          success: true,
+          incarnationChanged: true,
+          remoteIncarnationId: `incarnation-${incarnation}`,
+        };
+      });
+      const attemptsAtDial: number[] = [];
+      vi.spyOn(deps, 'dialPeer').mockImplementation(async () => {
+        attemptsAtDial.push(reconnectionManager.getAttemptCount('peer1'));
+        // Bounds the loop if the budget never runs out.
+        if (attemptsAtDial.length >= 10) {
+          abortController.abort();
+        }
+        return mockChannel;
+      });
+
+      const lifecycle = makeReconnectionLifecycle(deps);
+
+      await lifecycle.attemptReconnection('peer1');
+
+      expect(deps.onRemoteGiveUp).toHaveBeenCalledWith('peer1');
+      expect(attemptsAtDial).toStrictEqual([1, 1, 2, 3]);
+    });
+
+    it('spends no attempt on a restart reported again before the kernel records it', async () => {
+      const reconnectionManager = new ReconnectionManager();
+      reconnectionManager.startReconnection('peer1');
+      deps.reconnectionManager = reconnectionManager;
+      const restart = {
+        success: true,
+        incarnationChanged: true,
+        remoteIncarnationId: 'incarnation-B',
+      };
+      (deps.doOutboundHandshake as ReturnType<typeof vi.fn>)
+        .mockResolvedValueOnce(restart)
+        .mockResolvedValueOnce(restart)
+        .mockResolvedValueOnce(restart)
+        .mockResolvedValueOnce(restart)
+        .mockResolvedValueOnce(restart);
+      const attemptsAtDial: number[] = [];
+      vi.spyOn(deps, 'dialPeer').mockImplementation(async () => {
+        attemptsAtDial.push(reconnectionManager.getAttemptCount('peer1'));
+        return mockChannel;
+      });
+
+      const lifecycle = makeReconnectionLifecycle(deps);
+
+      await lifecycle.attemptReconnection('peer1');
+
+      expect(attemptsAtDial).toStrictEqual([1, 1, 2, 3, 4, 5]);
+      expect(deps.registerChannel).toHaveBeenCalledTimes(1);
+      expect(deps.onRemoteGiveUp).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      { maxAttempts: 3, dials: [1, 1, 2, 3, 4, 5, 6], gaveUp: true },
+      { maxAttempts: 0, dials: [1, 1, 2, 3, 4, 5, 6, 7, 8, 9], gaveUp: false },
+    ])(
+      'gives back no more attempts than a budget of $maxAttempts to a restart the kernel never records',
+      async ({ maxAttempts, dials, gaveUp }) => {
+        const reconnectionManager = new ReconnectionManager();
+        reconnectionManager.startReconnection('peer1');
+        deps.reconnectionManager = reconnectionManager;
+        (
+          deps.doOutboundHandshake as ReturnType<typeof vi.fn>
+        ).mockResolvedValue({
+          success: true,
+          incarnationChanged: true,
+          remoteIncarnationId: 'incarnation-B',
+        });
+        const attemptsAtDial: number[] = [];
+        vi.spyOn(deps, 'dialPeer').mockImplementation(async () => {
+          attemptsAtDial.push(reconnectionManager.getAttemptCount('peer1'));
+          if (attemptsAtDial.length === 10) {
+            reconnectionManager.stopReconnection('peer1');
+          }
+          return mockChannel;
+        });
+
+        const lifecycle = makeReconnectionLifecycle(deps);
+
+        await lifecycle.attemptReconnection('peer1', maxAttempts);
+
+        expect({
+          dials: attemptsAtDial,
+          gaveUp:
+            (deps.onRemoteGiveUp as ReturnType<typeof vi.fn>).mock.calls
+              .length > 0,
+        }).toStrictEqual({ dials, gaveUp });
+      },
+    );
+
+    it('gives back attempts to the latest restart a peer reports', async () => {
+      const reconnectionManager = new ReconnectionManager();
+      reconnectionManager.startReconnection('peer1');
+      deps.reconnectionManager = reconnectionManager;
+      let handshakes = 0;
+      vi.spyOn(deps, 'doOutboundHandshake').mockImplementation(async () => {
+        handshakes += 1;
+        return {
+          success: true,
+          incarnationChanged: true,
+          remoteIncarnationId:
+            handshakes === 1 ? 'incarnation-B' : 'incarnation-C',
+        };
+      });
+      const attemptsAtDial: number[] = [];
+      vi.spyOn(deps, 'dialPeer').mockImplementation(async () => {
+        attemptsAtDial.push(reconnectionManager.getAttemptCount('peer1'));
+        return mockChannel;
+      });
+
+      const lifecycle = makeReconnectionLifecycle(deps);
+
+      await lifecycle.attemptReconnection('peer1', 3);
+
+      expect(attemptsAtDial).toStrictEqual([1, 1, 2, 3, 4, 5, 6]);
     });
 
     it('resets backoff on successful reconnection', async () => {

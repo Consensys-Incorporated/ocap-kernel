@@ -57,7 +57,6 @@ const encoder = new TextEncoder();
  */
 export const mockReadableStream = (chunks: object[]) =>
   // ReadableStream is experimental in Node 20, but this case works.
-  // eslint-disable-next-line n/no-unsupported-features/node-builtins
   new ReadableStream<object>({
     start(controller) {
       for (const chunk of chunks.slice(0, -1)) {

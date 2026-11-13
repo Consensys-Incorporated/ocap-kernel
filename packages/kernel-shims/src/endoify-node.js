@@ -7,7 +7,6 @@ import './endoify-repair.js';
 
 // @libp2p/webrtc needs to modify globals in Node.js only, so we need to import
 // it before hardening.
-// eslint-disable-next-line import-x/no-unresolved -- peer dependency
 import '@libp2p/webrtc';
 
 hardenIntrinsics();

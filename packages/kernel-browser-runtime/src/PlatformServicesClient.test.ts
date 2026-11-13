@@ -11,10 +11,9 @@ import type { PlatformServicesClientStream } from './PlatformServicesClient.ts';
 import { PlatformServicesClient } from './PlatformServicesClient.ts';
 
 vi.mock('@metamask/streams/browser', async (importOriginal) => {
-  // eslint-disable-next-line @typescript-eslint/no-shadow
-  const { TestDuplexStream } = await import(
-    '@ocap/repo-tools/test-utils/streams'
-  );
+  // oxlint-disable-next-line typescript/no-shadow
+  const { TestDuplexStream } =
+    await import('@ocap/repo-tools/test-utils/streams');
 
   class MockStream extends TestDuplexStream {
     constructor() {
@@ -97,7 +96,7 @@ describe('PlatformServicesClient', () => {
     });
 
     it('rejects pending promises for error replies', async () => {
-      const resultP = client.launch('v0', makeVatConfig());
+      const resultP = client.launch('v0' as VatId, makeVatConfig());
 
       await stream.receiveInput(
         makeMessageEvent('m1', {
@@ -151,7 +150,7 @@ describe('PlatformServicesClient', () => {
       const newStream = await TestDuplexStream.make((message) => {
         outputs.push(message as unknown as MessageEventWithPayload);
       });
-      // eslint-disable-next-line no-new -- test setup
+      // oxlint-disable-next-line no-new -- test setup
       new PlatformServicesClient(
         newStream as unknown as PlatformServicesClientStream,
       );
@@ -176,7 +175,7 @@ describe('PlatformServicesClient', () => {
 
     describe('launch', () => {
       it('resolves with a duplex stream when receiving a launch reply', async () => {
-        const vatId: VatId = 'v0';
+        const vatId = 'v0' as VatId;
         const vatConfig = makeVatConfig();
         const result = client.launch(vatId, vatConfig);
 
@@ -188,7 +187,7 @@ describe('PlatformServicesClient', () => {
       });
 
       it('throws an error when receiving reply without a port', async () => {
-        const vatId: VatId = 'v0';
+        const vatId = 'v0' as VatId;
         const vatConfig = makeVatConfig();
         const launchP = client.launch(vatId, vatConfig);
         const reply = makeNullReply('m1');
@@ -207,7 +206,7 @@ describe('PlatformServicesClient', () => {
         );
 
         // Call launch before starting the client
-        const launchPromise = newClient.launch('v0', makeVatConfig());
+        const launchPromise = newClient.launch('v0' as VatId, makeVatConfig());
 
         // Now send the launch reply
         await delay(10);
@@ -220,7 +219,7 @@ describe('PlatformServicesClient', () => {
 
     describe('terminate', () => {
       it('resolves when receiving a terminate reply', async () => {
-        const result = client.terminate('v0');
+        const result = client.terminate('v0' as VatId);
         await stream.receiveInput(makeNullReply('m1'));
         await delay(10);
 
@@ -359,7 +358,7 @@ describe('PlatformServicesClient', () => {
           const newStream = await TestDuplexStream.make((message) => {
             outputs.push(message as unknown as MessageEventWithPayload);
           });
-          // eslint-disable-next-line no-new -- test setup
+          // oxlint-disable-next-line no-new -- test setup
           new PlatformServicesClient(
             newStream as unknown as PlatformServicesClientStream,
           );
@@ -486,7 +485,7 @@ describe('PlatformServicesClient', () => {
           const newStream = await TestDuplexStream.make((message) => {
             outputs.push(message as unknown as MessageEventWithPayload);
           });
-          // eslint-disable-next-line no-new -- test setup
+          // oxlint-disable-next-line no-new -- test setup
           new PlatformServicesClient(
             newStream as unknown as PlatformServicesClientStream,
           );
@@ -573,7 +572,7 @@ describe('PlatformServicesClient', () => {
           const newStream = await TestDuplexStream.make((message) => {
             outputs.push(message as unknown as MessageEventWithPayload);
           });
-          // eslint-disable-next-line no-new -- test setup
+          // oxlint-disable-next-line no-new -- test setup
           new PlatformServicesClient(
             newStream as unknown as PlatformServicesClientStream,
           );

@@ -9,6 +9,7 @@ import { describe, it, expect, vi } from 'vitest';
 import type { VatEndowments } from './endowments.ts';
 import { VatSupervisor } from './VatSupervisor.ts';
 import type { FetchBlob } from './VatSupervisor.ts';
+import type { VatId } from '../types.ts';
 
 vi.mock('./syscall.ts', () => ({
   makeSupervisorSyscall: vi.fn(() => ({
@@ -40,7 +41,7 @@ const makeVatSupervisor = async ({
   platformOptions,
   makeAllowedGlobals,
   fetchBlob,
-  writerOnEnd,
+  onEnd,
 }: {
   dispatch?: (input: unknown) => void | Promise<void>;
   logger?: Logger;
@@ -49,7 +50,7 @@ const makeVatSupervisor = async ({
   platformOptions?: Record<string, unknown>;
   makeAllowedGlobals?: (options: { logger: Logger }) => VatEndowments;
   fetchBlob?: FetchBlob;
-  writerOnEnd?: () => void;
+  onEnd?: () => void;
 } = {}): Promise<{
   supervisor: VatSupervisor;
   stream: TestDuplexStream<JsonRpcMessage, JsonRpcMessage>;
@@ -59,7 +60,7 @@ const makeVatSupervisor = async ({
     JsonRpcMessage
   >(dispatch ?? (() => undefined), {
     validateInput: isJsonRpcMessage,
-    writerOnEnd,
+    onEnd,
   });
 
   // Provide a default makePlatform if none is specified
@@ -67,14 +68,14 @@ const makeVatSupervisor = async ({
 
   return {
     supervisor: new VatSupervisor({
-      id: 'test-id',
+      id: 'test-id' as VatId,
       kernelStream,
       logger: logger ?? new Logger(),
       vatPowers: vatPowers ?? {},
       makePlatform: makePlatform ?? defaultMakePlatform,
       platformOptions: platformOptions ?? {},
-      makeAllowedGlobals,
-      fetchBlob,
+      ...(makeAllowedGlobals && { makeAllowedGlobals }),
+      ...(fetchBlob && { fetchBlob }),
     }),
     stream: kernelStream,
   };
@@ -160,20 +161,20 @@ describe('VatSupervisor', () => {
 
     it('calls the endowments teardown before closing the stream', async () => {
       // The stream is hardened, so we can't vi.spyOn(stream, 'end'). Instead,
-      // observe the writer's onEnd callback, which fires as part of stream.end().
+      // observe the stream's onEnd callback, which fires as part of stream.end().
       const teardown = vi.fn().mockResolvedValue(undefined);
-      const writerOnEnd = vi.fn();
+      const onEnd = vi.fn();
       const { supervisor } = await makeVatSupervisor({
         makeAllowedGlobals: () => makeVatEndowments({}, teardown),
-        writerOnEnd,
+        onEnd,
       });
 
       await supervisor.terminate();
 
       expect(teardown).toHaveBeenCalledTimes(1);
-      expect(writerOnEnd).toHaveBeenCalledTimes(1);
+      expect(onEnd).toHaveBeenCalledTimes(1);
       expect(teardown.mock.invocationCallOrder[0]).toBeLessThan(
-        writerOnEnd.mock.invocationCallOrder[0] as number,
+        onEnd.mock.invocationCallOrder[0] as number,
       );
     });
 
@@ -255,7 +256,7 @@ describe('VatSupervisor', () => {
   describe('platform configuration', () => {
     it('accepts makePlatform and platformOptions parameters', async () => {
       const makePlatform = vi.fn().mockResolvedValue({});
-      const platformOptions = { fs: { rootDir: '/tmp' } };
+      const platformOptions = { fs: { root: ['tmp'] } };
 
       const { supervisor } = await makeVatSupervisor({
         makePlatform,
@@ -290,21 +291,51 @@ describe('VatSupervisor', () => {
       expect(factory).toHaveBeenCalledTimes(1);
     });
 
-    it('rejects fetch requests without network.allowedHosts', async () => {
-      const dispatch = vi.fn();
+    const endowmentsFetch = (() => undefined) as unknown as typeof fetch;
+    const suppliedFetch = (() => undefined) as unknown as typeof fetch;
+    const fsOptions = { makeReadFile: () => undefined };
+
+    it.each([
+      {
+        name: "builds http on the endowments' fetch",
+        fetch: endowmentsFetch,
+        platformOptions: {},
+        expected: { http: { fetch: endowmentsFetch } },
+      },
+      {
+        name: 'builds http on a fetch platformOptions supply',
+        fetch: endowmentsFetch,
+        platformOptions: { http: { fetch: suppliedFetch } },
+        expected: { http: { fetch: suppliedFetch } },
+      },
+      {
+        name: 'keeps the other platformOptions',
+        fetch: endowmentsFetch,
+        platformOptions: { fs: fsOptions },
+        expected: { fs: fsOptions, http: { fetch: endowmentsFetch } },
+      },
+      {
+        name: 'passes platformOptions through when the endowments have no fetch',
+        fetch: undefined,
+        platformOptions: { fs: fsOptions },
+        expected: { fs: fsOptions },
+      },
+    ])('$name', async ({ fetch: vatFetch, platformOptions, expected }) => {
       const mockFetchBlob: FetchBlob = vi.fn().mockResolvedValue({
         ok: true,
         text: vi.fn().mockResolvedValue(''),
       });
-
-      // Use a plain function, not vi.fn(), since `makeVatEndowments`
-      // hardens the globals record transitively — a vi.fn() here would
-      // freeze the mock's internals and break unrelated tests that mock-reset
-      // afterwards.
-      const stubFetch = (() => undefined) as unknown as typeof fetch;
+      const makePlatform = vi.fn().mockResolvedValue({});
+      const platformConfig = {
+        http: { allow: [{ host: 'example.test' }] },
+      };
       const { stream } = await makeVatSupervisor({
-        dispatch,
-        makeAllowedGlobals: () => makeVatEndowments({ fetch: stubFetch }),
+        makePlatform,
+        platformOptions,
+        makeAllowedGlobals: () => ({
+          ...makeVatEndowments({}),
+          ...(vatFetch && { fetch: vatFetch }),
+        }),
         fetchBlob: mockFetchBlob,
       });
 
@@ -312,82 +343,14 @@ describe('VatSupervisor', () => {
         id: 'test-init',
         method: 'initVat',
         params: {
-          vatConfig: {
-            bundleSpec: 'test.bundle',
-            parameters: {},
-            globals: ['fetch'],
-          },
+          vatConfig: { bundleSpec: 'test.bundle', platformConfig },
           state: [],
         },
         jsonrpc: '2.0',
       });
       await delay(50);
 
-      expect(dispatch).toHaveBeenCalledWith(
-        expect.objectContaining({
-          id: 'test-init',
-          error: expect.objectContaining({
-            message: expect.stringContaining(
-              'requested "fetch" but no network.allowedHosts',
-            ),
-          }),
-        }),
-      );
-    });
-
-    it('proceeds past the fetch-allowlist guard when network.allowedHosts is supplied', async () => {
-      // If the guard mis-fires, dispatch would receive the specific
-      // 'requested "fetch" but no network.allowedHosts' error. Asserting
-      // its absence proves the caveat wrap ran and init moved on (any
-      // later error, e.g., bundle load, is acceptable).
-      const dispatch = vi.fn();
-      const mockFetchBlob: FetchBlob = vi.fn().mockResolvedValue({
-        ok: true,
-        text: vi.fn().mockResolvedValue(''),
-      });
-
-      const stubFetch = (() => undefined) as unknown as typeof fetch;
-      const { stream } = await makeVatSupervisor({
-        dispatch,
-        makeAllowedGlobals: () => makeVatEndowments({ fetch: stubFetch }),
-        fetchBlob: mockFetchBlob,
-      });
-
-      await stream.receiveInput({
-        id: 'test-init',
-        method: 'initVat',
-        params: {
-          vatConfig: {
-            bundleSpec: 'test.bundle',
-            parameters: {},
-            globals: ['fetch'],
-            network: { allowedHosts: ['example.test'] },
-          },
-          state: [],
-        },
-        jsonrpc: '2.0',
-      });
-      await delay(50);
-
-      // With makeLiveSlots mocked, init completes and dispatch receives
-      // the delivery result — assert that positive shape directly so the
-      // test doesn't pass vacuously if init were to short-circuit.
-      expect(dispatch).toHaveBeenCalledWith(
-        expect.objectContaining({
-          id: 'test-init',
-          result: expect.anything(),
-        }),
-      );
-      expect(dispatch).not.toHaveBeenCalledWith(
-        expect.objectContaining({
-          id: 'test-init',
-          error: expect.objectContaining({
-            message: expect.stringMatching(
-              /requested "fetch" but no network\.allowedHosts/u,
-            ),
-          }),
-        }),
-      );
+      expect(makePlatform).toHaveBeenCalledWith(platformConfig, expected);
     });
 
     it('rejects an unknown global at the initVat RPC boundary', async () => {

@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add `PeerRestartedError`, `IntentionalCloseError`, and `NetworkStoppedError` sentinel errors for the remote-comms transport ([#948](https://github.com/MetaMask/ocap-kernel/pull/948))
 - Add `isTerminalSendError` utility to discriminate retry-worthy from terminal `sendRemoteMessage` errors ([#948](https://github.com/MetaMask/ocap-kernel/pull/948))
 
+### Removed
+
+- **BREAKING:** Remove the CommonJS build; the package is ESM-only. Its entry points are `.js` and `.d.ts` files, formerly `.mjs`/`.cjs` and `.d.mts`/`.d.cts` ([#1186](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1186))
+
 ## [0.6.0]
 
 ### Added

@@ -37,22 +37,28 @@ async function main(): Promise<void> {
     (listener) => globalThis.removeEventListener('message', listener),
   );
 
-  const [messageStream, platformServicesClient, kernelDatabase] =
-    await Promise.all([
-      MessagePortDuplexStream.make<JsonRpcMessage, JsonRpcMessage>(
-        port,
-        isJsonRpcMessage,
-      ),
-      PlatformServicesClient.make(globalThis as PostMessageTarget),
-      makeSQLKernelDatabase({ dbFilename: DB_FILENAME }),
-    ]);
+  const messageStream = await MessagePortDuplexStream.make<
+    JsonRpcMessage,
+    JsonRpcMessage
+  >(port, isJsonRpcMessage);
 
+  // Must precede anything that logs: forwarding swaps out the `console` methods
+  // the logger's transport resolves at dispatch, so earlier lines never leave
+  // the worker.
   setupConsoleForwarding({
     source: 'kernel-worker',
     onMessage: (message) => {
       messageStream.write(message).catch(() => undefined);
     },
   });
+
+  const [platformServicesClient, kernelDatabase] = await Promise.all([
+    PlatformServicesClient.make(globalThis as PostMessageTarget),
+    makeSQLKernelDatabase({
+      dbFilename: DB_FILENAME,
+      logger: logger.subLogger({ tags: ['kernel-store'] }),
+    }),
+  ]);
 
   const urlParams = new URLSearchParams(globalThis.location.search);
   const resetStorage = urlParams.get('reset-storage') === 'true';

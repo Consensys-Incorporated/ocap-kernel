@@ -19,7 +19,8 @@ describe('makeOcapJsonrpcClusterConfig', () => {
       type: 'socket',
       path: '/tmp/ocap-jsonrpc.sock',
     });
-    expect(config.vats[OCAP_JSONRPC_VAT_NAME]?.bundleSpec).toBe(
+    expect(config.vats[OCAP_JSONRPC_VAT_NAME]).toHaveProperty(
+      'bundleSpec',
       `file:///tmp/jsonrpc/${OCAP_JSONRPC_BUNDLE_FILENAME}`,
     );
   });

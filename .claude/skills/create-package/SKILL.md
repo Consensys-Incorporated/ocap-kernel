@@ -39,9 +39,9 @@ yarn workspace @ocap/my-package add some-dependency @ocap/kernel-agents
 When adding monorepo dependencies like `@ocap/kernel-agents`, update the TypeScript references:
 
 ```jsonc
-// packages/my-package/tsconfig.json and tsconfig.build.json
+// packages/my-package/tsconfig.build.json
 {
-  "references": [{ "path": "../kernel-agents" }],
+  "references": [{ "path": "../kernel-agents/tsconfig.build.json" }],
 }
 ```
 

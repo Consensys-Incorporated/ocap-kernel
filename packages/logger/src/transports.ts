@@ -28,11 +28,10 @@ export function makeConsoleTransport(
     if (baseLevelIdx <= logLevels[method]) {
       return (...args: unknown[]) => {
         // Ultimately, a console somewhere is an acceptable terminal for logging
-        // eslint-disable-next-line no-console
         console[method](...args);
       };
     }
-    // eslint-disable-next-line no-empty-function
+    // oxlint-disable-next-line no-empty-function
     return harden(() => {}) as LogMethod;
   };
   const filteredConsole = {
@@ -70,7 +69,7 @@ export const makeStreamTransport = (
         jsonrpc: '2.0',
       })
       // This is a last resort, but it's better than nothing
-      // eslint-disable-next-line no-console
+      // oxlint-disable-next-line no-console
       .catch(console.debug);
   };
 };

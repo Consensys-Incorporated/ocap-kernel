@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `RpcClient` result-validation errors now include the individual struct failures, not just the top-level message ([#1005](https://github.com/MetaMask/ocap-kernel/pull/1005))
   - A union's own message names only the union, so a reply from a peer built against an older schema was indistinguishable from an ordinary bad value; the failures name the branch and the key
 
+### Removed
+
+- **BREAKING:** Remove the CommonJS build; the package is ESM-only. Its entry points are `.js` and `.d.ts` files, formerly `.mjs`/`.cjs` and `.d.mts`/`.d.cts` ([#1186](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1186))
+
 ## [0.6.0]
 
 ### Changed
