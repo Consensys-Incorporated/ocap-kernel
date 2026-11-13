@@ -98,8 +98,7 @@ describe('a crank whose transaction SQLite rolls back mid-delivery', () => {
         message: { methargs: { body: '', slots: [] }, result: null },
       } as unknown as RunQueueItem);
 
-      // As `VatSyscall` does: a failed syscall is logged and the delivery carries on.
-      const syscall = (write: () => void): void => {
+      const swallowFailure = (write: () => void): void => {
         try {
           write();
         } catch {
@@ -108,12 +107,14 @@ describe('a crank whose transaction SQLite rolls back mid-delivery', () => {
       };
       const deliver = async (): Promise<CrankResult | undefined> => {
         kdb.executeQuery('PRAGMA max_page_count = 1');
-        syscall(() =>
+        swallowFailure(() =>
           kernelStore.setKernelServiceKref('big', 'x'.repeat(100_000) as KRef),
         );
         kdb.executeQuery('PRAGMA max_page_count = 1073741823');
-        syscall(() => kernelStore.setKernelServiceKref('after', asKRef('ko2')));
-        syscall(() =>
+        swallowFailure(() =>
+          kernelStore.setKernelServiceKref('after', asKRef('ko2')),
+        );
+        swallowFailure(() =>
           kernelStore.makeVatStore('v1').updateKVData([['after', 'value']], []),
         );
         return crankResult;
@@ -155,7 +156,7 @@ describe('a crank whose transaction SQLite rolls back mid-delivery', () => {
       try {
         kernelStore.setKernelServiceKref('big', 'x'.repeat(100_000) as KRef);
       } catch {
-        // Swallowed, as `VatSyscall` does.
+        // Swallowed.
       }
       kdb.executeQuery('PRAGMA max_page_count = 1073741823');
       // A read that finds the write SQLite undid.

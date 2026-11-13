@@ -136,6 +136,9 @@ export class KernelQueue {
   /** A failed rollback discards every savepoint, leaving the catch none. */
   #abortRollbackFailed: boolean = false;
 
+  /** The first fault {@link panic} recorded, thrown by the run loop. */
+  #panic: Error | undefined;
+
   /**
    * The run loop's state, as one value so that a failure recorded for a loop
    * that never started can't be represented. Once failed, nothing drains the
@@ -199,6 +202,7 @@ export class KernelQueue {
    */
   async #runLoop(deliver: Deliver): Promise<void> {
     for (;;) {
+      this.#throwIfPanicked();
       // `endRunLoop` was called, and every control operation queued before it
       // has run; `enqueueControl` refuses any after.
       if (this.#ending && this.#controlRequests.length === 0) {
@@ -238,7 +242,9 @@ export class KernelQueue {
             this.#kernelStore.incrementCrankNumber();
             this.#kernelStore.nextTerminatedVatCleanup();
             const crankResult = await deliver(queueItem);
+            this.#throwIfPanicked();
             await this.#processCrankResult(crankResult, queueItem);
+            this.#throwIfPanicked();
             afterCommit = crankResult?.afterCommit;
           } else {
             if (this.#wakeUpTheRunQueue !== null) {
@@ -249,7 +255,9 @@ export class KernelQueue {
             this.#wakeUpTheRunQueue = resolve;
             wakeUpPromise = promise;
           }
-        } catch (error) {
+        } catch (thrown) {
+          // The panic, if any, came first and is the fault to report.
+          const error = this.#panic ?? thrown;
           if (!this.#abortRollbackFailed) {
             try {
               this.#kernelStore.rollbackCrank('crank');
@@ -483,6 +491,32 @@ export class KernelQueue {
   }
 
   /**
+   * Stop the kernel over a fault of its own, such as a store write that
+   * failed, caught where a throw would not reach the run loop. As SwingSet's
+   * `kernelPanic`, the run loop throws it before the open crank commits, or on
+   * waking if no crank is open.
+   *
+   * @param problem - What failed, completing "Kernel panic: ...".
+   * @param cause - The error that was caught.
+   * @returns This call's error; the run loop throws the first one recorded.
+   */
+  panic(problem: string, cause: unknown): Error {
+    const error = new Error(`Kernel panic: ${problem}`, { cause });
+    this.#panic ??= error;
+    this.#wakeRunLoop();
+    return error;
+  }
+
+  /**
+   * Throw the fault {@link panic} recorded, if any.
+   */
+  #throwIfPanicked(): void {
+    if (this.#panic) {
+      throw this.#panic;
+    }
+  }
+
+  /**
    * Report whether the kernel is able to process its run queue at all.
    *
    * @returns The current run loop status.
@@ -623,6 +657,8 @@ export class KernelQueue {
     if (crankResult?.terminate) {
       const { vatId, info } = crankResult.terminate;
       await this.#terminateVat(vatId, info);
+      // Before the flush answers anyone.
+      this.#throwIfPanicked();
     }
     this.#kernelStore.collectGarbage();
     // The audit goes first, so the flush does not settle the promise
