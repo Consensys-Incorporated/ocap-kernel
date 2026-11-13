@@ -20,6 +20,9 @@ const moonPhases = [
 ] as const;
 type MoonPhase = (typeof moonPhases)[number];
 
+// A vat has no clock or entropy, so successive calls cycle through the phases.
+let moonPhaseIndex = 0;
+
 const capabilities = makeInternalCapabilities(
   'Examples',
   {
@@ -33,9 +36,9 @@ const capabilities = makeInternalCapabilities(
       ];
     },
     async getMoonPhase(): Promise<MoonPhase> {
-      return moonPhases[
-        Math.floor(Math.random() * moonPhases.length)
-      ] as MoonPhase;
+      const phase = moonPhases[moonPhaseIndex % moonPhases.length] as MoonPhase;
+      moonPhaseIndex += 1;
+      return phase;
     },
   },
   S.interface('Examples', {
