@@ -7,8 +7,10 @@ import type {
   KRef,
   KernelPromise,
   KernelMessage,
+  PromiseQueueEntry,
   PromiseState,
   EndpointId,
+  Sender,
 } from '../../types.ts';
 import type { StoreContext } from '../types.ts';
 import { getRefCountMethods } from './refcount.ts';
@@ -89,6 +91,13 @@ export function getPromiseMethods(ctx: StoreContext) {
       case 'fulfilled':
       case 'rejected': {
         result.value = JSON.parse(ctx.kv.getRequired(`${kpid}.value`));
+        const resolver = ctx.kv.get(`${kpid}.resolver`);
+        if (resolver !== undefined) {
+          if (resolver !== 'kernel') {
+            insistEndpointId(resolver);
+          }
+          result.resolver = resolver;
+        }
         break;
       }
       default:
@@ -107,6 +116,7 @@ export function getPromiseMethods(ctx: StoreContext) {
     ctx.kv.delete(`${kpid}.decider`);
     ctx.kv.delete(`${kpid}.subscribers`);
     ctx.kv.delete(`${kpid}.value`);
+    ctx.kv.delete(`${kpid}.resolver`);
     ctx.kv.delete(refCountKey(kpid));
     provideStoredQueue(kpid).delete();
   }
@@ -156,27 +166,35 @@ export function getPromiseMethods(ctx: StoreContext) {
    * Resolve a kernel promise, updating its state and returning any queued messages.
    * The queued messages should be buffered by the caller for eventual delivery.
    *
-   * @param kpid - The ref of the promise being resolved.
-   * @param rejected - True if the promise is being rejected, false if fulfilled.
-   * @param value - The value the promise is being fulfilled to or rejected with.
-   * @returns An array of queued messages that were waiting on this promise,
-   *          each as a tuple of [target, message].
+   * @param options - Options bag.
+   * @param options.kpid - The ref of the promise being resolved.
+   * @param options.rejected - True if the promise is being rejected, false if fulfilled.
+   * @param options.value - The value the promise is being fulfilled to or rejected with.
+   * @param options.resolver - Who is resolving it.
+   * @returns The messages that were waiting on this promise, with their
+   * provenance.
    */
-  function resolveKernelPromise(
-    kpid: KRef,
-    rejected: boolean,
-    value: CapData<KRef>,
-  ): [KRef, KernelMessage][] {
+  function resolveKernelPromise({
+    kpid,
+    rejected,
+    value,
+    resolver,
+  }: {
+    kpid: KRef;
+    rejected: boolean;
+    value: CapData<KRef>;
+    resolver: Sender;
+  }): PromiseQueueEntry[] {
     const queue = provideStoredQueue(kpid, false);
     // Releasing each queue entry's references as we go: the caller re-enqueues
     // these on the run queue, which takes its own.
-    const queuedMessages: [KRef, KernelMessage][] = [];
-    for (const message of getKernelPromiseMessageQueue(kpid)) {
-      queuedMessages.push([kpid, message]);
+    const queuedMessages = getKernelPromiseMessageQueue(kpid);
+    for (const { message } of queuedMessages) {
       releaseQueuedMessageRefs(kpid, message, 'resolve|dequeue');
     }
     ctx.kv.set(`${kpid}.state`, rejected ? 'rejected' : 'fulfilled');
     ctx.kv.set(`${kpid}.value`, JSON.stringify(value));
+    ctx.kv.set(`${kpid}.resolver`, resolver);
     ctx.kv.delete(`${kpid}.decider`);
     ctx.kv.delete(`${kpid}.subscribers`);
     // The promise has been decided, so it is no longer owed a decision.
@@ -192,9 +210,10 @@ export function getPromiseMethods(ctx: StoreContext) {
    * everything the message carries, just as the run queue does.
    *
    * @param kpid - The KRef of the promise to enqueue on.
-   * @param message - The message to enqueue.
+   * @param entry - The message to enqueue, with its provenance.
    */
-  function enqueuePromiseMessage(kpid: KRef, message: KernelMessage): void {
+  function enqueuePromiseMessage(kpid: KRef, entry: PromiseQueueEntry): void {
+    const { message } = entry;
     incrementRefCount(kpid, 'promiseQueue|target');
     if (message.result) {
       incrementRefCount(message.result, 'promiseQueue|result');
@@ -202,7 +221,7 @@ export function getPromiseMethods(ctx: StoreContext) {
     for (const slot of message.methargs.slots) {
       incrementRefCount(slot, 'promiseQueue|slot');
     }
-    provideStoredQueue(kpid, false).enqueue(message);
+    provideStoredQueue(kpid, false).enqueue(entry);
   }
 
   /**
@@ -234,13 +253,13 @@ export function getPromiseMethods(ctx: StoreContext) {
    * @param kpid - The KRef of the kernel promise of interest.
    * @returns An array of all the messages in the given promise's message queue.
    */
-  function getKernelPromiseMessageQueue(kpid: KRef): KernelMessage[] {
-    const result: KernelMessage[] = [];
+  function getKernelPromiseMessageQueue(kpid: KRef): PromiseQueueEntry[] {
+    const result: PromiseQueueEntry[] = [];
     const queue = provideStoredQueue(kpid, false);
     for (;;) {
-      const message = queue.dequeue() as KernelMessage;
-      if (message) {
-        result.push(message);
+      const entry = queue.dequeue() as PromiseQueueEntry;
+      if (entry) {
+        result.push(entry);
       } else {
         return result;
       }

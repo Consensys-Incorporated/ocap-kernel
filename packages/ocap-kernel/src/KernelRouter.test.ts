@@ -21,6 +21,7 @@ import type {
   CrankResult,
   EndpointHandle,
   RemoteId,
+  Sender,
   VatId,
   KRef,
 } from './types.ts';
@@ -42,6 +43,9 @@ describe('KernelRouter', () => {
   >;
   let mockApplyIncarnationChange: Mock<
     (item: RunQueueItemPeerIncarnation) => CrankResult
+  >;
+  let mockInvokeKernelService: Mock<
+    (target: KRef, message: KernelMessage, sender: Sender) => void
   >;
 
   beforeEach(() => {
@@ -94,6 +98,10 @@ describe('KernelRouter', () => {
       orphanKernelObject: vi.fn(),
       forgetKref: vi.fn(),
       createCrankSavepoint: vi.fn(),
+      setCurrentDelivery: vi.fn(),
+      isTracked: vi.fn().mockReturnValue(false),
+      recordDelivery: vi.fn(),
+      recordConveyance: vi.fn(),
     } as unknown as KernelStore;
 
     // Mock KernelQueue
@@ -101,7 +109,7 @@ describe('KernelRouter', () => {
       resolvePromises: vi.fn(),
     } as unknown as KernelQueue;
 
-    const mockInvokeKernelService = vi.fn();
+    mockInvokeKernelService = vi.fn();
     mockRestartVat = vi.fn(async () => undefined);
     mockTerminateVat = vi.fn(async () => undefined);
     mockApplyIncarnationChange = vi.fn(() => ({}));
@@ -149,6 +157,8 @@ describe('KernelRouter', () => {
           type: 'send',
           target,
           message,
+          sender: v1,
+          cause: 1,
         };
 
         const result = await kernelRouter.deliver(sendItem);
@@ -178,6 +188,102 @@ describe('KernelRouter', () => {
         );
       });
 
+      it('tells the translators who sent the message', async () => {
+        (kernelStore.getOwner as unknown as MockInstance).mockReturnValueOnce(
+          v1,
+        );
+        await kernelRouter.deliver({
+          type: 'send',
+          target: asKRef('ko123'),
+          message: { methargs: { body: 'method args', slots: [] } },
+          sender: asVatId('v2'),
+          cause: 3,
+        });
+        expect(kernelStore.setCurrentDelivery).toHaveBeenCalledWith({
+          via: 'message',
+          sender: 'v2',
+        });
+      });
+
+      it('records a delivery to a tracked object and the conveyance of each tracked reference it carries', async () => {
+        const target = asKRef('ko123');
+        (kernelStore.getOwner as unknown as MockInstance).mockReturnValueOnce(
+          v1,
+        );
+        (kernelStore.isTracked as unknown as MockInstance).mockImplementation(
+          (kref: KRef) => kref === target || kref === 'ko2',
+        );
+        const message: KernelMessage = {
+          methargs: kser([
+            'poke',
+            [kslot(asKRef('ko1')), kslot(asKRef('ko2')), kslot(asKRef('ko2'))],
+          ]),
+          result: asKRef('kp1'),
+        };
+        await kernelRouter.deliver({
+          type: 'send',
+          target,
+          message,
+          sender: asVatId('v2'),
+          cause: 3,
+        });
+        expect(kernelStore.recordDelivery).toHaveBeenCalledWith({
+          target,
+          targetEndpoint: v1,
+          sender: 'v2',
+          cause: 3,
+          method: 'poke',
+          message,
+        });
+        expect(kernelStore.recordConveyance).toHaveBeenCalledTimes(1);
+        expect(kernelStore.recordConveyance).toHaveBeenCalledWith({
+          kref: 'ko2',
+          sender: 'v2',
+          to: v1,
+          via: 'message',
+          carrier: target,
+        });
+      });
+
+      it('records nothing for a message to an untracked object carrying no tracked reference', async () => {
+        (kernelStore.getOwner as unknown as MockInstance).mockReturnValueOnce(
+          v1,
+        );
+        await kernelRouter.deliver({
+          type: 'send',
+          target: asKRef('ko123'),
+          message: {
+            methargs: { body: 'method args', slots: [asKRef('ko1')] },
+          },
+          sender: v1,
+          cause: 1,
+        });
+        expect(kernelStore.recordDelivery).not.toHaveBeenCalled();
+        expect(kernelStore.recordConveyance).not.toHaveBeenCalled();
+      });
+
+      it('passes the sender to a kernel service', async () => {
+        const target = asKRef('ko123');
+        (kernelStore.getOwner as unknown as MockInstance).mockReturnValueOnce(
+          'kernel',
+        );
+        const message: KernelMessage = {
+          methargs: { body: 'method args', slots: [] },
+        };
+        await kernelRouter.deliver({
+          type: 'send',
+          target,
+          message,
+          sender: asVatId('v2'),
+          cause: 3,
+        });
+        expect(mockInvokeKernelService).toHaveBeenCalledWith(
+          target,
+          message,
+          'v2',
+        );
+      });
+
       it('splats a message when target is revoked and returns undefined', async () => {
         // Setup the kernel store to return a revoked owner for the target
         (kernelStore.isRevoked as unknown as MockInstance).mockReturnValueOnce(
@@ -197,6 +303,8 @@ describe('KernelRouter', () => {
           type: 'send',
           target,
           message,
+          sender: v1,
+          cause: 1,
         };
         const result = await kernelRouter.deliver(sendItem);
 
@@ -257,6 +365,8 @@ describe('KernelRouter', () => {
           type: 'send',
           target,
           message,
+          sender: v1,
+          cause: 1,
         };
         const result = await kernelRouter.deliver(sendItem);
 
@@ -316,14 +426,17 @@ describe('KernelRouter', () => {
           type: 'send',
           target,
           message,
+          sender: v1,
+          cause: 1,
         };
         const result = await kernelRouter.deliver(sendItem);
 
         // Verify the message was enqueued on the promise
-        expect(kernelStore.enqueuePromiseMessage).toHaveBeenCalledWith(
-          target,
+        expect(kernelStore.enqueuePromiseMessage).toHaveBeenCalledWith(target, {
           message,
-        );
+          sender: v1,
+          cause: 1,
+        });
         // Verify no vat interaction occurred
         expect(getEndpoint).not.toHaveBeenCalled();
         expect(endpointHandle.deliverMessage).not.toHaveBeenCalled();
@@ -347,12 +460,19 @@ describe('KernelRouter', () => {
           },
           result: asKRef('kp9'),
         };
-        await kernelRouter.deliver({ type: 'send', target, message });
-
-        expect(kernelStore.enqueuePromiseMessage).toHaveBeenCalledWith(
+        await kernelRouter.deliver({
+          type: 'send',
           target,
           message,
-        );
+          sender: v1,
+          cause: 1,
+        });
+
+        expect(kernelStore.enqueuePromiseMessage).toHaveBeenCalledWith(target, {
+          message,
+          sender: v1,
+          cause: 1,
+        });
         expect(
           (kernelStore.decrementRefCount as unknown as MockInstance).mock.calls,
         ).toStrictEqual([
@@ -383,7 +503,13 @@ describe('KernelRouter', () => {
           result: null,
         };
 
-        await kernelRouter.deliver({ type: 'send', target, message });
+        await kernelRouter.deliver({
+          type: 'send',
+          target,
+          message,
+          sender: v1,
+          cause: 1,
+        });
 
         expect(endpointHandle.deliverMessage).toHaveBeenCalledWith(
           `translated-${routedTarget}`,
@@ -417,6 +543,8 @@ describe('KernelRouter', () => {
           type: 'send',
           target: promiseId,
           message,
+          sender: v1,
+          cause: 1,
         };
 
         const result = await kernelRouter.deliver(sendItem);
@@ -467,6 +595,8 @@ describe('KernelRouter', () => {
           type: 'send',
           target: promiseId,
           message,
+          sender: v1,
+          cause: 1,
         };
 
         const result = await kernelRouter.deliver(sendItem);
@@ -507,6 +637,8 @@ describe('KernelRouter', () => {
           type: 'send',
           target,
           message,
+          sender: v1,
+          cause: 1,
         };
 
         const result = await kernelRouter.deliver(sendItem);
@@ -552,6 +684,8 @@ describe('KernelRouter', () => {
             type: 'send',
             target,
             message,
+            sender: endpointId,
+            cause: 1,
           };
 
           await kernelRouter.deliver(sendItem);
@@ -587,6 +721,8 @@ describe('KernelRouter', () => {
             kernelRouter.deliver({
               type: 'send',
               target: asKRef('ko123'),
+              sender: owner,
+              cause: 1,
               message: {
                 methargs: { body: 'method args', slots: [] },
                 result: asKRef('kp1'),
@@ -659,6 +795,42 @@ describe('KernelRouter', () => {
           'deliver|notify',
         );
         expect(result).toStrictEqual(mockCrankResult);
+      });
+
+      it('tells the translators who settled each promise, and records the conveyance of a tracked reference', async () => {
+        const kpid = asKRef('kp123');
+        const tracked = asKRef('ko7');
+        (
+          kernelStore.getKernelPromise as unknown as MockInstance
+        ).mockReturnValue({
+          state: 'fulfilled',
+          value: { body: '#"$0"', slots: [tracked, tracked] },
+          resolver: asVatId('v2'),
+        });
+        (kernelStore.krefToEref as unknown as MockInstance).mockReturnValueOnce(
+          'p+123',
+        );
+        (
+          kernelStore.getKpidsToRetire as unknown as MockInstance
+        ).mockReturnValueOnce([kpid]);
+        (kernelStore.isTracked as unknown as MockInstance).mockImplementation(
+          (kref: KRef) => kref === tracked,
+        );
+
+        await kernelRouter.deliver({ type: 'notify', endpointId: v1, kpid });
+
+        expect(kernelStore.setCurrentDelivery).toHaveBeenCalledWith({
+          via: 'notify',
+          sender: 'v2',
+        });
+        expect(kernelStore.recordConveyance).toHaveBeenCalledTimes(1);
+        expect(kernelStore.recordConveyance).toHaveBeenCalledWith({
+          kref: tracked,
+          sender: 'v2',
+          to: v1,
+          via: 'notify',
+          carrier: kpid,
+        });
       });
 
       it('returns didDelivery when promise is not in vat clist', async () => {
@@ -1295,6 +1467,8 @@ describe('KernelRouter', () => {
                 methargs: { body: 'method args', slots: [] },
                 result: asKRef('kp1'),
               },
+              sender: v1,
+              cause: 1,
             };
           },
         ],

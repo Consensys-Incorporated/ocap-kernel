@@ -1,6 +1,12 @@
 import { describe, it, expect } from 'vitest';
 
-import { SQL_QUERIES, assertSafeIdentifier } from './common.ts';
+import {
+  SQL_QUERIES,
+  assertSafeIdentifier,
+  buildRecordsDelete,
+  buildRecordsQuery,
+  recordRowFromValues,
+} from './common.ts';
 
 describe('SQL_QUERIES', () => {
   // XXX Is this test actually useful? It's basically testing that the source code matches itself.
@@ -40,13 +46,20 @@ describe('SQL_QUERIES', () => {
   it('has all expected query properties', () => {
     expect(Object.keys(SQL_QUERIES).sort()).toStrictEqual([
       'ABORT_TRANSACTION',
+      'APPEND_RECORD',
       'BEGIN_IMMEDIATE_TRANSACTION',
       'BEGIN_TRANSACTION',
       'CLEAR',
+      'CLEAR_RECORDS',
       'CLEAR_VS',
       'COMMIT_TRANSACTION',
+      'CREATE_INDEX_RECORDS_ENDPOINT',
+      'CREATE_INDEX_RECORDS_KREF',
+      'CREATE_INDEX_RECORDS_SENDER',
+      'CREATE_INDEX_RECORDS_TRACE',
       'CREATE_SAVEPOINT',
       'CREATE_TABLE',
+      'CREATE_TABLE_RECORDS',
       'CREATE_TABLE_VS',
       'DELETE',
       'DELETE_VS',
@@ -97,5 +110,77 @@ describe('assertSafeIdentifier', () => {
     expect(() => assertSafeIdentifier("name'; DROP TABLE users--")).toThrow(
       'Invalid identifier',
     );
+  });
+});
+
+describe('buildRecordsQuery', () => {
+  it('selects every record in sequence order when given no conditions', () => {
+    expect(buildRecordsQuery({})).toStrictEqual({
+      sql: 'SELECT seq, kind, witness, crank, kref, endpoint, sender, trace, data FROM records ORDER BY seq',
+      params: [],
+    });
+  });
+
+  it('binds one parameter per condition, in clause order', () => {
+    expect(
+      buildRecordsQuery({
+        kind: 'delivery',
+        kref: 'ko1',
+        endpoint: 'v1',
+        sender: 'v2',
+        trace: 't1',
+        involving: 'v3',
+        throughCrank: 7,
+        afterSeq: 3,
+        limit: 10,
+      }),
+    ).toStrictEqual({
+      sql: 'SELECT seq, kind, witness, crank, kref, endpoint, sender, trace, data FROM records WHERE kind = ? AND kref = ? AND endpoint = ? AND sender = ? AND trace = ? AND (endpoint = ? OR sender = ?) AND crank <= ? AND seq > ? ORDER BY seq LIMIT ?',
+      params: ['delivery', 'ko1', 'v1', 'v2', 't1', 'v3', 'v3', 7, 3, 10],
+    });
+  });
+});
+
+describe('buildRecordsDelete', () => {
+  it('deletes what the conditions select', () => {
+    expect(buildRecordsDelete({ kref: 'ko1', throughCrank: 5 })).toStrictEqual({
+      sql: 'DELETE FROM records WHERE kref = ? AND crank <= ?',
+      params: ['ko1', 5],
+    });
+  });
+
+  it('applies a limit through a subquery, earliest first', () => {
+    expect(buildRecordsDelete({ kind: 'delivery', limit: 2 })).toStrictEqual({
+      sql: 'DELETE FROM records WHERE seq IN (SELECT seq FROM records WHERE kind = ? ORDER BY seq LIMIT ?)',
+      params: ['delivery', 2],
+    });
+  });
+});
+
+describe('recordRowFromValues', () => {
+  it('names the columns in query order', () => {
+    expect(
+      recordRowFromValues([
+        3,
+        'delivery',
+        'kernel',
+        7,
+        'ko1',
+        'v1',
+        null,
+        null,
+        '{}',
+      ]),
+    ).toStrictEqual({
+      seq: 3,
+      kind: 'delivery',
+      witness: 'kernel',
+      crank: 7,
+      kref: 'ko1',
+      endpoint: 'v1',
+      sender: null,
+      trace: null,
+      data: '{}',
+    });
   });
 });

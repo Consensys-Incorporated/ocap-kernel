@@ -586,6 +586,8 @@ describe('Remote Communications (Integration Tests)', () => {
           type: 'send',
           target: target as KRef,
           message: { methargs: kser(['hello', ['again']]), result: null },
+          sender: 'kernel',
+          cause: 'async',
         });
       },
       'message',

@@ -498,10 +498,14 @@ describe('a vat retired from outside the run loop during its delivery', () => {
     {
       what: 'send with no result',
       queue: ({ kernelQueue, doomedRoot }: Harness): void => {
-        kernelQueue.enqueueSend(doomedRoot, {
-          methargs: kser(['second', []]),
-          result: null,
-        });
+        kernelQueue.enqueueSend(
+          doomedRoot,
+          {
+            methargs: kser(['second', []]),
+            result: null,
+          },
+          { sender: 'kernel' },
+        );
       },
     },
     {

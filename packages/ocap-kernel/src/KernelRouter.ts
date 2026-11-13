@@ -4,7 +4,7 @@ import { VatNotFoundError } from '@metamask/kernel-errors';
 import { Logger } from '@metamask/logger';
 
 import { KernelQueue } from './KernelQueue.ts';
-import { makeKernelError } from './liveslots/kernel-marshal.ts';
+import { kmethodName, makeKernelError } from './liveslots/kernel-marshal.ts';
 import type { KernelStore } from './store/index.ts';
 import { extractSingleRef } from './store/utils/extract-ref.ts';
 import { parseRef } from './store/utils/parse-ref.ts';
@@ -27,6 +27,7 @@ import type {
   RunQueueItemGCAction,
   CrankResult,
   GCRunQueueType,
+  Sender,
   VatId,
 } from './types.ts';
 import { isRemoteId, isVatId } from './types.ts';
@@ -51,7 +52,11 @@ type KernelRouterOptions = {
   kernelStore: KernelStore;
   kernelQueue: KernelQueue;
   getEndpoint: (endpointId: EndpointId) => EndpointHandle;
-  invokeKernelService: (target: KRef, message: KernelMessage) => void;
+  invokeKernelService: (
+    target: KRef,
+    message: KernelMessage,
+    sender: Sender,
+  ) => void;
   restartVat: (vatId: VatId) => Promise<CrankResult | undefined>;
   terminateVat: (
     vatId: VatId,
@@ -78,7 +83,11 @@ export class KernelRouter {
   readonly #getEndpoint: (endpointId: EndpointId) => EndpointHandle;
 
   /** A function that invokes a method on a kernel service. */
-  readonly #invokeKernelService: (target: KRef, message: KernelMessage) => void;
+  readonly #invokeKernelService: (
+    target: KRef,
+    message: KernelMessage,
+    sender: Sender,
+  ) => void;
 
   /**
    * A function that replaces a vat's worker, for the crank that carries out a
@@ -337,11 +346,12 @@ export class KernelRouter {
     }
 
     const { endpointId, target } = route;
-    const { message } = item;
+    const { message, sender, cause } = item;
     this.#logCrank(
-      `deliver ${endpointId} send ${target}<-${JSON.stringify(message)}`,
+      `deliver ${endpointId} send ${target}<-${JSON.stringify(message)} from ${sender}, cause ${cause}`,
     );
     if (endpointId) {
+      this.#kernelStore.setCurrentDelivery({ via: 'message', sender });
       const isKernelServiceMessage = endpointId === 'kernel';
       let endpoint: EndpointHandle | null = null;
       if (!isKernelServiceMessage) {
@@ -391,6 +401,7 @@ export class KernelRouter {
             'deliver|send|result',
           );
         }
+        this.#recordSend(item, target, endpointId);
       }
       if (endpoint) {
         // endpoint is only set when !isKernelServiceMessage, so endpointId
@@ -428,7 +439,11 @@ export class KernelRouter {
           }
         }
       } else if (isKernelServiceMessage) {
-        crankResult = this.#deliverKernelServiceMessage(target, message);
+        crankResult = this.#deliverKernelServiceMessage(
+          target,
+          message,
+          sender,
+        );
       } else {
         Fail`no owner for kernel object ${target}`;
       }
@@ -442,7 +457,11 @@ export class KernelRouter {
     } else {
       // The references move from this run queue item to the promise's queue
       // entry. New holder first, so nothing transiently looks unreferenced.
-      this.#kernelStore.enqueuePromiseMessage(target, message);
+      this.#kernelStore.enqueuePromiseMessage(target, {
+        message,
+        sender,
+        cause,
+      });
       this.#kernelStore.decrementRefCount(item.target, 'requeue|target');
       if (message.result) {
         this.#kernelStore.decrementRefCount(message.result, 'requeue|result');
@@ -456,17 +475,59 @@ export class KernelRouter {
   }
 
   /**
+   * Record what a send does with tracked objects: a delivery, if its target is
+   * tracked, and a conveyance of each tracked reference it carries. Written
+   * before the delivery, inside the crank's savepoint, so a delivery that is
+   * rolled back takes its records with it.
+   *
+   * @param item - The send.
+   * @param target - The object it is delivered to, which may not be the one
+   * it was aimed at if that was a promise.
+   * @param endpointId - The endpoint the object belongs to.
+   */
+  #recordSend(
+    item: RunQueueItemSend,
+    target: KRef,
+    endpointId: EndpointId | 'kernel',
+  ): void {
+    const { message, sender, cause } = item;
+    if (this.#kernelStore.isTracked(target)) {
+      this.#kernelStore.recordDelivery({
+        target,
+        targetEndpoint: endpointId,
+        sender,
+        cause,
+        method: kmethodName(message.methargs),
+        message,
+      });
+    }
+    for (const slot of new Set(message.methargs.slots)) {
+      if (this.#kernelStore.isTracked(slot)) {
+        this.#kernelStore.recordConveyance({
+          kref: slot,
+          sender,
+          to: endpointId,
+          via: 'message',
+          carrier: target,
+        });
+      }
+    }
+  }
+
+  /**
    * Delivers a message to a kernel service object.
    *
    * @param target - The kernel reference of the target service object.
    * @param message - The message to deliver to the service.
+   * @param sender - Who sent it.
    * @returns The crank result indicating the delivery was to the kernel.
    */
   #deliverKernelServiceMessage(
     target: KRef,
     message: KernelMessage,
+    sender: Sender,
   ): CrankResult {
-    this.#invokeKernelService(target, message);
+    this.#invokeKernelService(target, message, sender);
     return { didDelivery: 'kernel' };
   }
 
@@ -567,6 +628,20 @@ export class KernelRouter {
       if (!tPromise.value) {
         throw Fail`target promise ${toResolve} has no value`;
       }
+      // Per promise: a notify can carry several, each settled by someone.
+      const sender = tPromise.resolver ?? 'kernel';
+      this.#kernelStore.setCurrentDelivery({ via: 'notify', sender });
+      for (const slot of new Set(tPromise.value.slots)) {
+        if (this.#kernelStore.isTracked(slot)) {
+          this.#kernelStore.recordConveyance({
+            kref: slot,
+            sender,
+            to: endpointId,
+            via: 'notify',
+            carrier: toResolve,
+          });
+        }
+      }
       resolutions.push([
         this.#kernelStore.translateRefKtoE(endpointId, toResolve, true),
         tPromise.state === 'rejected',
@@ -665,6 +740,7 @@ export class KernelRouter {
       );
       return { didDelivery: remoteId };
     }
+    this.#kernelStore.setCurrentDelivery({ via: 'ocap-url' });
     try {
       return await remote.deliverInbound(message);
     } catch (error) {

@@ -5,7 +5,7 @@ import type { Logger } from '@metamask/logger';
 import type { KernelQueue } from './KernelQueue.ts';
 import { kser, kunser, makeKernelError } from './liveslots/kernel-marshal.ts';
 import type { KernelStore } from './store/index.ts';
-import type { KRef, KernelMessage } from './types.ts';
+import type { KRef, KernelMessage, Sender } from './types.ts';
 import { assert } from './utils/assert.ts';
 
 export type KernelService = {
@@ -21,6 +21,11 @@ export type KernelService = {
   kref: KRef;
   service: object;
   systemOnly: boolean;
+  /**
+   * Whether each method is called with `{ caller }`, the endpoint the kernel
+   * saw the message come from, ahead of the caller's own arguments.
+   */
+  withCaller: boolean;
 };
 
 type KernelServiceManagerConstructorProps = {
@@ -74,12 +79,17 @@ export class KernelServiceManager {
    * @param options - Registration options.
    * @param options.systemOnly - Whether the service is only available to system
    * subclusters. Defaults to `false`.
+   * @param options.withCaller - Whether to call each method with the calling
+   * endpoint, as `{ caller }`, ahead of the arguments. Defaults to `false`.
    * @returns The registered kernel service with its kref.
    */
   registerKernelServiceObject(
     name: string,
     service: object,
-    { systemOnly = false }: { systemOnly?: boolean } = {},
+    {
+      systemOnly = false,
+      withCaller = false,
+    }: { systemOnly?: boolean; withCaller?: boolean } = {},
   ): KernelService {
     if (this.#kernelServicesByName.has(name)) {
       throw new Error(`Kernel service "${name}" is already registered`);
@@ -90,7 +100,7 @@ export class KernelServiceManager {
       this.#kernelStore.setKernelServiceKref(name, kref);
       this.#kernelStore.pinObject(kref);
     }
-    const kernelService = { name, kref, service, systemOnly };
+    const kernelService = { name, kref, service, systemOnly, withCaller };
     this.#kernelServicesByName.set(name, kernelService);
     this.#kernelServicesByObject.set(kref, kernelService);
     return kernelService;
@@ -150,6 +160,7 @@ export class KernelServiceManager {
       kref,
       service,
       systemOnly: false,
+      withCaller: false,
     });
     return kref;
   }
@@ -253,8 +264,13 @@ export class KernelServiceManager {
    *
    * @param target - The target kref of the service.
    * @param message - The message to invoke the service with.
+   * @param sender - Who sent it.
    */
-  invokeKernelService(target: KRef, message: KernelMessage): void {
+  invokeKernelService(
+    target: KRef,
+    message: KernelMessage,
+    sender: Sender,
+  ): void {
     const kernelService = this.#kernelServicesByObject.get(target);
     if (!kernelService) {
       // Reachable, and not necessarily a kernel bug: an anonymous kernel
@@ -291,8 +307,11 @@ export class KernelServiceManager {
         string,
         (...methodArgs: unknown[]) => unknown
       >;
+      const callArgs = kernelService.withCaller
+        ? [harden({ caller: sender }), ...args]
+        : args;
       // oxlint-disable-next-line typescript/no-non-null-assertion
-      const resultPromise = E(service)[method]!(...args);
+      const resultPromise = E(service)[method]!(...callArgs);
       Promise.resolve(resultPromise)
         .then((resultValue) => {
           if (result) {

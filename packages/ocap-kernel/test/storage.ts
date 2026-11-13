@@ -1,4 +1,11 @@
-import type { KVStore, KernelDatabase, VatStore } from '@metamask/kernel-store';
+import type {
+  KVStore,
+  KernelDatabase,
+  RecordFilter,
+  RecordRow,
+  RecordStore,
+  VatStore,
+} from '@metamask/kernel-store';
 
 import { markStoreFaults } from '../src/store/utils/store-fault.ts';
 import { keySearch } from '../src/utils/key-search.ts';
@@ -104,6 +111,48 @@ function makeMapVatStore(_vatID: string): ClearableVatStore {
 }
 
 /**
+ * Make a mock record store backed by an array.
+ *
+ * @returns The mock {@link RecordStore}, with the array behind it.
+ */
+export function makeArrayRecordStore(): RecordStore & { rows: RecordRow[] } {
+  const rows: RecordRow[] = [];
+  let nextSeq = 1;
+  const matches =
+    (filter: RecordFilter) =>
+    (row: RecordRow): boolean =>
+      (filter.kind === undefined || row.kind === filter.kind) &&
+      (filter.kref === undefined || row.kref === filter.kref) &&
+      (filter.endpoint === undefined || row.endpoint === filter.endpoint) &&
+      (filter.sender === undefined || row.sender === filter.sender) &&
+      (filter.trace === undefined || row.trace === filter.trace) &&
+      (filter.involving === undefined ||
+        row.endpoint === filter.involving ||
+        row.sender === filter.involving) &&
+      (filter.throughCrank === undefined || row.crank <= filter.throughCrank) &&
+      (filter.afterSeq === undefined || row.seq > filter.afterSeq);
+  const select = (filter: RecordFilter): RecordRow[] =>
+    rows.filter(matches(filter)).slice(0, filter.limit ?? rows.length);
+  return {
+    rows,
+    append: (row) => {
+      const seq = nextSeq;
+      nextSeq += 1;
+      rows.push({ ...row, seq });
+      return seq;
+    },
+    query: (filter = {}) => select(filter),
+    delete: (filter = {}) => {
+      const doomed = new Set(select(filter).map((row) => row.seq));
+      const kept = rows.filter((row) => !doomed.has(row.seq));
+      rows.length = 0;
+      rows.push(...kept);
+      return doomed.size;
+    },
+  };
+}
+
+/**
  * Make a mock Kernel database using Maps.
  *
  * @returns the mock {@link KernelDatabase}.
@@ -111,10 +160,13 @@ function makeMapVatStore(_vatID: string): ClearableVatStore {
 export function makeMapKernelDatabase(): KernelDatabase {
   const map = new Map<string, string>();
   const vatStores = new Map<string, ClearableVatStore>();
+  const records = makeArrayRecordStore();
   return {
     kernelKVStore: makeMapKVStoreInternal(map),
+    records,
     clear: () => {
       map.clear();
+      records.delete();
       for (const vs of vatStores.values()) {
         vs.clear();
       }

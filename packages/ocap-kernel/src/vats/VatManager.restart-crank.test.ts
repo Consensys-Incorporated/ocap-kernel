@@ -99,7 +99,7 @@ describe('a restart whose relaunch fails', () => {
         kernelQueue.enqueueSend(
           target,
           { methargs: kser(['hello', []]), result: null },
-          false,
+          { sender: 'kernel', immediate: false },
         ),
     },
     {
@@ -177,10 +177,14 @@ describe('a restart whose new worker never answers', () => {
     );
     const restarting = vatManager.restartVat(asVatId('v1'));
     restarting.catch(() => undefined);
-    kernelQueue.enqueueSend(target, {
-      methargs: kser(['hello', []]),
-      result: null,
-    });
+    kernelQueue.enqueueSend(
+      target,
+      {
+        methargs: kser(['hello', []]),
+        result: null,
+      },
+      { sender: 'kernel' },
+    );
 
     const delivered: RunLoopItem['type'][] = [];
     const running = kernelQueue.run(async (item) => {

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `KernelDatabase.records`, a `RecordStore` over a `records` table for the kernel's accountability records: `append`, `query` and `delete`, the last two by a `RecordFilter`. `clear` empties it with the rest
+
 ### Changed
 
 - **BREAKING:** Bump `better-sqlite3` from `^12.4.1` to `^13.0.3`, which requires Node 22 or later — the same floor this package already declares ([#1113](https://github.com/MetaMask/ocap-kernel/pull/1113))

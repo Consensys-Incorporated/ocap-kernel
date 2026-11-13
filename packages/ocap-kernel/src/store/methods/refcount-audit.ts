@@ -3,7 +3,12 @@ import type { CapData } from '@endo/marshal';
 import { getBaseMethods } from './base.ts';
 import { getHeldResultMethods } from './held-result.ts';
 import { getPinMethods } from './pinned.ts';
-import type { KRef, KernelMessage, RunQueueItem } from '../../types.ts';
+import type {
+  KRef,
+  KernelMessage,
+  PromiseQueueEntry,
+  RunQueueItem,
+} from '../../types.ts';
 import type { StoreContext } from '../types.ts';
 import { parseRef } from '../utils/parse-ref.ts';
 import { isPromiseRef } from '../utils/promise-ref.ts';
@@ -226,7 +231,7 @@ export function getRefCountAuditMethods(ctx: StoreContext) {
           }
         } else {
           const kpid = queueName as KRef;
-          const message = JSON.parse(entry) as KernelMessage;
+          const { message } = JSON.parse(entry) as PromiseQueueEntry;
           credit(kpid, `${kpid} queue #${seq} target`);
           creditMessage(message, `${kpid} queue #${seq}`);
         }

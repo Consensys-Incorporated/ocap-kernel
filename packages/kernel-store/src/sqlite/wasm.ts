@@ -6,11 +6,24 @@ import type {
 } from '@sqlite.org/sqlite-wasm';
 import sqlite3InitModule from '@sqlite.org/sqlite-wasm';
 
-import { DEFAULT_DB_FILENAME, SQL_QUERIES } from './common.ts';
+import {
+  DEFAULT_DB_FILENAME,
+  SQL_QUERIES,
+  buildRecordsDelete,
+  buildRecordsQuery,
+  recordRowFromValues,
+} from './common.ts';
 import { getDBFolder } from './env.ts';
 import { makeTransactionMethods } from './transactions.ts';
 import type { TransactionMethods } from './transactions.ts';
-import type { KVStore, VatStore, KernelDatabase } from '../types.ts';
+import type {
+  KVStore,
+  VatStore,
+  KernelDatabase,
+  RecordFilter,
+  RecordRow,
+  RecordStore,
+} from '../types.ts';
 
 export type Database = SqliteDatabase & {
   /**
@@ -180,6 +193,112 @@ function makeKVStore(
 }
 
 /**
+ * Bind a statement's parameters. SQLite refuses to bind an empty list to a
+ * statement with no parameter markers.
+ *
+ * @param statement - The statement.
+ * @param params - The values for its markers, if it has any.
+ */
+function bindIfAny(
+  statement: PreparedStatement,
+  params: (string | number)[],
+): void {
+  if (params.length > 0) {
+    statement.bind(params);
+  }
+}
+
+/**
+ * Makes a {@link RecordStore} on top of a SQLite database.
+ *
+ * @param db - The (open) database to use.
+ * @param options - Options for the store.
+ * @param options.guardWrite - The transaction methods' write guard.
+ * @returns A record store using the given database.
+ */
+function makeRecordStore(
+  db: Database,
+  { guardWrite }: Pick<TransactionMethods, 'guardWrite'>,
+): RecordStore {
+  db.exec(SQL_QUERIES.CREATE_TABLE_RECORDS);
+  db.exec(SQL_QUERIES.CREATE_INDEX_RECORDS_KREF);
+  db.exec(SQL_QUERIES.CREATE_INDEX_RECORDS_ENDPOINT);
+  db.exec(SQL_QUERIES.CREATE_INDEX_RECORDS_SENDER);
+  db.exec(SQL_QUERIES.CREATE_INDEX_RECORDS_TRACE);
+  const sqlAppend = db.prepare(SQL_QUERIES.APPEND_RECORD);
+
+  /**
+   * Append a record.
+   *
+   * @param row - The record, without its sequence number.
+   * @returns The sequence number it was given.
+   */
+  function append(row: Omit<RecordRow, 'seq'>): number {
+    try {
+      sqlAppend.bind([
+        row.kind,
+        row.witness,
+        row.crank,
+        row.kref,
+        row.endpoint,
+        row.sender,
+        row.trace,
+        row.data,
+      ]);
+      sqlAppend.step();
+    } finally {
+      sqlAppend.reset();
+    }
+    return Number(db.selectValue('SELECT last_insert_rowid()'));
+  }
+
+  /**
+   * Read records, in sequence order.
+   *
+   * @param filter - Which records.
+   * @returns The records.
+   */
+  function query(filter: RecordFilter = {}): RecordRow[] {
+    const { sql, params } = buildRecordsQuery(filter);
+    const statement = db.prepare(sql);
+    const rows: RecordRow[] = [];
+    try {
+      bindIfAny(statement, params);
+      while (statement.step()) {
+        rows.push(recordRowFromValues(statement.get([])));
+      }
+    } finally {
+      statement.finalize();
+    }
+    return rows;
+  }
+
+  /**
+   * Delete records.
+   *
+   * @param filter - Which records.
+   * @returns How many were deleted.
+   */
+  function deleteRecords(filter: RecordFilter = {}): number {
+    const { sql, params } = buildRecordsDelete(filter);
+    const statement = db.prepare(sql);
+    try {
+      bindIfAny(statement, params);
+      statement.step();
+    } finally {
+      statement.finalize();
+    }
+    return db.changes();
+  }
+
+  return {
+    append: guardWrite(append),
+    query,
+    delete: guardWrite(deleteRecords),
+  };
+}
+
+/**
  * Makes a {@link KernelDatabase} for low-level persistent storage.
  *
  * @param options - The options for the database.
@@ -234,11 +353,13 @@ export async function makeSQLKernelDatabase({
   });
 
   const kvStore = makeKVStore(db, { guardWrite });
+  const records = makeRecordStore(db, { guardWrite });
 
   db.exec(SQL_QUERIES.CREATE_TABLE_VS);
 
   const sqlKVClear = db.prepare(SQL_QUERIES.CLEAR);
   const sqlKVClearVS = db.prepare(SQL_QUERIES.CLEAR_VS);
+  const sqlClearRecords = db.prepare(SQL_QUERIES.CLEAR_RECORDS);
   const sqlVatstoreGetAll = db.prepare(SQL_QUERIES.GET_ALL_VS);
   const sqlVatstoreSet = db.prepare(SQL_QUERIES.SET_VS);
   const sqlVatstoreDelete = db.prepare(SQL_QUERIES.DELETE_VS);
@@ -251,6 +372,7 @@ export async function makeSQLKernelDatabase({
     logger?.debug('clearing all kernel state');
     runStatement(sqlKVClear);
     runStatement(sqlKVClearVS);
+    runStatement(sqlClearRecords);
   }
 
   /**
@@ -361,6 +483,7 @@ export async function makeSQLKernelDatabase({
 
   return {
     kernelKVStore: kvStore,
+    records,
     clear: guardWrite(kvClear),
     executeQuery,
     makeVatStore,

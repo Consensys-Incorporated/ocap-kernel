@@ -170,10 +170,11 @@ describe('makeSQLKernelDatabase', () => {
     expect(mockStatement.run).toHaveBeenCalledWith('test-key');
   });
 
-  it('clear drops and recreates the table', async () => {
+  it('clear empties every table', async () => {
     const store = await makeSQLKernelDatabase({});
+    mockStatement.run.mockClear();
     store.clear();
-    expect(mockStatement.run).toHaveBeenCalledTimes(4);
+    expect(mockStatement.run).toHaveBeenCalledTimes(3);
   });
 
   it('executeQuery runs arbitrary SQL queries', async () => {

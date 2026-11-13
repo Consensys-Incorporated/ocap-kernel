@@ -14,7 +14,7 @@ import {
   runTestVats,
 } from './utils.ts';
 
-const v1Root = 'ko4' as KRef;
+const v1Root = 'ko5' as KRef;
 
 describe('persistent storage', { timeout: 20_000 }, () => {
   let logger: ReturnType<typeof makeTestLogger>;

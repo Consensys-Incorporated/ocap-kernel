@@ -24,6 +24,7 @@ import {
   tuple,
   literal,
   boolean,
+  number,
   exactOptional,
   type,
 } from '@metamask/superstruct';
@@ -341,13 +342,42 @@ export function coerceVatSyscallObject(
   return vso as JsonVatSyscallObject;
 }
 
+/** Who issued a send or a resolution: an endpoint, or the kernel itself. */
+export const SenderStruct = union([EndpointIdStruct, literal('kernel')]);
+
+export type Sender = Infer<typeof SenderStruct>;
+
+/**
+ * The crank a send was issued in, or `'async'` for one issued outside any
+ * crank, as when a vat's `fetch` callback reaches the kernel between
+ * deliveries. The kernel cannot see what caused such a send, and says so.
+ */
+export const CauseStruct = union([number(), literal('async')]);
+
+export type Cause = Infer<typeof CauseStruct>;
+
 const RunQueueItemSendStruct = object({
   type: literal('send'),
   target: KRefStruct,
   message: KernelMessageStruct,
+  sender: SenderStruct,
+  cause: CauseStruct,
 });
 
 export type RunQueueItemSend = Infer<typeof RunQueueItemSendStruct>;
+
+/**
+ * A message waiting on a promise's queue. It keeps its provenance, so that
+ * the delivery it becomes once the promise settles is charged to its sender,
+ * not to the resolver.
+ */
+export const PromiseQueueEntryStruct = object({
+  message: KernelMessageStruct,
+  sender: SenderStruct,
+  cause: CauseStruct,
+});
+
+export type PromiseQueueEntry = Infer<typeof PromiseQueueEntryStruct>;
 
 const RunQueueItemNotifyStruct = object({
   type: literal('notify'),
@@ -458,6 +488,17 @@ export type PeerArrival =
 export type RunLoopItem = RunQueueItem | PeerArrival;
 
 /**
+ * How a crank's item hands references to an endpoint, for the record of each
+ * reference an endpoint acquires. A message or a notify names who sent it. A
+ * crank taking a peer's inbound message hands a reference to that peer only in
+ * reply to an ocap URL redemption, which no sender can be named for: the URL
+ * is a bearer token. Other cranks hand out nothing.
+ */
+export type DeliveryContext =
+  | { via: 'message' | 'notify'; sender: Sender }
+  | { via: 'ocap-url' };
+
+/**
  * Assert that a value is a valid kernel message.
  *
  * @param value - The value to check.
@@ -513,6 +554,8 @@ export type KernelPromise = {
   decider?: EndpointId | 'kernel';
   subscribers?: EndpointId[];
   value?: CapData<KRef>;
+  /** Who settled it, once it is settled. */
+  resolver?: Sender;
 };
 
 export type KernelState = {

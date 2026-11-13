@@ -141,6 +141,17 @@ export function kunser(serializedValue: CapData<KRef>): unknown {
 }
 
 /**
+ * Get the name of the method a message invokes.
+ *
+ * @param methargs - The message's method and arguments, as serialized by `kser`.
+ * @returns The method name, or a symbol's description for a symbol-named one.
+ */
+export function kmethodName(methargs: CapData<KRef>): string {
+  const [method] = kunser(methargs) as [string | symbol, unknown[]];
+  return typeof method === 'symbol' ? String(method) : method;
+}
+
+/**
  * Produce a serialized expected kernel error with a machine-readable code.
  * The resulting error message has the format `[KERNEL:<CODE>] <detail>`.
  *
