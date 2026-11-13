@@ -1,61 +1,62 @@
 import '@ocap/repo-tools/test-utils/mock-endoify';
 
 import { S } from '@metamask/kernel-utils';
-import type {
-  ChatMessage,
-  ChatResult,
-  ToolCall,
-} from '@metamask/kernel-language-model-service';
+import type { ChatMessage } from '@metamask/kernel-language-model-service';
+import { makeMockChat } from '@metamask/kernel-language-model-service/test-utils';
+import type { MockChatTurn } from '@metamask/kernel-language-model-service/test-utils';
 import { describe, expect, it, vi } from 'vitest';
 
 import { makeChatAgent } from './chat-agent.ts';
 import type { BoundChat } from './chat-agent.ts';
 import { makeMethodCapability } from '../../test/make-method-capability.ts';
 
-const makeToolCall = (
-  id: string,
-  name: string,
-  args: Record<string, unknown>,
-): ToolCall => ({
-  id,
-  type: 'function',
-  function: { name, arguments: JSON.stringify(args) },
-});
-
-const makeTextResponse = (content: string): ChatResult => ({
-  id: '0',
-  model: 'test',
-  choices: [
-    {
-      message: { role: 'assistant', content },
-      index: 0,
-      finish_reason: 'stop',
+/**
+ * A scripted chat that records the messages of each call.
+ *
+ * @param turns - The assistant turns, in order.
+ * @returns The chat and the record.
+ */
+const makeRecordingChat = (
+  turns: MockChatTurn[],
+): { chat: BoundChat; recorded: ChatMessage[][] } => {
+  const mockChat = makeMockChat(turns);
+  const recorded: ChatMessage[][] = [];
+  return {
+    chat: async ({ messages }) => {
+      recorded.push([...messages]);
+      return mockChat();
     },
-  ],
-  usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
-});
+    recorded,
+  };
+};
 
-const makeToolCallResponse = (
-  id: string,
-  toolCalls: ToolCall[],
-): ChatResult => ({
-  id,
-  model: 'test',
-  choices: [
-    {
-      message: { role: 'assistant', content: '', tool_calls: toolCalls },
-      index: 0,
-      finish_reason: 'tool_calls',
-    },
-  ],
-  usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
-});
+const makeAdd = () => {
+  const add = vi.fn(async (a: number, b: number) => a + b);
+  const capability = makeMethodCapability(
+    'Math',
+    'add',
+    add,
+    S.method(
+      'Add two numbers',
+      [S.arg('a', S.number()), S.arg('b', S.number())],
+      S.number(),
+    ),
+  );
+  return { add, capability };
+};
+
+const ping = makeMethodCapability(
+  'Server',
+  'ping',
+  async () => 'pong',
+  S.method('Ping the server', [], S.string()),
+);
 
 const noCapabilities = {};
 
 describe('makeChatAgent', () => {
   it('returns plain text response when model does not invoke a tool', async () => {
-    const chat: BoundChat = async () => makeTextResponse('Hello, world!');
+    const chat = makeMockChat(['Hello, world!']);
     const agent = makeChatAgent({ chat, capabilities: noCapabilities });
 
     const result = await agent.task('say hello');
@@ -63,30 +64,10 @@ describe('makeChatAgent', () => {
   });
 
   it('dispatches a tool call and returns final text answer', async () => {
-    const add = vi.fn(async (a: number, b: number) => a + b);
-    const addCap = makeMethodCapability(
-      'Math',
-      'add',
-      add,
-      S.method(
-        'Add two numbers',
-        [S.arg('a', S.number()), S.arg('b', S.number())],
-        S.number(),
-      ),
-    );
+    const { add, capability } = makeAdd();
+    const chat = makeMockChat([[{ name: 'add', args: { a: 3, b: 4 } }], '7']);
 
-    let call = 0;
-    const chat: BoundChat = async () => {
-      call += 1;
-      if (call === 1) {
-        return makeToolCallResponse('0', [
-          makeToolCall('c1', 'add', { a: 3, b: 4 }),
-        ]);
-      }
-      return makeTextResponse('7');
-    };
-
-    const agent = makeChatAgent({ chat, capabilities: { add: addCap } });
+    const agent = makeChatAgent({ chat, capabilities: { add: capability } });
 
     const result = await agent.task('add 3 and 4');
     expect(add).toHaveBeenCalledWith(3, 4);
@@ -94,23 +75,10 @@ describe('makeChatAgent', () => {
   });
 
   it('injects tool result message before next turn', async () => {
-    const recorded: ChatMessage[][] = [];
-    const ping = makeMethodCapability(
-      'Server',
-      'ping',
-      async () => 'pong',
-      S.method('Send a ping', [], S.string()),
-    );
-
-    let call = 0;
-    const chat: BoundChat = async ({ messages }) => {
-      recorded.push([...messages]);
-      call += 1;
-      if (call === 1) {
-        return makeToolCallResponse('0', [makeToolCall('c1', 'ping', {})]);
-      }
-      return makeTextResponse('done');
-    };
+    const { chat, recorded } = makeRecordingChat([
+      [{ id: 'c1', name: 'ping', args: {} }],
+      'done',
+    ]);
 
     const agent = makeChatAgent({ chat, capabilities: { ping } });
     await agent.task('ping');
@@ -128,18 +96,10 @@ describe('makeChatAgent', () => {
   });
 
   it('injects error message for unknown tool and continues', async () => {
-    const recorded: ChatMessage[][] = [];
-    let call = 0;
-    const chat: BoundChat = async ({ messages }) => {
-      recorded.push([...messages]);
-      call += 1;
-      if (call === 1) {
-        return makeToolCallResponse('0', [
-          makeToolCall('c1', 'nonexistent', {}),
-        ]);
-      }
-      return makeTextResponse('recovered');
-    };
+    const { chat, recorded } = makeRecordingChat([
+      [{ name: 'nonexistent', args: {} }],
+      'recovered',
+    ]);
 
     const agent = makeChatAgent({ chat, capabilities: noCapabilities });
     const result = await agent.task('do something');
@@ -156,31 +116,14 @@ describe('makeChatAgent', () => {
   });
 
   it('injects a tool error for an invalid-argument tool call and continues', async () => {
-    const add = vi.fn(async (a: number, b: number) => a + b);
-    const addCap = makeMethodCapability(
-      'Math',
-      'add',
-      add,
-      S.method(
-        'Add two numbers',
-        [S.arg('a', S.number()), S.arg('b', S.number())],
-        S.number(),
-      ),
-    );
+    const { add, capability } = makeAdd();
+    const { chat, recorded } = makeRecordingChat([
+      // `b` is missing, so the exo's interface guard rejects the call.
+      [{ name: 'add', args: { a: 3 } }],
+      'recovered',
+    ]);
 
-    const recorded: ChatMessage[][] = [];
-    let call = 0;
-    const chat: BoundChat = async ({ messages }) => {
-      recorded.push([...messages]);
-      call += 1;
-      if (call === 1) {
-        // `b` is missing, so the exo's interface guard rejects the call.
-        return makeToolCallResponse('0', [makeToolCall('c1', 'add', { a: 3 })]);
-      }
-      return makeTextResponse('recovered');
-    };
-
-    const agent = makeChatAgent({ chat, capabilities: { add: addCap } });
+    const agent = makeChatAgent({ chat, capabilities: { add: capability } });
     const result = await agent.task('add 3 and ?');
 
     // The guard rejection surfaces as a tool error rather than crashing the
@@ -203,14 +146,9 @@ describe('makeChatAgent', () => {
   });
 
   it('throws when invocation budget is exceeded', async () => {
-    const ping = makeMethodCapability(
-      'Server',
-      'ping',
-      async () => 'pong',
-      S.method('Send a ping', [], S.string()),
+    const chat = makeMockChat(
+      Array.from({ length: 3 }, () => [{ name: 'ping', args: {} }]),
     );
-    const chat: BoundChat = async () =>
-      makeToolCallResponse('0', [makeToolCall('c1', 'ping', {})]);
 
     const agent = makeChatAgent({ chat, capabilities: { ping } });
 
@@ -220,7 +158,7 @@ describe('makeChatAgent', () => {
   });
 
   it('applies judgment to final answer', async () => {
-    const chat: BoundChat = async () => makeTextResponse('hello');
+    const chat = makeMockChat(['hello']);
     const agent = makeChatAgent({ chat, capabilities: noCapabilities });
 
     const isNumber = (result: unknown): result is number =>
@@ -230,16 +168,10 @@ describe('makeChatAgent', () => {
 
   it('passes tools to the chat function', async () => {
     const recordedTools: unknown[] = [];
-    const ping = makeMethodCapability(
-      'Server',
-      'ping',
-      async () => 'pong',
-      S.method('Ping the server', [], S.string()),
-    );
-
+    const mockChat = makeMockChat(['done']);
     const chat: BoundChat = async ({ tools }) => {
       recordedTools.push(tools);
-      return makeTextResponse('done');
+      return mockChat();
     };
 
     const agent = makeChatAgent({ chat, capabilities: { ping } });
@@ -259,9 +191,10 @@ describe('makeChatAgent', () => {
 
   it('passes undefined tools when there are no capabilities', async () => {
     let recordedTools: unknown = 'not-set';
+    const mockChat = makeMockChat(['done']);
     const chat: BoundChat = async ({ tools }) => {
       recordedTools = tools;
-      return makeTextResponse('done');
+      return mockChat();
     };
 
     const agent = makeChatAgent({ chat, capabilities: noCapabilities });
@@ -271,13 +204,7 @@ describe('makeChatAgent', () => {
   });
 
   it('accumulates experiences across tasks', async () => {
-    let call = 0;
-    const responses = ['hello', 'world'];
-    const chat: BoundChat = async () => {
-      const response = makeTextResponse(responses[call] ?? '');
-      call += 1;
-      return response;
-    };
+    const chat = makeMockChat(['hello', 'world']);
     const agent = makeChatAgent({ chat, capabilities: noCapabilities });
 
     await agent.task('first');
