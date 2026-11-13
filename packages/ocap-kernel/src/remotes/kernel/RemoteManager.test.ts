@@ -1181,7 +1181,7 @@ describe('RemoteManager', () => {
       return verdict;
     }
 
-    it('panics, failing the handshake, when the store cannot read the peer', async () => {
+    it('panics when the store cannot read the peer incarnation', async () => {
       const fault = new Error('SQLITE_IOERR');
       const logError = vi.spyOn(logger, 'error').mockReturnValue();
       const { kernelKVStore } = kernelDatabase;
@@ -1195,7 +1195,13 @@ describe('RemoteManager', () => {
 
       await expect(
         getOnIncarnationChange()('peer-1', 'incarnation-1'),
-      ).rejects.toThrow('Kernel panic: reading the incarnation of peer peer-1');
+      ).rejects.toThrow(
+        'Kernel panic: reading the incarnation of peer peer-1 failed',
+      );
+      expect(mockKernelQueue.panic).toHaveBeenCalledWith(
+        'reading the incarnation of peer peer-1 failed',
+        fault,
+      );
       expect(logError).toHaveBeenCalledWith(
         'Kernel panic: reading the incarnation of peer peer-1 failed',
         fault,

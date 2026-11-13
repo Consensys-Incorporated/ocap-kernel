@@ -648,7 +648,8 @@ export class KernelRouter {
    *
    * The remote can be gone by the time its turn comes: the message was
    * accepted while it was live and the queue outlives it. Throwing here would
-   * escape the crank and kill the run loop, so the message is dropped.
+   * escape the crank and kill the run loop, so the message is dropped, except
+   * on a store fault.
    *
    * @param item - The inbound message.
    * @returns The crank outcome.

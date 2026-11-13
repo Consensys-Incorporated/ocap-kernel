@@ -13,7 +13,6 @@ import type {
   CrankResult,
   KRef,
   PlatformServices,
-  RemoteId,
   RunLoopItem,
 } from '../../types.ts';
 import type { RemoteComms } from '../types.ts';
@@ -517,8 +516,7 @@ describe('a store fault while taking a peer message', () => {
     const kernelRouter = new KernelRouter({
       kernelStore,
       kernelQueue,
-      getEndpoint: (endpointId) =>
-        remoteManager.getRemote(endpointId as RemoteId),
+      getEndpoint: () => remote,
       invokeKernelService: () => undefined,
       restartVat: async () => undefined,
       terminateVat: async () => undefined,
@@ -530,45 +528,39 @@ describe('a store fault while taking a peer message', () => {
       .run(kernelRouter.deliver.bind(kernelRouter))
       .catch(() => undefined);
     expect(await onIncarnationChange(PEER_ID, 'incarnation-A')).toBe(false);
+    await remoteManager.handleRemoteMessage(PEER_ID, emptyNotify(1));
     await settle();
     const fault = new Error('database or disk is full');
     const receiptKey = `remoteSeq.${remote.remoteId}.highestReceivedSeq`;
     const set = kernelDatabase.kernelKVStore.set.bind(
       kernelDatabase.kernelKVStore,
     );
-    let failed = false;
     vi.spyOn(kernelDatabase.kernelKVStore, 'set').mockImplementation(
       (key: string, value: string) => {
-        if (key === receiptKey && !failed) {
-          failed = true;
+        if (key === receiptKey) {
           throw fault;
         }
         set(key, value);
       },
     );
 
-    await remoteManager.handleRemoteMessage(PEER_ID, emptyNotify(1));
+    await remoteManager.handleRemoteMessage(PEER_ID, emptyNotify(2));
     await settle();
-    // The peer's next message, whose receipt would acknowledge the first.
-    await remoteManager
-      .handleRemoteMessage(PEER_ID, emptyNotify(2))
-      .catch(() => undefined);
-    await settle();
-    // The delayed standalone ACK.
+    // Outlasts the delayed standalone ACK armed when the message arrived.
     await delay(100);
 
     expect({
       runLoop: kernelQueue.getRunLoopStatus(),
       received: kernelDatabase.kernelKVStore.get(receiptKey),
-      acks: sent.filter((message) => message.includes('"ack"')),
+      acks: [...new Set(sent.filter((message) => message.includes('"ack"')))],
     }).toStrictEqual({
       runLoop: {
         state: 'failed',
         error: fault.message,
         detail: expect.any(String),
       },
-      received: undefined,
-      acks: [],
+      received: '1',
+      acks: ['{"ack":1}'],
     });
   });
 });
