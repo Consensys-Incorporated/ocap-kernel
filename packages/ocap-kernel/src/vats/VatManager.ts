@@ -47,24 +47,13 @@ type RunningVat = { handle?: VatHandle; lost?: Error };
 type Waiter<Value> = {
   resolve: (value: Value) => void;
   reject: (error: Error) => void;
-  /**
-   * Set once the waiter is promised an answer that does not depend on the run
-   * loop, so the loop's death no longer needs to give one.
-   */
-  answerDue: boolean;
 };
 
-/** The callers a crank took, and the ways it can answer them. */
+/** The callers a crank took, and how to answer them. */
 type TakenWaiters<Value> = {
   count: number;
-  /** Answer now, from a crank's `afterCommit`. */
+  /** Called from a crank's `afterCommit`. */
   answer: (outcome: Value | Error) => void;
-  /**
-   * Answer once the crank ends, whether or not it commits or the run loop
-   * survives it, so callers wake to what it committed. They may wake inside
-   * the next crank, which can still roll back what they write.
-   */
-  answerOnceCrankEnds: (outcome: Value | Error) => void;
 };
 
 /**
@@ -731,39 +720,32 @@ export class VatManager {
    *
    * @param vatId - The ID of the vat.
    * @param reason - The reason for the termination, if any.
-   * @returns Irrevocable once `stopVat` has run, whether or not it threw;
-   *   `undefined` for a vat already gone.
+   * @returns The crank outcome, carrying the callers' answer.
    */
   async performVatTermination(
     vatId: VatId,
     reason?: CapData<KRef>,
-  ): Promise<CrankResult | undefined> {
+  ): Promise<CrankResult> {
     const taken = this.#takeWaiters(this.#terminationWaiters, vatId);
-    // Not before the teardown ends: a restart asked for during it must still
-    // wait for this crank, whose failure can leave the vat known.
-    const answerOnceCrankEnds = (failure?: Error): void => {
-      const pending = (this.#pendingTerminations.get(vatId) ?? 0) - 1;
-      if (pending > 0) {
-        this.#pendingTerminations.set(vatId, pending);
-      } else {
-        this.#pendingTerminations.delete(vatId);
-      }
-      const superseded = this.#takeWaiters(this.#supersededRestarts, vatId);
-      taken.answerOnceCrankEnds(failure);
-      superseded.answerOnceCrankEnds(
-        failure
-          ? new Error(
-              `Restart of vat ${vatId} was overtaken by a termination that failed`,
-              { cause: failure },
-            )
-          : new VatDeletedError(vatId),
-      );
-    };
+    const crankResult: CrankResult = harden({
+      afterCommit: async () => {
+        // Not before: a restart asked for during the teardown must still wait
+        // for this crank.
+        const pending = (this.#pendingTerminations.get(vatId) ?? 0) - 1;
+        if (pending > 0) {
+          this.#pendingTerminations.set(vatId, pending);
+        } else {
+          this.#pendingTerminations.delete(vatId);
+        }
+        const superseded = this.#takeWaiters(this.#supersededRestarts, vatId);
+        taken.answer(undefined);
+        superseded.answer(new VatDeletedError(vatId));
+      },
+    });
     if (!this.#isVatKnown(vatId)) {
       // Already dead: the in-crank termination path or `terminateAllVats` got
       // here first, and this vat is exactly what the caller asked for.
-      answerOnceCrankEnds();
-      return undefined;
+      return crankResult;
     }
     if (taken.count === 0) {
       this.#logger.debug(
@@ -773,18 +755,9 @@ export class VatManager {
     try {
       await this.stopVat(vatId, true, reason);
     } catch (error) {
-      // Not thrown: the run loop's catch would roll the crank back, undoing
-      // whatever of the death did get written and restoring the request, so
-      // every later start would replay the same failing termination.
-      const failure = new Error(`Termination of vat ${vatId} failed`, {
-        cause: error,
-      });
-      this.#logger.error(failure.message, error);
-      answerOnceCrankEnds(failure);
-      return harden({ irrevocable: true });
+      throw new Error(`Termination of vat ${vatId} failed`, { cause: error });
     }
-    answerOnceCrankEnds();
-    return harden({ irrevocable: true });
+    return crankResult;
   }
 
   /**
@@ -831,15 +804,8 @@ export class VatManager {
     // than an unhandled one from a waiter nothing will ever await.
     enqueue();
     const { promise, resolve, reject } = makePromiseKit<Value>();
-    const waiter: Waiter<Value> = { resolve, reject, answerDue: false };
-    waiters.set(vatId, [...(waiters.get(vatId) ?? []), waiter]);
-    // Not once a crank has promised an answer: it may have committed the work
-    // before the loop died.
-    const stopWatchingTheRunLoop = this.#kernelQueue.onRunLoopDeath((error) => {
-      if (!waiter.answerDue) {
-        reject(error);
-      }
-    });
+    waiters.set(vatId, [...(waiters.get(vatId) ?? []), { resolve, reject }]);
+    const stopWatchingTheRunLoop = this.#kernelQueue.onRunLoopDeath(reject);
     try {
       return await promise;
     } finally {
@@ -853,7 +819,7 @@ export class VatManager {
    *
    * @param waiters - The per-vat waiter lists for this kind of work.
    * @param vatId - The vat the work concerns.
-   * @returns The callers taken, and the ways to answer them.
+   * @returns The callers taken, and how to answer them.
    */
   #takeWaiters<Value>(
     waiters: Map<VatId, Waiter<Value>[]>,
@@ -863,7 +829,6 @@ export class VatManager {
     waiters.delete(vatId);
     const answer = (outcome: Value | Error): void => {
       for (const waiter of taken) {
-        waiter.answerDue = true;
         if (outcome instanceof Error) {
           waiter.reject(outcome);
         } else {
@@ -871,16 +836,7 @@ export class VatManager {
         }
       }
     };
-    const answerOnceCrankEnds = (outcome: Value | Error): void => {
-      for (const waiter of taken) {
-        waiter.answerDue = true;
-      }
-      this.#kernelQueue
-        .waitForCrank()
-        .then(() => answer(outcome))
-        .catch(this.#logger.error);
-    };
-    return { count: taken.length, answer, answerOnceCrankEnds };
+    return { count: taken.length, answer };
   }
 
   /**
@@ -979,14 +935,15 @@ export class VatManager {
   }
 
   /**
-   * Answer a failed restart's callers once its crank ends, and have the run
+   * Answer a failed restart's callers once its crank commits, and have the run
    * loop terminate the vat.
    *
    * @param options - Named options.
    * @param options.vatId - The ID of the vat.
    * @param options.taken - The restart's callers.
    * @param options.error - Why the restart failed.
-   * @returns The crank outcome: an abort and a termination.
+   * @returns The crank outcome: an abort, a termination and the callers'
+   *   answer.
    */
   #failRestart({
     vatId,
@@ -1006,8 +963,6 @@ export class VatManager {
       { cause: error },
     );
     this.#logger.error(failure.message, error);
-    // Not `answer` from `afterCommit`, which an aborted crank skips.
-    taken.answerOnceCrankEnds(failure);
     // Through the crank result, so the run loop rolls back before retiring
     // the vat: what the new worker's `initVat` buffered would otherwise be
     // flushed on behalf of a vat that no longer exists. The rollback restores
@@ -1021,6 +976,7 @@ export class VatManager {
           ? makeLostVatReason(vatId, error)
           : makeFatalKernelError('INTERNAL_ERROR', failure.message),
       },
+      afterCommit: async () => taken.answer(failure),
     });
   }
 

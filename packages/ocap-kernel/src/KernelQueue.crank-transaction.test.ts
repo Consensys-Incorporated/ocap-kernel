@@ -23,7 +23,7 @@ const STOP_RUN_LOOP = 'test: stop run loop';
 describe('a crank that dies after recording a vat death', () => {
   /**
    * Run one crank that delivers `crankResult`, then kills the run loop from
-   * `collectGarbage`, which is past the point where the rollback is decided.
+   * `collectGarbage`, after the vat's death is recorded.
    *
    * @param crankResult - What the delivery reports.
    * @returns The store the crank ran against.
@@ -57,21 +57,19 @@ describe('a crank that dies after recording a vat death', () => {
     return kernelStore as unknown as ReturnType<typeof makeKernelStore>;
   }
 
-  it('leaves the vat dead after a graceful exit', async () => {
+  it.each([
+    { how: 'a graceful exit', abort: false },
+    { how: 'an aborted delivery', abort: true },
+  ])('rolls the death back with the crank after $how', async ({ abort }) => {
     const kernelStore = await runOneDoomedCrank({
+      abort,
       terminate: { vatId: 'v1', info: {} as KernelMessage['methargs'] },
     } as unknown as CrankResult);
 
-    expect(kernelStore.getTerminatedVats()).toStrictEqual(['v1']);
-  });
-
-  it('leaves the vat dead after an aborted delivery', async () => {
-    const kernelStore = await runOneDoomedCrank({
-      abort: true,
-      terminate: { vatId: 'v1', info: {} as KernelMessage['methargs'] },
-    } as unknown as CrankResult);
-
-    expect(kernelStore.getTerminatedVats()).toStrictEqual(['v1']);
+    expect({
+      terminated: kernelStore.getTerminatedVats(),
+      queued: kernelStore.runQueueLength(),
+    }).toStrictEqual({ terminated: [], queued: 1 });
   });
 });
 
@@ -171,7 +169,7 @@ describe('a crank whose transaction SQLite rolls back mid-delivery', () => {
       errors: [
         { message: 'no record matching key' },
         {
-          message: 'SQLite already ended the transaction holding savepoint t1',
+          message: 'SQLite already ended the transaction holding savepoint t0',
           cause: { message: 'database or disk is full' },
         },
       ],
