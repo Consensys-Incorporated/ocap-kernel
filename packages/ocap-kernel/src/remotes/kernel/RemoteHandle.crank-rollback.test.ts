@@ -129,8 +129,8 @@ async function deliverAndCommit(
 }
 
 /**
- * Make a delivery in a crank that then rolls back, the way the run loop does
- * for one that aborts: the message is written down and `afterCommit` withheld.
+ * Make a delivery in a crank that then rolls the delivery back: the message is
+ * written down, undone, and never sent.
  *
  * @param remote - The handle to deliver through.
  * @param kernelStore - The store the crank runs against.

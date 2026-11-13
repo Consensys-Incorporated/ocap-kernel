@@ -149,7 +149,7 @@ export function makeMapKernelDatabase(): KernelDatabase {
  * @returns The error.
  */
 export function makeStoreFault(): Error {
-  const fault = new Error('database or disk is full');
+  const fault = new Error('store fault');
   const kv = markStoreFaults({
     set: () => {
       throw fault;

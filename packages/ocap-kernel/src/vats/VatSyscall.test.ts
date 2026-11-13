@@ -7,6 +7,7 @@ import type { MockInstance } from 'vitest';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import type { KernelQueue } from '../KernelQueue.ts';
+import { makeFatalKernelError } from '../liveslots/kernel-marshal.ts';
 import type { KernelStore } from '../store/index.ts';
 import type { KernelMessage, VatId } from '../types.ts';
 import { VatSyscall } from './VatSyscall.ts';
@@ -293,7 +294,16 @@ describe('VatSyscall', () => {
       const vso = ['send', 'ko1', {}] as VatSyscallObject;
       const result = vatSys.handleSyscall(vso);
 
-      expect(result).toStrictEqual(['error', 'test error']);
+      expect({ result, illegalSyscall: vatSys.illegalSyscall }).toStrictEqual({
+        result: ['error', 'test error'],
+        illegalSyscall: {
+          vatId: 'v1',
+          info: makeFatalKernelError(
+            'ILLEGAL_SYSCALL',
+            'Syscall translation error: prepare to die',
+          ),
+        },
+      });
       expect(logger.error).toHaveBeenCalledWith(
         'Fatal syscall error in vat v1',
         error,
