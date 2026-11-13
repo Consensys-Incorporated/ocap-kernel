@@ -132,7 +132,6 @@ describe('Garbage Collection', () => {
       [objectId],
     );
     const createObjectRef = createObjectData.slots[0] as KRef;
-    // Held only by the resolved promise's value, which still carries the slot
     expect(kernelStore.getObjectRefCount(createObjectRef)).toStrictEqual({
       reachable: 1,
       recognizable: 1,
@@ -147,13 +146,10 @@ describe('Garbage Collection', () => {
       createObjectRef,
     );
     expect(exporterReachable).toBe(true);
-    // Check that the object is reachable as a promise from the importer vat
-    const importerKref = kernelStore.erefToKref(
-      importerVatId,
-      'p-1' as ERef,
-    ) as KRef;
-    expect(kernelStore.hasCListEntry(importerVatId, importerKref)).toBe(true);
-    expect(kernelStore.getRefCount(importerKref)).toBe(1);
+    // The importer resolved `storeImport`'s result promise, so has retired it
+    expect(
+      kernelStore.erefToKref(importerVatId, 'p-1' as ERef),
+    ).toBeUndefined();
     // Use the object
     const useResult = await kernel.queueMessage(importerKRef, 'useImport', []);
     await waitUntilQuiescent();
@@ -166,13 +162,23 @@ describe('Garbage Collection', () => {
       'held-object',
     ]);
 
+    const createdRef = created.slots[0] as KRef;
     expect(pong.kpid).toBeUndefined();
     expect(kernelStore.getHeldResults()).toStrictEqual([created.kpid]);
+    expect(kernelStore.getObjectRefCount(createdRef)).toStrictEqual({
+      reachable: 1,
+      recognizable: 1,
+    });
 
     await kernel.releaseResult(pong);
     await kernel.releaseResult(created);
 
     expect(kernelStore.getHeldResults()).toStrictEqual([]);
+    expect(kernelStore.kernelRefExists(created.kpid as KRef)).toBe(false);
+    expect(kernelStore.getObjectRefCount(createdRef)).toStrictEqual({
+      reachable: 0,
+      recognizable: 0,
+    });
     await expect(kernel.releaseResult(created)).rejects.toThrow(
       'is not a held result',
     );
@@ -322,8 +328,6 @@ describe('Garbage Collection', () => {
       expect(kernelStore.getImporters(sharedKRef)).toStrictEqual(
         [importerVatId, secondImporterVatId].sort(),
       );
-      // Two importers, plus the resolved createObject promise whose value
-      // still carries the slot
       expect(kernelStore.getObjectRefCount(sharedKRef)).toStrictEqual({
         reachable: 3,
         recognizable: 3,
@@ -385,7 +389,6 @@ describe('Garbage Collection', () => {
       });
 
       expect(kernelStore.getImporters(sharedKRef)).toStrictEqual([]);
-      // Only the createObject result's stored value still names it
       expect(kernelStore.getObjectRefCount(sharedKRef)).toStrictEqual({
         reachable: 1,
         recognizable: 1,
