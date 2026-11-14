@@ -160,6 +160,24 @@ describe('Garbage Collection', () => {
     expect(parseReplyBody(useResult.body)).toBe(objectId);
   });
 
+  it('holds a result that carries an object until it is released', async () => {
+    const pong = await kernel.queueMessage(exporterKRef, 'noop', []);
+    const created = await kernel.queueMessage(exporterKRef, 'createObject', [
+      'held-object',
+    ]);
+
+    expect(pong.kpid).toBeUndefined();
+    expect(kernelStore.getHeldResults()).toStrictEqual([created.kpid]);
+
+    await kernel.releaseResult(pong);
+    await kernel.releaseResult(created);
+
+    expect(kernelStore.getHeldResults()).toStrictEqual([]);
+    await expect(kernel.releaseResult(created)).rejects.toThrow(
+      'is not a held result',
+    );
+  });
+
   it('should trigger GC syscalls through bringOutYourDead', async () => {
     // Create an object in the exporter vat with a known ID
     const objectId = 'test-object';

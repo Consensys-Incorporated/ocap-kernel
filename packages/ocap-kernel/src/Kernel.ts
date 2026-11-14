@@ -35,6 +35,7 @@ import type {
   EndpointHandle,
   SystemSubclusterConfig,
   ControlOperation,
+  QueueMessageResult,
 } from './types.ts';
 import { isVatId, isRemoteId } from './types.ts';
 import type { AllowedGlobalName } from './vats/endowments.ts';
@@ -350,6 +351,10 @@ export class Kernel {
       );
     }
 
+    // Results held for callers of a previous incarnation, whose promises
+    // died with it.
+    this.#kernelQueue.releaseAbandonedResults();
+
     // Before the vats start, so a throw leaves no worker running, and before
     // the run loop, which may find a delivery to any remote already queued.
     this.#remoteManager.restoreRemotes();
@@ -551,13 +556,16 @@ export class Kernel {
    * @param target - The object to which the message is directed.
    * @param method - The method to be invoked.
    * @param args - Message arguments.
-   * @returns A promise for the CapData encoded result of the message invocation.
+   * @returns A promise for the CapData encoded result of the message
+   * invocation. If it carries slots it also has a `kpid`, and the kernel keeps
+   * the krefs in it alive until it is passed to `releaseResult`, or until the
+   * kernel next starts.
    */
   async queueMessage(
     target: KRef,
     method: string,
     args: unknown[],
-  ): Promise<CapData<KRef>> {
+  ): Promise<QueueMessageResult> {
     try {
       return await this.#kernelQueue.enqueueMessage(target, method, args);
     } catch (rejection) {
@@ -565,6 +573,22 @@ export class Kernel {
         throw kunser(rejection as CapData<KRef>);
       }
       throw rejection;
+    }
+  }
+
+  /**
+   * Give up the krefs in a `queueMessage` result, or in the `bootstrapResult`
+   * of `launchSubcluster`. Anything else that holds them keeps them alive.
+   *
+   * @param result - The result. One without a `kpid` holds nothing, and
+   * releasing it does nothing.
+   * @param result.kpid - The result's `kpid`.
+   * @throws If the result has a `kpid` the kernel is not holding, as when it
+   * is released twice.
+   */
+  async releaseResult({ kpid }: { kpid?: KRef | undefined }): Promise<void> {
+    if (kpid !== undefined) {
+      await this.#kernelQueue.releaseResult(kpid);
     }
   }
 
