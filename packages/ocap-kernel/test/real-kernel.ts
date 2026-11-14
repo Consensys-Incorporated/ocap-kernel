@@ -58,8 +58,9 @@ export function watch(promise: Promise<unknown>): () => string {
 /**
  * A kernel over a real store, running two vats whose handles are faked:
  * `waiter` (v1), the bootstrap vat, and `doomed` (v2). A vat answers
- * `bootstrap` and `answer`, returns {@link explosion} for `explode`, and holds
- * its crank open on `stall` until the test calls `release`.
+ * `bootstrap` and `answer`, writes its state for `remember`, returns
+ * {@link explosion} for `explode`, and holds its crank open on `stall` until
+ * the test calls `release`.
  *
  * @param options - Options bag.
  * @param options.dbFilename - Where the store lives.
@@ -108,6 +109,11 @@ export async function setUpRealKernel({
               'resolve',
               [[message.result, false, kser(method)]],
             ]);
+          }
+          if (method === 'remember') {
+            kernelStore
+              .makeVatStore(vatId)
+              .updateKVData([['remembered', 'yes']], []);
           }
           if (method === 'explode') {
             return explosion(vatId);

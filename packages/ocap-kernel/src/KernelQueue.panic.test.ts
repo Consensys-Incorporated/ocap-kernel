@@ -85,3 +85,37 @@ describe('a store fault in a syscall', () => {
     await second.kernel.stop();
   });
 });
+
+describe("a store fault writing a vat's state", () => {
+  it('stops the kernel with the message still queued, rather than fail it', async () => {
+    const { kernel, kernelDatabase, waiterRoot } = await setUpRealKernel();
+    vi.spyOn(kernelDatabase, 'makeVatStore').mockReturnValue({
+      getKVData: () => [],
+      updateKVData: () => {
+        throw new Error('database or disk is full');
+      },
+    });
+    const settlement = watch(kernel.queueMessage(waiterRoot, 'remember', []));
+
+    await vi.waitFor(async () =>
+      expect((await kernel.getStatus()).runLoop.state).toBe('failed'),
+    );
+    await delay(0);
+
+    const { get } = kernelDatabase.kernelKVStore;
+    expect({
+      runLoop: (await kernel.getStatus()).runLoop,
+      settlement: settlement(),
+      queued: Number(get('queue.run.head')) - Number(get('queue.run.tail')),
+    }).toStrictEqual({
+      runLoop: {
+        state: 'failed',
+        error: 'database or disk is full',
+        detail: expect.any(String),
+      },
+      settlement:
+        'Kernel run loop died; this message result will never be delivered',
+      queued: 1,
+    });
+  });
+});

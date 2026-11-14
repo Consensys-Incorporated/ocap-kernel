@@ -451,6 +451,51 @@ describe('VatHandle', () => {
         ['kept', 'old'],
       ]);
     });
+
+    it('terminates a vat whose worker answers a delivery with an error', async () => {
+      const { vat, stream } = await makeVat();
+      const delivering = vat.deliverMessage(asERef('o+0'), {
+        methargs: { body: '#["hello",[]]', slots: [] },
+        result: null,
+      });
+      await delay(10);
+
+      await stream.receiveInput({
+        id: 'v0:1',
+        error: { code: -32603, message: 'worker blew up' },
+        jsonrpc: '2.0',
+      });
+
+      expect(await delivering).toStrictEqual({
+        didDelivery: 'v0',
+        abort: true,
+        terminate: {
+          vatId: 'v0',
+          reject: true,
+          info: {
+            body: expect.stringContaining('worker blew up'),
+            slots: [],
+          },
+        },
+      });
+    });
+
+    it('still rejects a ping the worker answers with an error', async () => {
+      const { vat, stream } = await makeVat();
+      const pinging = vat.ping();
+      pinging.catch(() => undefined);
+      await delay(10);
+
+      await stream.receiveInput({
+        id: 'v0:1',
+        error: { code: -32603, message: 'worker blew up' },
+        jsonrpc: '2.0',
+      });
+
+      await expect(pinging).rejects.toMatchObject({
+        message: 'worker blew up',
+      });
+    });
   });
 
   describe('terminate', () => {
