@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 
 import { asKRef } from '../../../test/branded.ts';
 import { makeMapKernelDatabase } from '../../../test/storage.ts';
@@ -51,6 +51,29 @@ describe('held results', () => {
     expect(() => ks.releaseHeldResult(kpid)).toThrow('is not a held result');
 
     expect(ks.getRefCount(kpid)).toBe(1);
+  });
+
+  it('deletes the row before decrementing the count', () => {
+    const kdb = makeMapKernelDatabase();
+    const ks = makeKernelStore(kdb);
+    const [kpid] = ks.initKernelPromise();
+    ks.holdResult(kpid);
+    const writes: string[] = [];
+    const { set } = kdb.kernelKVStore;
+    vi.spyOn(kdb.kernelKVStore, 'delete').mockImplementation((key) => {
+      writes.push(`delete ${key}`);
+    });
+    vi.spyOn(kdb.kernelKVStore, 'set').mockImplementation((key, value) => {
+      writes.push(`set ${key}`);
+      set(key, value);
+    });
+
+    ks.releaseHeldResult(kpid);
+
+    expect(writes).toStrictEqual([
+      `delete heldResult.${kpid}`,
+      `set ${kpid}.refCount`,
+    ]);
   });
 
   it('does not record a hold on a promise that is gone', () => {

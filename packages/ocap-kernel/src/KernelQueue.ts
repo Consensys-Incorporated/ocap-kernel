@@ -6,6 +6,7 @@ import { stringify } from '@metamask/kernel-utils';
 import { processGCActionSet } from './garbage-collection/garbage-collection.ts';
 import { kser, makeKernelError } from './liveslots/kernel-marshal.ts';
 import type { KernelStore } from './store/index.ts';
+import { isStoreFault } from './store/utils/store-fault.ts';
 import type {
   CrankResult,
   EndpointId,
@@ -919,15 +920,29 @@ export class KernelQueue {
    * Release every held result. For boot: a caller's pending promise does not
    * survive a restart, so nobody is left to release these.
    *
-   * @returns The number released.
+   * @returns The number released, and each hold the kernel's own checks
+   * refused to release, with the error. Those are dropped too, so that one bad
+   * row does not fail every start.
+   * @throws A store fault.
    */
-  releaseAbandonedResults(): number {
+  releaseAbandonedResults(): {
+    released: number;
+    dropped: { kpid: KRef; error: unknown }[];
+  } {
+    const dropped: { kpid: KRef; error: unknown }[] = [];
     const abandoned = this.#kernelStore.getHeldResults();
     for (const kpid of abandoned) {
-      this.#kernelStore.releaseHeldResult(kpid);
+      try {
+        this.#kernelStore.releaseHeldResult(kpid);
+      } catch (error) {
+        if (isStoreFault(error)) {
+          throw error;
+        }
+        dropped.push({ kpid, error });
+      }
     }
     this.#collectReleasedResults();
-    return abandoned.length;
+    return harden({ released: abandoned.length - dropped.length, dropped });
   }
 
   /**

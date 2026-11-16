@@ -26,6 +26,7 @@ import { VatHandle } from './vats/VatHandle.ts';
 import { asKRef, asSubclusterId, asVatId } from '../test/branded.ts';
 import { KernelServiceManager } from './KernelServiceManager.ts';
 import { makeMapKernelDatabase } from '../test/storage.ts';
+import { markStoreFaults } from './store/utils/store-fault.ts';
 
 const mocks = vi.hoisted(() => {
   class KernelQueue {
@@ -37,7 +38,13 @@ const mocks = vi.hoisted(() => {
 
     releaseResultIfHeld = vi.fn().mockResolvedValue(true);
 
-    releaseAbandonedResults = vi.fn().mockReturnValue(0);
+    // On the prototype, for a test to spy on before `Kernel.make` calls it.
+    releaseAbandonedResults(): {
+      released: number;
+      dropped: { kpid: string; error: unknown }[];
+    } {
+      return { released: 0, dropped: [] };
+    }
 
     #runLoopFailure: Error | undefined;
 
@@ -517,12 +524,86 @@ describe('Kernel', () => {
       ).toStrictEqual([['kp7']]);
     });
 
+    it.each([
+      ['stopped', 'Kernel run loop is stopped; cannot write outside a crank'],
+      ['failed', 'Kernel run loop died; cannot write outside a crank'],
+    ])('resolves when the run loop has %s', async (state, refusal) => {
+      const kernel = await Kernel.make(
+        mockPlatformServices,
+        mockKernelDatabase,
+      );
+      const queue = mocks.KernelQueue.lastInstance;
+      if (state === 'stopped') {
+        await queue.endRunLoop();
+      } else {
+        queue.killRunLoop(new Error('run loop boom'));
+      }
+      queue.releaseResultIfHeld.mockRejectedValue(new Error(refusal));
+
+      await kernel.releaseResult({ kpid: asKRef('kp7') });
+
+      expect(queue.getRunLoopStatus().state).toBe(state);
+    });
+
+    it('rejects with a store fault after the run loop has stopped', async () => {
+      const kernel = await Kernel.make(
+        mockPlatformServices,
+        mockKernelDatabase,
+      );
+      const queue = mocks.KernelQueue.lastInstance;
+      const { kernelKVStore } = makeMapKernelDatabase();
+      vi.spyOn(kernelKVStore, 'delete').mockImplementation(() => {
+        throw new Error('disk full');
+      });
+      queue.releaseResultIfHeld.mockImplementation(async () =>
+        markStoreFaults(kernelKVStore).delete('heldResult.kp7'),
+      );
+      await queue.endRunLoop();
+
+      await expect(
+        kernel.releaseResult({ kpid: asKRef('kp7') }),
+      ).rejects.toThrow('disk full');
+    });
+
+    it('rejects when the release fails under a running loop', async () => {
+      const kernel = await Kernel.make(
+        mockPlatformServices,
+        mockKernelDatabase,
+      );
+      mocks.KernelQueue.lastInstance.releaseResultIfHeld.mockRejectedValue(
+        new Error('disk full'),
+      );
+
+      await expect(
+        kernel.releaseResult({ kpid: asKRef('kp7') }),
+      ).rejects.toThrow('disk full');
+    });
+
     it('releases the results a previous incarnation held when it starts', async () => {
+      const sweep = vi.spyOn(
+        mocks.KernelQueue.prototype,
+        'releaseAbandonedResults',
+      );
+
       await Kernel.make(mockPlatformServices, mockKernelDatabase);
 
-      expect(
-        mocks.KernelQueue.lastInstance.releaseAbandonedResults,
-      ).toHaveBeenCalledOnce();
+      expect(sweep).toHaveBeenCalledOnce();
+    });
+
+    it('logs a hold it dropped without releasing and starts', async () => {
+      const error = new Error('refCount underflow kp7');
+      vi.spyOn(
+        mocks.KernelQueue.prototype,
+        'releaseAbandonedResults',
+      ).mockReturnValueOnce({ released: 0, dropped: [{ kpid: 'kp7', error }] });
+      const logger = new Logger('test');
+      const logError = vi.spyOn(logger, 'error').mockReturnValue();
+
+      await Kernel.make(mockPlatformServices, mockKernelDatabase, { logger });
+
+      expect(logError.mock.calls).toStrictEqual([
+        ['Dropped the hold on result kp7:', error],
+      ]);
     });
 
     it('deserializes CapData rejections into Errors', async () => {

@@ -19,6 +19,7 @@ import type { RemoteCommsOptions } from './remotes/types.ts';
 import type { PingVatResult } from './rpc/index.ts';
 import { makeKernelStore } from './store/index.ts';
 import type { KernelStore } from './store/index.ts';
+import { isStoreFault } from './store/utils/store-fault.ts';
 import type {
   VatId,
   RemoteId,
@@ -351,7 +352,10 @@ export class Kernel {
 
     // Results held for callers of a previous incarnation, whose promises
     // died with it.
-    this.#kernelQueue.releaseAbandonedResults();
+    const { dropped } = this.#kernelQueue.releaseAbandonedResults();
+    for (const { kpid, error } of dropped) {
+      this.#logger.error(`Dropped the hold on result ${kpid}:`, error);
+    }
 
     // Before the vats start, so a throw leaves no worker running, and before
     // the run loop, which may find a delivery to any remote already queued.
@@ -544,14 +548,30 @@ export class Kernel {
    *
    * @param result - The result. Releasing one the kernel holds nothing for
    * does nothing: one without a `kpid`, one already released, or one from
-   * before the kernel last started.
+   * before the kernel last started. So does releasing after the run loop has
+   * stopped or died, since the next start releases every hold.
    * @param result.kpid - The result's `kpid`.
    */
   async releaseResult({ kpid }: { kpid?: KRef | undefined }): Promise<void> {
     if (kpid === undefined) {
       return;
     }
-    if (!(await this.#kernelQueue.releaseResultIfHeld(kpid))) {
+    let held;
+    try {
+      held = await this.#kernelQueue.releaseResultIfHeld(kpid);
+    } catch (error) {
+      // Asked after the refusal, to cover a loop that ends with the release
+      // still queued.
+      const { state } = this.#kernelQueue.getRunLoopStatus();
+      if (isStoreFault(error) || (state !== 'stopped' && state !== 'failed')) {
+        throw error;
+      }
+      this.#logger.debug(
+        `releaseResult: run loop ${state}, ${kpid} is left for the next start`,
+      );
+      return;
+    }
+    if (!held) {
       this.#logger.debug(`releaseResult: ${kpid} is not a held result`);
     }
   }
