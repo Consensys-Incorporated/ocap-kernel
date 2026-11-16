@@ -16,7 +16,6 @@ import type {
   RunQueueItemBringOutYourDead,
   RunQueueItemRemoteInbound,
   RunQueueItemPeerIncarnation,
-  ControlOperation,
   EndpointId,
   GCRunQueueType,
   CrankResult,
@@ -44,7 +43,6 @@ describe('KernelRouter', () => {
   let mockApplyIncarnationChange: Mock<
     (item: RunQueueItemPeerIncarnation) => CrankResult
   >;
-  let mockPerformControl: Mock<(operation: ControlOperation) => Promise<void>>;
 
   beforeEach(() => {
     // Mock EndpointHandle with more detailed return values
@@ -107,7 +105,6 @@ describe('KernelRouter', () => {
     mockRestartVat = vi.fn(async () => undefined);
     mockTerminateVat = vi.fn(async () => undefined);
     mockApplyIncarnationChange = vi.fn(() => ({}));
-    mockPerformControl = vi.fn(async () => undefined);
 
     // Create the router to test
     kernelRouter = new KernelRouter({
@@ -118,7 +115,6 @@ describe('KernelRouter', () => {
       restartVat: mockRestartVat,
       terminateVat: mockTerminateVat,
       applyIncarnationChange: mockApplyIncarnationChange,
-      performControl: mockPerformControl,
     });
   });
 
@@ -1495,27 +1491,6 @@ describe('KernelRouter', () => {
             incarnation: 'incarnation-B',
             restart: true,
           }),
-        ).rejects.toThrow(failure);
-      });
-    });
-
-    describe('control', () => {
-      it('hands a control operation to the kernel', async () => {
-        const result = await kernelRouter.deliver({
-          type: 'control',
-          operation: 'reset',
-        });
-
-        expect(mockPerformControl).toHaveBeenCalledWith('reset');
-        expect(result).toBeUndefined();
-      });
-
-      it('lets a failure reach the run loop', async () => {
-        const failure = new Error('clear failed');
-        mockPerformControl.mockRejectedValueOnce(failure);
-
-        await expect(
-          kernelRouter.deliver({ type: 'control', operation: 'clearStorage' }),
         ).rejects.toThrow(failure);
       });
     });

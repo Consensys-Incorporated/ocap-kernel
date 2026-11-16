@@ -11,7 +11,6 @@ import { parseRef } from './store/utils/parse-ref.ts';
 import { isPromiseRef } from './store/utils/promise-ref.ts';
 import { isStoreFault } from './store/utils/store-fault.ts';
 import type {
-  ControlOperation,
   EndpointId,
   EndpointHandle,
   ERef,
@@ -59,7 +58,6 @@ type KernelRouterOptions = {
     reason?: CapData<KRef>,
   ) => Promise<CrankResult | undefined>;
   applyIncarnationChange: (item: RunQueueItemPeerIncarnation) => CrankResult;
-  performControl: (operation: ControlOperation) => Promise<void>;
   logger?: Logger;
 };
 
@@ -106,9 +104,6 @@ export class KernelRouter {
     item: RunQueueItemPeerIncarnation,
   ) => CrankResult;
 
-  /** A function that carries out a control operation. */
-  readonly #performControl: (operation: ControlOperation) => Promise<void>;
-
   /** The logger, if any. */
   readonly #logger: Logger | undefined;
 
@@ -123,7 +118,6 @@ export class KernelRouter {
    * @param options.restartVat - A function that replaces a vat's worker.
    * @param options.terminateVat - A function that ends a vat.
    * @param options.applyIncarnationChange - A function that records a peer's incarnation change.
-   * @param options.performControl - A function that carries out a control operation.
    * @param options.logger - The logger. If not provided, no logging will be done.
    */
   constructor({
@@ -134,7 +128,6 @@ export class KernelRouter {
     restartVat,
     terminateVat,
     applyIncarnationChange,
-    performControl,
     logger,
   }: KernelRouterOptions) {
     this.#kernelStore = kernelStore;
@@ -144,7 +137,6 @@ export class KernelRouter {
     this.#restartVat = restartVat;
     this.#terminateVat = terminateVat;
     this.#applyIncarnationChange = applyIncarnationChange;
-    this.#performControl = performControl;
     this.#logger = logger;
   }
 
@@ -197,9 +189,6 @@ export class KernelRouter {
         return await this.#terminateVat(item.vatId, item.reason);
       case 'peerIncarnation':
         return this.#applyIncarnationChange(item);
-      case 'control':
-        await this.#performControl(item.operation);
-        return undefined;
       default:
         // @ts-expect-error Runtime does not respect "never".
         Fail`unsupported or unknown run queue item type ${item.type}`;

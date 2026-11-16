@@ -209,7 +209,6 @@ function boot(
     restartVat: vatManager.performVatRestart.bind(vatManager),
     terminateVat: vatManager.performVatTermination.bind(vatManager),
     applyIncarnationChange: () => ({}),
-    performControl: async () => undefined,
     logger,
   });
   return {
