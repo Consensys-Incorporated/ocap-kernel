@@ -34,7 +34,7 @@ describe('held results', () => {
     const [kpid] = ks.initKernelPromise();
     ks.holdResult(kpid);
 
-    expect(ks.releaseHeldResult(kpid)).toBe(true);
+    ks.releaseHeldResult(kpid);
 
     expect({
       held: ks.isResultHeld(kpid),
@@ -48,7 +48,7 @@ describe('held results', () => {
     const ks = makeKernelStore(makeMapKernelDatabase());
     const [kpid] = ks.initKernelPromise();
 
-    expect(ks.releaseHeldResult(kpid)).toBe(false);
+    expect(() => ks.releaseHeldResult(kpid)).toThrow('is not a held result');
 
     expect(ks.getRefCount(kpid)).toBe(1);
   });

@@ -172,16 +172,16 @@ describe('Garbage Collection', () => {
 
     await kernel.releaseResult(pong);
     await kernel.releaseResult(created);
-
     expect(kernelStore.getHeldResults()).toStrictEqual([]);
     expect(kernelStore.kernelRefExists(created.kpid as KRef)).toBe(false);
     expect(kernelStore.getObjectRefCount(createdRef)).toStrictEqual({
       reachable: 0,
       recognizable: 0,
     });
-    await expect(kernel.releaseResult(created)).rejects.toThrow(
-      'is not a held result',
-    );
+
+    // A second release finds nothing held.
+    await kernel.releaseResult(created);
+    expect(kernelStore.getHeldResults()).toStrictEqual([]);
   });
 
   it('should trigger GC syscalls through bringOutYourDead', async () => {

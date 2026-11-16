@@ -154,7 +154,7 @@ describe('the hold on a queueMessage result', () => {
     await stop();
   });
 
-  it('cannot be released twice', async () => {
+  it('cannot be released twice by the kernel', async () => {
     const { kernelQueue, root, start, stop } = await setUp(OBJECT);
     start();
     const { kpid } = await kernelQueue.enqueueMessage(root, 'fetch', []);
@@ -163,6 +163,20 @@ describe('the hold on a queueMessage result', () => {
     await expect(kernelQueue.releaseResult(kpid as KRef)).rejects.toThrow(
       'is not a held result',
     );
+    await stop();
+  });
+
+  it('is released once by a host that releases it twice', async () => {
+    const { kernelStore, kernelQueue, root, start, stop } = await setUp(OBJECT);
+    start();
+    const { kpid } = await kernelQueue.enqueueMessage(root, 'fetch', []);
+
+    expect({
+      first: await kernelQueue.releaseResultIfHeld(kpid as KRef),
+      second: await kernelQueue.releaseResultIfHeld(kpid as KRef),
+      held: kernelStore.getHeldResults(),
+      audit: kernelStore.auditRefCounts(),
+    }).toStrictEqual({ first: true, second: false, held: [], audit: [] });
     await stop();
   });
 

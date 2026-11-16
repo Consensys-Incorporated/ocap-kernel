@@ -1,3 +1,5 @@
+import { Fail } from '@endo/errors';
+
 import { getBaseMethods } from './base.ts';
 import { getRefCountMethods } from './refcount.ts';
 import type { KRef } from '../../types.ts';
@@ -42,15 +44,13 @@ export function getHeldResultMethods(ctx: StoreContext) {
    * Release a held result promise.
    *
    * @param kpid - The promise.
-   * @returns False if it was not held.
+   * @throws If it is not held.
    */
-  function releaseHeldResult(kpid: KRef): boolean {
-    if (!isResultHeld(kpid)) {
-      return false;
-    }
+  function releaseHeldResult(kpid: KRef): void {
+    isResultHeld(kpid) ||
+      Fail`${kpid} is not a held result; it may have been released already`;
     decrementRefCount(kpid, 'release|result');
     ctx.kv.delete(`${HELD_RESULT_PREFIX}${kpid}`);
-    return true;
   }
 
   /**

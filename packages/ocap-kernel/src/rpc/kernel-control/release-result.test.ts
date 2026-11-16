@@ -18,8 +18,8 @@ describe('releaseResultHandler', () => {
     expect(result).toBeNull();
   });
 
-  it('propagates the refusal of a result that is not held', async () => {
-    const error = new Error('kp1 is not a held result');
+  it('propagates a rejection', async () => {
+    const error = new Error('run loop has stopped');
     const kernel = {
       releaseResult: vi.fn().mockRejectedValue(error),
     } as unknown as Kernel;
