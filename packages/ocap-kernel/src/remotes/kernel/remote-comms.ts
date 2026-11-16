@@ -378,9 +378,8 @@ export type PreparedRemoteComms = Awaited<
 };
 
 /**
- * Write what remote comms keep in the store: the kernel's identity and its
- * relays, and whether it woke from an earlier incarnation. For a crank, so
- * that a failure rolls them back together.
+ * Write what remote comms keep in the store: the kernel's identity, its
+ * relays, and whether it woke from an earlier incarnation.
  *
  * @param kernelStore - The kernel's persistent state store.
  * @param options - Configuration options for remote communications.
@@ -419,8 +418,7 @@ export async function prepareRemoteComms(
 }
 
 /**
- * Start the transport over what `prepareRemoteComms` wrote. Outside any
- * crank: the transport keeps no store state.
+ * Start the transport over what `prepareRemoteComms` wrote.
  *
  * @param prepared - What `prepareRemoteComms` returned.
  * @param options - Named options.
