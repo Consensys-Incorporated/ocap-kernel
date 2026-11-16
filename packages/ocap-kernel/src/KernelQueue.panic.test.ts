@@ -1,0 +1,130 @@
+import type { KernelDatabase } from '@metamask/kernel-store';
+import { delay } from '@metamask/kernel-utils';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { describe, it, expect, onTestFinished, vi } from 'vitest';
+
+import { setUpRealKernel, watch } from '../test/real-kernel.ts';
+
+/**
+ * Fail the kernel's writes that `matches` picks, as a full disk does.
+ *
+ * @param kernelDatabase - The kernel's database.
+ * @param matches - Which writes fail.
+ */
+function failWrites(
+  kernelDatabase: KernelDatabase,
+  matches: (key: string, value: string) => boolean,
+): void {
+  const { kernelKVStore } = kernelDatabase;
+  const set = kernelKVStore.set.bind(kernelKVStore);
+  vi.spyOn(kernelKVStore, 'set').mockImplementation((key, value) => {
+    if (matches(key, value)) {
+      throw new Error('database or disk is full');
+    }
+    set(key, value);
+  });
+}
+
+/**
+ * Read every row the kernel keeps, except the crank number: a rolled-back
+ * crank keeps the number it took, so no later crank gets the same one.
+ *
+ * @param kernelDatabase - The kernel's database.
+ * @returns The rows of its tables.
+ */
+function dumpStore(kernelDatabase: KernelDatabase): Record<string, unknown> {
+  return {
+    kv: kernelDatabase.executeQuery(
+      "SELECT key, value FROM kv WHERE key != 'crankNumber' ORDER BY key",
+    ),
+    vatState: kernelDatabase.executeQuery(
+      'SELECT vatID, key, value FROM kv_vatstore ORDER BY vatID, key',
+    ),
+  };
+}
+
+describe('a store fault in a syscall', () => {
+  it('stops the kernel, rolls the store back, and the next start delivers the message again', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'panic-'));
+    onTestFinished(async () => rm(dir, { recursive: true, force: true }));
+    const dbFilename = join(dir, 'store.db');
+    const first = await setUpRealKernel({ dbFilename });
+    failWrites(
+      first.kernelDatabase,
+      (key, value) => /^kp\d+\.state$/u.test(key) && value !== 'unresolved',
+    );
+    let before: Record<string, unknown> | undefined;
+    const release = first.kernelDatabase.releaseSavepoint.bind(
+      first.kernelDatabase,
+    );
+    vi.spyOn(first.kernelDatabase, 'releaseSavepoint').mockImplementation(
+      (name) => {
+        release(name);
+        // The commit of the message's own crank: written, not yet taken.
+        before ??= dumpStore(first.kernelDatabase);
+      },
+    );
+    const settlement = watch(
+      first.kernel.queueMessage(first.doomedRoot, 'answer', []),
+    );
+
+    await vi.waitFor(async () =>
+      expect((await first.kernel.getStatus()).runLoop.state).toBe('failed'),
+    );
+    await delay(0);
+    const { runLoop } = await first.kernel.getStatus();
+    const after = dumpStore(first.kernelDatabase);
+    await first.kernel.stop();
+    vi.restoreAllMocks();
+    const second = await setUpRealKernel({ dbFilename });
+
+    expect({ runLoop, settlement: settlement(), after }).toStrictEqual({
+      runLoop: {
+        state: 'failed',
+        error: 'Kernel panic: syscall resolve from vat v2 failed',
+        detail: expect.stringContaining('database or disk is full'),
+      },
+      settlement:
+        'Kernel run loop died; this message result will never be delivered',
+      after: before,
+    });
+    await vi.waitFor(() => expect(second.received).toContain('v2:answer'));
+    await second.kernel.stop();
+  });
+});
+
+describe("a store fault writing a vat's state", () => {
+  it('stops the kernel with the message still queued, rather than fail it', async () => {
+    const { kernel, kernelDatabase, waiterRoot } = await setUpRealKernel();
+    vi.spyOn(kernelDatabase, 'makeVatStore').mockReturnValue({
+      getKVData: () => [],
+      updateKVData: () => {
+        throw new Error('database or disk is full');
+      },
+    });
+    const settlement = watch(kernel.queueMessage(waiterRoot, 'remember', []));
+
+    await vi.waitFor(async () =>
+      expect((await kernel.getStatus()).runLoop.state).toBe('failed'),
+    );
+    await delay(0);
+
+    const { get } = kernelDatabase.kernelKVStore;
+    expect({
+      runLoop: (await kernel.getStatus()).runLoop,
+      settlement: settlement(),
+      queued: Number(get('queue.run.head')) - Number(get('queue.run.tail')),
+    }).toStrictEqual({
+      runLoop: {
+        state: 'failed',
+        error: 'database or disk is full',
+        detail: expect.any(String),
+      },
+      settlement:
+        'Kernel run loop died; this message result will never be delivered',
+      queued: 1,
+    });
+  });
+});

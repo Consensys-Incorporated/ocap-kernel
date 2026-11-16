@@ -9,6 +9,7 @@ import type {
   ExtractResult,
 } from '@metamask/kernel-rpc-methods';
 import type { VatStore } from '@metamask/kernel-store';
+import { stringify } from '@metamask/kernel-utils';
 import type { JsonRpcMessage } from '@metamask/kernel-utils';
 import { Logger } from '@metamask/logger';
 import type { DuplexStream } from '@metamask/streams';
@@ -389,7 +390,23 @@ export class VatHandle implements EndpointHandle {
     method: Method;
     params: ExtractParams<Method, typeof vatMethodSpecs>;
   }): Promise<ExtractResult<Method, typeof vatMethodSpecs>> {
-    const result = await this.#rpcClient.call(method, params);
+    let result: unknown;
+    try {
+      result = await this.#rpcClient.call(method, params);
+    } catch (error) {
+      if (method !== 'deliver' || this.#closing) {
+        throw error;
+      }
+      // A dead channel is reported as a lost vat, and closes the handle before
+      // this runs. What else fails a `deliver` is the worker's, not the kernel's.
+      this.#logger?.error(`Vat ${this.vatId} failed a delivery:`, error);
+      const detail =
+        error instanceof Error ? error.message : stringify(error, 0);
+      result = harden([
+        [[], []],
+        `Vat worker failed the delivery: ${detail}`,
+      ] satisfies VatDeliveryResult);
+    }
     if (method === 'initVat' || method === 'deliver') {
       const [[sets, deletes], vatError] = result as VatDeliveryResult;
       let deliveryError = vatError;
@@ -400,15 +417,13 @@ export class VatHandle implements EndpointHandle {
         ? capReasonText(deliveryError)
         : undefined;
       const noErrors = !deliveryError && !this.#vatSyscall.illegalSyscall;
-      // On errors, we neither update this vat's KV data nor rollback previous changes.
-      // This is safe because vats are always terminated when errors occur
-      // and they have their own databases, which are deleted when the vat is terminated.
-      // The main kernel database will be rolled back.
+      // On an error the state goes unwritten: the vat is terminated and the
+      // crank rolled back.
       if (noErrors) {
         this.#vatStore.updateKVData(sets, deletes);
       }
     }
-    return result;
+    return result as ExtractResult<Method, typeof vatMethodSpecs>;
   }
 
   /**

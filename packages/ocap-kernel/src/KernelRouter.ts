@@ -9,6 +9,7 @@ import type { KernelStore } from './store/index.ts';
 import { extractSingleRef } from './store/utils/extract-ref.ts';
 import { parseRef } from './store/utils/parse-ref.ts';
 import { isPromiseRef } from './store/utils/promise-ref.ts';
+import { isStoreFault } from './store/utils/store-fault.ts';
 import type {
   EndpointId,
   EndpointHandle,
@@ -409,8 +410,12 @@ export class KernelRouter {
             endpoint.deliverMessage(endpointTarget, endpointMessage),
           );
         } catch (error) {
-          // Delivery failed (e.g., remote queue full). Reject the kernel promise
-          // so the caller knows the message wasn't delivered.
+          // A peer must not be able to stop the kernel. A vat's worker
+          // failures are crank results by the time they get here, so what a
+          // vat's delivery throws is the kernel's.
+          if (!isRemoteId(eid) || isStoreFault(error)) {
+            throw error;
+          }
           this.#logger?.error(`Delivery to ${endpointId} failed:`, error);
           if (message.result) {
             const detail =
@@ -421,7 +426,6 @@ export class KernelRouter {
               makeKernelError('DELIVERY_FAILED', capReasonText(detail)),
             );
           }
-          // Continue processing other messages - don't let one failure crash the queue
         }
       } else if (isKernelServiceMessage) {
         crankResult = this.#deliverKernelServiceMessage(target, message);
@@ -636,7 +640,8 @@ export class KernelRouter {
    *
    * The remote can be gone by the time its turn comes: the message was
    * accepted while it was live and the queue outlives it. Throwing here would
-   * escape the crank and kill the run loop, so the message is dropped.
+   * escape the crank and kill the run loop, so the message is dropped, except
+   * on a store fault.
    *
    * @param item - The inbound message.
    * @returns The crank outcome.
@@ -665,7 +670,10 @@ export class KernelRouter {
     } catch (error) {
       // What a peer sends can fail here: an unknown method, a reference that
       // does not resolve, a reply to a redemption that has timed out. None of
-      // it is the kernel's to die of.
+      // it is the kernel's to die of, but a store fault is.
+      if (isStoreFault(error)) {
+        throw error;
+      }
       this.#logger?.error(
         `Discarded inbound message seq=${seq} from ${remoteId}, which could not be delivered:`,
         error,

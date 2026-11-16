@@ -94,6 +94,7 @@ import { getSubclusterMethods } from './methods/subclusters.ts';
 import { getTranslators } from './methods/translators.ts';
 import { getVatMethods } from './methods/vat.ts';
 import type { StoreContext, StoredValue } from './types.ts';
+import { markStoreFaults } from './utils/store-fault.ts';
 
 /**
  * The prefix shared by the issuance count of every object an ocap URL names,
@@ -130,7 +131,7 @@ export function makeKernelStore(kdb: KernelDatabase, logger?: Logger) {
   // Initialize core state
 
   /** KV store in which all the kernel's own state is kept. */
-  const kv: KVStore = kdb.kernelKVStore;
+  const kv: KVStore = markStoreFaults(kdb.kernelKVStore);
 
   const { getPrefixedKeys, provideCachedStoredValue, provideStoredQueue } =
     getBaseMethods(kv);
