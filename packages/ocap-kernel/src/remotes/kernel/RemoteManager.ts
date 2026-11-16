@@ -145,7 +145,6 @@ export class RemoteManager {
       ...(mnemonic === undefined ? {} : { mnemonic }),
     };
 
-    // In a crank of its own, which a failure rolls back.
     const { identity } = await this.#kernelQueue.enqueueInbox(
       'initialize the identity',
       async () =>
@@ -420,9 +419,8 @@ export class RemoteManager {
 
     this.#ackTimeoutMs = mergedOptions.ackTimeoutMs;
 
-    // The identity and relays this writes belong to one crank, which a
-    // failure rolls back. The transport keeps no store state, so it starts
-    // once that crank has committed, and one that fails to start leaves the
+    // The transport keeps no store state, so it starts after the crank that
+    // wrote the identity has committed: one that fails to start leaves the
     // identity written.
     const prepared = await this.#kernelQueue.enqueueInbox(
       'initialize remote comms',

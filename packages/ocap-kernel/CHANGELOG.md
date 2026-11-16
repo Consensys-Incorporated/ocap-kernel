@@ -86,9 +86,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+<<<<<<< HEAD
 - A host call made while a crank is running no longer writes into that crank, whose abort undid it after the caller was told it succeeded. Each runs in a crank of its own and none is answered before that crank commits ([#1303](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1303))
 - A `queueMessage`, `restartVat` or `terminateVat` call, and a new remote's setup, each run in a crank of their own. They used to be written between cranks with no transaction, so a store fault partway kept half of one; now the crank rolls back and stops the kernel ([#1302](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1302))
 - A crank that rolls back keeps the IDs it gave out, so no later crank is given a vat, remote, object or promise ID that a caller may have seen ([#1302](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1302))
+=======
+- A `queueMessage`, `restartVat` or `terminateVat` call, and a new remote's setup, each run in a crank of their own: a store fault partway now rolls the write back and stops the kernel, instead of keeping half of it ([#1302](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1302))
+- A crank that rolls back keeps the IDs it gave out, so no later crank hands out an ID a caller may have seen ([#1302](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1302))
+>>>>>>> sirtimid/inbox-requests
 - `reset` and `clearStorage` reject the host calls still waiting for the run loop behind them, instead of carrying them out on the fresh kernel ([#1301](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1301))
 - A store fault (a read or write the kernel's database refuses, as on a full disk) in a syscall, in a peer's handshake, while taking a peer's message or while writing a vat's state after a delivery stops the kernel and rolls back the open crank, instead of going on with the vat terminated, the handshake failed, the message dropped or the state unwritten ([#1288](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1288), [#1289](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1289), [#1290](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1290))
 - **BREAKING:** A vat whose worker answers a delivery with an error or a malformed result is terminated. The error used to reject a message with `DELIVERY_FAILED`, and kill the run loop for a notify or GC delivery ([#1290](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1290))
