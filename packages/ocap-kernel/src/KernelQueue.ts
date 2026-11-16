@@ -240,7 +240,6 @@ export class KernelQueue {
         // stick, and promises resolved during it stay resolved while their
         // notifies die unflushed. A restart would resume from that.
         try {
-          // The inbox goes first.
           const inbox = this.#inbox.shift();
           const queueItem = inbox ? undefined : this.#getNextRunQueueItem();
           // At the take, so a crank that dies before the work starts still
