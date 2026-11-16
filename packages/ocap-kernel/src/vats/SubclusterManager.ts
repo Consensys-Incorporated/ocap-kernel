@@ -1,5 +1,6 @@
 import type { CapData } from '@endo/marshal';
 import { SubclusterNotFoundError } from '@metamask/kernel-errors';
+import { isCapData } from '@metamask/kernel-utils';
 import { Logger } from '@metamask/logger';
 
 import type { IOManager } from '../io/IOManager.ts';
@@ -551,7 +552,15 @@ export class SubclusterManager {
         return { value: { answer: bootstrapAnswer } };
       },
     );
-    const bootstrapResult = await answer;
+    let bootstrapResult: CapData<KRef>;
+    try {
+      bootstrapResult = await answer;
+    } catch (rejection) {
+      // Reported as `Kernel.queueMessage` reports a rejected answer.
+      throw isCapData(rejection)
+        ? kunser(rejection as CapData<KRef>)
+        : rejection;
+    }
     const unserialized = kunser(bootstrapResult);
     if (unserialized instanceof Error) {
       throw unserialized;
