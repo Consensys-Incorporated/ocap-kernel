@@ -853,7 +853,7 @@ describe('RemoteManager', () => {
 
       await expect(
         manager.withRemote('new-peer', {
-          // What taking a peer's acknowledgement writes.
+          // A store write of `use`'s own, as taking a peer's acknowledgement makes.
           use: (remote) => {
             armed = true;
             realStore.setRemoteStartSeq(remote.remoteId, 1);
