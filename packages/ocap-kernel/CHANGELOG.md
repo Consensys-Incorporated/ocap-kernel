@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Number cranks, from 1, with a counter that persists across restarts. `KernelStore.getCrankNumber()` reports the current crank's number, or the last one's between cranks, and the `@@@@` delivery log lines carry it ([#1281](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1281))
-- `Kernel.make` takes `kernelServices`, kernel services registered before the run loop starts; one registered later writes into whatever crank is open ([#1215](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1215))
+- `Kernel.make` takes `kernelServices`, kernel services registered before the run loop starts ([#1215](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1215))
 - Add `Request`, `Headers`, and `Response` to the globals a vat may request, for `makeFetch` from `@metamask/kernel-platforms` ([#942](https://github.com/MetaMask/ocap-kernel/pull/942), [#1163](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1163))
 - Add `getRemoteIDs` to the kernel store, listing every remote the kernel knows about ([#1088](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1088))
 - Add a `vatRelaunchTimeoutMs` option to `Kernel.make`: how long a persisted vat's start at boot, or a vat's restart, waits for its worker before giving up, 30 seconds by default ([#1096](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1096), [#1246](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1246))
@@ -46,12 +46,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - `recomputeRefCounts` is a repair tool for a drifted store, offered to embedders and never run automatically: opening an existing store does not migrate it. Reach it by calling `makeKernelStore` over the kernel's own database
   - Exports the `RefCountViolation` type
 - Add `setReachableFlag` to the kernel store, the counterpart to `clearReachableFlag` ([#1020](https://github.com/MetaMask/ocap-kernel/pull/1020))
-- Add `getOcapURLObjects`, `getOcapURLIssuanceCount`, `retainForOcapURL`, `undoOcapURLRetention` and `releaseOcapURLRetentions` to the kernel store, and `VatManager.releaseVatRootPin` ([#1020](https://github.com/MetaMask/ocap-kernel/pull/1020))
-  - `undoOcapURLRetention` unwinds one issuance whose URL was never minted; `releaseOcapURLRetentions` drops a target's whole retention, for disavowing every URL naming it at once
+- Add `getOcapURLObjects`, `getOcapURLIssuanceCount`, `retainForOcapURL` and `releaseOcapURLRetentions` to the kernel store, and `VatManager.releaseVatRootPin` ([#1020](https://github.com/MetaMask/ocap-kernel/pull/1020))
+  - `releaseOcapURLRetentions` drops a target's whole retention, for disavowing every URL naming it at once
 - Add `getPinCount` to the kernel store, which reports how many pins are held on an object ([#1020](https://github.com/MetaMask/ocap-kernel/pull/1020))
 
 ### Changed
 
+- **BREAKING:** `revoke`, `pinVatRoot`, `unpinVatRoot`, `reapVats`, `reapRemotes`, `collectGarbage` and `registerKernelServiceObject` return promises ([#1303](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1303))
+- **BREAKING:** Every host call that writes the kernel store is refused once `stop` has begun, not only once the run loop has ended. `revoke`, `pinVatRoot`, `unpinVatRoot`, `reapVats`, `reapRemotes`, `collectGarbage`, `registerKernelServiceObject`, `initIdentity`, `initRemoteComms`, `issueOcapURL` and `redeemOcapURL` of a remote URL are also refused once the run loop has died ([#1303](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1303))
 - **BREAKING:** `clearStorage`, `reset` and `terminateAllVats` are refused once the run loop has died; restart the kernel instead, with `resetStorage` to clear its state ([#1105](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1105))
 - **BREAKING:** `getImporters` returns `EndpointId[]`, and includes remotes and terminated vats ([#1088](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1088))
 - **BREAKING:** `Kernel.make`'s `ioChannelFactory` option is now `ioListenerFactory`, and the exported `IOChannelFactory` type is replaced by `IOListener` and `IOListenerFactory`. A cluster config's `io` entries now create listeners; vats call `accept()` to obtain a channel instead of reading and writing the endowment directly ([#1007](https://github.com/MetaMask/ocap-kernel/pull/1007))
@@ -84,6 +86,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A host call made while a crank is running no longer writes into that crank, whose abort undid it after the caller was told it succeeded. Each runs in a crank of its own and none is answered before that crank commits ([#1303](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1303))
 - A `queueMessage`, `restartVat` or `terminateVat` call, and a new remote's setup, each run in a crank of their own: a store fault partway now rolls the write back and stops the kernel, instead of keeping half of it ([#1302](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1302))
 - A crank that rolls back keeps the IDs it gave out, so no later crank hands out an ID a caller may have seen ([#1302](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1302))
 - A `clearStorage`, `reset` or `terminateAllVats` still waiting behind a `reset` or `clearStorage` is rejected, instead of carried out on the fresh kernel ([#1301](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1301))

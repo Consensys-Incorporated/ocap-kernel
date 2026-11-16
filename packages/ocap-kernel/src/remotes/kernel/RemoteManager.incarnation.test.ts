@@ -3,7 +3,7 @@ import { delay } from '@metamask/kernel-utils';
 import { Logger } from '@metamask/logger';
 import { describe, it, expect, onTestFinished, vi } from 'vitest';
 
-import { initRemoteComms } from './remote-comms.ts';
+import { startRemoteComms } from './remote-comms.ts';
 import { RemoteManager } from './RemoteManager.ts';
 import { KernelRouter } from '../../KernelRouter.ts';
 import { asRRef } from '../../../test/branded.ts';
@@ -19,7 +19,7 @@ import type { RemoteComms } from '../types.ts';
 
 vi.mock('./remote-comms.ts', async () => {
   const actual = await vi.importActual('./remote-comms.ts');
-  return { ...actual, initRemoteComms: vi.fn() };
+  return { ...actual, startRemoteComms: vi.fn() };
 });
 
 const PEER_ID = '12D3KooWPeer1';
@@ -56,7 +56,7 @@ async function setUp() {
     }),
     registerLocationHints: vi.fn().mockResolvedValue(undefined),
   } as unknown as RemoteComms;
-  vi.mocked(initRemoteComms).mockResolvedValue(remoteComms);
+  vi.mocked(startRemoteComms).mockResolvedValue(remoteComms);
   const remoteManager = new RemoteManager({
     platformServices: {} as PlatformServices,
     kernelStore,
@@ -66,10 +66,9 @@ async function setUp() {
   remoteManager.setMessageHandler(vi.fn());
   await remoteManager.initRemoteComms();
   onTestFinished(() => remoteManager.cleanup());
-  const onRemoteGiveUp = vi.mocked(initRemoteComms).mock.lastCall?.[6] as (
-    peerId: string,
-  ) => void;
-  const onIncarnationChange = vi.mocked(initRemoteComms).mock.lastCall?.[8] as (
+  const started = vi.mocked(startRemoteComms).mock.lastCall?.[1];
+  const onRemoteGiveUp = started?.onRemoteGiveUp as (peerId: string) => void;
+  const onIncarnationChange = started?.onIncarnationChange as (
     peerId: string,
     incarnation: string,
   ) => Promise<boolean>;

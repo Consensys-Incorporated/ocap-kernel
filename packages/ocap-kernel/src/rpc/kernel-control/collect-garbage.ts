@@ -19,13 +19,13 @@ export type CollectGarbageHooks = { kernel: Pick<Kernel, 'collectGarbage'> };
 export const collectGarbageHandler: Handler<
   'collectGarbage',
   EmptyJsonArray,
-  null,
+  Promise<null>,
   CollectGarbageHooks
 > = {
   ...collectGarbageSpec,
   hooks: { kernel: true },
-  implementation: ({ kernel }) => {
-    kernel.collectGarbage();
+  implementation: async ({ kernel }: CollectGarbageHooks): Promise<null> => {
+    await kernel.collectGarbage();
     return null;
   },
 };

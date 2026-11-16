@@ -193,6 +193,67 @@ describe('a host call that wipes or ends vats, on a real kernel', () => {
   );
 });
 
+describe('a host call on a real kernel', () => {
+  it.each([
+    {
+      call: 'pinVatRoot',
+      make: async ({ kernel, doomedId }: RealKernel): Promise<unknown> =>
+        kernel.pinVatRoot(doomedId),
+      read: ({ kernelDatabase, doomedRoot }: RealKernel): unknown =>
+        makeKernelStore(kernelDatabase).getPinCount(doomedRoot),
+      before: 1,
+      after: 2,
+    },
+    {
+      call: 'revoke',
+      make: async ({ kernel, doomedRoot }: RealKernel): Promise<unknown> =>
+        kernel.revoke(doomedRoot),
+      read: ({ kernelDatabase, doomedRoot }: RealKernel): unknown =>
+        makeKernelStore(kernelDatabase).isRevoked(doomedRoot),
+      before: false,
+      after: true,
+    },
+  ])(
+    '$call, made while a crank is open, lands in a crank of its own that the abort of the open one does not undo',
+    async ({ make, read, before, after }) => {
+      const harness = await setUpRealKernel();
+      await harness.stall();
+      const settlement = watch(make(harness));
+      await delay(0);
+      const duringCrank = read(harness);
+
+      harness.release({ didDelivery: harness.waiterId, abort: true });
+      await vi.waitFor(() => expect(settlement()).toBe('fulfilled'));
+
+      expect({ duringCrank, afterwards: read(harness) }).toStrictEqual({
+        duringCrank: before,
+        afterwards: after,
+      });
+    },
+  );
+});
+
+describe('initRemoteComms on a real kernel', () => {
+  it('keeps the identity it wrote when the transport fails to start', async () => {
+    const { kernel, kernelDatabase, platformServices } =
+      await setUpRealKernel();
+    Object.assign(platformServices, {
+      initializeRemoteComms: vi
+        .fn()
+        .mockRejectedValue(new Error('transport failed')),
+    });
+
+    await expect(kernel.initRemoteComms()).rejects.toThrow('transport failed');
+
+    expect({
+      identity:
+        makeKernelStore(kernelDatabase).getRemoteIdentityValue('peerId') !==
+        undefined,
+      runLoop: (await kernel.getStatus()).runLoop.state,
+    }).toStrictEqual({ identity: true, runLoop: 'running' });
+  });
+});
+
 describe('stop on a real kernel', () => {
   it('tears down even when the run loop dies before it ends', async () => {
     const harness = await setUpRealKernel();

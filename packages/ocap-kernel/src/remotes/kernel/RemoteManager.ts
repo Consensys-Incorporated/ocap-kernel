@@ -1,7 +1,12 @@
 import type { Logger } from '@metamask/logger';
 
-import { initRemoteComms, initRemoteIdentity } from './remote-comms.ts';
+import {
+  initRemoteIdentity,
+  prepareRemoteComms,
+  startRemoteComms,
+} from './remote-comms.ts';
 import { RemoteHandle } from './RemoteHandle.ts';
+import { attempt } from '../../KernelQueue.ts';
 import type { KernelQueue } from '../../KernelQueue.ts';
 import { makeKernelError } from '../../liveslots/kernel-marshal.ts';
 import type { KernelStore } from '../../store/index.ts';
@@ -140,11 +145,17 @@ export class RemoteManager {
       ...(mnemonic === undefined ? {} : { mnemonic }),
     };
 
-    const { identity } = await initRemoteIdentity(
-      this.#kernelStore,
-      mergedOptions,
-      this.#logger,
-      this.#keySeed,
+    const { identity } = await this.#kernelQueue.enqueueInbox(
+      'initialize the identity',
+      async () =>
+        attempt(async () =>
+          initRemoteIdentity(
+            this.#kernelStore,
+            mergedOptions,
+            this.#logger,
+            this.#keySeed,
+          ),
+        ),
     );
     this.#remoteIdentity = identity;
   }
@@ -393,7 +404,8 @@ export class RemoteManager {
    * @returns a promise that resolves when initialization is complete.
    */
   async initRemoteComms(options?: RemoteCommsOptions): Promise<void> {
-    if (!this.#messageHandler) {
+    const remoteMessageHandler = this.#messageHandler;
+    if (!remoteMessageHandler) {
       throw Error(
         'Message handler must be set before initializing remote comms',
       );
@@ -407,17 +419,29 @@ export class RemoteManager {
 
     this.#ackTimeoutMs = mergedOptions.ackTimeoutMs;
 
-    const remoteComms = await initRemoteComms(
-      this.#kernelStore,
-      this.#platformServices,
-      this.#messageHandler,
-      mergedOptions,
-      this.#logger,
-      this.#keySeed,
-      this.#handleRemoteGiveUp.bind(this),
-      this.#incarnationId,
-      this.#handleIncarnationChange.bind(this),
+    // The transport keeps no store state, so it starts after the crank that
+    // wrote the identity has committed: one that fails to start leaves the
+    // identity written.
+    const prepared = await this.#kernelQueue.enqueueInbox(
+      'initialize remote comms',
+      async () =>
+        attempt(async () =>
+          prepareRemoteComms(
+            this.#kernelStore,
+            mergedOptions,
+            this.#logger,
+            this.#keySeed,
+          ),
+        ),
     );
+    const remoteComms = await startRemoteComms(prepared, {
+      platformServices: this.#platformServices,
+      remoteMessageHandler,
+      logger: this.#logger,
+      onRemoteGiveUp: this.#handleRemoteGiveUp.bind(this),
+      incarnationId: this.#incarnationId,
+      onIncarnationChange: this.#handleIncarnationChange.bind(this),
+    });
     for (const remote of this.#remotes.values()) {
       remote.attachTransport({
         remoteComms,

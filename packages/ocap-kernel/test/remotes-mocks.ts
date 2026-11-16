@@ -180,6 +180,7 @@ export class MockRemotesFactory {
       remoteComms,
       remoteHandle,
       kernelStore: this.config.kernelStore as KernelStore,
+      kernelQueue: this.makeMockKernelQueue(),
     };
   }
 

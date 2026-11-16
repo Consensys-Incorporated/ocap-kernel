@@ -375,7 +375,7 @@ await kernel.terminateAllVats();
 await kernel.reload();
 
 // Run garbage collection
-kernel.collectGarbage();
+await kernel.collectGarbage();
 ```
 
 ## Common Use Cases
