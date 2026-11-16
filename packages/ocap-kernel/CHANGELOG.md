@@ -84,6 +84,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A `queueMessage`, `restartVat` or `terminateVat` call, and a new remote's setup, each run in a crank of their own: a store fault partway now rolls the write back and stops the kernel, instead of keeping half of it ([#1302](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1302))
+- A crank that rolls back keeps the IDs it gave out, so no later crank hands out an ID a caller may have seen ([#1302](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1302))
 - A `clearStorage`, `reset` or `terminateAllVats` still waiting behind a `reset` or `clearStorage` is rejected, instead of carried out on the fresh kernel ([#1301](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1301))
 - A store fault (a read or write the kernel's database refuses, as on a full disk) in a syscall, in a peer's handshake, while taking a peer's message or while writing a vat's state after a delivery stops the kernel and rolls back the open crank, instead of going on with the vat terminated, the handshake failed, the message dropped or the state unwritten ([#1288](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1288), [#1289](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1289), [#1290](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1290))
 - **BREAKING:** A vat whose worker answers a delivery with an error or a malformed result is terminated. The error used to reject a message with `DELIVERY_FAILED`, and kill the run loop for a notify or GC delivery ([#1290](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1290))

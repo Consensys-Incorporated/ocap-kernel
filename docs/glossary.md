@@ -82,8 +82,9 @@ or an item off the [run queue](#run-queue), such as a message or notification fo
 [a vat](#vat). The first two wait in memory until their crank comes. Cranks can be aborted
 and rolled back if errors occur. Cranks are numbered from 1 by a counter kept in the
 [kernel store](../packages/ocap-kernel/src/store/index.ts), so the numbering continues
-across kernel restarts; a crank that rolls back still used up its number. See the
-[KernelQueue](../packages/ocap-kernel/src/KernelQueue.ts) for the run loop implementation.
+across kernel restarts; a crank that rolls back still used up its number, and the IDs it
+gave out. See the [KernelQueue](../packages/ocap-kernel/src/KernelQueue.ts) for the run
+loop implementation.
 
 ### syscall
 
@@ -210,9 +211,10 @@ details.
 ### inbox
 
 The [run loop](#run-loop)'s in-memory queue of work from outside it: the host calls
-`clearStorage`, `reset` and `terminateAllVats`. The run loop takes each in a [crank](#crank)
-of its own, and its caller hears nothing of it before that crank commits. See `enqueueInbox`
-in [KernelQueue](../packages/ocap-kernel/src/KernelQueue.ts).
+`clearStorage`, `reset`, `terminateAllVats`, `queueMessage`, `restartVat` and `terminateVat`,
+and a new remote's setup. The run loop takes each in a [crank](#crank) of its own, and its
+caller hears nothing of it before that crank commits. See `enqueueInbox` in
+[KernelQueue](../packages/ocap-kernel/src/KernelQueue.ts).
 
 ### run loop
 

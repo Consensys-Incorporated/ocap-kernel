@@ -220,7 +220,7 @@ export class Kernel {
       vatManager: this.#vatManager,
       getKernelService: (name) =>
         this.#kernelServiceManager.getKernelService(name),
-      queueMessage: this.queueMessage.bind(this),
+      writeMessage: this.#kernelQueue.writeMessage.bind(this.#kernelQueue),
       ...(this.#ioManager ? { ioManager: this.#ioManager } : {}),
       logger: this.#logger.subLogger({ tags: ['SubclusterManager'] }),
     });
@@ -713,7 +713,6 @@ export class Kernel {
     this.#kernelQueue.discardArrivals();
     this.#kernelQueue.abandonSubscriptions(abandoned);
     this.#remoteManager.releaseRestartHolds();
-    this.#kernelQueue.discardHeldRequests(abandoned);
     this.#kernelQueue.discardInbox(abandoned);
     this.#vatManager.abandonQueuedWork(abandoned);
   }
@@ -941,8 +940,8 @@ export class Kernel {
 
   /**
    * Gracefully stop the kernel without deleting vats. Waits for the open crank
-   * and for a `clearStorage`, `reset` or `terminateAllVats` queued before
-   * this; if one never ends, neither does this, and the embedder has to end
+   * and for the inbox items queued before this, a `reset` or a `queueMessage`
+   * say; if one never ends, neither does this, and the embedder has to end
    * the process. A later call settles as this one does.
    */
   async stop(): Promise<void> {

@@ -149,14 +149,8 @@ describe('VatManager queued termination', () => {
       harness.run();
       await harness.openACrank();
 
-      // An outside caller asks while a crank is open, so the request is held
-      // in KernelQueue's memory until that crank ends.
-      const termination = vatManager.terminateVat(asVatId('v1'));
-      termination.catch(() => undefined);
-
-      // `Kernel.reset`, taken in the next crank, ahead of the termination
-      // written as this crank ends. Its steps, less the IO and remote ones
-      // this harness has none of.
+      // `Kernel.reset`, taken in the next crank. Its steps, less the IO and
+      // remote ones this harness has none of.
       const resetting = kernelQueue.enqueueInbox('reset', async () => {
         await vatManager.terminateAllVats();
         kernelStore.reset();
@@ -165,11 +159,14 @@ describe('VatManager queued termination', () => {
         );
         kernelQueue.discardArrivals();
         kernelQueue.abandonSubscriptions(abandoned);
-        kernelQueue.discardHeldRequests(abandoned);
         kernelQueue.discardInbox(abandoned);
         vatManager.abandonQueuedWork(abandoned);
         return { value: undefined };
       });
+      // An outside caller asks while the reset waits for the open crank, so
+      // its request is in the inbox behind the reset.
+      const termination = vatManager.terminateVat(asVatId('v1'));
+      termination.catch(() => undefined);
       harness.openGate();
       await resetting;
       await expect(termination).rejects.toThrow('Kernel was reset');

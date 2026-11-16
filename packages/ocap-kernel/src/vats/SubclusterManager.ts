@@ -1,5 +1,6 @@
 import type { CapData } from '@endo/marshal';
 import { SubclusterNotFoundError } from '@metamask/kernel-errors';
+import { isCapData } from '@metamask/kernel-utils';
 import { Logger } from '@metamask/logger';
 
 import type { IOManager } from '../io/IOManager.ts';
@@ -27,11 +28,11 @@ type SubclusterManagerOptions = {
   getKernelService: (
     name: string,
   ) => { kref: KRef; systemOnly: boolean } | undefined;
-  queueMessage: (
+  writeMessage: (
     target: KRef,
     method: string,
     args: unknown[],
-  ) => Promise<CapData<KRef>>;
+  ) => { answer: Promise<CapData<KRef>> };
   ioManager?: IOManager;
   logger?: Logger;
 };
@@ -54,12 +55,12 @@ export class SubclusterManager {
     name: string,
   ) => { kref: KRef; systemOnly: boolean } | undefined;
 
-  /** Function to queue messages */
-  readonly #queueMessage: (
+  /** Writes a message inside the open crank */
+  readonly #writeMessage: (
     target: KRef,
     method: string,
     args: unknown[],
-  ) => Promise<CapData<KRef>>;
+  ) => { answer: Promise<CapData<KRef>> };
 
   /** Logger for diagnostic output */
   readonly #logger: Logger;
@@ -78,7 +79,7 @@ export class SubclusterManager {
    * @param options.kernelQueue - The kernel's message queue for scheduling deliveries.
    * @param options.vatManager - Manager for creating and managing vat instances.
    * @param options.getKernelService - Function to retrieve a kernel service by its kref.
-   * @param options.queueMessage - Function to queue messages for delivery to targets.
+   * @param options.writeMessage - Function that writes a message inside the open crank.
    * @param options.ioManager - Optional IO manager for IO channel lifecycle.
    * @param options.logger - Optional logger for diagnostic output.
    */
@@ -87,7 +88,7 @@ export class SubclusterManager {
     kernelQueue,
     vatManager,
     getKernelService,
-    queueMessage,
+    writeMessage,
     ioManager,
     logger,
   }: SubclusterManagerOptions) {
@@ -95,7 +96,7 @@ export class SubclusterManager {
     this.#kernelQueue = kernelQueue;
     this.#vatManager = vatManager;
     this.#getKernelService = getKernelService;
-    this.#queueMessage = queueMessage;
+    this.#writeMessage = writeMessage;
     this.#ioManager = ioManager;
     this.#logger = logger ?? new Logger('SubclusterManager');
     harden(this);
@@ -526,24 +527,40 @@ export class SubclusterManager {
     }
     const vatRootKrefs = Object.fromEntries(vatRootKrefsEntries);
 
-    // A failed peer's promise is made in the same write as the message, which
-    // `queueMessage` writes at once outside a crank: one made sooner, rejected
-    // and named by nothing else yet, would be collected by an open crank
-    // before the held message took its reference.
-    const { answer } = await this.#kernelQueue.writeOutsideCrank(() => {
-      const roots = Object.fromEntries(
-        rootsEntries.map(([vatName, root]): [string, SlotValue] => [
-          vatName,
-          root instanceof Error
-            ? this.#makeRejectedRoot(root)
-            : kslot(root, 'vatRoot'),
-        ]),
-      );
-      return {
-        answer: this.#queueMessage(rootKref, 'bootstrap', [roots, services]),
-      };
-    });
-    const bootstrapResult = await answer;
+    // A failed peer's promise is made in the crank that writes the message:
+    // one made sooner, rejected and named by nothing else yet, would be
+    // collected by a crank before the message took its reference.
+    const { answer } = await this.#kernelQueue.enqueueInbox(
+      'bootstrap a subcluster',
+      () => {
+        const roots = Object.fromEntries(
+          rootsEntries.map(([vatName, root]): [string, SlotValue] => [
+            vatName,
+            root instanceof Error
+              ? this.#makeRejectedRoot(root)
+              : kslot(root, 'vatRoot'),
+          ]),
+        );
+        const { answer: bootstrapAnswer } = this.#writeMessage(
+          rootKref,
+          'bootstrap',
+          [roots, services],
+        );
+        // Awaited once the crank commits; a crank that dies first abandons
+        // the answer with nobody holding it.
+        bootstrapAnswer.catch(() => undefined);
+        return { value: { answer: bootstrapAnswer } };
+      },
+    );
+    let bootstrapResult: CapData<KRef>;
+    try {
+      bootstrapResult = await answer;
+    } catch (rejection) {
+      // Reported as `Kernel.queueMessage` reports a rejected answer.
+      throw isCapData(rejection)
+        ? kunser(rejection as CapData<KRef>)
+        : rejection;
+    }
     const unserialized = kunser(bootstrapResult);
     if (unserialized instanceof Error) {
       throw unserialized;
