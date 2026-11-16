@@ -616,6 +616,25 @@ describe('RemoteManager', () => {
         .mocked(mockKernelQueue.acceptRemoteInbound)
         .mock.calls.map(([{ seq }]) => seq);
 
+    // A manager over a real store and a running loop, with remote comms up.
+    const setUpRealManager = async () => {
+      const kdb = await makeSQLKernelDatabase({ dbFilename: ':memory:' });
+      const realStore = makeKernelStore(kdb);
+      const kernelQueue = new KernelQueue(realStore, async () => undefined);
+      const running = kernelQueue.run(async () => undefined);
+      const manager = new RemoteManager({
+        platformServices: mockPlatformServices,
+        kernelStore: realStore,
+        kernelQueue,
+        logger,
+      });
+      vi.mocked(remoteComms.initRemoteComms).mockResolvedValue(mockRemoteComms);
+      manager.setMessageHandler(vi.fn());
+      await manager.initRemoteComms();
+      onTestFinished(() => manager.cleanup());
+      return { kdb, realStore, kernelQueue, running, manager };
+    };
+
     it('sets up a new remote only when the kernel queue makes the write', async () => {
       const writeHeld = holdWrites();
 
@@ -788,19 +807,8 @@ describe('RemoteManager', () => {
     );
 
     it('kills the run loop when a setup cannot be written, rolling the setup back', async () => {
-      const kdb = await makeSQLKernelDatabase({ dbFilename: ':memory:' });
-      const realStore = makeKernelStore(kdb);
-      const kernelQueue = new KernelQueue(realStore, async () => undefined);
-      const running = kernelQueue.run(async () => undefined);
-      const manager = new RemoteManager({
-        platformServices: mockPlatformServices,
-        kernelStore: realStore,
-        kernelQueue,
-        logger,
-      });
-      vi.mocked(remoteComms.initRemoteComms).mockResolvedValue(mockRemoteComms);
-      manager.setMessageHandler(vi.fn());
-      await manager.initRemoteComms();
+      const { kdb, realStore, kernelQueue, running, manager } =
+        await setUpRealManager();
       const fault = new Error('SQLITE_FULL');
       const { kernelKVStore } = kdb;
       const counterBefore = kernelKVStore.get('nextRemoteId');
@@ -825,23 +833,11 @@ describe('RemoteManager', () => {
         counter: String(Number(counterBefore) + 1),
         state: 'failed',
       });
-      manager.cleanup();
     });
 
     it('kills the run loop when acting on a new remote hits a store fault, rolling the setup back', async () => {
-      const kdb = await makeSQLKernelDatabase({ dbFilename: ':memory:' });
-      const realStore = makeKernelStore(kdb);
-      const kernelQueue = new KernelQueue(realStore, async () => undefined);
-      const running = kernelQueue.run(async () => undefined);
-      const manager = new RemoteManager({
-        platformServices: mockPlatformServices,
-        kernelStore: realStore,
-        kernelQueue,
-        logger,
-      });
-      vi.mocked(remoteComms.initRemoteComms).mockResolvedValue(mockRemoteComms);
-      manager.setMessageHandler(vi.fn());
-      await manager.initRemoteComms();
+      const { kdb, realStore, kernelQueue, running, manager } =
+        await setUpRealManager();
       const fault = new Error('SQLITE_FULL');
       const { kernelKVStore } = kdb;
       const set = kernelKVStore.set.bind(kernelKVStore);
@@ -870,23 +866,11 @@ describe('RemoteManager', () => {
         remotes: realStore.getRemoteIDs(),
         state: kernelQueue.getRunLoopStatus().state,
       }).toStrictEqual({ remotes: [], state: 'failed' });
-      manager.cleanup();
     });
 
     it("rejects a new peer's refused first message, keeping the run loop and the setup", async () => {
-      const kdb = await makeSQLKernelDatabase({ dbFilename: ':memory:' });
-      const realStore = makeKernelStore(kdb);
-      const kernelQueue = new KernelQueue(realStore, async () => undefined);
-      const running = kernelQueue.run(async () => undefined);
-      const manager = new RemoteManager({
-        platformServices: mockPlatformServices,
-        kernelStore: realStore,
-        kernelQueue,
-        logger,
-      });
-      vi.mocked(remoteComms.initRemoteComms).mockResolvedValue(mockRemoteComms);
-      manager.setMessageHandler(vi.fn());
-      await manager.initRemoteComms();
+      const { realStore, kernelQueue, running, manager } =
+        await setUpRealManager();
 
       await expect(
         manager.handleRemoteMessage('new-peer', peerMessage(0)),
@@ -900,7 +884,6 @@ describe('RemoteManager', () => {
       }).toStrictEqual({ state: 'running', peers: ['new-peer'] });
       await kernelQueue.endRunLoop();
       await running;
-      manager.cleanup();
     });
 
     it('leaves no record of a remote whose handle failed to be made', async () => {

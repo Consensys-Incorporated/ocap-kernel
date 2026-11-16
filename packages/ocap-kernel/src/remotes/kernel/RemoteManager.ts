@@ -545,9 +545,10 @@ export class RemoteManager {
    * if it has none. Set up inside whatever crank was open, an abort would take
    * back its records while its handle lives on. `use` runs in that crank, as
    * soon as the handle exists, so what it writes before its first `await`
-   * commits with the setup; what it throws is the caller's to hear, and leaves
+   * commits with the setup. What it throws is the caller's to hear, and leaves
    * the setup committed, unless it is a store fault, which rolls the setup
-   * back and kills the run loop.
+   * back and kills the run loop; a fault it rejects with instead, as an
+   * `async` `use` must, only the caller hears.
    *
    * @param peerId - The libp2p peer for which a handle is sought.
    * @param options - Options bag.

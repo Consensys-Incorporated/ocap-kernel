@@ -770,7 +770,11 @@ export class KernelQueue {
     // One promise for the write and the answer, so that a run loop death
     // between the two cannot leave the answer's rejection unhandled.
     this.enqueueInbox('queue a message', () => {
-      this.#writeMessage(target, methargs, { resolve, reject });
+      this.#writeMessage({
+        target,
+        methargs,
+        subscription: { resolve, reject },
+      });
       return { value: undefined };
     }).catch(reject);
     return promise;
@@ -788,9 +792,9 @@ export class KernelQueue {
    * @param args - Message arguments.
    * @returns The `answer`: a promise for the (CapData encoded) result of the
    * message invocation. It rejects with `OBJECT_DELETED` if the kernel does
-   * not have the target or a kref in the arguments. Boxed, so that the write
-   * reads as synchronous and the answer, which only a later crank can settle,
-   * is not awaited inside the crank that wrote it.
+   * not have the target or a kref in the arguments. Boxed, so that the
+   * answer, which only a later crank can settle, is not awaited inside the
+   * crank that wrote it.
    */
   writeMessage(
     target: KRef,
@@ -798,22 +802,31 @@ export class KernelQueue {
     args: unknown[],
   ): { answer: Promise<CapData<KRef>> } {
     const { promise, resolve, reject } = makePromiseKit<CapData<KRef>>();
-    this.#writeMessage(target, kser([method, args]), { resolve, reject });
+    this.#writeMessage({
+      target,
+      methargs: kser([method, args]),
+      subscription: { resolve, reject },
+    });
     return { answer: promise };
   }
 
   /**
    * Write a message and subscribe to its result. A store fault is thrown.
    *
-   * @param target - The object to which the message is directed.
-   * @param methargs - The method and arguments, serialized.
-   * @param subscription - How to answer the caller.
+   * @param message - The message.
+   * @param message.target - The object to which the message is directed.
+   * @param message.methargs - The method and arguments, serialized.
+   * @param message.subscription - How to answer the caller.
    */
-  #writeMessage(
-    target: KRef,
-    methargs: CapData<KRef>,
-    subscription: Subscription,
-  ): void {
+  #writeMessage({
+    target,
+    methargs,
+    subscription,
+  }: {
+    target: KRef;
+    methargs: CapData<KRef>;
+    subscription: Subscription;
+  }): void {
     // Checked first, so that a missing kref rejects the answer with
     // `OBJECT_DELETED` rather than throwing out of the crank.
     const missing = [target, ...methargs.slots].find(

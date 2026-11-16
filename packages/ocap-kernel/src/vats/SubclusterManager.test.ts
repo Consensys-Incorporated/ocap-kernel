@@ -86,6 +86,7 @@ describe('SubclusterManager', () => {
       waitForCrank: vi.fn().mockResolvedValue(undefined),
       resolvePromises: vi.fn(),
       assertRunLoopAlive: vi.fn(),
+      assertInboxOpen: vi.fn(),
       enqueueInbox: vi.fn<KernelQueue['enqueueInbox']>(async (_what, work) => {
         const outcome = await work();
         if ('failure' in outcome) {
@@ -155,16 +156,20 @@ describe('SubclusterManager', () => {
       });
     });
 
-    // The launch fails at the bootstrap message either way; only refusing up
-    // front keeps it from leaking a spawned worker per vat in the config.
-    it('refuses to launch when the run loop has died', async () => {
-      vi.mocked(mockKernelQueue.assertRunLoopAlive).mockImplementation(() => {
-        throw new Error('Kernel run loop died; cannot launch a subcluster');
+    // The launch is refused at the bootstrap message either way; only refusing
+    // up front keeps it from writing the subcluster and spawning its workers.
+    it('refuses to launch when the kernel is stopping', async () => {
+      vi.mocked(mockKernelQueue.assertInboxOpen).mockImplementation(() => {
+        throw new Error(
+          'Kernel run loop is stopping; cannot launch a subcluster',
+        );
       });
 
       await expect(
         subclusterManager.launchSubcluster(createMockClusterConfig()),
-      ).rejects.toThrow('Kernel run loop died; cannot launch a subcluster');
+      ).rejects.toThrow(
+        'Kernel run loop is stopping; cannot launch a subcluster',
+      );
 
       expect(mockVatManager.launchVat).not.toHaveBeenCalled();
       expect(mockKernelStore.addSubcluster).not.toHaveBeenCalled();
@@ -780,31 +785,25 @@ describe('SubclusterManager', () => {
         expect(mockKernelStore.deleteSubcluster).toHaveBeenCalledWith('s1');
       });
 
-      it('rejects with the unserialized error when the bootstrap answer rejects with CapData', async () => {
-        const config = createMockClusterConfig();
-        mockKernelQueue.writeMessage.mockImplementation(() => ({
-          // As the kernel rejects an answer: with CapData, not an Error.
-          // oxlint-disable-next-line typescript/prefer-promise-reject-errors
-          answer: Promise.reject(kser(new Error('bootstrap vat is gone'))),
-        }));
+      it.each([
+        // As the kernel rejects an answer: with CapData, not an Error.
+        // oxlint-disable-next-line typescript/prefer-promise-reject-errors
+        ['rejects with', async () => Promise.reject(kser(new Error('threw')))],
+        ['resolves to', async () => kser(new Error('threw'))],
+      ])(
+        'rethrows when the bootstrap answer %s a serialized error',
+        async (_, answer) => {
+          mockKernelQueue.writeMessage.mockImplementation(() => ({
+            answer: answer(),
+          }));
 
-        await expect(
-          subclusterManager.launchSubcluster(config),
-        ).rejects.toThrow('bootstrap vat is gone');
-      });
+          await expect(
+            subclusterManager.launchSubcluster(createMockClusterConfig()),
+          ).rejects.toThrow('threw');
 
-      it('rethrows when the bootstrap message resolves to a serialized error', async () => {
-        const config = createMockClusterConfig();
-        mockKernelQueue.writeMessage.mockImplementation(() => ({
-          answer: Promise.resolve(kser(new Error('bootstrap threw'))),
-        }));
-
-        await expect(
-          subclusterManager.launchSubcluster(config),
-        ).rejects.toThrow('bootstrap threw');
-
-        expect(mockKernelStore.deleteSubcluster).toHaveBeenCalledWith('s1');
-      });
+          expect(mockKernelStore.deleteSubcluster).toHaveBeenCalledWith('s1');
+        },
+      );
     });
   });
 

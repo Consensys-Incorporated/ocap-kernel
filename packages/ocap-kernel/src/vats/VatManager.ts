@@ -701,9 +701,10 @@ export class VatManager {
       try {
         await this.#kernelQueue.enqueueTerminateVat(vatId, reason);
       } catch (error) {
-        // Never written: the run loop died, or a reset or `clearStorage`
-        // discarded it. The restarts it overtook hear of that as every waiter
-        // does, from `onRunLoopDeath` or `abandonQueuedWork`.
+        // Never written: the run loop died, a reset or `clearStorage` discarded
+        // it, or the store refused it before the loop had started. The restarts
+        // it overtook hear of that as every waiter does, from `onRunLoopDeath`
+        // or `abandonQueuedWork`.
         this.#forgetPendingTermination(vatId);
         throw error;
       }
@@ -841,7 +842,7 @@ export class VatManager {
       } else {
         waiters.delete(vatId);
       }
-      reject(error as Error);
+      reject(error);
     });
     try {
       return await promise;

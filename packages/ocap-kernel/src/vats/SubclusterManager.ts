@@ -102,9 +102,10 @@ export class SubclusterManager {
     { isSystem = false }: { isSystem?: boolean } = {},
   ): Promise<SubclusterLaunchResult> {
     await this.#kernelQueue.waitForCrank();
-    // It would fail at the bootstrap message anyway, but only refusing here fails
-    // before spawning a worker per vat, which the catch below leaks.
-    this.#kernelQueue.assertRunLoopAlive('launch a subcluster');
+    // It would be refused at the bootstrap message anyway, but only refusing
+    // here fails before the subcluster is written and a worker spawned per vat,
+    // which the catch below could not then retire.
+    this.#kernelQueue.assertInboxOpen('launch a subcluster');
     isClusterConfig(config) || Fail`invalid cluster config`;
     if (!config.vats[config.bootstrap]) {
       Fail`invalid bootstrap vat name ${config.bootstrap}`;
@@ -530,7 +531,6 @@ export class SubclusterManager {
           roots,
           services,
         ]);
-        // Nobody holds the answer until the crank commits, as in `withRemote`.
         written.answer.catch(() => undefined);
         return { value: written };
       },
