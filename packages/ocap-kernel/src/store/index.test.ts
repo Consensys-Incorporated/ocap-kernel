@@ -204,7 +204,6 @@ describe('kernel store', () => {
         'translateRefEtoK',
         'translateRefKtoE',
         'translateSyscallVtoK',
-        'undoOcapURLRetention',
         'unpinObject',
         'waitForCrank',
       ]);
@@ -440,22 +439,6 @@ describe('kernel store', () => {
       });
     });
 
-    it('undoes one retention of a target that several URLs name', () => {
-      const ks = makeKernelStore(mockKernelDatabase);
-      const kref = ks.initKernelObject(v1);
-      ks.retainForOcapURL(kref);
-      ks.retainForOcapURL(kref);
-
-      ks.undoOcapURLRetention(kref);
-
-      expect(ks.getOcapURLIssuanceCount(kref)).toBe(1);
-      expect(ks.isObjectPinned(kref)).toBe(true);
-      expect(ks.getObjectRefCount(kref)).toStrictEqual({
-        reachable: 1,
-        recognizable: 1,
-      });
-    });
-
     it('refuses to retain a kref the kernel has deleted', () => {
       const ks = makeKernelStore(mockKernelDatabase);
 
@@ -463,34 +446,6 @@ describe('kernel store', () => {
         'cannot issue an ocap URL for deleted kref "ko99"',
       );
       expect(ks.getOcapURLObjects()).toStrictEqual([]);
-    });
-
-    it('undoing the last retention clears the record entirely', () => {
-      const ks = makeKernelStore(mockKernelDatabase);
-      const kref = ks.initKernelObject(v1);
-      const otherKref = ks.initKernelObject(v1);
-      ks.retainForOcapURL(kref);
-      ks.retainForOcapURL(otherKref);
-
-      ks.undoOcapURLRetention(kref);
-      expect(ks.isObjectPinned(kref)).toBe(false);
-      expect(ks.getOcapURLObjects()).toStrictEqual([otherKref]);
-
-      ks.undoOcapURLRetention(otherKref);
-      expect(ks.getOcapURLObjects()).toStrictEqual([]);
-      expect(
-        mockKernelDatabase.kernelKVStore.get(`ocapURLObjects.${otherKref}`),
-      ).toBeUndefined();
-    });
-
-    it('undoing a retention that was never taken leaves the pin alone', () => {
-      const ks = makeKernelStore(mockKernelDatabase);
-      const kref = ks.initKernelObject(v1);
-      ks.pinObject(kref);
-
-      ks.undoOcapURLRetention(kref);
-
-      expect(ks.isObjectPinned(kref)).toBe(true);
     });
 
     it('releases every retention of a target at once', () => {

@@ -2,12 +2,13 @@ import { makeSQLKernelDatabase } from '@metamask/kernel-store/sqlite/nodejs';
 import { delay } from '@metamask/kernel-utils';
 import { describe, it, expect, vi } from 'vitest';
 
-import { KernelQueue } from './KernelQueue.ts';
+import { attempt, KernelQueue } from './KernelQueue.ts';
 import { makeKernelStore } from './store/index.ts';
 import type { RunQueueItem } from './types.ts';
 import { makeGCAction } from './types.ts';
 import { asRRef, asRemoteId, asVatId } from '../test/branded.ts';
 import { watch } from '../test/real-kernel.ts';
+import { makeStoreFault } from '../test/storage.ts';
 
 const arrival = {
   remoteId: asRemoteId('r1'),
@@ -185,6 +186,43 @@ describe('an inbox item', () => {
       }).toStrictEqual({ written, state: 'stopped' });
     },
   );
+
+  it('rolls back what an attempt wrote before it threw, and tells the caller', async () => {
+    const { kernelStore, kernelQueue } = await makeFixture(0);
+    const running = kernelQueue.run(async () => undefined);
+
+    await expect(
+      kernelQueue.enqueueInbox('pin', async () =>
+        attempt(async () => {
+          kernelStore.setVatConfig(asVatId('v9'), { bundleName: 'written' });
+          await delay(0);
+          throw new Error('no such vat');
+        }),
+      ),
+    ).rejects.toThrow('no such vat');
+    await kernelQueue.endRunLoop();
+    await running;
+
+    expect({
+      written: kernelStore.isVatActive(asVatId('v9')),
+      state: kernelQueue.getRunLoopStatus().state,
+    }).toStrictEqual({ written: false, state: 'stopped' });
+  });
+
+  it('lets a store fault through an attempt, which kills the run loop', async () => {
+    const { kernelQueue } = await makeFixture(0);
+    const running = kernelQueue.run(async () => undefined);
+    const fault = makeStoreFault();
+
+    const asked = kernelQueue.enqueueInbox('pin', async () =>
+      attempt(() => {
+        throw fault;
+      }),
+    );
+
+    await expect(asked).rejects.toBe(fault);
+    await expect(running).rejects.toBe(fault);
+  });
 
   it('keeps what it wrote when a later crank aborts', async () => {
     const { kernelStore, kernelQueue } = await makeFixture(2);

@@ -112,7 +112,7 @@ describe('Garbage Collection', () => {
     isSettled: () => boolean;
   }): Promise<void> {
     for (let attempt = 0; attempt < MAX_REAP_ATTEMPTS; attempt++) {
-      kernel.reapVats((id) => id === vatId);
+      await kernel.reapVats((id) => id === vatId);
       for (let i = 0; i < CRANKS_PER_REAP; i++) {
         await kernel.queueMessage(rootKRef, 'noop', []);
         await waitUntilQuiescent(500);
@@ -245,7 +245,7 @@ describe('Garbage Collection', () => {
     await waitUntilQuiescent();
 
     // Schedule a final reap
-    kernel.reapVats((vatId) => vatId === exporterVatId);
+    await kernel.reapVats((vatId) => vatId === exporterVatId);
 
     // Run a crank to ensure GC completes
     await kernel.queueMessage(exporterKRef, 'noop', []);

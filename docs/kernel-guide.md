@@ -254,13 +254,13 @@ const myService = makeDefaultExo('myService', {
 });
 
 // Register before launching subclusters that need it
-kernel.registerKernelServiceObject('myService', myService);
+await kernel.registerKernelServiceObject('myService', myService);
 ```
 
 ### Registering a system-only service
 
 ```ts
-kernel.registerKernelServiceObject('privilegedService', serviceObj, {
+await kernel.registerKernelServiceObject('privilegedService', serviceObj, {
   systemOnly: true,
 });
 ```
@@ -525,7 +525,7 @@ The kernel supports **revoking** object references. Once revoked, any `E()` call
 
 ```ts
 // Host application side
-kernel.revoke(kref);
+await kernel.revoke(kref);
 
 // Check revocation status
 kernel.isRevoked(kref); // true
@@ -630,7 +630,7 @@ const kernel = await Kernel.make(platformServices, db, {
 
 // 3. Register the service (must happen before kernel.make resolves,
 //    or before any subcluster that uses it is launched)
-kernel.registerKernelServiceObject('weatherService', weatherService);
+await kernel.registerKernelServiceObject('weatherService', weatherService);
 
 // 4. Interact with the system subcluster's root object
 const rootKref = kernel.getSystemSubclusterRoot('weather-system');

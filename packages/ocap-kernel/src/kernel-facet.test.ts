@@ -27,7 +27,7 @@ const makeMockKernel = (): KernelFacetSource => ({
     }),
   pingVat: async () => Promise.resolve('pong'),
   queueMessage: async () => Promise.resolve({ body: '#null', slots: [] }),
-  registerKernelServiceObject: () => ({
+  registerKernelServiceObject: async () => ({
     name: 'test',
     kref: asKRef('ko1'),
     service: {},
