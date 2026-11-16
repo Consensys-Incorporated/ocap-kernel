@@ -84,6 +84,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `reset` and `clearStorage` reject the host calls still waiting for the run loop behind them, instead of carrying them out on the fresh kernel ([#1301](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1301))
 - A store fault (a read or write the kernel's database refuses, as on a full disk) in a syscall, in a peer's handshake, while taking a peer's message or while writing a vat's state after a delivery stops the kernel and rolls back the open crank, instead of going on with the vat terminated, the handshake failed, the message dropped or the state unwritten ([#1288](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1288), [#1289](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1289), [#1290](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1290))
 - **BREAKING:** A vat whose worker answers a delivery with an error or a malformed result is terminated. The error used to reject a message with `DELIVERY_FAILED`, and kill the run loop for a notify or GC delivery ([#1290](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1290))
 - A vat's termination that fails partway, as when the store refuses a write, rolls back with its crank and kills the run loop, instead of leaving the vat persisted with no worker. The next start relaunches the vat and carries out a queued `terminateVat` again ([#1287](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1287))
