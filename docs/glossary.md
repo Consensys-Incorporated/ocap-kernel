@@ -77,10 +77,10 @@ management, and [syscall](#syscall) coordination.
 ### crank
 
 A single execution cycle of the kernel's [run loop](#run-loop). Each crank processes one
-item: a control operation such as `reset`, a message from a remote peer, or an item off
-the [run queue](#run-queue), such as a message or notification for [a vat](#vat). The
-first two wait in memory until their crank comes. Cranks can be aborted and rolled back if
-errors occur. Cranks are numbered from 1 by a counter kept in the
+item: an [inbox](#inbox) item such as a host call to `reset`, a message from a remote peer,
+or an item off the [run queue](#run-queue), such as a message or notification for
+[a vat](#vat). The first two wait in memory until their crank comes. Cranks can be aborted
+and rolled back if errors occur. Cranks are numbered from 1 by a counter kept in the
 [kernel store](../packages/ocap-kernel/src/store/index.ts), so the numbering continues
 across kernel restarts; a crank that rolls back still used up its number. See the
 [KernelQueue](../packages/ocap-kernel/src/KernelQueue.ts) for the run loop implementation.
@@ -207,20 +207,43 @@ collection](#garbage-collection-gc) actions. See the
 [queue methods](../packages/ocap-kernel/src/store/methods/queue.ts) for implementation
 details.
 
+### inbox
+
+The [run loop](#run-loop)'s in-memory queue of work from outside it: the host calls
+`clearStorage`, `reset` and `terminateAllVats`. The run loop takes each in a [crank](#crank)
+of its own, and its caller hears nothing of it before that crank commits. See `enqueueInbox`
+in [KernelQueue](../packages/ocap-kernel/src/KernelQueue.ts).
+
 ### run loop
 
 The loop in [KernelQueue](../packages/ocap-kernel/src/KernelQueue.ts) that takes items one
 at a time, each in a [crank](#crank) of its own, and sleeps when none are waiting. It takes
-a control operation (`clearStorage`, `reset` or `terminateAllVats`) ahead of everything
-else, then any garbage collection action or reap, then the [run queue](#run-queue) and the
-messages remote peers have sent, in turns, so a peer that sends faster than cranks finish
-cannot crowd out the run queue. It is the one writer meant to change the kernel store: work
+an item from its [inbox](#inbox) first, then any garbage collection action or reap, then the
+[run queue](#run-queue) and the messages remote peers have sent, in turns, so a peer that
+sends faster than cranks finish cannot crowd out the run queue. It is the one writer meant
+to change the kernel store: work
 asked for from outside it, such as a vat restart or termination, or a peer's message or
 change of incarnation (but not the acknowledgement a message carries), is queued for it to
 carry out rather than written into whichever crank happens to be open. `stop` ends the run
-loop between cranks, once the control operations asked for before it have run. A crank that
-throws kills the run loop for the life of the kernel instance; callers still waiting on
-queued work, control operations included, are then rejected.
+loop between cranks, once the inbox items asked for before it have run. A crank that throws
+kills the run loop for the life of the kernel instance; callers still waiting on queued
+work, inbox items included, are then rejected.
+
+### store fault
+
+An error the kernel's database throws on a read or write, as when the disk is full. It is
+the kernel's own fault, not that of the [vat](#vat) or peer it was serving, so the kernel
+stops, by a [kernel panic](#kernel-panic) or a throw out of the [crank](#crank), rather
+than terminate the vat or drop the peer's message. The kernel marks what its KV store
+throws, so [`isStoreFault`](../packages/ocap-kernel/src/store/utils/store-fault.ts) can
+tell a store fault from a failed check of the kernel's own.
+
+### kernel panic
+
+After SwingSet's `kernelPanic`: a fault recorded where a throw would not reach the
+[run loop](#run-loop), such as a [store fault](#store-fault) in a [syscall](#syscall). The
+run loop throws it before the open [crank](#crank) commits, so the crank rolls back and the
+loop dies. See `panic` in [KernelQueue](../packages/ocap-kernel/src/KernelQueue.ts).
 
 ### kernel router
 

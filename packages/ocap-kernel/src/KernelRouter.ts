@@ -9,8 +9,8 @@ import type { KernelStore } from './store/index.ts';
 import { extractSingleRef } from './store/utils/extract-ref.ts';
 import { parseRef } from './store/utils/parse-ref.ts';
 import { isPromiseRef } from './store/utils/promise-ref.ts';
+import { isStoreFault } from './store/utils/store-fault.ts';
 import type {
-  ControlOperation,
   EndpointId,
   EndpointHandle,
   ERef,
@@ -58,7 +58,6 @@ type KernelRouterOptions = {
     reason?: CapData<KRef>,
   ) => Promise<CrankResult | undefined>;
   applyIncarnationChange: (item: RunQueueItemPeerIncarnation) => CrankResult;
-  performControl: (operation: ControlOperation) => Promise<void>;
   logger?: Logger;
 };
 
@@ -105,9 +104,6 @@ export class KernelRouter {
     item: RunQueueItemPeerIncarnation,
   ) => CrankResult;
 
-  /** A function that carries out a control operation. */
-  readonly #performControl: (operation: ControlOperation) => Promise<void>;
-
   /** The logger, if any. */
   readonly #logger: Logger | undefined;
 
@@ -122,7 +118,6 @@ export class KernelRouter {
    * @param options.restartVat - A function that replaces a vat's worker.
    * @param options.terminateVat - A function that ends a vat.
    * @param options.applyIncarnationChange - A function that records a peer's incarnation change.
-   * @param options.performControl - A function that carries out a control operation.
    * @param options.logger - The logger. If not provided, no logging will be done.
    */
   constructor({
@@ -133,7 +128,6 @@ export class KernelRouter {
     restartVat,
     terminateVat,
     applyIncarnationChange,
-    performControl,
     logger,
   }: KernelRouterOptions) {
     this.#kernelStore = kernelStore;
@@ -143,7 +137,6 @@ export class KernelRouter {
     this.#restartVat = restartVat;
     this.#terminateVat = terminateVat;
     this.#applyIncarnationChange = applyIncarnationChange;
-    this.#performControl = performControl;
     this.#logger = logger;
   }
 
@@ -196,9 +189,6 @@ export class KernelRouter {
         return await this.#terminateVat(item.vatId, item.reason);
       case 'peerIncarnation':
         return this.#applyIncarnationChange(item);
-      case 'control':
-        await this.#performControl(item.operation);
-        return undefined;
       default:
         // @ts-expect-error Runtime does not respect "never".
         Fail`unsupported or unknown run queue item type ${item.type}`;
@@ -420,8 +410,12 @@ export class KernelRouter {
             endpoint.deliverMessage(endpointTarget, endpointMessage),
           );
         } catch (error) {
-          // Delivery failed (e.g., remote queue full). Reject the kernel promise
-          // so the caller knows the message wasn't delivered.
+          // A peer must not be able to stop the kernel. A vat's worker
+          // failures are crank results by the time they get here, so what a
+          // vat's delivery throws is the kernel's.
+          if (!isRemoteId(eid) || isStoreFault(error)) {
+            throw error;
+          }
           this.#logger?.error(`Delivery to ${endpointId} failed:`, error);
           if (message.result) {
             const detail =
@@ -432,7 +426,6 @@ export class KernelRouter {
               makeKernelError('DELIVERY_FAILED', capReasonText(detail)),
             );
           }
-          // Continue processing other messages - don't let one failure crash the queue
         }
       } else if (isKernelServiceMessage) {
         crankResult = this.#deliverKernelServiceMessage(target, message);
@@ -647,7 +640,8 @@ export class KernelRouter {
    *
    * The remote can be gone by the time its turn comes: the message was
    * accepted while it was live and the queue outlives it. Throwing here would
-   * escape the crank and kill the run loop, so the message is dropped.
+   * escape the crank and kill the run loop, so the message is dropped, except
+   * on a store fault.
    *
    * @param item - The inbound message.
    * @returns The crank outcome.
@@ -676,7 +670,10 @@ export class KernelRouter {
     } catch (error) {
       // What a peer sends can fail here: an unknown method, a reference that
       // does not resolve, a reply to a redemption that has timed out. None of
-      // it is the kernel's to die of.
+      // it is the kernel's to die of, but a store fault is.
+      if (isStoreFault(error)) {
+        throw error;
+      }
       this.#logger?.error(
         `Discarded inbound message seq=${seq} from ${remoteId}, which could not be delivered:`,
         error,

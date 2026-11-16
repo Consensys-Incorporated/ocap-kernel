@@ -63,7 +63,6 @@ async function setUp(answer: Answer) {
     restartVat: async () => undefined,
     terminateVat: async () => undefined,
     applyIncarnationChange: () => ({}),
-    performControl: async () => undefined,
     logger: { error: vi.fn(), log: vi.fn() } as unknown as Logger,
   });
   vi.spyOn(console, 'debug').mockImplementation(() => undefined);

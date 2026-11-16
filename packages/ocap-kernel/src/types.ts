@@ -454,19 +454,8 @@ export type PeerArrival =
   | RunQueueItemRemoteInbound
   | RunQueueItemPeerIncarnation;
 
-/**
- * A host call the run loop carries out ahead of all other work, in a crank of
- * its own.
- */
-export type ControlOperation = 'clearStorage' | 'reset' | 'terminateAllVats';
-
-export type RunLoopItemControl = {
-  type: 'control';
-  operation: ControlOperation;
-};
-
-/** Everything the run loop takes a crank for. */
-export type RunLoopItem = RunQueueItem | PeerArrival | RunLoopItemControl;
+/** Everything the run loop takes a crank for, apart from its inbox. */
+export type RunLoopItem = RunQueueItem | PeerArrival;
 
 /**
  * Assert that a value is a valid kernel message.
@@ -980,16 +969,10 @@ export function makeGCAction(
 
 export type CrankResult = {
   didDelivery?: EndpointId | 'kernel'; // the endpoint to which we made a delivery
-  abort?: boolean; // changes should be discarded, not committed
+  abort?: boolean; // the delivery's writes are rolled back; the crank still commits
   terminate?: { vatId: VatId; reject: boolean; info: CapData<KRef> };
   /**
-   * The delivery has done work a caller will be told of, so a later failure in
-   * this crank, from collection or the audit, must not roll it back. Ignored
-   * alongside `abort`, which rolls back first.
-   */
-  irrevocable?: boolean;
-  /**
-   * Work the run loop runs once the crank has committed, skipped if it aborts.
+   * Work the run loop runs once the crank has committed, after an abort too.
    * For what a rollback could not undo anyway, and what must not be observable
    * before the writes it reports on are durable: in-memory state, and sending
    * a message the crank has already written down.
@@ -1004,6 +987,16 @@ export type CrankResult = {
    */
   afterCommit?: () => Promise<void>;
 };
+
+/**
+ * How work from the run loop's inbox ends: what its caller is told once the
+ * crank has committed. A `failure` is for the caller's own error, such as
+ * naming a vat that does not exist; the work's writes stand unless `abort`
+ * is set too, which rolls them back as a failed delivery's are.
+ */
+export type InboxOutcome<Value> =
+  | { value: Value; failure?: never; abort?: never }
+  | { failure: Error; value?: never; abort?: boolean };
 
 export type VatDeliveryResult = [VatCheckpoint, string | null];
 

@@ -28,8 +28,7 @@ const config: VatConfig = { sourceSpec: 'test.js' };
 /**
  * A real store, run loop and vat manager, with vat workers mocked out. The run
  * loop routes queued terminations to the vat manager, as `KernelRouter` does,
- * control operations to what the test passes `onControl`, and holds a send to
- * `gate` open until the test calls `openGate`.
+ * and holds a send to `gate` open until the test calls `openGate`.
  *
  * @param options - Options.
  * @param options.kdb - The database, to reuse one across a kernel restart.
@@ -98,17 +97,12 @@ async function setUp({
   const gateKit = makePromiseKit<void>();
   const crankOpen = makePromiseKit<void>();
   const delivered: RunLoopItem[] = [];
-  let performControl = async (): Promise<void> => undefined;
   const deliver = async (
     item: RunLoopItem,
   ): Promise<CrankResult | undefined> => {
     delivered.push(item);
     if (item.type === 'terminateVat') {
       return vatManager.performVatTermination(item.vatId, item.reason);
-    }
-    if (item.type === 'control') {
-      await performControl();
-      return undefined;
     }
     if (item.type === 'send' && item.target === gate) {
       crankOpen.resolve();
@@ -137,9 +131,6 @@ async function setUp({
       await crankOpen.promise;
     },
     openGate: () => gateKit.resolve(),
-    onControl: (perform: () => Promise<void>) => {
-      performControl = perform;
-    },
   };
 }
 
@@ -166,7 +157,7 @@ describe('VatManager queued termination', () => {
       // `Kernel.reset`, taken in the next crank, ahead of the termination
       // written as this crank ends. Its steps, less the IO and remote ones
       // this harness has none of.
-      harness.onControl(async () => {
+      const resetting = kernelQueue.enqueueInbox('reset', async () => {
         await vatManager.terminateAllVats();
         kernelStore.reset();
         const abandoned = new Error(
@@ -175,9 +166,10 @@ describe('VatManager queued termination', () => {
         kernelQueue.discardArrivals();
         kernelQueue.abandonSubscriptions(abandoned);
         kernelQueue.discardHeldRequests(abandoned);
+        kernelQueue.discardInbox(abandoned);
         vatManager.abandonQueuedWork(abandoned);
+        return { value: undefined };
       });
-      const resetting = kernelQueue.enqueueControl('reset');
       harness.openGate();
       await resetting;
       await expect(termination).rejects.toThrow('Kernel was reset');

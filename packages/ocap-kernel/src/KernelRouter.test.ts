@@ -16,7 +16,6 @@ import type {
   RunQueueItemBringOutYourDead,
   RunQueueItemRemoteInbound,
   RunQueueItemPeerIncarnation,
-  ControlOperation,
   EndpointId,
   GCRunQueueType,
   CrankResult,
@@ -26,6 +25,7 @@ import type {
   KRef,
 } from './types.ts';
 import { asKRef, asRemoteId, asVatId } from '../test/branded.ts';
+import { makeStoreFault } from '../test/storage.ts';
 
 const v1 = asVatId('v1');
 
@@ -43,7 +43,6 @@ describe('KernelRouter', () => {
   let mockApplyIncarnationChange: Mock<
     (item: RunQueueItemPeerIncarnation) => CrankResult
   >;
-  let mockPerformControl: Mock<(operation: ControlOperation) => Promise<void>>;
 
   beforeEach(() => {
     // Mock EndpointHandle with more detailed return values
@@ -106,7 +105,6 @@ describe('KernelRouter', () => {
     mockRestartVat = vi.fn(async () => undefined);
     mockTerminateVat = vi.fn(async () => undefined);
     mockApplyIncarnationChange = vi.fn(() => ({}));
-    mockPerformControl = vi.fn(async () => undefined);
 
     // Create the router to test
     kernelRouter = new KernelRouter({
@@ -117,7 +115,6 @@ describe('KernelRouter', () => {
       restartVat: mockRestartVat,
       terminateVat: mockTerminateVat,
       applyIncarnationChange: mockApplyIncarnationChange,
-      performControl: mockPerformControl,
     });
   });
 
@@ -537,9 +534,9 @@ describe('KernelRouter', () => {
           `${'x'.repeat(10_000)}… (5 more characters)`,
         ],
       ])(
-        'rejects with DELIVERY_FAILED when endpoint.deliverMessage throws %s',
+        "rejects with DELIVERY_FAILED when a remote's deliverMessage throws %s",
         async (_what, thrown, detail) => {
-          const endpointId = v1;
+          const endpointId = asRemoteId('r1');
           const target = asKRef('ko123');
           (kernelStore.getOwner as unknown as MockInstance).mockReturnValueOnce(
             endpointId,
@@ -562,6 +559,41 @@ describe('KernelRouter', () => {
           expect(kernelQueue.resolvePromises).toHaveBeenCalledWith(endpointId, [
             ['kp1', true, makeKernelError('DELIVERY_FAILED', detail)],
           ]);
+        },
+      );
+
+      it.each([
+        {
+          what: "a vat's failure",
+          owner: v1,
+          failure: new Error('kernel bug'),
+        },
+        {
+          what: "a remote's store fault",
+          owner: asRemoteId('r1'),
+          failure: makeStoreFault(),
+        },
+      ])(
+        'throws $what, for the run loop to roll back',
+        async ({ owner, failure }) => {
+          (kernelStore.getOwner as unknown as MockInstance).mockReturnValueOnce(
+            owner,
+          );
+          (
+            endpointHandle.deliverMessage as unknown as MockInstance
+          ).mockRejectedValueOnce(failure);
+
+          await expect(
+            kernelRouter.deliver({
+              type: 'send',
+              target: asKRef('ko123'),
+              message: {
+                methargs: { body: 'method args', slots: [] },
+                result: asKRef('kp1'),
+              },
+            }),
+          ).rejects.toBe(failure);
+          expect(kernelQueue.resolvePromises).not.toHaveBeenCalled();
         },
       );
     });
@@ -1406,7 +1438,7 @@ describe('KernelRouter', () => {
     describe('terminateVat', () => {
       it('hands a queued termination request to the vat manager', async () => {
         const reason = kser('because');
-        const crankResult = { irrevocable: true };
+        const crankResult = { afterCommit: async () => undefined };
         mockTerminateVat.mockResolvedValueOnce(crankResult);
 
         const result = await kernelRouter.deliver({
@@ -1459,27 +1491,6 @@ describe('KernelRouter', () => {
             incarnation: 'incarnation-B',
             restart: true,
           }),
-        ).rejects.toThrow(failure);
-      });
-    });
-
-    describe('control', () => {
-      it('hands a control operation to the kernel', async () => {
-        const result = await kernelRouter.deliver({
-          type: 'control',
-          operation: 'reset',
-        });
-
-        expect(mockPerformControl).toHaveBeenCalledWith('reset');
-        expect(result).toBeUndefined();
-      });
-
-      it('lets a failure reach the run loop', async () => {
-        const failure = new Error('clear failed');
-        mockPerformControl.mockRejectedValueOnce(failure);
-
-        await expect(
-          kernelRouter.deliver({ type: 'control', operation: 'clearStorage' }),
         ).rejects.toThrow(failure);
       });
     });

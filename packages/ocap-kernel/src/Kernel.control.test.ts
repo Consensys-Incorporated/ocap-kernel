@@ -8,7 +8,7 @@ import { asVatId } from '../test/branded.ts';
 import { explosion, setUpRealKernel, watch } from '../test/real-kernel.ts';
 import type { RealKernel } from '../test/real-kernel.ts';
 
-describe('a control operation on a real kernel', () => {
+describe('a host call that wipes or ends vats, on a real kernel', () => {
   it.each(['clearStorage', 'reset', 'terminateAllVats'] as const)(
     'runs %s ahead of the crank queued behind the one it waited for, and keeps what it wrote',
     async (method) => {
@@ -84,6 +84,11 @@ describe('a control operation on a real kernel', () => {
       request: 'termination',
       make: async (kernel: Kernel): Promise<unknown> =>
         kernel.terminateVat(asVatId('v1')),
+    },
+    {
+      request: 'host call',
+      make: async (kernel: Kernel): Promise<unknown> =>
+        kernel.terminateAllVats(),
     },
   ])(
     'abandons a $request asked for while the reset awaits a worker',
@@ -207,7 +212,7 @@ describe('stop on a real kernel', () => {
     }).toStrictEqual({ stopRemoteComms: 1, terminateAll: 1, closed: 1 });
   });
 
-  it('runs a control operation asked for before it, then ends the run loop', async () => {
+  it('runs a host call asked for before it, then ends the run loop', async () => {
     const harness = await setUpRealKernel();
     harness.close.mockImplementation(() => undefined);
     await harness.stall();

@@ -1181,6 +1181,34 @@ describe('RemoteManager', () => {
       return verdict;
     }
 
+    it('panics when the store cannot read the peer incarnation', async () => {
+      const fault = new Error('SQLITE_IOERR');
+      const logError = vi.spyOn(logger, 'error').mockReturnValue();
+      const { kernelKVStore } = kernelDatabase;
+      const get = kernelKVStore.get.bind(kernelKVStore);
+      vi.spyOn(kernelKVStore, 'get').mockImplementation((key) => {
+        if (key === 'peerIncarnation.peer-1') {
+          throw fault;
+        }
+        return get(key);
+      });
+
+      await expect(
+        getOnIncarnationChange()('peer-1', 'incarnation-1'),
+      ).rejects.toThrow(
+        'Kernel panic: reading the incarnation of peer peer-1 failed',
+      );
+      expect(mockKernelQueue.panic).toHaveBeenCalledWith(
+        'reading the incarnation of peer peer-1 failed',
+        fault,
+      );
+      expect(logError).toHaveBeenCalledWith(
+        'Kernel panic: reading the incarnation of peer peer-1 failed',
+        fault,
+      );
+      expect(mockKernelQueue.acceptPeerIncarnation).not.toHaveBeenCalled();
+    });
+
     it('triggers persist + finalize peer restart when persisted incarnation differs from observed', async () => {
       const peerId = 'peer-that-restarted';
       const remote = remoteManager.establishRemote(peerId);
