@@ -283,10 +283,11 @@ export class KernelQueue {
   }
 
   /**
-   * Hand the run loop a host call. The loop takes it in a crank of its own,
-   * ahead of all other work, and answers once that crank commits. Before the
-   * loop has started the work runs at once, as the kernel's boot writes do,
-   * with no crank to roll back.
+   * Hand the run loop work from outside it: a host call, or a request the
+   * kernel's own code makes while a crank may be open. The loop takes it in a
+   * crank of its own, ahead of all other work, and answers once that crank
+   * commits. Before the loop has started the work runs at once, as the
+   * kernel's boot writes do, with no crank to roll back.
    *
    * @param what - What the work is, completing "cannot ..." when refused.
    * @param work - The work. Its writes must be made by the time its promise
@@ -779,14 +780,17 @@ export class KernelQueue {
    * Write a message from the kernel to an object in an endpoint now, and
    * subscribe to its result. For the kernel's own code inside a crank, whose
    * transaction the writes join; from outside the run loop, use
-   * `enqueueMessage`. A store fault is thrown, out of the caller's crank.
+   * `enqueueMessage`. A store fault is thrown; let it out of the crank, to
+   * kill the run loop.
    *
    * @param target - The object to which the message is directed.
    * @param method - The method to be invoked.
    * @param args - Message arguments.
    * @returns The `answer`: a promise for the (CapData encoded) result of the
    * message invocation. It rejects with `OBJECT_DELETED` if the kernel does
-   * not have the target or a kref in the arguments.
+   * not have the target or a kref in the arguments. Boxed, so that the write
+   * reads as synchronous and the answer, which only a later crank can settle,
+   * is not awaited inside the crank that wrote it.
    */
   writeMessage(
     target: KRef,

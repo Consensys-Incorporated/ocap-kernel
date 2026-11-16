@@ -429,10 +429,7 @@ describe('a writer acting while a crank aborts', () => {
   it('ocap URL redemption, known peer: its request lands in a crank of its own', async () => {
     const harness = await setUp();
     const { kernelStore, remote, remoteManager, persistedForPeer } = harness;
-    const ocapURLManager = new OcapURLManager({
-      remoteManager,
-      kernelStore,
-    });
+    const ocapURLManager = new OcapURLManager({ remoteManager, kernelStore });
     await abortACrankWhile(harness, async () => {
       ocapURLManager
         .redeemOcapURL(`ocap:token@${PEER_ID}`)

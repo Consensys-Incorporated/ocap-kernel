@@ -220,7 +220,6 @@ export class Kernel {
       vatManager: this.#vatManager,
       getKernelService: (name) =>
         this.#kernelServiceManager.getKernelService(name),
-      writeMessage: this.#kernelQueue.writeMessage.bind(this.#kernelQueue),
       ...(this.#ioManager ? { ioManager: this.#ioManager } : {}),
       logger: this.#logger.subLogger({ tags: ['SubclusterManager'] }),
     });

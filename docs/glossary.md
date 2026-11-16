@@ -212,8 +212,10 @@ details.
 
 The [run loop](#run-loop)'s in-memory queue of work from outside it: the host calls
 `clearStorage`, `reset`, `terminateAllVats`, `queueMessage`, `restartVat` and `terminateVat`,
-and a new remote's setup. The run loop takes each in a [crank](#crank) of its own, and its
-caller hears nothing of it before that crank commits. See `enqueueInbox` in
+a subcluster's bootstrap message, and acting on a remote, for an ocap URL redemption or for a
+peer's message when the peer has no handle yet or an earlier message of its own still waits.
+The run loop takes each in a [crank](#crank) of its own, and its caller hears nothing of it
+before that crank commits. See `enqueueInbox` in
 [KernelQueue](../packages/ocap-kernel/src/KernelQueue.ts).
 
 ### run loop
