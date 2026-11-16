@@ -210,11 +210,11 @@ details.
 
 ### inbox
 
-The [run loop](#run-loop)'s in-memory queue of work from outside it: host calls such as
-`queueMessage`, `revoke` or `reset`, and requests the kernel's own code makes while a crank
-may be open, such as a vat termination or a new remote's setup. The run loop takes each in
-a [crank](#crank) of its own, and its caller hears nothing of it before that crank commits.
-See `enqueueInbox` in [KernelQueue](../packages/ocap-kernel/src/KernelQueue.ts).
+The [run loop](#run-loop)'s in-memory queue of work from outside it: the host calls
+`clearStorage`, `reset`, `terminateAllVats`, `queueMessage`, `restartVat` and `terminateVat`,
+and a new remote's setup. The run loop takes each in a [crank](#crank) of its own, and its
+caller hears nothing of it before that crank commits. See `enqueueInbox` in
+[KernelQueue](../packages/ocap-kernel/src/KernelQueue.ts).
 
 ### run loop
 

@@ -975,8 +975,8 @@ export type CrankResult = {
 /**
  * How work from the run loop's inbox ends: what its caller is told once the
  * crank has committed. A `failure` is for the caller's own error, such as
- * naming a vat that does not exist; the crank still commits unless `abort`
- * is set too.
+ * naming a vat that does not exist; the work's writes stand unless `abort`
+ * is set too, which rolls them back as a failed delivery's are.
  */
 export type InboxOutcome<Value> =
   | { value: Value; failure?: never; abort?: never }
