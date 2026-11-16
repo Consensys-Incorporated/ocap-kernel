@@ -160,12 +160,15 @@ export class OcapURLManager {
       return identity.redeemLocalOcapURL(url);
     }
 
-    // This is a remote OCAP URL — requires full remote comms
-    // Add relay hints to our own relay pool so future URLs embed them
-    identity.addKnownRelays(hints);
+    // This is a remote OCAP URL — requires full remote comms. The relay hints
+    // are added inside `use`, so they are written in the remote's crank along
+    // with the request, and future URLs embed them.
     return this.#remoteManager.withRemote(host, {
       hints,
-      use: async (remote) => remote.redeemOcapURL(url),
+      use: async (remote) => {
+        identity.addKnownRelays(hints);
+        return remote.redeemOcapURL(url);
+      },
     });
   }
 }

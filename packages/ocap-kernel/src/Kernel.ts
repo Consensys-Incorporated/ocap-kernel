@@ -220,7 +220,7 @@ export class Kernel {
       vatManager: this.#vatManager,
       getKernelService: (name) =>
         this.#kernelServiceManager.getKernelService(name),
-      queueMessage: this.queueMessage.bind(this),
+      writeMessage: this.#kernelQueue.writeMessage.bind(this.#kernelQueue),
       ...(this.#ioManager ? { ioManager: this.#ioManager } : {}),
       logger: this.#logger.subLogger({ tags: ['SubclusterManager'] }),
     });
@@ -713,7 +713,6 @@ export class Kernel {
     this.#kernelQueue.discardArrivals();
     this.#kernelQueue.abandonSubscriptions(abandoned);
     this.#remoteManager.releaseRestartHolds();
-    this.#kernelQueue.discardHeldRequests(abandoned);
     this.#kernelQueue.discardInbox(abandoned);
     this.#vatManager.abandonQueuedWork(abandoned);
   }
