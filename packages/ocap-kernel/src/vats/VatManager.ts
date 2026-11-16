@@ -704,7 +704,8 @@ export class VatManager {
         // Never written: the run loop died, a reset or `clearStorage` discarded
         // it, or the store refused it before the loop had started. The restarts
         // it overtook hear of that as every waiter does, from `onRunLoopDeath`
-        // or `abandonQueuedWork`.
+        // or `abandonQueuedWork`; before the loop has started none has been
+        // asked for, since no host holds the kernel yet.
         this.#forgetPendingTermination(vatId);
         throw error;
       }
