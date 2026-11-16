@@ -941,9 +941,9 @@ export class Kernel {
 
   /**
    * Gracefully stop the kernel without deleting vats. Waits for the open crank
-   * and for the crank of each host call queued before this; if one never ends,
-   * neither does this, and the embedder has to end the process. A later call
-   * settles as this one does.
+   * and for a `clearStorage`, `reset` or `terminateAllVats` queued before
+   * this; if one never ends, neither does this, and the embedder has to end
+   * the process. A later call settles as this one does.
    */
   async stop(): Promise<void> {
     this.#stopping ??= this.#stop();

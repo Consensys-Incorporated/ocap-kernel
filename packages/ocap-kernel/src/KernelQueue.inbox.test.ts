@@ -168,10 +168,10 @@ describe('an inbox item', () => {
     async ({ abort, written }) => {
       const { kernelStore, kernelQueue } = await makeFixture(0);
       const running = kernelQueue.run(async () => undefined);
-      const failure = new Error('worker would not start');
+      const failure = new Error('no such vat');
 
       await expect(
-        kernelQueue.enqueueInbox('launch', () => {
+        kernelQueue.enqueueInbox('terminate a vat', () => {
           kernelStore.setVatConfig(asVatId('v9'), { bundleName: 'written' });
           return { abort, failure };
         }),
@@ -240,22 +240,15 @@ describe('an inbox item', () => {
       const { kdb, kernelStore, kernelQueue } = await makeFixture(2);
       kernelStore.setVatConfig(asVatId('v1'), { bundleName: 'before' });
       const boom = new Error('failed after the wipe');
-      let delivered = 0;
-      const running = kernelQueue.run(async () => {
-        delivered += 1;
-        if (delivered === 1) {
-          // Taken ahead of the second send, while the first one's crank is open.
-          kernelQueue
-            .enqueueInbox('reset', () => {
-              kernelStore[method]();
-              throw boom;
-            })
-            .catch(() => undefined);
-        }
-        return undefined;
+      const running = kernelQueue.run(async () => undefined);
+      // Taken ahead of the second send, while the first one's crank is open.
+      const asked = kernelQueue.enqueueInbox('reset', () => {
+        kernelStore[method]();
+        throw boom;
       });
 
       await expect(running).rejects.toBe(boom);
+      await expect(asked).rejects.toBe(boom);
       const reopened = makeKernelStore(kdb);
       expect({
         cachedQueueLength: kernelStore.runQueueLength(),
@@ -268,6 +261,32 @@ describe('an inbox item', () => {
       });
     },
   );
+
+  it('is answered once its crank commits, even if a held write then kills the run loop', async () => {
+    const { kdb, kernelStore, kernelQueue } = await makeFixture(0);
+    const target = kernelStore.initKernelObject(asVatId('v1'));
+    const full = new Error('SQLITE_FULL');
+    let armed = false;
+    const set = kdb.kernelKVStore.set.bind(kdb.kernelKVStore);
+    // Fails the held message's write, which creates its result promise.
+    vi.spyOn(kdb.kernelKVStore, 'set').mockImplementation((key, value) => {
+      if (armed && key.endsWith('.state') && value === 'unresolved') {
+        throw full;
+      }
+      set(key, value);
+    });
+    let message: Promise<unknown> | undefined;
+    const running = kernelQueue.run(async () => undefined);
+
+    await kernelQueue.enqueueInbox('terminateAllVats', () => {
+      message = kernelQueue.enqueueMessage(target, 'held', []);
+      message.catch(() => undefined);
+      armed = true;
+      return { value: undefined };
+    });
+    await expect(running).rejects.toBe(full);
+    await expect(message).rejects.toThrow('Kernel run loop died');
+  });
 
   it('is rejected with what failed its commit', async () => {
     const { kdb, kernelQueue } = await makeFixture(0);
@@ -483,28 +502,40 @@ describe('ending the run loop', () => {
     expect(taken).toStrictEqual(['send', 'reset']);
   });
 
-  it('refuses a request made during the last crank', async () => {
+  it('writes a request made during the last crank, for the next start', async () => {
     const { kernelStore, kernelQueue } = await makeFixture(1);
-    let refused: (() => string) | undefined;
     const running = kernelQueue.run(async () => {
       kernelQueue.endRunLoop().catch(() => undefined);
-      refused = watch(
-        kernelQueue.enqueueInbox('terminate a vat', () => ({
-          value: undefined,
-        })),
-      );
+      kernelQueue.enqueueTerminateVat(asVatId('v1'));
       return undefined;
+    });
+
+    await running;
+    expect(kernelStore.dequeueRun()).toStrictEqual({
+      type: 'terminateVat',
+      vatId: 'v1',
+    });
+  });
+
+  it('writes at once a request made during the afterCommit of the last crank', async () => {
+    const { kernelQueue } = await makeFixture(1);
+    let written: (() => string) | undefined;
+    const running = kernelQueue.run(async () => {
+      kernelQueue.endRunLoop().catch(() => undefined);
+      return {
+        afterCommit: async () => {
+          written = watch(kernelQueue.writeOutsideCrank(() => 'written'));
+          await delay(0);
+        },
+      };
     });
 
     await running;
     await delay(0);
     expect({
-      refused: refused?.(),
-      queued: kernelStore.runQueueLength(),
-    }).toStrictEqual({
-      refused: 'Kernel run loop is stopping; cannot terminate a vat',
-      queued: 0,
-    });
+      written: written?.(),
+      state: kernelQueue.getRunLoopStatus().state,
+    }).toStrictEqual({ written: 'fulfilled', state: 'stopped' });
   });
 
   it('refuses an inbox item asked for after it', async () => {
@@ -529,6 +560,9 @@ describe('ending the run loop', () => {
       'Kernel run loop is stopped; cannot queue a message',
     );
     expect(() => kernelQueue.acceptRemoteInbound(arrival)).toThrow(
+      'Kernel run loop is stopped',
+    );
+    await expect(kernelQueue.writeOutsideCrank(vi.fn())).rejects.toThrow(
       'Kernel run loop is stopped',
     );
     await expect(

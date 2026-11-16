@@ -122,11 +122,7 @@ export class KernelQueue {
    */
   #heldRequests: HeldRequest[] = [];
 
-  /**
-   * Work from outside the run loop. Written into whatever crank was open, a
-   * host call would be rolled back with that crank if it aborted, after its
-   * caller was told it was done.
-   */
+  /** Work from outside the run loop, each item taken in a crank of its own. */
   readonly #inbox: InboxItem[] = [];
 
   /** The inbox item whose crank is open, answered once it commits. */
@@ -342,16 +338,17 @@ export class KernelQueue {
   }
 
   /**
-   * Hand the run loop work from outside it: a host call, or a request the
-   * kernel's own code makes while a crank may be open. The loop takes it in a
-   * crank of its own, ahead of all other work, and answers once that crank
-   * commits. Before the loop has started the work runs at once, as the
-   * kernel's boot writes do, with no crank to roll back.
+   * Hand the run loop a host call. The loop takes it in a crank of its own,
+   * ahead of all other work, and answers once that crank commits. Before the
+   * loop has started the work runs at once, as the kernel's boot writes do,
+   * with no crank to roll back.
    *
    * @param what - What the work is, completing "cannot ..." when refused.
    * @param work - The work. Its writes must be made by the time its promise
    * settles, and a caller's own error returned as a failure: a throw is a
-   * kernel or store fault, which kills the run loop.
+   * kernel or store fault, which kills the run loop. Its value must not be a
+   * promise, which would answer the caller when it settles rather than when
+   * the crank commits.
    * @returns A promise for the outcome's `value`, given once the crank commits.
    * It rejects with the outcome's `failure`; with what killed the run loop if
    * its crank did; with the dead-loop error if the loop dies before taking it;
@@ -411,9 +408,8 @@ export class KernelQueue {
 
   /**
    * Reject every inbox item waiting behind the open crank, for a kernel wiping
-   * its store in that crank. Carried out after the wipe, a request made during
-   * it would act on the fresh kernel: a termination asked for during a reset
-   * would kill the next vat launched under that id.
+   * its store in that crank: carried out after the wipe, they would act on the
+   * fresh kernel.
    *
    * @param error - What to tell their callers.
    */
