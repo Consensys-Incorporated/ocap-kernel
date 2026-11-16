@@ -783,7 +783,7 @@ export type SubclusterLaunchResult = {
   rootKref: KRef;
   /** The CapData result of calling bootstrap() on the root object, if any. */
   bootstrapResult: CapData<KRef> | undefined;
-  /** Map from vat name to root kref for all successfully launched vats. */
+  /** Map from vat name to root kref, for every vat in the subcluster. */
   vatRootKrefs: Record<string, KRef>;
 };
 
