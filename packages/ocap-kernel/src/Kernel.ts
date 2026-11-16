@@ -112,7 +112,7 @@ export class Kernel {
    * @param options.ioListenerFactory - Optional factory for creating IO listeners.
    * @param options.allowedGlobalNames - Optional list of allowed global names for vat endowments.
    * @param options.onRunLoopFailure - Optional handler called if the run loop dies.
-   * @param options.vatRelaunchTimeoutMs - How long a persisted vat's start at boot, or a vat's restart, waits for its worker before terminating the vat.
+   * @param options.vatRelaunchTimeoutMs - How long a vat's start, at boot, on restart or in a launch, waits for its worker before the vat is terminated or the launch fails.
    * @param options.auditRefCounts - If true, verify every kref's reference
    * counts against the references the kernel actually holds at the end of each
    * crank, and throw on any mismatch. Intended for tests and debugging; the
@@ -222,7 +222,6 @@ export class Kernel {
       vatManager: this.#vatManager,
       getKernelService: (name) =>
         this.#kernelServiceManager.getKernelService(name),
-      writeMessage: this.#kernelQueue.writeMessage.bind(this.#kernelQueue),
       ...(this.#ioManager ? { ioManager: this.#ioManager } : {}),
       logger: this.#logger.subLogger({ tags: ['SubclusterManager'] }),
     });
@@ -276,7 +275,7 @@ export class Kernel {
    * @param options.systemSubclusters - Optional array of system subcluster configurations.
    * @param options.allowedGlobalNames - Optional list of allowed global names for vat endowments. When set, only these names from the `VatSupervisor`'s configured endowments (see `createDefaultEndowments`) are available to vats.
    * @param options.onRunLoopFailure - Optional handler called if the run loop dies. The kernel must be restarted after that, so an embedder that outlives it (e.g. a daemon) should use this to terminate or restart.
-   * @param options.vatRelaunchTimeoutMs - How long a persisted vat's start at boot, or a vat's restart, waits for its worker before terminating the vat, in milliseconds: more than 0 and at most 2^31 - 1. Defaults to 30 seconds.
+   * @param options.vatRelaunchTimeoutMs - How long a vat's start, at boot, on restart or in a launch, waits for its worker before the vat is terminated or the launch fails, in milliseconds: more than 0 and at most 2^31 - 1. Defaults to 30 seconds.
    * @param options.auditRefCounts - If true, verify reference counts against
    * ground truth at the end of each crank and throw on any mismatch.
    * @param options.kernelServices - Kernel services to register before the run
@@ -594,12 +593,11 @@ export class Kernel {
   }
 
   /**
-   * Terminates a named sub-cluster of vats, each by way of `terminateVat`.
-   * Refused on a dead run loop. A member that survives keeps the subcluster
-   * and its IO channels, and makes this reject.
+   * Terminates a named sub-cluster of vats, in a crank of its own. A failure
+   * partway rolls back its store writes and kills the run loop.
    *
    * @param subclusterId - The id of the subcluster to terminate.
-   * @returns A promise that resolves when termination is complete.
+   * @returns A promise that resolves once the crank has committed.
    */
   async terminateSubcluster(subclusterId: SubclusterId): Promise<void> {
     return this.#subclusterManager.terminateSubcluster(subclusterId);
