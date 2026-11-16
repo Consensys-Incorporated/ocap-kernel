@@ -34,7 +34,7 @@ const mocks = vi.hoisted(() => {
       .fn()
       .mockResolvedValue({ body: '{"result":"ok"}', slots: [] });
 
-    releaseResult = vi.fn().mockResolvedValue(undefined);
+    releaseResultIfHeld = vi.fn().mockResolvedValue(true);
 
     releaseAbandonedResults = vi.fn().mockReturnValue(0);
 
@@ -484,8 +484,24 @@ describe('Kernel', () => {
       await kernel.releaseResult(result as QueueMessageResult);
 
       expect(
-        mocks.KernelQueue.lastInstance.releaseResult.mock.calls,
+        mocks.KernelQueue.lastInstance.releaseResultIfHeld.mock.calls,
       ).toStrictEqual(calls ? [['kp7']] : []);
+    });
+
+    it('resolves when the result is not held', async () => {
+      const kernel = await Kernel.make(
+        mockPlatformServices,
+        mockKernelDatabase,
+      );
+      mocks.KernelQueue.lastInstance.releaseResultIfHeld.mockResolvedValue(
+        false,
+      );
+
+      await kernel.releaseResult({ kpid: asKRef('kp7') });
+
+      expect(
+        mocks.KernelQueue.lastInstance.releaseResultIfHeld.mock.calls,
+      ).toStrictEqual([['kp7']]);
     });
 
     it('releases the results a previous incarnation held when it starts', async () => {

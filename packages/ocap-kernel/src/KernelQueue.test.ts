@@ -63,7 +63,7 @@ describe('KernelQueue', () => {
       initKernelPromise: vi.fn().mockReturnValue(['kp1']),
       holdResult: vi.fn(),
       isResultHeld: vi.fn().mockReturnValue(false),
-      releaseHeldResult: vi.fn().mockReturnValue(false),
+      releaseHeldResult: vi.fn(),
       kernelRefExists: vi.fn().mockReturnValue(true),
       incrementRefCount: vi.fn(),
       getKernelPromise: vi.fn(),

@@ -643,8 +643,9 @@ const result = await kernel.queueMessage(rootKref, 'getWeatherReport', [
 
 A result that carries krefs also has a `kpid`. The kernel keeps those krefs
 alive for the caller until the result is passed to `kernel.releaseResult`, or
-until the kernel next starts. Releasing a result without a `kpid` does nothing,
-so a caller can release every result without looking:
+until the kernel next starts. Releasing a result the kernel holds nothing for
+does nothing, whether it has no `kpid`, was already released, or dates from
+before a restart, so a caller can release every result without looking:
 
 ```ts
 const result = await kernel.queueMessage(rootKref, 'getForecaster', ['Paris']);

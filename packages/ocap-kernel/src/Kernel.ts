@@ -580,15 +580,17 @@ export class Kernel {
    * Give up the krefs in a `queueMessage` result, or in the `bootstrapResult`
    * of `launchSubcluster`. Anything else that holds them keeps them alive.
    *
-   * @param result - The result. One without a `kpid` holds nothing, and
-   * releasing it does nothing.
+   * @param result - The result. Releasing one the kernel holds nothing for
+   * does nothing: one without a `kpid`, one already released, or one from
+   * before the kernel last started.
    * @param result.kpid - The result's `kpid`.
-   * @throws If the result has a `kpid` the kernel is not holding, as when it
-   * is released twice.
    */
   async releaseResult({ kpid }: { kpid?: KRef | undefined }): Promise<void> {
-    if (kpid !== undefined) {
-      await this.#kernelQueue.releaseResult(kpid);
+    if (kpid === undefined) {
+      return;
+    }
+    if (!(await this.#kernelQueue.releaseResultIfHeld(kpid))) {
+      this.#logger.debug(`releaseResult: ${kpid} is not a held result`);
     }
   }
 

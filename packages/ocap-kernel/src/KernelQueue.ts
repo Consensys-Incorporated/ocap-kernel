@@ -839,9 +839,28 @@ export class KernelQueue {
   async releaseResult(kpid: KRef): Promise<void> {
     insistKRef(kpid);
     await this.writeOutsideCrank(() => {
-      this.#kernelStore.releaseHeldResult(kpid) ||
-        Fail`${kpid} is not a held result; it may have been released already`;
+      this.#kernelStore.releaseHeldResult(kpid);
       this.#collectReleasedResults();
+    });
+  }
+
+  /**
+   * Release the hold on a result promise, if there is one. For a caller
+   * outside the kernel, which cannot know that a restart or an earlier release
+   * already ended its hold.
+   *
+   * @param kpid - The promise, from the answer's `kpid`.
+   * @returns False if the kernel was not holding `kpid`.
+   */
+  async releaseResultIfHeld(kpid: KRef): Promise<boolean> {
+    insistKRef(kpid);
+    return await this.writeOutsideCrank(() => {
+      if (!this.#kernelStore.isResultHeld(kpid)) {
+        return false;
+      }
+      this.#kernelStore.releaseHeldResult(kpid);
+      this.#collectReleasedResults();
+      return true;
     });
   }
 
@@ -1265,7 +1284,10 @@ export class KernelQueue {
       // A held result stays held only while a caller is about to be handed
       // krefs along with the kpid to release them by. A rejection reaches the
       // caller as a thrown error, which has nowhere to carry the kpid.
-      if (rejected || !data.slots?.length || !this.subscriptions.has(kpid)) {
+      if (
+        this.#kernelStore.isResultHeld(kpid) &&
+        (rejected || !data.slots?.length || !this.subscriptions.has(kpid))
+      ) {
         this.#kernelStore.releaseHeldResult(kpid);
       }
 
