@@ -422,7 +422,8 @@ export class RemoteManager {
 
     // The transport keeps no store state, so it starts after the crank that
     // wrote the identity has committed: one that fails to start leaves the
-    // identity written.
+    // identity written, as does a `stop` begun while that crank waited, which
+    // refuses the start.
     const prepared = await this.#kernelQueue.enqueueInbox(
       'initialize remote comms',
       async () =>
@@ -435,6 +436,7 @@ export class RemoteManager {
           ),
         ),
     );
+    this.#kernelQueue.assertInboxOpen('start remote comms');
     const remoteComms = await startRemoteComms(prepared, {
       platformServices: this.#platformServices,
       remoteMessageHandler,

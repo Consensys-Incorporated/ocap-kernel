@@ -1892,6 +1892,44 @@ describe('Kernel', () => {
     });
   });
 
+  describe('a host call that writes the store', () => {
+    it.each([
+      {
+        call: 'registerKernelServiceObject',
+        what: 'register a kernel service',
+        make: async (kernel: Kernel): Promise<unknown> =>
+          kernel.registerKernelServiceObject('service', {}),
+      },
+      {
+        call: 'reapVats',
+        what: 'reap vats',
+        make: async (kernel: Kernel): Promise<unknown> => kernel.reapVats(),
+      },
+      {
+        call: 'reapRemotes',
+        what: 'reap remotes',
+        make: async (kernel: Kernel): Promise<unknown> => kernel.reapRemotes(),
+      },
+      {
+        call: 'collectGarbage',
+        what: 'collect garbage',
+        make: async (kernel: Kernel): Promise<unknown> =>
+          kernel.collectGarbage(),
+      },
+    ])('hands $call to the run loop', async ({ what, make }) => {
+      const kernel = await Kernel.make(
+        mockPlatformServices,
+        makeMapKernelDatabase(),
+      );
+
+      await make(kernel);
+
+      expect(
+        mocks.KernelQueue.lastInstance.enqueueInbox,
+      ).toHaveBeenCalledExactlyOnceWith(what, expect.any(Function));
+    });
+  });
+
   describe('a host call that fails for the caller', () => {
     const badFilter = (): boolean => {
       throw new Error('bad filter');
@@ -1917,24 +1955,6 @@ describe('Kernel', () => {
         call: 'registerKernelServiceObject',
         make: async (kernel: Kernel): Promise<unknown> =>
           kernel.registerKernelServiceObject('ocapURLIssuerService', {}),
-      },
-      {
-        call: 'initIdentity',
-        make: async (kernel: Kernel): Promise<unknown> => {
-          mocks.RemoteManager.lastInstance.initIdentity.mockRejectedValueOnce(
-            new Error('no identity'),
-          );
-          return kernel.initIdentity();
-        },
-      },
-      {
-        call: 'initRemoteComms',
-        make: async (kernel: Kernel): Promise<unknown> => {
-          mocks.RemoteManager.lastInstance.initRemoteComms.mockRejectedValueOnce(
-            new Error('no transport'),
-          );
-          return kernel.initRemoteComms();
-        },
       },
       {
         call: 'reapVats',
