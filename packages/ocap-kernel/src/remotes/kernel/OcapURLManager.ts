@@ -42,7 +42,7 @@ export class OcapURLManager {
   /** The kernel's store, for retaining the objects issued URLs name */
   readonly #kernelStore: KernelStore;
 
-  /** The kernel's run queue, whose inbox takes each issue's write */
+  /** The kernel's run queue */
   readonly #kernelQueue: KernelQueue;
 
   /** OCAP URL issuer service object */

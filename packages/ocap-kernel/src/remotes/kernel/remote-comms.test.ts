@@ -40,21 +40,8 @@ function makeLearnedRelayEntries(
   return addrs.map((addr) => ({ addr, lastSeen, isBootstrap: false }));
 }
 
-/**
- * Prepare remote comms and start them, as `RemoteManager` does on either side
- * of its crank.
- *
- * @param kernelStore - The kernel store, for storing persistent key info.
- * @param platformServices - The platform services, for network I/O.
- * @param remoteMessageHandler - Handler to process received inbound communications.
- * @param options - Options for remote communications initialization.
- * @param logger - The logger to use.
- * @param keySeed - Optional seed for libp2p key generation.
- * @param onRemoteGiveUp - Optional callback to be called when we give up on a remote.
- * @param incarnationId - Unique identifier for this kernel instance.
- * @param onIncarnationChange - Optional callback when a remote peer's incarnation changes.
- * @returns The started remote comms.
- */
+// Prepare remote comms and start them, as `RemoteManager` does on either side
+// of its crank.
 async function initRemoteComms(
   kernelStore: KernelStore,
   platformServices: PlatformServices,

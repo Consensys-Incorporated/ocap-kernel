@@ -62,7 +62,7 @@ const DEAD_RUN_LOOP_RESULT =
 /**
  * Carry out a host call's work for `enqueueInbox`, turning a throw into a
  * failure that rejects the caller and rolls the crank back. A store fault is
- * rethrown, for the run loop to panic over.
+ * rethrown and kills the run loop.
  *
  * @param work - The call's work.
  * @returns The outcome for the run loop.

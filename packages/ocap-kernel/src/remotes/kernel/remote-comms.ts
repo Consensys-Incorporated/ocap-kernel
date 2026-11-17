@@ -366,7 +366,7 @@ export async function initRemoteIdentity(
   });
 }
 
-/** What `prepareRemoteComms` wrote and read, for `startRemoteComms`. */
+/** What `startRemoteComms` takes from `prepareRemoteComms`. */
 export type PreparedRemoteComms = Awaited<
   ReturnType<typeof initRemoteIdentity>
 > & {
@@ -378,8 +378,8 @@ export type PreparedRemoteComms = Awaited<
 };
 
 /**
- * Write what remote comms keep in the store: the kernel's identity, its
- * relays, and whether it woke from an earlier incarnation.
+ * Write what remote comms keep in the store, the kernel's identity and its
+ * relays, and read whether it woke from an earlier incarnation.
  *
  * @param kernelStore - The kernel's persistent state store.
  * @param options - Configuration options for remote communications.

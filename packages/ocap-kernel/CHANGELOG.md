@@ -53,7 +53,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - **BREAKING:** `revoke`, `pinVatRoot`, `unpinVatRoot`, `reapVats`, `reapRemotes`, `collectGarbage` and `registerKernelServiceObject` return promises ([#1303](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1303))
-- **BREAKING:** Every host call that writes the kernel store is refused once `stop` has begun, not only once the run loop has ended. `revoke`, `pinVatRoot`, `unpinVatRoot`, `reapVats`, `reapRemotes`, `collectGarbage`, `registerKernelServiceObject`, `initIdentity`, `initRemoteComms` and `issueOcapURL` are also refused once the run loop has died ([#1303](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1303))
+- **BREAKING:** `revoke`, `pinVatRoot`, `unpinVatRoot`, `reapVats`, `reapRemotes`, `collectGarbage`, `registerKernelServiceObject`, `initIdentity`, `initRemoteComms` and `issueOcapURL` are refused once `stop` has begun or the run loop has died ([#1303](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1303))
 - **BREAKING:** `clearStorage`, `reset` and `terminateAllVats` are refused once the run loop has died; restart the kernel instead, with `resetStorage` to clear its state ([#1105](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1105))
 - **BREAKING:** `getImporters` returns `EndpointId[]`, and includes remotes and terminated vats ([#1088](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1088))
 - **BREAKING:** `Kernel.make`'s `ioChannelFactory` option is now `ioListenerFactory`, and the exported `IOChannelFactory` type is replaced by `IOListener` and `IOListenerFactory`. A cluster config's `io` entries now create listeners; vats call `accept()` to obtain a channel instead of reading and writing the endowment directly ([#1007](https://github.com/MetaMask/ocap-kernel/pull/1007))
@@ -88,7 +88,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- A host call made while a crank is running no longer writes into that crank, whose abort undid it after the caller was told it succeeded. Each runs in a crank of its own and none is answered before that crank commits ([#1303](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1303))
+- A `revoke`, `pinVatRoot`, `unpinVatRoot`, `reapVats`, `reapRemotes`, `collectGarbage`, `registerKernelServiceObject`, `initIdentity`, `initRemoteComms` or `issueOcapURL` call made while a crank is running no longer writes into that crank, whose abort undid it after the caller was told it succeeded. Each runs in a crank of its own and none is answered before that crank commits ([#1303](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1303))
 - A `queueMessage`, `restartVat` or `terminateVat` call, a subcluster's bootstrap message, a new peer's setup and a peer's first message each run in a crank of their own: a store fault partway now rolls the write back and stops the kernel, instead of keeping half of it ([#1302](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1302))
 - An ocap URL redemption runs in a crank of its own, so one asked for while another crank was open is no longer lost when that crank aborts, and one asked for once the run loop has died is refused at once instead of timing out ([#1302](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1302))
 - A crank that rolls back keeps the IDs it gave out, so no later crank hands out an ID a caller may have seen ([#1302](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1302))

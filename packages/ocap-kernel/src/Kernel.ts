@@ -579,8 +579,7 @@ export class Kernel {
   }
 
   /**
-   * Launches a sub-cluster of vats, in a crank of its own. A vat that does not
-   * start within `vatRelaunchTimeoutMs` rolls the whole launch back.
+   * Launches a sub-cluster of vats.
    *
    * @param config - Configuration object for sub-cluster.
    * @returns A promise for the subcluster ID and the (CapData encoded) result
