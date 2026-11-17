@@ -352,10 +352,7 @@ export class Kernel {
 
     // Results held for callers of a previous incarnation, whose promises
     // died with it.
-    const { dropped } = this.#kernelQueue.releaseAbandonedResults();
-    for (const { kpid, error } of dropped) {
-      this.#logger.error(`Dropped the hold on result ${kpid}:`, error);
-    }
+    this.#kernelQueue.releaseAbandonedResults();
 
     // Before the vats start, so a throw leaves no worker running, and before
     // the run loop, which may find a delivery to any remote already queued.
@@ -548,8 +545,8 @@ export class Kernel {
    *
    * @param result - The result. Releasing one the kernel holds nothing for
    * does nothing: one without a `kpid`, one already released, or one from
-   * before the kernel last started. So does releasing after the run loop has
-   * stopped or died, since the next start releases every hold.
+   * before the kernel last started. So does releasing once `stop` is
+   * called or the run loop has died, since the next start releases every hold.
    * @param result.kpid - The result's `kpid`.
    */
   async releaseResult({ kpid }: { kpid?: KRef | undefined }): Promise<void> {
@@ -560,14 +557,14 @@ export class Kernel {
     try {
       held = await this.#kernelQueue.releaseResultIfHeld(kpid);
     } catch (error) {
-      // Asked after the refusal, to cover a loop that ends with the release
-      // still queued.
       const { state } = this.#kernelQueue.getRunLoopStatus();
-      if (isStoreFault(error) || (state !== 'stopped' && state !== 'failed')) {
+      const stopping = this.#stopping !== undefined;
+      const closed = stopping || state === 'stopped' || state === 'failed';
+      if (isStoreFault(error) || !closed) {
         throw error;
       }
       this.#logger.debug(
-        `releaseResult: run loop ${state}, ${kpid} is left for the next start`,
+        `releaseResult: run loop ${state === 'running' ? 'stopping' : state}, ${kpid} is left for the next start`,
       );
       return;
     }

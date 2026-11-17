@@ -152,6 +152,30 @@ describe('the hold on a queueMessage result', () => {
     await stop();
   });
 
+  it('is released in a crank of its own', async () => {
+    const { kdb, kernelStore, kernelQueue, root, start, stop } =
+      await setUp(OBJECT);
+    start();
+    const { kpid } = await kernelQueue.enqueueMessage(root, 'fetch', []);
+    const before = kernelStore.getCrankNumber();
+    const inCrank: boolean[] = [];
+    const deleteRow = kdb.kernelKVStore.delete.bind(kdb.kernelKVStore);
+    vi.spyOn(kdb.kernelKVStore, 'delete').mockImplementation((key) => {
+      if (key === `heldResult.${kpid}`) {
+        inCrank.push(kernelStore.isInCrank());
+      }
+      deleteRow(key);
+    });
+
+    await kernelQueue.releaseResult(kpid as KRef);
+
+    expect({
+      inCrank,
+      cranks: kernelStore.getCrankNumber() - before,
+    }).toStrictEqual({ inCrank: [true], cranks: 1 });
+    await stop();
+  });
+
   it('cannot be released twice by the kernel', async () => {
     const { kernelQueue, root, start, stop } = await setUp(OBJECT);
     start();
@@ -186,48 +210,36 @@ describe('the hold on a queueMessage result', () => {
     await stop();
     const nextKernelQueue = new KernelQueue(kernelStore, async () => undefined);
 
-    expect(nextKernelQueue.releaseAbandonedResults()).toStrictEqual({
-      released: 2,
-      dropped: [],
-    });
+    expect(nextKernelQueue.releaseAbandonedResults()).toBe(2);
 
     expect(kernelStore.getHeldResults()).toStrictEqual([]);
     expect(kernelStore.auditRefCounts()).toStrictEqual([]);
   });
 
-  it('is dropped at start when its count is already gone', async () => {
+  it('is released for no result at start when one release fails', async () => {
     const { kernelStore, kernelQueue, root, start, stop } = await setUp(OBJECT);
     start();
+    const { kpid: kept } = await kernelQueue.enqueueMessage(root, 'fetch', []);
     const { kpid: lost } = await kernelQueue.enqueueMessage(root, 'fetch', []);
-    await kernelQueue.enqueueMessage(root, 'fetch', []);
     await stop();
-    // As a crash between a release's two writes left it, before the row was
-    // deleted first.
+    const refCount = kernelStore.getRefCount(kept as KRef);
     while (kernelStore.getRefCount(lost as KRef) > 0) {
       kernelStore.decrementRefCount(lost as KRef, 'test');
     }
     const nextKernelQueue = new KernelQueue(kernelStore, async () => undefined);
 
+    expect(() => nextKernelQueue.releaseAbandonedResults()).toThrow(
+      'refCount underflow',
+    );
+
     expect({
-      swept: nextKernelQueue.releaseAbandonedResults(),
       held: kernelStore.getHeldResults(),
-    }).toStrictEqual({
-      swept: {
-        released: 1,
-        dropped: [
-          {
-            kpid: lost,
-            error: expect.objectContaining({
-              message: expect.stringContaining('refCount underflow'),
-            }),
-          },
-        ],
-      },
-      held: [],
-    });
+      refCount: kernelStore.getRefCount(kept as KRef),
+      inCrank: kernelStore.isInCrank(),
+    }).toStrictEqual({ held: [kept, lost], refCount, inCrank: false });
   });
 
-  it('is not dropped at start by a store fault', async () => {
+  it('is still held after a store fault at start', async () => {
     const { kdb, kernelStore, kernelQueue, root, start, stop } =
       await setUp(OBJECT);
     start();

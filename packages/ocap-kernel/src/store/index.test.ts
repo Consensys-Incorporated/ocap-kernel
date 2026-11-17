@@ -211,6 +211,7 @@ describe('kernel store', () => {
         'undoOcapURLRetention',
         'unpinObject',
         'waitForCrank',
+        'writeAtomically',
       ]);
     });
   });

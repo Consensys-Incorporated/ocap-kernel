@@ -39,11 +39,8 @@ const mocks = vi.hoisted(() => {
     releaseResultIfHeld = vi.fn().mockResolvedValue(true);
 
     // On the prototype, for a test to spy on before `Kernel.make` calls it.
-    releaseAbandonedResults(): {
-      released: number;
-      dropped: { kpid: string; error: unknown }[];
-    } {
-      return { released: 0, dropped: [] };
+    releaseAbandonedResults(): number {
+      return 0;
     }
 
     #runLoopFailure: Error | undefined;
@@ -525,8 +522,8 @@ describe('Kernel', () => {
     });
 
     it.each([
-      ['stopped', 'Kernel run loop is stopped; cannot write outside a crank'],
-      ['failed', 'Kernel run loop died; cannot write outside a crank'],
+      ['stopped', 'Kernel run loop is stopped; cannot release a result'],
+      ['failed', 'Kernel run loop died; cannot release a result'],
     ])('resolves when the run loop has %s', async (state, refusal) => {
       const kernel = await Kernel.make(
         mockPlatformServices,
@@ -590,20 +587,24 @@ describe('Kernel', () => {
       expect(sweep).toHaveBeenCalledOnce();
     });
 
-    it('logs a hold it dropped without releasing and starts', async () => {
-      const error = new Error('refCount underflow kp7');
-      vi.spyOn(
-        mocks.KernelQueue.prototype,
-        'releaseAbandonedResults',
-      ).mockReturnValueOnce({ released: 0, dropped: [{ kpid: 'kp7', error }] });
-      const logger = new Logger('test');
-      const logError = vi.spyOn(logger, 'error').mockReturnValue();
+    it('resolves while the kernel is stopping', async () => {
+      const kernel = await Kernel.make(
+        mockPlatformServices,
+        mockKernelDatabase,
+      );
+      const queue = mocks.KernelQueue.lastInstance;
+      const ended = makePromiseKit<void>();
+      vi.spyOn(queue, 'endRunLoop').mockReturnValue(ended.promise);
+      const stopped = kernel.stop();
+      queue.releaseResultIfHeld.mockRejectedValue(
+        new Error('Kernel run loop is stopping; cannot release a result'),
+      );
 
-      await Kernel.make(mockPlatformServices, mockKernelDatabase, { logger });
+      await kernel.releaseResult({ kpid: asKRef('kp7') });
 
-      expect(logError.mock.calls).toStrictEqual([
-        ['Dropped the hold on result kp7:', error],
-      ]);
+      expect(queue.getRunLoopStatus().state).toBe('running');
+      ended.resolve();
+      await stopped;
     });
 
     it('deserializes CapData rejections into Errors', async () => {
