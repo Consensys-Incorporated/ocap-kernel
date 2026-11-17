@@ -5,7 +5,7 @@ import { isJsonRpcMessage } from '@metamask/kernel-utils';
 import type { JsonRpcMessage } from '@metamask/kernel-utils';
 import { Logger } from '@metamask/logger';
 import { TestDuplexStream } from '@ocap/repo-tools/test-utils/streams';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, open as openFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, it, expect, onTestFinished, vi } from 'vitest';
@@ -33,6 +33,68 @@ const v1 = asVatId('v1');
 type Stream = TestDuplexStream<JsonRpcMessage, JsonRpcMessage>;
 
 type KernelDatabase = Awaited<ReturnType<typeof makeSQLKernelDatabase>>;
+
+// Timing experiment: where the first on-disk test's time goes on CI.
+const now = (): number => performance.now();
+const ms = (value: number): string => value.toFixed(0);
+const testName = (): string => expect.getState().currentTestName ?? '?';
+
+/**
+ * Make a lap timer.
+ *
+ * @returns A function recording the time since the last lap under a label,
+ * and the labelled laps so far.
+ */
+function makeLaps(): { lap: (label: string) => void; laps: string[] } {
+  const laps: string[] = [];
+  let last = now();
+  return {
+    laps,
+    lap: (label: string): void => {
+      const at = now();
+      laps.push(`${label} ${ms(at - last)}`);
+      last = at;
+    },
+  };
+}
+
+/**
+ * Record a timing line on stdout and, for the on-disk tests, as a GitHub
+ * annotation.
+ *
+ * @param line - The line.
+ */
+function report(line: string): void {
+  process.stdout.write(`[lost-vat timing ${process.version}] ${line}\n`);
+  if (/probe|will not start at boot|cannot be written/u.test(line)) {
+    process.stdout.write(
+      `::notice title=lost-vat timing ${process.version}::${line}\n`,
+    );
+  }
+}
+
+/**
+ * Time a bare file write and fsync, before any test opens a database.
+ */
+async function probe(): Promise<void> {
+  const { lap, laps } = makeLaps();
+  const dir = await mkdtemp(join(tmpdir(), 'lost-vat-probe-'));
+  lap('mkdtemp');
+  const file = await openFile(join(dir, 'probe'), 'w');
+  await file.write('x');
+  lap('open+write');
+  await file.sync();
+  lap('fsync1');
+  await file.write('y');
+  await file.sync();
+  lap('write+fsync2');
+  await file.close();
+  await rm(dir, { recursive: true, force: true });
+  lap('close+rm');
+  report(`probe: ${laps.join(', ')}`);
+}
+
+await probe();
 
 /** How a vat loses its channel. */
 type Death = 'close' | 'bad frame' | 'oversized syscall';
@@ -235,18 +297,30 @@ function boot(
  * @returns The pieces a test drives, and a way to boot the same store again.
  */
 async function setUp({ onDisk = false }: { onDisk?: boolean } = {}) {
+  const name = testName();
+  const started = now();
+  onTestFinished(() => {
+    report(`total ${name}: ${ms(now() - started)}`);
+  });
+  const { lap, laps } = makeLaps();
   let dbFilename = ':memory:';
   if (onDisk) {
     const dir = await mkdtemp(join(tmpdir(), 'lost-vat-'));
     onTestFinished(async () => rm(dir, { recursive: true, force: true }));
     dbFilename = join(dir, 'store.db');
+    lap('mkdtemp');
   }
   const kdb = await makeSQLKernelDatabase({ dbFilename });
+  lap('open');
   const kernel = boot(kdb);
+  lap('boot');
   const { vatManager, kernelStore } = kernel;
   const doomedRoot = await vatManager.launchVat(config, 'doomed');
+  lap('launch1');
   const survivorRoot = await vatManager.launchVat(config, 'survivor');
+  lap('launch2');
   const survivorERef = kernelStore.translateRefKtoE(v1, survivorRoot, true);
+  report(`setUp ${onDisk ? 'disk' : 'mem'} ${name}: ${laps.join(', ')}`);
   return {
     ...kernel,
     kdb,
@@ -268,12 +342,19 @@ async function setUp({ onDisk = false }: { onDisk?: boolean } = {}) {
       if (!onDisk) {
         throw new Error('Only a store on disk can be booted again');
       }
+      const reboot = makeLaps();
       kdb.close();
-      const next = boot(await makeSQLKernelDatabase({ dbFilename }), options);
+      reboot.lap('close');
+      const reopened = await makeSQLKernelDatabase({ dbFilename });
+      reboot.lap('reopen');
+      const next = boot(reopened, options);
+      reboot.lap('boot');
       await next.vatManager.initializeAllVats();
+      reboot.lap('init');
       if (options.run ?? true) {
         next.run();
       }
+      report(`reboot ${name}: ${reboot.laps.join(', ')}`);
       return next;
     },
   };
