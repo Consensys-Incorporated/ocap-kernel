@@ -110,7 +110,9 @@ describe('accountability', () => {
     await call(kernel, tracker, 'untrack');
     await call(kernel, tracker, 'handOver');
 
-    const deliveries = await kernel.exportRecords({ kind: 'delivery' });
+    const deliveries = await kernel.exportAccountabilityRecords({
+      kind: 'delivery',
+    });
     expect(deliveries).toHaveLength(1);
     expect(deliveries[0]).toStrictEqual(
       expect.objectContaining({
@@ -122,7 +124,7 @@ describe('accountability', () => {
 
   it("records each endpoint's first acquisition of each object", async () => {
     const { kernel, tracker, holder, trackerVat } = await launch();
-    const introductions = (await kernel.exportRecords({
+    const introductions = (await kernel.exportAccountabilityRecords({
       kind: 'introduction',
     })) as IntroductionRecord[];
     const acquired = introductions.map((record) => [

@@ -1,9 +1,9 @@
 import type {
   KVStore,
   KernelDatabase,
-  RecordFilter,
-  RecordRow,
-  RecordStore,
+  AccountabilityRecordFilter,
+  AccountabilityRecordRow,
+  AccountabilityRecordStore,
   VatStore,
 } from '@metamask/kernel-store';
 
@@ -113,14 +113,16 @@ function makeMapVatStore(_vatID: string): ClearableVatStore {
 /**
  * Make a mock record store backed by an array.
  *
- * @returns The mock {@link RecordStore}, with the array behind it.
+ * @returns The mock {@link AccountabilityRecordStore}, with the array behind it.
  */
-export function makeArrayRecordStore(): RecordStore & { rows: RecordRow[] } {
-  const rows: RecordRow[] = [];
+export function makeArrayAccountabilityRecordStore(): AccountabilityRecordStore & {
+  rows: AccountabilityRecordRow[];
+} {
+  const rows: AccountabilityRecordRow[] = [];
   let nextSeq = 1;
   const matches =
-    (filter: RecordFilter) =>
-    (row: RecordRow): boolean =>
+    (filter: AccountabilityRecordFilter) =>
+    (row: AccountabilityRecordRow): boolean =>
       (filter.kind === undefined || row.kind === filter.kind) &&
       (filter.kref === undefined || row.kref === filter.kref) &&
       (filter.endpoint === undefined || row.endpoint === filter.endpoint) &&
@@ -131,7 +133,9 @@ export function makeArrayRecordStore(): RecordStore & { rows: RecordRow[] } {
         row.sender === filter.involving) &&
       (filter.throughCrank === undefined || row.crank <= filter.throughCrank) &&
       (filter.afterSeq === undefined || row.seq > filter.afterSeq);
-  const select = (filter: RecordFilter): RecordRow[] =>
+  const select = (
+    filter: AccountabilityRecordFilter,
+  ): AccountabilityRecordRow[] =>
     rows.filter(matches(filter)).slice(0, filter.limit ?? rows.length);
   return {
     rows,
@@ -160,13 +164,13 @@ export function makeArrayRecordStore(): RecordStore & { rows: RecordRow[] } {
 export function makeMapKernelDatabase(): KernelDatabase {
   const map = new Map<string, string>();
   const vatStores = new Map<string, ClearableVatStore>();
-  const records = makeArrayRecordStore();
+  const accountabilityRecords = makeArrayAccountabilityRecordStore();
   return {
     kernelKVStore: makeMapKVStoreInternal(map),
-    records,
+    accountabilityRecords,
     clear: () => {
       map.clear();
-      records.delete();
+      accountabilityRecords.delete();
       for (const vs of vatStores.values()) {
         vs.clear();
       }

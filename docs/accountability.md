@@ -629,7 +629,7 @@ call, which it is not.
   lets the host attribute an external act to a party, attach the party's
   signed intent, and start a trace from it.
 - `kernel.attest(attestation)` stores an implementer or operator attestation.
-- `kernel.exportRecords(filter)` and `kernel.pruneRecords(filter)` are the
+- `kernel.exportAccountabilityRecords(filter)` and `kernel.pruneAccountabilityRecords(filter)` are the
   retention operations. Export produces a signed bundle that stands on its
   own (unsigned until Phase 2 gives the kernel a signing key); prune is the
   only thing that deletes records, and it is never implicit.
@@ -731,13 +731,13 @@ Six phases, each independently useful and landable.
 `crankNumber` on kernel objects. No new tables. Visible effect: the `@@@@`
 delivery log lines can say who sent what, which is worth having on its own.
 
-**Phase 1: introductions and tracked objects.** The records table in
+**Phase 1: introductions and tracked objects.** The accountability records table in
 `kernel-store`, with the witness column from the start; introduction records
 from `translateRefKtoE`; `track`,
 `untrack`, `history` on a new `accountability` kernel service; `delivery`
 records from `KernelRouter.#deliverSend` for tracked targets and `conveyance`
 records from the slot walks in `#deliverSend` and `#deliverNotify` for tracked
-slots; `exportRecords` and `pruneRecords` on the kernel. Records resolve to endpoints only; party resolution is Phase 2.
+slots; `exportAccountabilityRecords` and `pruneAccountabilityRecords` on the kernel. Records resolve to endpoints only; party resolution is Phase 2.
 
 **Phase 2: parties.** Bundle hashing in the loader; the attestation record
 kind; `operator`, `implementer`, and `intent` attestations; kernel signing

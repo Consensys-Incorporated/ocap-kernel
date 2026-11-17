@@ -119,7 +119,7 @@ describe('record methods', () => {
         kernelStore.incrementCrankNumber();
         kernelStore.setCurrentDelivery(context);
         kernelStore.recordIntroduction({ kref: ko1, endpoint: r0 });
-        expect(kernelStore.getRecords()).toStrictEqual([
+        expect(kernelStore.getAccountabilityRecords()).toStrictEqual([
           {
             seq: 1,
             kind: 'introduction',
@@ -153,7 +153,7 @@ describe('record methods', () => {
           methargs: { ...message.methargs, slots: [ko1, ko1] },
         },
       });
-      expect(kernelStore.getRecords()).toStrictEqual([
+      expect(kernelStore.getAccountabilityRecords()).toStrictEqual([
         {
           seq: 1,
           kind: 'delivery',
@@ -182,7 +182,7 @@ describe('record methods', () => {
         method: 'doIt',
         message: { methargs: message.methargs },
       });
-      expect(kernelStore.getRecords()[0]).toStrictEqual(
+      expect(kernelStore.getAccountabilityRecords()[0]).toStrictEqual(
         expect.objectContaining({ args: message.methargs, result: null }),
       );
     });
@@ -196,7 +196,7 @@ describe('record methods', () => {
       via: 'notify',
       carrier: asKRef('kp2'),
     });
-    expect(kernelStore.getRecords({ kref: ko1 })).toStrictEqual([
+    expect(kernelStore.getAccountabilityRecords({ kref: ko1 })).toStrictEqual([
       {
         seq: 1,
         kind: 'conveyance',
@@ -211,7 +211,7 @@ describe('record methods', () => {
     ]);
   });
 
-  describe('getRecords and pruneRecords', () => {
+  describe('getAccountabilityRecords and pruneAccountabilityRecords', () => {
     beforeEach(() => {
       kernelStore.recordConveyance({
         kref: ko1,
@@ -231,17 +231,21 @@ describe('record methods', () => {
 
     it('reads the records a filter selects', () => {
       expect(
-        kernelStore.getRecords({ involving: v2 }).map((record) => record.seq),
+        kernelStore
+          .getAccountabilityRecords({ involving: v2 })
+          .map((record) => record.seq),
       ).toStrictEqual([1, 2]);
       expect(
-        kernelStore.getRecords({ endpoint: r0 }).map((record) => record.seq),
+        kernelStore
+          .getAccountabilityRecords({ endpoint: r0 })
+          .map((record) => record.seq),
       ).toStrictEqual([2]);
     });
 
     it('deletes the records a filter selects and nothing else', () => {
-      expect(kernelStore.pruneRecords({ endpoint: v2 })).toBe(1);
+      expect(kernelStore.pruneAccountabilityRecords({ endpoint: v2 })).toBe(1);
       expect(
-        kernelStore.getRecords().map((record) => record.seq),
+        kernelStore.getAccountabilityRecords().map((record) => record.seq),
       ).toStrictEqual([2]);
     });
   });

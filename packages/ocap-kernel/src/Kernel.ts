@@ -1,5 +1,8 @@
 import type { CapData } from '@endo/marshal';
-import type { KernelDatabase, RecordFilter } from '@metamask/kernel-store';
+import type {
+  KernelDatabase,
+  AccountabilityRecordFilter,
+} from '@metamask/kernel-store';
 import { isCapData } from '@metamask/kernel-utils';
 import { Logger } from '@metamask/logger';
 
@@ -604,10 +607,13 @@ export class Kernel {
    * @param filter - Which records; all of them if omitted.
    * @returns The records.
    */
-  async exportRecords(filter?: RecordFilter): Promise<AccountabilityRecord[]> {
+  async exportAccountabilityRecords(
+    filter?: AccountabilityRecordFilter,
+  ): Promise<AccountabilityRecord[]> {
     return this.#kernelQueue.enqueueInbox(
       'export accountability records',
-      async () => attempt(() => this.#kernelStore.getRecords(filter)),
+      async () =>
+        attempt(() => this.#kernelStore.getAccountabilityRecords(filter)),
     );
   }
 
@@ -619,10 +625,13 @@ export class Kernel {
    * @param filter - Which records; all of them if omitted.
    * @returns How many were deleted.
    */
-  async pruneRecords(filter?: RecordFilter): Promise<number> {
+  async pruneAccountabilityRecords(
+    filter?: AccountabilityRecordFilter,
+  ): Promise<number> {
     return this.#kernelQueue.enqueueInbox(
       'prune accountability records',
-      async () => attempt(() => this.#kernelStore.pruneRecords(filter)),
+      async () =>
+        attempt(() => this.#kernelStore.pruneAccountabilityRecords(filter)),
     );
   }
 

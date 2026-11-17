@@ -74,7 +74,7 @@
  *   kernelService.${serviceName} = ${koid}   // kref of kernel service object ${serviceName}
  *
  * The kernel's accountability records are not in the key value store: they are
- * in the database's records table (see `methods/records.ts`).
+ * in the database's `accountability_records` table (see `methods/accountability-records.ts`).
  */
 
 import { Fail } from '@endo/errors';
@@ -94,7 +94,7 @@ import { getPinMethods } from './methods/pinned.ts';
 import { getPromiseMethods } from './methods/promise.ts';
 import { getQueueMethods } from './methods/queue.ts';
 import { getReachableMethods } from './methods/reachable.ts';
-import { getRecordMethods } from './methods/records.ts';
+import { getAccountabilityRecordMethods } from './methods/accountability-records.ts';
 import { getRefCountAuditMethods } from './methods/refcount-audit.ts';
 import { getRefCountMethods } from './methods/refcount.ts';
 import { getRelayMethods } from './methods/relay.ts';
@@ -225,7 +225,7 @@ export function makeKernelStore(kdb: KernelDatabase, logger?: Logger) {
     savepoints: [],
     crankBuffer: [],
     auditRefCounts: false,
-    records: kdb.records,
+    accountabilityRecords: kdb.accountabilityRecords,
     recordIntroductions: true,
     // Logging
     logger: logger?.subLogger({ tags: ['kernel-store'] }),
@@ -250,7 +250,7 @@ export function makeKernelStore(kdb: KernelDatabase, logger?: Logger) {
   const subclusters = getSubclusterMethods(context);
   const activity = getActivityMethods(kv);
   const relay = getRelayMethods({ kv, logger: context.logger });
-  const records = getRecordMethods(context);
+  const accountabilityRecords = getAccountabilityRecordMethods(context);
 
   /**
    * Create a new VatStore for a vat.
@@ -353,7 +353,7 @@ export function makeKernelStore(kdb: KernelDatabase, logger?: Logger) {
     ...subclusters,
     ...activity,
     ...relay,
-    ...records,
+    ...accountabilityRecords,
     makeVatStore,
     deleteVat,
     clear,

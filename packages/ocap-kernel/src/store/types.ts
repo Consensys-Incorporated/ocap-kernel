@@ -1,4 +1,7 @@
-import type { KVStore, RecordStore } from '@metamask/kernel-store';
+import type {
+  KVStore,
+  AccountabilityRecordStore,
+} from '@metamask/kernel-store';
 import type { Logger } from '@metamask/logger';
 import { object, string, number, boolean, refine } from '@metamask/superstruct';
 
@@ -37,7 +40,7 @@ export type StoreContext = {
   nextSubclusterId: StoredValue; // Holds string
   vatToSubclusterMap: StoredValue; // Holds Record<VatId, SubclusterId>
   auditRefCounts: boolean; // If set, verify refcounts against ground truth every crank
-  records: RecordStore; // The accountability records table
+  accountabilityRecords: AccountabilityRecordStore; // The accountability records table
   recordIntroductions: boolean; // If set, record each endpoint's first acquisition of each object
   logger?: Logger | undefined;
 };

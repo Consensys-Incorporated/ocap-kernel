@@ -2043,9 +2043,9 @@ describe('Kernel', () => {
       const kref = kernelStore.initKernelObject(asVatId('v1'));
       kernelStore.initEndpoint(asVatId('v2'));
       kernelStore.translateRefKtoE(asVatId('v2'), kref, true);
-      expect(kernelStore.getRecords({ kind: 'introduction' })).toHaveLength(
-        expected,
-      );
+      expect(
+        kernelStore.getAccountabilityRecords({ kind: 'introduction' }),
+      ).toHaveLength(expected);
     });
 
     it('exports and prunes records', async () => {
@@ -2053,7 +2053,7 @@ describe('Kernel', () => {
         mockPlatformServices,
         mockKernelDatabase,
       );
-      mockKernelDatabase.records.append({
+      mockKernelDatabase.accountabilityRecords.append({
         kind: 'conveyance',
         witness: 'kernel',
         crank: 1,
@@ -2072,7 +2072,9 @@ describe('Kernel', () => {
           carrier: 'ko1',
         }),
       });
-      expect(await kernel.exportRecords({ kref: 'ko1' })).toStrictEqual([
+      expect(
+        await kernel.exportAccountabilityRecords({ kref: 'ko1' }),
+      ).toStrictEqual([
         {
           seq: 1,
           kind: 'conveyance',
@@ -2085,9 +2087,9 @@ describe('Kernel', () => {
           carrier: 'ko1',
         },
       ]);
-      expect(await kernel.pruneRecords({ kref: 'ko2' })).toBe(0);
-      expect(await kernel.pruneRecords()).toBe(1);
-      expect(await kernel.exportRecords()).toStrictEqual([]);
+      expect(await kernel.pruneAccountabilityRecords({ kref: 'ko2' })).toBe(0);
+      expect(await kernel.pruneAccountabilityRecords()).toBe(1);
+      expect(await kernel.exportAccountabilityRecords()).toStrictEqual([]);
     });
   });
 

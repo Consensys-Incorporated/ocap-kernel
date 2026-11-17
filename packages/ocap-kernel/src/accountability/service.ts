@@ -110,7 +110,7 @@ export function makeAccountabilityService({
       return kernelQueue.enqueueInbox("read an object's history", async () =>
         attempt(() =>
           harden(
-            kernelStore.getRecords(
+            kernelStore.getAccountabilityRecords(
               kernelStore.getOwner(kref) === caller
                 ? { kref }
                 : { kref, involving: caller },
