@@ -251,13 +251,10 @@ const mocks = vi.hoisted(() => {
   return { KernelQueue, RemoteManager };
 });
 
-vi.mock('./KernelQueue.ts', async () => {
-  const actual =
-    await vi.importActual<typeof import('./KernelQueue.ts')>(
-      './KernelQueue.ts',
-    );
-  return { attempt: actual.attempt, KernelQueue: mocks.KernelQueue };
-});
+vi.mock('./KernelQueue.ts', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./KernelQueue.ts')>()),
+  KernelQueue: mocks.KernelQueue,
+}));
 
 vi.mock('./remotes/kernel/RemoteManager.ts', () => {
   return { RemoteManager: mocks.RemoteManager };

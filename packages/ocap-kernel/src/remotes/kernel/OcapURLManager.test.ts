@@ -1,5 +1,5 @@
 import { makeSQLKernelDatabase } from '@metamask/kernel-store/sqlite/nodejs';
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, onTestFinished, vi } from 'vitest';
 import type { Mock } from 'vitest';
 
 import { OcapURLManager } from './OcapURLManager.ts';
@@ -73,14 +73,17 @@ describe('OcapURLManager', () => {
    * An issuer over a real store and run loop, whose crank can roll a failed
    * issuance back.
    *
-   * @returns The issuer, its store, a kref to issue for, and a function that
-   * ends the run loop.
+   * @returns The issuer, its store, and a kref to issue for.
    */
   const setUpWithRunLoop = async () => {
     const kdb = await makeSQLKernelDatabase({ dbFilename: ':memory:' });
     const kernelStore = makeKernelStore(kdb);
     const kernelQueue = new KernelQueue(kernelStore, async () => undefined);
     const running = kernelQueue.run(async () => undefined);
+    onTestFinished(async () => {
+      await kernelQueue.endRunLoop();
+      await running;
+    });
     const manager = new OcapURLManager({
       remoteManager: mockRemoteManager,
       kernelStore,
@@ -90,10 +93,6 @@ describe('OcapURLManager', () => {
       manager,
       kernelStore,
       kref: kernelStore.initKernelObject('kernel'),
-      end: async () => {
-        await kernelQueue.endRunLoop();
-        await running;
-      },
     };
   };
 
@@ -165,13 +164,12 @@ describe('OcapURLManager', () => {
     });
 
     it('rolls the retention back when minting the URL fails', async () => {
-      const { manager, kernelStore, kref, end } = await setUpWithRunLoop();
+      const { manager, kernelStore, kref } = await setUpWithRunLoop();
       vi.spyOn(mockRemoteComms, 'issueOcapURL').mockRejectedValue(
         new Error('Issue failed'),
       );
 
       await expect(manager.issueOcapURL(kref)).rejects.toThrow('Issue failed');
-      await end();
 
       expect({
         pinned: kernelStore.isObjectPinned(kref),
@@ -185,14 +183,13 @@ describe('OcapURLManager', () => {
     });
 
     it('keeps the retention a URL already issued depends on', async () => {
-      const { manager, kernelStore, kref, end } = await setUpWithRunLoop();
+      const { manager, kernelStore, kref } = await setUpWithRunLoop();
       await manager.issueOcapURL(kref);
       vi.spyOn(mockRemoteComms, 'issueOcapURL').mockRejectedValue(
         new Error('Issue failed'),
       );
 
       await expect(manager.issueOcapURL(kref)).rejects.toThrow('Issue failed');
-      await end();
 
       expect({
         pinned: kernelStore.isObjectPinned(kref),

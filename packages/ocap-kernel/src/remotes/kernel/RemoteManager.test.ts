@@ -67,8 +67,7 @@ describe('RemoteManager', () => {
     });
 
     vi.mocked(remoteComms.initRemoteIdentity).mockClear();
-    vi.mocked(remoteComms.prepareRemoteComms).mockClear();
-    vi.mocked(remoteComms.startRemoteComms).mockClear();
+    vi.mocked(remoteComms.startRemoteComms).mockResolvedValue(mockRemoteComms);
   });
 
   describe('identity initialization', () => {
@@ -135,9 +134,6 @@ describe('RemoteManager', () => {
 
     it('getRemoteIdentity works after initRemoteComms (returns comms)', async () => {
       const messageHandler = vi.fn();
-      vi.mocked(remoteComms.startRemoteComms).mockResolvedValue(
-        mockRemoteComms,
-      );
 
       remoteManager.setMessageHandler(messageHandler);
       await remoteManager.initRemoteComms();
@@ -236,9 +232,6 @@ describe('RemoteManager', () => {
 
     it('initializes remote comms after setting message handler', async () => {
       const messageHandler = vi.fn();
-      vi.mocked(remoteComms.startRemoteComms).mockResolvedValue(
-        mockRemoteComms,
-      );
 
       remoteManager.setMessageHandler(messageHandler);
       await remoteManager.initRemoteComms({ relays: ['relay1', 'relay2'] });
@@ -261,9 +254,6 @@ describe('RemoteManager', () => {
 
     it('initializes remote comms with all options', async () => {
       const messageHandler = vi.fn();
-      vi.mocked(remoteComms.startRemoteComms).mockResolvedValue(
-        mockRemoteComms,
-      );
 
       remoteManager.setMessageHandler(messageHandler);
       await remoteManager.initRemoteComms({
@@ -296,9 +286,6 @@ describe('RemoteManager', () => {
       });
 
       const messageHandler = vi.fn();
-      vi.mocked(remoteComms.startRemoteComms).mockResolvedValue(
-        mockRemoteComms,
-      );
 
       managerWithKeySeed.setMessageHandler(messageHandler);
       await managerWithKeySeed.initRemoteComms();
@@ -315,9 +302,6 @@ describe('RemoteManager', () => {
       expect(remoteManager.isRemoteCommsInitialized()).toBe(false);
 
       const messageHandler = vi.fn();
-      vi.mocked(remoteComms.startRemoteComms).mockResolvedValue(
-        mockRemoteComms,
-      );
 
       remoteManager.setMessageHandler(messageHandler);
       await remoteManager.initRemoteComms();
@@ -328,9 +312,6 @@ describe('RemoteManager', () => {
     it('restores previously established remotes from kernel store', async () => {
       // First establish some remotes and store them
       const messageHandler = vi.fn();
-      vi.mocked(remoteComms.startRemoteComms).mockResolvedValue(
-        mockRemoteComms,
-      );
       remoteManager.setMessageHandler(messageHandler);
       await remoteManager.initRemoteComms();
 
@@ -380,9 +361,6 @@ describe('RemoteManager', () => {
         manager: RemoteManager;
         remoteId: ReturnType<typeof asRemoteId>;
       }> {
-        vi.mocked(remoteComms.startRemoteComms).mockResolvedValue(
-          mockRemoteComms,
-        );
         remoteManager.setMessageHandler(vi.fn());
         await remoteManager.initRemoteComms();
         const { remoteId } = remoteManager.establishRemote('peer-1');
@@ -474,9 +452,6 @@ describe('RemoteManager', () => {
 
     it('handles empty kernel store during initialization', async () => {
       const messageHandler = vi.fn();
-      vi.mocked(remoteComms.startRemoteComms).mockResolvedValue(
-        mockRemoteComms,
-      );
 
       remoteManager.setMessageHandler(messageHandler);
       await remoteManager.initRemoteComms();
@@ -489,9 +464,6 @@ describe('RemoteManager', () => {
   describe('remote comms operations', () => {
     beforeEach(async () => {
       const messageHandler = vi.fn();
-      vi.mocked(remoteComms.startRemoteComms).mockResolvedValue(
-        mockRemoteComms,
-      );
       remoteManager.setMessageHandler(messageHandler);
       await remoteManager.initRemoteComms();
     });
@@ -549,9 +521,6 @@ describe('RemoteManager', () => {
   describe('remote handle management', () => {
     beforeEach(async () => {
       const messageHandler = vi.fn();
-      vi.mocked(remoteComms.startRemoteComms).mockResolvedValue(
-        mockRemoteComms,
-      );
       remoteManager.setMessageHandler(messageHandler);
       await remoteManager.initRemoteComms();
     });
@@ -641,9 +610,6 @@ describe('RemoteManager', () => {
         kernelQueue,
         logger,
       });
-      vi.mocked(remoteComms.startRemoteComms).mockResolvedValue(
-        mockRemoteComms,
-      );
       manager.setMessageHandler(vi.fn());
       await manager.initRemoteComms();
       onTestFinished(() => manager.cleanup());
@@ -1023,9 +989,6 @@ describe('RemoteManager', () => {
       remoteManager.cleanup();
 
       const messageHandler = vi.fn();
-      vi.mocked(remoteComms.startRemoteComms).mockResolvedValue(
-        mockRemoteComms,
-      );
       remoteManager.restoreRemotes();
       remoteManager.setMessageHandler(messageHandler);
       await remoteManager.initRemoteComms();
@@ -1059,9 +1022,6 @@ describe('RemoteManager', () => {
   describe('cleanup', () => {
     beforeEach(async () => {
       const messageHandler = vi.fn();
-      vi.mocked(remoteComms.startRemoteComms).mockResolvedValue(
-        mockRemoteComms,
-      );
       remoteManager.setMessageHandler(messageHandler);
       await remoteManager.initRemoteComms();
     });
@@ -1138,9 +1098,6 @@ describe('RemoteManager', () => {
 
       // Should be able to initialize again
       const messageHandler = vi.fn();
-      vi.mocked(remoteComms.startRemoteComms).mockResolvedValue(
-        mockRemoteComms,
-      );
       remoteManager.setMessageHandler(messageHandler);
       await remoteManager.initRemoteComms({ relays: ['relay1'] });
 
@@ -1166,9 +1123,6 @@ describe('RemoteManager', () => {
   describe('reapRemotes', () => {
     beforeEach(async () => {
       const messageHandler = vi.fn();
-      vi.mocked(remoteComms.startRemoteComms).mockResolvedValue(
-        mockRemoteComms,
-      );
       remoteManager.setMessageHandler(messageHandler);
       await remoteManager.initRemoteComms();
     });
@@ -1215,9 +1169,6 @@ describe('RemoteManager', () => {
   describe('handleRemoteGiveUp', () => {
     beforeEach(async () => {
       const messageHandler = vi.fn();
-      vi.mocked(remoteComms.startRemoteComms).mockResolvedValue(
-        mockRemoteComms,
-      );
       remoteManager.setMessageHandler(messageHandler);
       await remoteManager.initRemoteComms();
     });
@@ -1284,9 +1235,6 @@ describe('RemoteManager', () => {
   describe('handleIncarnationChange', () => {
     beforeEach(async () => {
       const messageHandler = vi.fn();
-      vi.mocked(remoteComms.startRemoteComms).mockResolvedValue(
-        mockRemoteComms,
-      );
       remoteManager.setMessageHandler(messageHandler);
       await remoteManager.initRemoteComms();
     });
