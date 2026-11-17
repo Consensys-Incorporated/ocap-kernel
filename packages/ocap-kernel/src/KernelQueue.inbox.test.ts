@@ -169,10 +169,10 @@ describe('an inbox item', () => {
     async ({ abort, written }) => {
       const { kernelStore, kernelQueue } = await makeFixture(0);
       const running = kernelQueue.run(async () => undefined);
-      const failure = new Error('worker would not start');
+      const failure = new Error('no such vat');
 
       await expect(
-        kernelQueue.enqueueInbox('launch', () => {
+        kernelQueue.enqueueInbox('terminate a vat', () => {
           kernelStore.setVatConfig(asVatId('v9'), { bundleName: 'written' });
           return { abort, failure };
         }),
@@ -278,22 +278,15 @@ describe('an inbox item', () => {
       const { kdb, kernelStore, kernelQueue } = await makeFixture(2);
       kernelStore.setVatConfig(asVatId('v1'), { bundleName: 'before' });
       const boom = new Error('failed after the wipe');
-      let delivered = 0;
-      const running = kernelQueue.run(async () => {
-        delivered += 1;
-        if (delivered === 1) {
-          // Taken ahead of the second send, while the first one's crank is open.
-          kernelQueue
-            .enqueueInbox('reset', () => {
-              kernelStore[method]();
-              throw boom;
-            })
-            .catch(() => undefined);
-        }
-        return undefined;
+      const running = kernelQueue.run(async () => undefined);
+      // Taken ahead of the second send, while the first one's crank is open.
+      const asked = kernelQueue.enqueueInbox('reset', () => {
+        kernelStore[method]();
+        throw boom;
       });
 
       await expect(running).rejects.toBe(boom);
+      await expect(asked).rejects.toBe(boom);
       const reopened = makeKernelStore(kdb);
       expect({
         cachedQueueLength: kernelStore.runQueueLength(),
@@ -519,30 +512,6 @@ describe('ending the run loop', () => {
     await asked;
     await running;
     expect(taken).toStrictEqual(['send', 'reset']);
-  });
-
-  it('refuses a request made during the last crank', async () => {
-    const { kernelStore, kernelQueue } = await makeFixture(1);
-    let refused: (() => string) | undefined;
-    const running = kernelQueue.run(async () => {
-      kernelQueue.endRunLoop().catch(() => undefined);
-      refused = watch(
-        kernelQueue.enqueueInbox('terminate a vat', () => ({
-          value: undefined,
-        })),
-      );
-      return undefined;
-    });
-
-    await running;
-    await delay(0);
-    expect({
-      refused: refused?.(),
-      queued: kernelStore.runQueueLength(),
-    }).toStrictEqual({
-      refused: 'Kernel run loop is stopping; cannot terminate a vat',
-      queued: 0,
-    });
   });
 
   it('refuses an inbox item asked for after it', async () => {

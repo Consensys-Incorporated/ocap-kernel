@@ -85,6 +85,11 @@ describe('a host call that wipes or ends vats, on a real kernel', () => {
       make: async (kernel: Kernel): Promise<unknown> =>
         kernel.terminateVat(asVatId('v1')),
     },
+    {
+      request: 'host call',
+      make: async (kernel: Kernel): Promise<unknown> =>
+        kernel.terminateAllVats(),
+    },
   ])(
     'abandons a $request asked for while the reset awaits a worker',
     async ({ make }) => {

@@ -268,10 +268,19 @@ describe('OcapURLManager', () => {
       expect(mockRemoteHandle.redeemOcapURL).toHaveBeenCalledWith(url);
     });
 
-    it('calls addKnownRelays with hints when redeeming a remote URL', async () => {
+    it("adds the relay hints inside the remote's crank when redeeming a remote URL", async () => {
       const url = 'ocap:def456@remote-peer-id,relay1,relay2';
+      let use: ((remote: RemoteHandle) => unknown) | undefined;
+      vi.mocked(mockRemoteManager.withRemote).mockImplementationOnce(
+        async (_peerId, options) => {
+          use = options.use;
+          return undefined as never;
+        },
+      );
       await ocapURLManager.redeemOcapURL(url);
 
+      expect(mockRemoteComms.addKnownRelays).not.toHaveBeenCalled();
+      await use?.(mockRemoteHandle);
       expect(mockRemoteComms.addKnownRelays).toHaveBeenCalledWith([
         'relay1',
         'relay2',

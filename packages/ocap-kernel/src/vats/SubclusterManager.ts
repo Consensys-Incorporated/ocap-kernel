@@ -28,11 +28,6 @@ type SubclusterManagerOptions = {
   getKernelService: (
     name: string,
   ) => { kref: KRef; systemOnly: boolean } | undefined;
-  writeMessage: (
-    target: KRef,
-    method: string,
-    args: unknown[],
-  ) => { answer: Promise<CapData<KRef>> };
   ioManager?: IOManager;
   logger?: Logger;
 };
@@ -55,13 +50,6 @@ export class SubclusterManager {
     name: string,
   ) => { kref: KRef; systemOnly: boolean } | undefined;
 
-  /** Writes a message inside the open crank */
-  readonly #writeMessage: (
-    target: KRef,
-    method: string,
-    args: unknown[],
-  ) => { answer: Promise<CapData<KRef>> };
-
   /** Logger for diagnostic output */
   readonly #logger: Logger;
 
@@ -79,7 +67,6 @@ export class SubclusterManager {
    * @param options.kernelQueue - The kernel's message queue for scheduling deliveries.
    * @param options.vatManager - Manager for creating and managing vat instances.
    * @param options.getKernelService - Function to retrieve a kernel service by its kref.
-   * @param options.writeMessage - Function that writes a message inside the open crank.
    * @param options.ioManager - Optional IO manager for IO channel lifecycle.
    * @param options.logger - Optional logger for diagnostic output.
    */
@@ -88,7 +75,6 @@ export class SubclusterManager {
     kernelQueue,
     vatManager,
     getKernelService,
-    writeMessage,
     ioManager,
     logger,
   }: SubclusterManagerOptions) {
@@ -96,7 +82,6 @@ export class SubclusterManager {
     this.#kernelQueue = kernelQueue;
     this.#vatManager = vatManager;
     this.#getKernelService = getKernelService;
-    this.#writeMessage = writeMessage;
     this.#ioManager = ioManager;
     this.#logger = logger ?? new Logger('SubclusterManager');
     harden(this);
@@ -117,9 +102,10 @@ export class SubclusterManager {
     { isSystem = false }: { isSystem?: boolean } = {},
   ): Promise<SubclusterLaunchResult> {
     await this.#kernelQueue.waitForCrank();
-    // It would fail at the bootstrap message anyway, but only refusing here fails
-    // before spawning a worker per vat, which the catch below leaks.
-    this.#kernelQueue.assertRunLoopAlive('launch a subcluster');
+    // It would be refused at the bootstrap message anyway, but only refusing
+    // here fails before the subcluster is written and a worker spawned per vat,
+    // which the catch below could not then retire.
+    this.#kernelQueue.assertInboxOpen('launch a subcluster');
     isClusterConfig(config) || Fail`invalid cluster config`;
     if (!config.vats[config.bootstrap]) {
       Fail`invalid bootstrap vat name ${config.bootstrap}`;
@@ -541,26 +527,20 @@ export class SubclusterManager {
               : kslot(root, 'vatRoot'),
           ]),
         );
-        const { answer: bootstrapAnswer } = this.#writeMessage(
-          rootKref,
-          'bootstrap',
-          [roots, services],
-        );
-        // Awaited once the crank commits; a crank that dies first abandons
-        // the answer with nobody holding it.
-        bootstrapAnswer.catch(() => undefined);
-        return { value: { answer: bootstrapAnswer } };
+        const written = this.#kernelQueue.writeMessage(rootKref, 'bootstrap', [
+          roots,
+          services,
+        ]);
+        written.answer.catch(() => undefined);
+        return { value: written };
       },
     );
-    let bootstrapResult: CapData<KRef>;
-    try {
-      bootstrapResult = await answer;
-    } catch (rejection) {
+    const bootstrapResult = await answer.catch((rejection: unknown) => {
       // Reported as `Kernel.queueMessage` reports a rejected answer.
       throw isCapData(rejection)
         ? kunser(rejection as CapData<KRef>)
         : rejection;
-    }
+    });
     const unserialized = kunser(bootstrapResult);
     if (unserialized instanceof Error) {
       throw unserialized;

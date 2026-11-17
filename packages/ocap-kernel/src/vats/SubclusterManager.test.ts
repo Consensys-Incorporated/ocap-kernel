@@ -1,4 +1,3 @@
-import type { CapData } from '@endo/marshal';
 import { SubclusterNotFoundError } from '@metamask/kernel-errors';
 import { Logger } from '@metamask/logger';
 import type { Mocked } from 'vitest';
@@ -28,11 +27,6 @@ describe('SubclusterManager', () => {
   let mockGetKernelService: (
     name: string,
   ) => { kref: KRef; systemOnly: boolean } | undefined;
-  let mockWriteMessage: (
-    target: KRef,
-    method: string,
-    args: unknown[],
-  ) => { answer: Promise<CapData<KRef>> };
   let subclusterManager: SubclusterManager;
   // Whether a vat has a handle until it is terminated, and the vats that have
   // been: what `hasVat` and `isVatActive` read.
@@ -92,7 +86,7 @@ describe('SubclusterManager', () => {
       waitForCrank: vi.fn().mockResolvedValue(undefined),
       resolvePromises: vi.fn(),
       assertRunLoopAlive: vi.fn(),
-      // Runs the work at once, as the queue does before its run loop starts.
+      assertInboxOpen: vi.fn(),
       enqueueInbox: vi.fn<KernelQueue['enqueueInbox']>(async (_what, work) => {
         const outcome = await work();
         if ('failure' in outcome) {
@@ -100,6 +94,9 @@ describe('SubclusterManager', () => {
         }
         return outcome.value;
       }),
+      writeMessage: vi.fn(() => ({
+        answer: Promise.resolve({ body: '{"result":"ok"}', slots: [] }),
+      })),
     } as unknown as Mocked<KernelQueue>;
 
     mockVatManager = {
@@ -117,16 +114,12 @@ describe('SubclusterManager', () => {
     mockGetKernelService = vi.fn().mockReturnValue(undefined) as unknown as (
       name: string,
     ) => { kref: KRef; systemOnly: boolean } | undefined;
-    mockWriteMessage = vi.fn().mockImplementation(() => ({
-      answer: Promise.resolve({ body: '{"result":"ok"}', slots: [] }),
-    })) as unknown as typeof mockWriteMessage;
 
     subclusterManager = new SubclusterManager({
       kernelStore: mockKernelStore,
       kernelQueue: mockKernelQueue,
       vatManager: mockVatManager,
       getKernelService: mockGetKernelService,
-      writeMessage: mockWriteMessage,
     });
   });
 
@@ -149,10 +142,11 @@ describe('SubclusterManager', () => {
         's1',
       );
       // writeMessage targets the real root KRef once all vats have launched
-      expect(mockWriteMessage).toHaveBeenCalledWith('ko1', 'bootstrap', [
-        { testVat: expect.anything() },
-        {},
-      ]);
+      expect(mockKernelQueue.writeMessage).toHaveBeenCalledWith(
+        'ko1',
+        'bootstrap',
+        [{ testVat: expect.anything() }, {}],
+      );
       expect(mockKernelQueue.resolvePromises).not.toHaveBeenCalled();
       expect(result).toStrictEqual({
         subclusterId: 's1',
@@ -162,16 +156,20 @@ describe('SubclusterManager', () => {
       });
     });
 
-    // The launch fails at the bootstrap message either way; only refusing up
-    // front keeps it from leaking a spawned worker per vat in the config.
-    it('refuses to launch when the run loop has died', async () => {
-      vi.mocked(mockKernelQueue.assertRunLoopAlive).mockImplementation(() => {
-        throw new Error('Kernel run loop died; cannot launch a subcluster');
+    // The launch is refused at the bootstrap message either way; only refusing
+    // up front keeps it from writing the subcluster and spawning its workers.
+    it('refuses to launch when the kernel is stopping', async () => {
+      vi.mocked(mockKernelQueue.assertInboxOpen).mockImplementation(() => {
+        throw new Error(
+          'Kernel run loop is stopping; cannot launch a subcluster',
+        );
       });
 
       await expect(
         subclusterManager.launchSubcluster(createMockClusterConfig()),
-      ).rejects.toThrow('Kernel run loop died; cannot launch a subcluster');
+      ).rejects.toThrow(
+        'Kernel run loop is stopping; cannot launch a subcluster',
+      );
 
       expect(mockVatManager.launchVat).not.toHaveBeenCalled();
       expect(mockKernelStore.addSubcluster).not.toHaveBeenCalled();
@@ -203,10 +201,11 @@ describe('SubclusterManager', () => {
         's1',
       );
       // bootstrap receives real ko<N> refs for both vats; no kernel promises allocated
-      expect(mockWriteMessage).toHaveBeenCalledWith('ko1', 'bootstrap', [
-        { alice: expect.anything(), bob: expect.anything() },
-        {},
-      ]);
+      expect(mockKernelQueue.writeMessage).toHaveBeenCalledWith(
+        'ko1',
+        'bootstrap',
+        [{ alice: expect.anything(), bob: expect.anything() }, {}],
+      );
       expect(mockKernelQueue.resolvePromises).not.toHaveBeenCalled();
     });
 
@@ -228,10 +227,11 @@ describe('SubclusterManager', () => {
       );
 
       // bootstrap receives alice's real ko1 root ref as writeMessage target
-      expect(mockWriteMessage).toHaveBeenCalledWith('ko1', 'bootstrap', [
-        { alice: expect.anything(), bob: expect.anything() },
-        {},
-      ]);
+      expect(mockKernelQueue.writeMessage).toHaveBeenCalledWith(
+        'ko1',
+        'bootstrap',
+        [{ alice: expect.anything(), bob: expect.anything() }, {}],
+      );
       // initKernelPromise called once — only for bob's rejected promise
       expect(mockKernelStore.initKernelPromise).toHaveBeenCalledTimes(1);
       // bob's promise rejected with a VAT_TERMINATED kernel error
@@ -267,12 +267,12 @@ describe('SubclusterManager', () => {
       await vi.waitFor(() => expect(writeHeld).toBeDefined());
       const madeBeforeTheWrite = [
         mockKernelStore.initKernelPromise.mock.calls.length,
-        vi.mocked(mockWriteMessage).mock.calls.length,
+        mockKernelQueue.writeMessage.mock.calls.length,
       ];
       writeHeld?.();
       const madeInTheWrite = [
         mockKernelStore.initKernelPromise.mock.calls.length,
-        vi.mocked(mockWriteMessage).mock.calls.length,
+        mockKernelQueue.writeMessage.mock.calls.length,
       ];
 
       await expect(launched).rejects.toThrow('bob exploded');
@@ -334,7 +334,6 @@ describe('SubclusterManager', () => {
         kernelQueue: mockKernelQueue,
         vatManager: mockVatManager,
         getKernelService: mockGetKernelService,
-        writeMessage: mockWriteMessage,
         ioManager: ioManager as never,
       });
       mockVatManager.launchVat.mockRejectedValueOnce(new Error('boom'));
@@ -409,7 +408,6 @@ describe('SubclusterManager', () => {
         kernelQueue: mockKernelQueue,
         vatManager: mockVatManager,
         getKernelService: mockGetKernelService,
-        writeMessage: mockWriteMessage,
         ioManager: ioManager as never,
       });
       (mockGetKernelService as ReturnType<typeof vi.fn>).mockReturnValue({
@@ -436,16 +434,9 @@ describe('SubclusterManager', () => {
 
     it('keeps the subcluster record when the run loop dies during launch', async () => {
       mockVatManager.launchVat.mockResolvedValueOnce('ko1' as KRef);
-      mockWriteMessage = vi.fn().mockImplementation(() => ({
+      mockKernelQueue.writeMessage.mockImplementation(() => ({
         answer: Promise.reject(new Error('run loop died')),
-      })) as typeof mockWriteMessage;
-      subclusterManager = new SubclusterManager({
-        kernelStore: mockKernelStore,
-        kernelQueue: mockKernelQueue,
-        vatManager: mockVatManager,
-        getKernelService: mockGetKernelService,
-        writeMessage: mockWriteMessage,
-      });
+      }));
       mockKernelStore.getSubclusterVats.mockReturnValue(['v1' as VatId]);
       vatsRunning = true;
       // What `terminateVat` does once the run loop is dead.
@@ -477,10 +468,11 @@ describe('SubclusterManager', () => {
       await subclusterManager.launchSubcluster(config);
 
       expect(mockGetKernelService).toHaveBeenCalledWith('testService');
-      expect(mockWriteMessage).toHaveBeenCalledWith('ko1', 'bootstrap', [
-        expect.anything(),
-        { testService: expect.anything() },
-      ]);
+      expect(mockKernelQueue.writeMessage).toHaveBeenCalledWith(
+        'ko1',
+        'bootstrap',
+        [expect.anything(), { testService: expect.anything() }],
+      );
     });
 
     it('passes a service named __proto__ as an own property', async () => {
@@ -498,8 +490,10 @@ describe('SubclusterManager', () => {
 
       await subclusterManager.launchSubcluster(config);
 
-      const [, services] = (mockWriteMessage as ReturnType<typeof vi.fn>).mock
-        .calls[0]![2] as [unknown, object];
+      const [, services] = mockKernelQueue.writeMessage.mock.calls[0]![2] as [
+        unknown,
+        object,
+      ];
       expect(Object.getPrototypeOf(services)).toBe(Object.prototype);
       expect(Object.keys(services)).toStrictEqual(['__proto__']);
     });
@@ -538,10 +532,11 @@ describe('SubclusterManager', () => {
       await subclusterManager.launchSubcluster(config, { isSystem: true });
 
       expect(mockGetKernelService).toHaveBeenCalledWith('kernelFacet');
-      expect(mockWriteMessage).toHaveBeenCalledWith('ko1', 'bootstrap', [
-        expect.anything(),
-        { kernelFacet: expect.anything() },
-      ]);
+      expect(mockKernelQueue.writeMessage).toHaveBeenCalledWith(
+        'ko1',
+        'bootstrap',
+        [expect.anything(), { kernelFacet: expect.anything() }],
+      );
     });
 
     it('throws for invalid cluster config', async () => {
@@ -592,7 +587,6 @@ describe('SubclusterManager', () => {
         kernelQueue: mockKernelQueue,
         vatManager: mockVatManager,
         getKernelService: mockGetKernelService,
-        writeMessage: mockWriteMessage,
         ioManager: mockIOManager as never,
       });
 
@@ -626,7 +620,6 @@ describe('SubclusterManager', () => {
         kernelQueue: mockKernelQueue,
         vatManager: mockVatManager,
         getKernelService: mockGetKernelService,
-        writeMessage: mockWriteMessage,
         ioManager: mockIOManager as never,
       });
 
@@ -664,7 +657,6 @@ describe('SubclusterManager', () => {
         kernelQueue: mockKernelQueue,
         vatManager: mockVatManager,
         getKernelService: mockGetKernelService,
-        writeMessage: mockWriteMessage,
         ioManager: mockIOManager as never,
       });
 
@@ -694,7 +686,6 @@ describe('SubclusterManager', () => {
         kernelQueue: mockKernelQueue,
         vatManager: mockVatManager,
         getKernelService: mockGetKernelService,
-        writeMessage: mockWriteMessage,
         ioManager: mockIOManager as never,
       });
 
@@ -759,7 +750,7 @@ describe('SubclusterManager', () => {
         body: '{"error":"Bootstrap failed"}',
         slots: [],
       };
-      (mockWriteMessage as ReturnType<typeof vi.fn>).mockImplementation(() => ({
+      mockKernelQueue.writeMessage.mockImplementation(() => ({
         answer: Promise.resolve(bootstrapResult),
       }));
 
@@ -777,13 +768,9 @@ describe('SubclusterManager', () => {
     describe('bootstrap failure propagation', () => {
       it('rejects with the underlying error when the bootstrap message rejects', async () => {
         const config = createMockClusterConfig();
-        (mockWriteMessage as ReturnType<typeof vi.fn>).mockImplementation(
-          () => ({
-            answer: Promise.reject(
-              new Error('vat failed to build root object'),
-            ),
-          }),
-        );
+        mockKernelQueue.writeMessage.mockImplementation(() => ({
+          answer: Promise.reject(new Error('vat failed to build root object')),
+        }));
 
         await expect(
           subclusterManager.launchSubcluster(config),
@@ -798,20 +785,25 @@ describe('SubclusterManager', () => {
         expect(mockKernelStore.deleteSubcluster).toHaveBeenCalledWith('s1');
       });
 
-      it('rethrows when the bootstrap message resolves to a serialized error', async () => {
-        const config = createMockClusterConfig();
-        (mockWriteMessage as ReturnType<typeof vi.fn>).mockImplementation(
-          () => ({
-            answer: Promise.resolve(kser(new Error('bootstrap threw'))),
-          }),
-        );
+      it.each([
+        // As the kernel rejects an answer: with CapData, not an Error.
+        // oxlint-disable-next-line typescript/prefer-promise-reject-errors
+        ['rejects with', async () => Promise.reject(kser(new Error('threw')))],
+        ['resolves to', async () => kser(new Error('threw'))],
+      ])(
+        'rethrows when the bootstrap answer %s a serialized error',
+        async (_, answer) => {
+          mockKernelQueue.writeMessage.mockImplementation(() => ({
+            answer: answer(),
+          }));
 
-        await expect(
-          subclusterManager.launchSubcluster(config),
-        ).rejects.toThrow('bootstrap threw');
+          await expect(
+            subclusterManager.launchSubcluster(createMockClusterConfig()),
+          ).rejects.toThrow('threw');
 
-        expect(mockKernelStore.deleteSubcluster).toHaveBeenCalledWith('s1');
-      });
+          expect(mockKernelStore.deleteSubcluster).toHaveBeenCalledWith('s1');
+        },
+      );
     });
   });
 
@@ -1194,7 +1186,6 @@ describe('SubclusterManager', () => {
         kernelQueue: mockKernelQueue,
         vatManager: mockVatManager,
         getKernelService: mockGetKernelService,
-        writeMessage: mockWriteMessage,
         ioManager: ioManager as never,
         logger,
       });
@@ -1514,7 +1505,6 @@ describe('SubclusterManager', () => {
         kernelQueue: mockKernelQueue,
         vatManager: mockVatManager,
         getKernelService: mockGetKernelService,
-        writeMessage: mockWriteMessage,
         ioManager: ioManager as never,
       });
       mockKernelStore.getAllSystemSubclusterMappings.mockReturnValue(
@@ -1649,7 +1639,6 @@ describe('SubclusterManager', () => {
         kernelQueue: mockKernelQueue,
         vatManager: mockVatManager,
         getKernelService: mockGetKernelService,
-        writeMessage: mockWriteMessage,
         ioManager: ioManager as never,
       });
 
@@ -1673,7 +1662,6 @@ describe('SubclusterManager', () => {
         kernelQueue: mockKernelQueue,
         vatManager: mockVatManager,
         getKernelService: mockGetKernelService,
-        writeMessage: mockWriteMessage,
         ioManager: ioManager as never,
       });
 
@@ -1717,7 +1705,6 @@ describe('SubclusterManager', () => {
         kernelQueue: mockKernelQueue,
         vatManager: mockVatManager,
         getKernelService: mockGetKernelService,
-        writeMessage: mockWriteMessage,
         ioManager: ioManager as never,
       });
 

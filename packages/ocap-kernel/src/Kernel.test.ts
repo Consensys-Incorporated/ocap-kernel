@@ -910,8 +910,8 @@ describe('Kernel', () => {
           mockKernelDatabase,
         );
         await kernel.launchSubcluster(makeSingleVatClusterConfig());
-        mocks.KernelQueue.lastInstance.enqueueTerminateVat.mockImplementationOnce(
-          async () => undefined,
+        mocks.KernelQueue.lastInstance.enqueueTerminateVat.mockResolvedValueOnce(
+          undefined,
         );
 
         const terminating = kernel.terminateVat(asVatId('v1'));
@@ -1433,7 +1433,7 @@ describe('Kernel', () => {
       );
       await kernel.launchSubcluster(makeSingleVatClusterConfig());
       const queue = mocks.KernelQueue.lastInstance;
-      queue.enqueueRestartVat.mockImplementationOnce(async () => undefined);
+      queue.enqueueRestartVat.mockResolvedValueOnce(undefined);
 
       const restarting = kernel.restartVat(asVatId('v1'));
       queue.killRunLoop(new Error('run loop boom'));
@@ -1453,8 +1453,8 @@ describe('Kernel', () => {
           mockKernelDatabase,
         );
         await kernel.launchSubcluster(makeSingleVatClusterConfig());
-        mocks.KernelQueue.lastInstance.enqueueRestartVat.mockImplementationOnce(
-          async () => undefined,
+        mocks.KernelQueue.lastInstance.enqueueRestartVat.mockResolvedValueOnce(
+          undefined,
         );
 
         const restarting = kernel.restartVat(asVatId('v1'));
