@@ -66,7 +66,7 @@ function makeLaps(): { lap: (label: string) => void; laps: string[] } {
  */
 function report(line: string): void {
   process.stdout.write(`[lost-vat timing ${process.version}] ${line}\n`);
-  if (/probe|will not start at boot|cannot be written/u.test(line)) {
+  if (/^(probe|disk-io)|will not start at boot|cannot be written/u.test(line)) {
     process.stdout.write(
       `::notice title=lost-vat timing ${process.version}::${line}\n`,
     );
@@ -95,6 +95,25 @@ async function probe(): Promise<void> {
 }
 
 await probe();
+
+/**
+ * Time a run of small writes, each fsynced.
+ *
+ * @param dir - Where to write.
+ * @param count - How many.
+ * @returns The milliseconds the run took.
+ */
+async function fsyncs(dir: string, count: number): Promise<string> {
+  const file = await openFile(join(dir, 'fsync-probe'), 'w');
+  const started = now();
+  for (let i = 0; i < count; i += 1) {
+    await file.write('x');
+    await file.sync();
+  }
+  const took = ms(now() - started);
+  await file.close();
+  return took;
+}
 
 /** How a vat loses its channel. */
 type Death = 'close' | 'bad frame' | 'oversized syscall';
@@ -304,14 +323,26 @@ async function setUp({ onDisk = false }: { onDisk?: boolean } = {}) {
   });
   const { lap, laps } = makeLaps();
   let dbFilename = ':memory:';
+  let dir = '';
   if (onDisk) {
-    const dir = await mkdtemp(join(tmpdir(), 'lost-vat-'));
+    dir = await mkdtemp(join(tmpdir(), 'lost-vat-'));
     onTestFinished(async () => rm(dir, { recursive: true, force: true }));
     dbFilename = join(dir, 'store.db');
     lap('mkdtemp');
   }
   const kdb = await makeSQLKernelDatabase({ dbFilename });
   lap('open');
+  const preFsyncs = onDisk ? await fsyncs(dir, 5) : '-';
+  let setCalls = 0;
+  let setMs = 0;
+  const realSet = kdb.kernelKVStore.set.bind(kdb.kernelKVStore);
+  vi.spyOn(kdb.kernelKVStore, 'set').mockImplementation((key, value) => {
+    const at = now();
+    realSet(key, value);
+    setMs += now() - at;
+    setCalls += 1;
+  });
+  lap('probe');
   const kernel = boot(kdb);
   lap('boot');
   const { vatManager, kernelStore } = kernel;
@@ -320,7 +351,12 @@ async function setUp({ onDisk = false }: { onDisk?: boolean } = {}) {
   const survivorRoot = await vatManager.launchVat(config, 'survivor');
   lap('launch2');
   const survivorERef = kernelStore.translateRefKtoE(v1, survivorRoot, true);
+  const postFsyncs = onDisk ? await fsyncs(dir, 5) : '-';
+  vi.mocked(kdb.kernelKVStore.set).mockRestore();
   report(`setUp ${onDisk ? 'disk' : 'mem'} ${name}: ${laps.join(', ')}`);
+  report(
+    `disk-io ${name}: fsync5 before ${preFsyncs}, kv.set n=${setCalls} ms=${ms(setMs)}, fsync5 after ${postFsyncs}`,
+  );
   return {
     ...kernel,
     kdb,
