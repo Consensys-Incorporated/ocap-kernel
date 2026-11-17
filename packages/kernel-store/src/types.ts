@@ -25,12 +25,12 @@ export type VatStore = {
 };
 
 /**
- * A row of the records table, where the kernel keeps its accountability
+ * A row of the accountability records table, where the kernel keeps what it
  * records: what it saw done with which object, by whom. Append-only, in the
  * order written. The columns other than `data` are the ones records are
  * looked up by, and `data` is the whole record as JSON.
  */
-export type RecordRow = {
+export type AccountabilityRecordRow = {
   seq: number;
   kind: string;
   /** The layer vouching for the record: the kernel, liveslots, or a vat. */
@@ -44,7 +44,7 @@ export type RecordRow = {
 };
 
 /** Which records to read or delete. Every condition given must hold. */
-export type RecordFilter = {
+export type AccountabilityRecordFilter = {
   kind?: string;
   kref?: string;
   endpoint?: string;
@@ -59,33 +59,33 @@ export type RecordFilter = {
   limit?: number;
 };
 
-export type RecordStore = {
+export type AccountabilityRecordStore = {
   /**
    * Append a record.
    *
    * @param row - The record, without its sequence number.
    * @returns The sequence number it was given.
    */
-  append(row: Omit<RecordRow, 'seq'>): number;
+  append(row: Omit<AccountabilityRecordRow, 'seq'>): number;
   /**
    * Read records, in sequence order.
    *
    * @param filter - Which records; all of them if omitted.
    * @returns The records.
    */
-  query(filter?: RecordFilter): RecordRow[];
+  query(filter?: AccountabilityRecordFilter): AccountabilityRecordRow[];
   /**
    * Delete records.
    *
    * @param filter - Which records; all of them if omitted.
    * @returns How many were deleted.
    */
-  delete(filter?: RecordFilter): number;
+  delete(filter?: AccountabilityRecordFilter): number;
 };
 
 export type KernelDatabase = {
   kernelKVStore: KVStore;
-  records: RecordStore;
+  accountabilityRecords: AccountabilityRecordStore;
   executeQuery(sql: string): Record<string, string>[];
   clear(): void;
   makeVatStore(vatID: string): VatStore;

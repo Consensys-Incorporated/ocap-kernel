@@ -10,7 +10,7 @@ import type { Cause, EndpointId, KRef, Sender } from '../types.ts';
  */
 export type Witness = 'kernel' | 'liveslots' | 'vat';
 
-type RecordBase = {
+type AccountabilityRecordBase = {
   /** The record's place in the kernel's records, in the order written. */
   seq: number;
   witness: Witness;
@@ -19,7 +19,7 @@ type RecordBase = {
 };
 
 /** An endpoint's first acquisition of an object. */
-export type IntroductionRecord = RecordBase & {
+export type IntroductionRecord = AccountabilityRecordBase & {
   kind: 'introduction';
   kref: KRef;
   endpoint: EndpointId;
@@ -33,7 +33,7 @@ export type IntroductionRecord = RecordBase & {
 };
 
 /** A message delivered to a tracked object. */
-export type DeliveryRecord = RecordBase & {
+export type DeliveryRecord = AccountabilityRecordBase & {
   kind: 'delivery';
   target: KRef;
   targetEndpoint: EndpointId | 'kernel';
@@ -50,7 +50,7 @@ export type DeliveryRecord = RecordBase & {
 };
 
 /** A tracked object carried to an endpoint in a message or a resolution. */
-export type ConveyanceRecord = RecordBase & {
+export type ConveyanceRecord = AccountabilityRecordBase & {
   kind: 'conveyance';
   kref: KRef;
   sender: Sender;

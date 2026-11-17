@@ -14,7 +14,7 @@ import type {
 import type { StoreContext } from '../types.ts';
 import * as clistModule from './clist.ts';
 import * as reachableModule from './reachable.ts';
-import * as recordsModule from './records.ts';
+import * as accountabilityRecordsModule from './accountability-records.ts';
 import * as refCountModule from './refcount.ts';
 import { getTranslators } from './translators.ts';
 import * as vatModule from './vat.ts';
@@ -35,9 +35,14 @@ describe('getTranslators', () => {
     mockKernelRefExists.mockReturnValue(true);
     mockCtx.recordIntroductions = true;
 
-    vi.spyOn(recordsModule, 'getRecordMethods').mockReturnValue({
+    vi.spyOn(
+      accountabilityRecordsModule,
+      'getAccountabilityRecordMethods',
+    ).mockReturnValue({
       recordIntroduction: mockRecordIntroduction,
-    } as unknown as ReturnType<typeof recordsModule.getRecordMethods>);
+    } as unknown as ReturnType<
+      typeof accountabilityRecordsModule.getAccountabilityRecordMethods
+    >);
 
     vi.spyOn(clistModule, 'getCListMethods').mockReturnValue({
       krefToEref: mockKrefToEref,

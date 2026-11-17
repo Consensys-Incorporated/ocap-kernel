@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `KernelDatabase.records`, a `RecordStore` over a `records` table for the kernel's accountability records: `append`, `query` and `delete`, the last two by a `RecordFilter`. `clear` empties it with the rest
+- `KernelDatabase.accountabilityRecords`, an `AccountabilityRecordStore` over an `accountability_records` table: `append`, `query` and `delete`, the last two by an `AccountabilityRecordFilter`. `clear` empties it with the rest
 
 ### Changed
 

@@ -22,7 +22,7 @@ import type {
 import type { StoreContext } from '../types.ts';
 import { getCListMethods } from './clist.ts';
 import { getReachableMethods } from './reachable.ts';
-import { getRecordMethods } from './records.ts';
+import { getAccountabilityRecordMethods } from './accountability-records.ts';
 import { getRefCountMethods } from './refcount.ts';
 import { getVatMethods } from './vat.ts';
 import { Fail, assert } from '../../utils/assert.ts';
@@ -42,7 +42,7 @@ export function getTranslators(ctx: StoreContext) {
   const { setReachableFlag } = getReachableMethods(ctx);
   const { kernelRefExists } = getRefCountMethods(ctx);
   const { exportFromEndpoint } = getVatMethods(ctx);
-  const { recordIntroduction } = getRecordMethods(ctx);
+  const { recordIntroduction } = getAccountabilityRecordMethods(ctx);
 
   /**
    * Reverse the direction indicator in an RRef.

@@ -1,4 +1,7 @@
-import type { RecordFilter, RecordRow } from '@metamask/kernel-store';
+import type {
+  AccountabilityRecordFilter,
+  AccountabilityRecordRow,
+} from '@metamask/kernel-store';
 
 import { getBaseMethods } from './base.ts';
 import { getPinMethods } from './pinned.ts';
@@ -22,7 +25,7 @@ import type { StoreContext } from '../types.ts';
  * @returns A records store object.
  */
 // oxlint-disable-next-line typescript/explicit-function-return-type
-export function getRecordMethods(ctx: StoreContext) {
+export function getAccountabilityRecordMethods(ctx: StoreContext) {
   const { getTrackedKey, getTrackerPrefix, getTrackerKey, getPrefixedKeys } =
     getBaseMethods(ctx.kv);
   const { pinObject, unpinObject } = getPinMethods(ctx);
@@ -131,7 +134,9 @@ export function getRecordMethods(ctx: StoreContext) {
    * @param input - The record.
    * @returns Its sequence number.
    */
-  function appendRecord(input: AccountabilityRecordInput): number {
+  function appendAccountabilityRecord(
+    input: AccountabilityRecordInput,
+  ): number {
     let kref: KRef;
     let endpoint: string;
     if (input.kind === 'delivery') {
@@ -142,7 +147,7 @@ export function getRecordMethods(ctx: StoreContext) {
       [kref, endpoint] = [input.kref, input.endpoint];
     }
     const crankNumber = Number(ctx.crankNumber.get());
-    return ctx.records.append({
+    return ctx.accountabilityRecords.append({
       kind: input.kind,
       witness: 'kernel',
       crank: crankNumber,
@@ -186,7 +191,7 @@ export function getRecordMethods(ctx: StoreContext) {
             sender: delivery.sender,
             via: delivery.via,
           };
-    appendRecord(record);
+    appendAccountabilityRecord(record);
   }
 
   /**
@@ -215,7 +220,7 @@ export function getRecordMethods(ctx: StoreContext) {
     const recordArgs = Object.values(getTrackers(target)).some(
       (options) => options.recordArgs,
     );
-    appendRecord({
+    appendAccountabilityRecord({
       kind: 'delivery',
       target,
       targetEndpoint,
@@ -237,7 +242,7 @@ export function getRecordMethods(ctx: StoreContext) {
   function recordConveyance(
     conveyance: Omit<AccountabilityRecordInput<ConveyanceRecord>, 'kind'>,
   ): void {
-    appendRecord({ kind: 'conveyance', ...conveyance });
+    appendAccountabilityRecord({ kind: 'conveyance', ...conveyance });
   }
 
   /**
@@ -246,10 +251,12 @@ export function getRecordMethods(ctx: StoreContext) {
    * @param filter - Which records; all of them if omitted.
    * @returns The records.
    */
-  function getRecords(filter?: RecordFilter): AccountabilityRecord[] {
-    return ctx.records
+  function getAccountabilityRecords(
+    filter?: AccountabilityRecordFilter,
+  ): AccountabilityRecord[] {
+    return ctx.accountabilityRecords
       .query(filter)
-      .map((row: RecordRow): AccountabilityRecord => ({
+      .map((row: AccountabilityRecordRow): AccountabilityRecord => ({
         ...(JSON.parse(row.data) as AccountabilityRecord),
         seq: row.seq,
       }));
@@ -261,8 +268,10 @@ export function getRecordMethods(ctx: StoreContext) {
    * @param filter - Which records; all of them if omitted.
    * @returns How many were deleted.
    */
-  function pruneRecords(filter?: RecordFilter): number {
-    return ctx.records.delete(filter);
+  function pruneAccountabilityRecords(
+    filter?: AccountabilityRecordFilter,
+  ): number {
+    return ctx.accountabilityRecords.delete(filter);
   }
 
   /**
@@ -284,8 +293,8 @@ export function getRecordMethods(ctx: StoreContext) {
     recordIntroduction,
     recordDelivery,
     recordConveyance,
-    getRecords,
-    pruneRecords,
+    getAccountabilityRecords,
+    pruneAccountabilityRecords,
     setIntroductionRecording,
   };
 }

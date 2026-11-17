@@ -3,9 +3,9 @@ import { describe, it, expect } from 'vitest';
 import {
   SQL_QUERIES,
   assertSafeIdentifier,
-  buildRecordsDelete,
-  buildRecordsQuery,
-  recordRowFromValues,
+  buildAccountabilityRecordsDelete,
+  buildAccountabilityRecordsQuery,
+  accountabilityRecordRowFromValues,
 } from './common.ts';
 
 describe('SQL_QUERIES', () => {
@@ -46,11 +46,11 @@ describe('SQL_QUERIES', () => {
   it('has all expected query properties', () => {
     expect(Object.keys(SQL_QUERIES).sort()).toStrictEqual([
       'ABORT_TRANSACTION',
-      'APPEND_RECORD',
+      'APPEND_ACCOUNTABILITY_RECORD',
       'BEGIN_IMMEDIATE_TRANSACTION',
       'BEGIN_TRANSACTION',
       'CLEAR',
-      'CLEAR_RECORDS',
+      'CLEAR_ACCOUNTABILITY_RECORDS',
       'CLEAR_VS',
       'COMMIT_TRANSACTION',
       'CREATE_INDEX_RECORDS_ENDPOINT',
@@ -59,7 +59,7 @@ describe('SQL_QUERIES', () => {
       'CREATE_INDEX_RECORDS_TRACE',
       'CREATE_SAVEPOINT',
       'CREATE_TABLE',
-      'CREATE_TABLE_RECORDS',
+      'CREATE_TABLE_ACCOUNTABILITY_RECORDS',
       'CREATE_TABLE_VS',
       'DELETE',
       'DELETE_VS',
@@ -113,17 +113,17 @@ describe('assertSafeIdentifier', () => {
   });
 });
 
-describe('buildRecordsQuery', () => {
+describe('buildAccountabilityRecordsQuery', () => {
   it('selects every record in sequence order when given no conditions', () => {
-    expect(buildRecordsQuery({})).toStrictEqual({
-      sql: 'SELECT seq, kind, witness, crank, kref, endpoint, sender, trace, data FROM records ORDER BY seq',
+    expect(buildAccountabilityRecordsQuery({})).toStrictEqual({
+      sql: 'SELECT seq, kind, witness, crank, kref, endpoint, sender, trace, data FROM accountability_records ORDER BY seq',
       params: [],
     });
   });
 
   it('binds one parameter per condition, in clause order', () => {
     expect(
-      buildRecordsQuery({
+      buildAccountabilityRecordsQuery({
         kind: 'delivery',
         kref: 'ko1',
         endpoint: 'v1',
@@ -135,32 +135,36 @@ describe('buildRecordsQuery', () => {
         limit: 10,
       }),
     ).toStrictEqual({
-      sql: 'SELECT seq, kind, witness, crank, kref, endpoint, sender, trace, data FROM records WHERE kind = ? AND kref = ? AND endpoint = ? AND sender = ? AND trace = ? AND (endpoint = ? OR sender = ?) AND crank <= ? AND seq > ? ORDER BY seq LIMIT ?',
+      sql: 'SELECT seq, kind, witness, crank, kref, endpoint, sender, trace, data FROM accountability_records WHERE kind = ? AND kref = ? AND endpoint = ? AND sender = ? AND trace = ? AND (endpoint = ? OR sender = ?) AND crank <= ? AND seq > ? ORDER BY seq LIMIT ?',
       params: ['delivery', 'ko1', 'v1', 'v2', 't1', 'v3', 'v3', 7, 3, 10],
     });
   });
 });
 
-describe('buildRecordsDelete', () => {
+describe('buildAccountabilityRecordsDelete', () => {
   it('deletes what the conditions select', () => {
-    expect(buildRecordsDelete({ kref: 'ko1', throughCrank: 5 })).toStrictEqual({
-      sql: 'DELETE FROM records WHERE kref = ? AND crank <= ?',
+    expect(
+      buildAccountabilityRecordsDelete({ kref: 'ko1', throughCrank: 5 }),
+    ).toStrictEqual({
+      sql: 'DELETE FROM accountability_records WHERE kref = ? AND crank <= ?',
       params: ['ko1', 5],
     });
   });
 
   it('applies a limit through a subquery, earliest first', () => {
-    expect(buildRecordsDelete({ kind: 'delivery', limit: 2 })).toStrictEqual({
-      sql: 'DELETE FROM records WHERE seq IN (SELECT seq FROM records WHERE kind = ? ORDER BY seq LIMIT ?)',
+    expect(
+      buildAccountabilityRecordsDelete({ kind: 'delivery', limit: 2 }),
+    ).toStrictEqual({
+      sql: 'DELETE FROM accountability_records WHERE seq IN (SELECT seq FROM accountability_records WHERE kind = ? ORDER BY seq LIMIT ?)',
       params: ['delivery', 2],
     });
   });
 });
 
-describe('recordRowFromValues', () => {
+describe('accountabilityRecordRowFromValues', () => {
   it('names the columns in query order', () => {
     expect(
-      recordRowFromValues([
+      accountabilityRecordRowFromValues([
         3,
         'delivery',
         'kernel',

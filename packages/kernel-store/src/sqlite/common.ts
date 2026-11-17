@@ -1,4 +1,7 @@
-import type { RecordFilter, RecordRow } from '../types.ts';
+import type {
+  AccountabilityRecordFilter,
+  AccountabilityRecordRow,
+} from '../types.ts';
 
 export const SQL_QUERIES = {
   CREATE_TABLE: `
@@ -16,8 +19,8 @@ export const SQL_QUERIES = {
       PRIMARY KEY(vatID, key)
     )
   `,
-  CREATE_TABLE_RECORDS: `
-    CREATE TABLE IF NOT EXISTS records (
+  CREATE_TABLE_ACCOUNTABILITY_RECORDS: `
+    CREATE TABLE IF NOT EXISTS accountability_records (
       seq INTEGER PRIMARY KEY AUTOINCREMENT,
       kind TEXT NOT NULL,
       witness TEXT NOT NULL,
@@ -30,19 +33,19 @@ export const SQL_QUERIES = {
     )
   `,
   CREATE_INDEX_RECORDS_KREF: `
-    CREATE INDEX IF NOT EXISTS records_kref ON records (kref, seq)
+    CREATE INDEX IF NOT EXISTS accountability_records_kref ON accountability_records (kref, seq)
   `,
   CREATE_INDEX_RECORDS_ENDPOINT: `
-    CREATE INDEX IF NOT EXISTS records_endpoint ON records (endpoint, seq)
+    CREATE INDEX IF NOT EXISTS accountability_records_endpoint ON accountability_records (endpoint, seq)
   `,
   CREATE_INDEX_RECORDS_SENDER: `
-    CREATE INDEX IF NOT EXISTS records_sender ON records (sender, seq)
+    CREATE INDEX IF NOT EXISTS accountability_records_sender ON accountability_records (sender, seq)
   `,
   CREATE_INDEX_RECORDS_TRACE: `
-    CREATE INDEX IF NOT EXISTS records_trace ON records (trace, seq)
+    CREATE INDEX IF NOT EXISTS accountability_records_trace ON accountability_records (trace, seq)
   `,
-  APPEND_RECORD: `
-    INSERT INTO records (kind, witness, crank, kref, endpoint, sender, trace, data)
+  APPEND_ACCOUNTABILITY_RECORD: `
+    INSERT INTO accountability_records (kind, witness, crank, kref, endpoint, sender, trace, data)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
   `,
   GET: `
@@ -85,7 +88,7 @@ export const SQL_QUERIES = {
   `,
   CLEAR: `DELETE FROM kv`,
   CLEAR_VS: `DELETE FROM kv_vatstore`,
-  CLEAR_RECORDS: `DELETE FROM records`,
+  CLEAR_ACCOUNTABILITY_RECORDS: `DELETE FROM accountability_records`,
   DROP: `DROP TABLE kv`,
   DROP_VS: `DROP TABLE kv_vatstore`,
   BEGIN_TRANSACTION: `BEGIN TRANSACTION`,
@@ -117,8 +120,8 @@ export function assertSafeIdentifier(name: string): void {
   }
 }
 
-/** The columns of a {@link RecordRow}, in the order queries return them. */
-export const RECORD_COLUMNS = [
+/** The columns of a {@link AccountabilityRecordRow}, in the order queries return them. */
+export const ACCOUNTABILITY_RECORD_COLUMNS = [
   'seq',
   'kind',
   'witness',
@@ -128,7 +131,7 @@ export const RECORD_COLUMNS = [
   'sender',
   'trace',
   'data',
-] as const satisfies (keyof RecordRow)[];
+] as const satisfies (keyof AccountabilityRecordRow)[];
 
 /** A SQL statement with the values to bind to its parameter markers. */
 export type BoundStatement = {
@@ -143,7 +146,9 @@ export type BoundStatement = {
  * @returns The clause, empty if the filter selects everything, and its
  * parameters.
  */
-function buildRecordsWhere(filter: RecordFilter): BoundStatement {
+function buildAccountabilityRecordsWhere(
+  filter: AccountabilityRecordFilter,
+): BoundStatement {
   const conditions: string[] = [];
   const params: (string | number)[] = [];
   const equal = (column: string, value: string | undefined): void => {
@@ -181,9 +186,11 @@ function buildRecordsWhere(filter: RecordFilter): BoundStatement {
  * @param filter - The filter.
  * @returns The query.
  */
-export function buildRecordsQuery(filter: RecordFilter): BoundStatement {
-  const { sql: where, params } = buildRecordsWhere(filter);
-  let sql = `SELECT ${RECORD_COLUMNS.join(', ')} FROM records${where} ORDER BY seq`;
+export function buildAccountabilityRecordsQuery(
+  filter: AccountabilityRecordFilter,
+): BoundStatement {
+  const { sql: where, params } = buildAccountabilityRecordsWhere(filter);
+  let sql = `SELECT ${ACCOUNTABILITY_RECORD_COLUMNS.join(', ')} FROM accountability_records${where} ORDER BY seq`;
   if (filter.limit !== undefined) {
     sql += ' LIMIT ?';
     params.push(filter.limit);
@@ -197,27 +204,31 @@ export function buildRecordsQuery(filter: RecordFilter): BoundStatement {
  * @param filter - The filter.
  * @returns The statement.
  */
-export function buildRecordsDelete(filter: RecordFilter): BoundStatement {
-  const { sql: where, params } = buildRecordsWhere(filter);
+export function buildAccountabilityRecordsDelete(
+  filter: AccountabilityRecordFilter,
+): BoundStatement {
+  const { sql: where, params } = buildAccountabilityRecordsWhere(filter);
   if (filter.limit === undefined) {
-    return { sql: `DELETE FROM records${where}`, params };
+    return { sql: `DELETE FROM accountability_records${where}`, params };
   }
   // SQLite deletes with `LIMIT` only when built with an option this package's
   // builds may lack, so the limit goes through a subquery.
   return {
-    sql: `DELETE FROM records WHERE seq IN (SELECT seq FROM records${where} ORDER BY seq LIMIT ?)`,
+    sql: `DELETE FROM accountability_records WHERE seq IN (SELECT seq FROM accountability_records${where} ORDER BY seq LIMIT ?)`,
     params: [...params, filter.limit],
   };
 }
 
 /**
  * Read a record row out of the values of its columns, in
- * {@link RECORD_COLUMNS} order.
+ * {@link ACCOUNTABILITY_RECORD_COLUMNS} order.
  *
  * @param values - The column values.
  * @returns The row.
  */
-export function recordRowFromValues(values: unknown[]): RecordRow {
+export function accountabilityRecordRowFromValues(
+  values: unknown[],
+): AccountabilityRecordRow {
   const [seq, kind, witness, crank, kref, endpoint, sender, trace, data] =
     values as [
       number,

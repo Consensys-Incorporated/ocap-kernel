@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 
-import type { KernelDatabase, RecordRow } from '../src/types.ts';
+import type { KernelDatabase, AccountabilityRecordRow } from '../src/types.ts';
 
 /**
  * A record with every column but the ones given set to something plausible.
@@ -8,9 +8,9 @@ import type { KernelDatabase, RecordRow } from '../src/types.ts';
  * @param fields - The columns to set.
  * @returns The record, ready to append.
  */
-export function makeRecord(
-  fields: Partial<Omit<RecordRow, 'seq'>> = {},
-): Omit<RecordRow, 'seq'> {
+export function makeAccountabilityRecord(
+  fields: Partial<Omit<AccountabilityRecordRow, 'seq'>> = {},
+): Omit<AccountabilityRecordRow, 'seq'> {
   return {
     kind: 'delivery',
     witness: 'kernel',
@@ -29,17 +29,21 @@ export function makeRecord(
  *
  * @param makeDb - Makes a fresh database.
  */
-export function describeRecordStore(
+export function describeAccountabilityRecordStore(
   makeDb: () => Promise<KernelDatabase>,
 ): void {
   describe('records', () => {
     it('numbers appended records in order and reads them back', async () => {
-      const { records } = await makeDb();
-      expect(records.append(makeRecord({ data: 'first' }))).toBe(1);
-      expect(records.append(makeRecord({ data: 'second' }))).toBe(2);
+      const { accountabilityRecords: records } = await makeDb();
+      expect(records.append(makeAccountabilityRecord({ data: 'first' }))).toBe(
+        1,
+      );
+      expect(records.append(makeAccountabilityRecord({ data: 'second' }))).toBe(
+        2,
+      );
       expect(records.query()).toStrictEqual([
-        { ...makeRecord({ data: 'first' }), seq: 1 },
-        { ...makeRecord({ data: 'second' }), seq: 2 },
+        { ...makeAccountabilityRecord({ data: 'first' }), seq: 1 },
+        { ...makeAccountabilityRecord({ data: 'second' }), seq: 2 },
       ]);
     });
 
@@ -55,69 +59,84 @@ export function describeRecordStore(
       ['limit', { limit: 2 }, [1, 2]],
       ['several conditions at once', { kref: 'ko1', sender: 'v3' }, [4]],
     ])('selects by %s', async (_what, filter, expected) => {
-      const { records } = await makeDb();
-      records.append(makeRecord({ crank: 1 }));
+      const { accountabilityRecords: records } = await makeDb();
+      records.append(makeAccountabilityRecord({ crank: 1 }));
       records.append(
-        makeRecord({ kind: 'conveyance', crank: 2, sender: 'kernel' }),
+        makeAccountabilityRecord({
+          kind: 'conveyance',
+          crank: 2,
+          sender: 'kernel',
+        }),
       );
       records.append(
-        makeRecord({ crank: 3, kref: 'ko2', endpoint: 'v3', trace: 't1' }),
+        makeAccountabilityRecord({
+          crank: 3,
+          kref: 'ko2',
+          endpoint: 'v3',
+          trace: 't1',
+        }),
       );
-      records.append(makeRecord({ crank: 3, endpoint: 'v2', sender: 'v3' }));
+      records.append(
+        makeAccountabilityRecord({ crank: 3, endpoint: 'v2', sender: 'v3' }),
+      );
       expect(records.query(filter).map((row) => row.seq)).toStrictEqual(
         expected,
       );
     });
 
     it('deletes the records a filter selects and reports how many', async () => {
-      const { records } = await makeDb();
-      records.append(makeRecord({ kref: 'ko1' }));
-      records.append(makeRecord({ kref: 'ko2' }));
-      records.append(makeRecord({ kref: 'ko1' }));
+      const { accountabilityRecords: records } = await makeDb();
+      records.append(makeAccountabilityRecord({ kref: 'ko1' }));
+      records.append(makeAccountabilityRecord({ kref: 'ko2' }));
+      records.append(makeAccountabilityRecord({ kref: 'ko1' }));
       expect(records.delete({ kref: 'ko1' })).toBe(2);
       expect(records.query().map((row) => row.seq)).toStrictEqual([2]);
     });
 
     it('deletes at most the limit, earliest first', async () => {
-      const { records } = await makeDb();
-      records.append(makeRecord());
-      records.append(makeRecord());
-      records.append(makeRecord());
+      const { accountabilityRecords: records } = await makeDb();
+      records.append(makeAccountabilityRecord());
+      records.append(makeAccountabilityRecord());
+      records.append(makeAccountabilityRecord());
       expect(records.delete({ limit: 2 })).toBe(2);
       expect(records.query().map((row) => row.seq)).toStrictEqual([3]);
     });
 
     it('deletes everything when given no filter', async () => {
-      const { records } = await makeDb();
-      records.append(makeRecord());
-      records.append(makeRecord());
+      const { accountabilityRecords: records } = await makeDb();
+      records.append(makeAccountabilityRecord());
+      records.append(makeAccountabilityRecord());
       expect(records.delete()).toBe(2);
       expect(records.query()).toStrictEqual([]);
     });
 
     it('does not reuse the sequence number of a deleted record', async () => {
-      const { records } = await makeDb();
-      records.append(makeRecord());
+      const { accountabilityRecords: records } = await makeDb();
+      records.append(makeAccountabilityRecord());
       records.delete();
-      expect(records.append(makeRecord())).toBe(2);
+      expect(records.append(makeAccountabilityRecord())).toBe(2);
     });
 
     it('is emptied by clear', async () => {
       const kdb = await makeDb();
-      kdb.records.append(makeRecord());
+      kdb.accountabilityRecords.append(makeAccountabilityRecord());
       kdb.clear();
-      expect(kdb.records.query()).toStrictEqual([]);
+      expect(kdb.accountabilityRecords.query()).toStrictEqual([]);
     });
 
     it('rolls an append back with the savepoint that covers it', async () => {
       const kdb = await makeDb();
-      kdb.records.append(makeRecord({ data: 'kept' }));
+      kdb.accountabilityRecords.append(
+        makeAccountabilityRecord({ data: 'kept' }),
+      );
       kdb.createSavepoint('t0');
-      kdb.records.append(makeRecord({ data: 'undone' }));
+      kdb.accountabilityRecords.append(
+        makeAccountabilityRecord({ data: 'undone' }),
+      );
       kdb.rollbackSavepoint('t0');
-      expect(kdb.records.query().map((row) => row.data)).toStrictEqual([
-        'kept',
-      ]);
+      expect(
+        kdb.accountabilityRecords.query().map((row) => row.data),
+      ).toStrictEqual(['kept']);
     });
   });
 }

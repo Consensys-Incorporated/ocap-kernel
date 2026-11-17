@@ -5,7 +5,7 @@ import * as clistModule from './clist.ts';
 import * as objectModule from './object.ts';
 import * as promiseModule from './promise.ts';
 import * as reachableModule from './reachable.ts';
-import * as recordsModule from './records.ts';
+import * as accountabilityRecordsModule from './accountability-records.ts';
 import * as refCountModule from './refcount.ts';
 import { getVatMethods } from './vat.ts';
 import { asVRef } from '../../../test/branded.ts';
@@ -70,8 +70,8 @@ vi.mock('./refcount.ts', () => ({
   getRefCountMethods: vi.fn(),
 }));
 
-vi.mock('./records.ts', () => ({
-  getRecordMethods: vi.fn(),
+vi.mock('./accountability-records.ts', () => ({
+  getAccountabilityRecordMethods: vi.fn(),
 }));
 
 describe('vat store methods', () => {
@@ -172,7 +172,9 @@ describe('vat store methods', () => {
     });
 
     (
-      recordsModule.getRecordMethods as ReturnType<typeof vi.fn>
+      accountabilityRecordsModule.getAccountabilityRecordMethods as ReturnType<
+        typeof vi.fn
+      >
     ).mockReturnValue({
       untrackAll: mockUntrackAll,
       untrackEndpoint: mockUntrackEndpoint,

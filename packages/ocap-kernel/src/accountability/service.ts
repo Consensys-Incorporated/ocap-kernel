@@ -106,7 +106,7 @@ export function makeAccountabilityService({
       const kref = objectKrefOf(obj);
       return kernelQueue.writeOutsideCrank(() =>
         harden(
-          kernelStore.getRecords(
+          kernelStore.getAccountabilityRecords(
             kernelStore.getOwner(kref) === caller
               ? { kref }
               : { kref, involving: caller },

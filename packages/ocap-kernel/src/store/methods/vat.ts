@@ -5,7 +5,7 @@ import { getCListMethods } from './clist.ts';
 import { getObjectMethods } from './object.ts';
 import { getPromiseMethods } from './promise.ts';
 import { getReachableMethods } from './reachable.ts';
-import { getRecordMethods } from './records.ts';
+import { getAccountabilityRecordMethods } from './accountability-records.ts';
 import { getRemoteMethods } from './remote.ts';
 import type {
   EndpointId,
@@ -45,7 +45,7 @@ export function getVatMethods(ctx: StoreContext) {
   const { initKernelObject } = getObjectMethods(ctx);
   const { addCListEntry } = getCListMethods(ctx);
   const { getRemoteIDs } = getRemoteMethods(ctx);
-  const { untrackAll, untrackEndpoint } = getRecordMethods(ctx);
+  const { untrackAll, untrackEndpoint } = getAccountabilityRecordMethods(ctx);
 
   /**
    * Delete all persistent state associated with an endpoint.
