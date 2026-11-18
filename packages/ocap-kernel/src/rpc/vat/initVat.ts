@@ -2,13 +2,15 @@ import type { MethodSpec, Handler } from '@metamask/kernel-rpc-methods';
 import {
   array,
   exactOptional,
+  literal,
   object,
   string,
   tuple,
+  union,
 } from '@metamask/superstruct';
-import type { Infer } from '@metamask/superstruct';
+import type { Infer, Struct } from '@metamask/superstruct';
 
-import { VatDeliveryResultStruct } from './shared.ts';
+import { VatCheckpointStruct } from './shared.ts';
 import { VatConfigStruct } from '../../types.ts';
 import type { VatConfig, VatDeliveryResult } from '../../types.ts';
 import { AllowedGlobalNameStruct } from '../../vats/endowments.ts';
@@ -22,23 +24,31 @@ const paramsStruct = object({
 
 type Params = Infer<typeof paramsStruct>;
 
-export type InitVatSpec = MethodSpec<
-  'initVat',
-  Params,
-  Promise<VatDeliveryResult>
->;
+/**
+ * The result of the vat's first delivery, and the content hash of the bundle
+ * the worker loaded for it.
+ */
+export type InitVatResult = [...VatDeliveryResult, string];
+
+const InitVatResultStruct: Struct<InitVatResult> = tuple([
+  VatCheckpointStruct,
+  union([string(), literal(null)]),
+  string(),
+]);
+
+export type InitVatSpec = MethodSpec<'initVat', Params, Promise<InitVatResult>>;
 
 export const initVatSpec: InitVatSpec = {
   method: 'initVat',
   params: paramsStruct,
-  result: VatDeliveryResultStruct,
+  result: InitVatResultStruct,
 };
 
 export type InitVat = (
   vatConfig: VatConfig,
   state: Map<string, string>,
   allowedGlobalNames: AllowedGlobalName[] | undefined,
-) => Promise<VatDeliveryResult>;
+) => Promise<InitVatResult>;
 
 type InitVatHooks = {
   initVat: InitVat;
@@ -47,7 +57,7 @@ type InitVatHooks = {
 export type InitVatHandler = Handler<
   'initVat',
   Params,
-  Promise<VatDeliveryResult>,
+  Promise<InitVatResult>,
   InitVatHooks
 >;
 

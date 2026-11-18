@@ -134,6 +134,33 @@ An object a holder has asked the `accountability` [kernel service](#kernel-servi
 record every delivery to and every conveyance of, in this kernel. It stays tracked, and
 pinned, until the last holder that asked untracks it or is terminated, or its owner is.
 
+### party
+
+An identifiable external entity answerable for what happens in the system: a person, an
+organization, or a legal entity. Endpoints are not parties; [attestations](#attestation)
+bind them to parties. The [kernel](#kernel) treats a party identifier as an opaque string
+but for its scheme, the part before the first colon, which names how the party's
+signatures are checked: `ed25519:<hex public key>` is built in, and a host supplies
+verifiers for other schemes through `Kernel.make`'s `accountability.partySignatureVerifiers`.
+See [parties.ts](../packages/ocap-kernel/src/accountability/parties.ts).
+
+### attestation
+
+A [party's](#party) signed statement, kept by the [kernel](#kernel) once the signature
+checks: an `operator` attestation, that the party answers for a kernel named by its peer
+ID, which that kernel countersigns; an `implementer` attestation, that the party answers
+for a bundle named by its [bundle hash](#bundle-hash); or an `intent` attestation, that
+the party meant one act, passed in with the `queueMessage` that performs it and kept on
+the resulting [accountability record](#accountability-record). See
+[attestations.ts](../packages/ocap-kernel/src/accountability/attestations.ts).
+
+### bundle hash
+
+The SHA-256 of a vat's bundle as fetched, prefixed `sha256:`, which the
+[supervisor](#supervisor) reports in its `initVat` reply and the kernel keeps under the
+vat's prefix. `Kernel.getVatBundleHash` reads it, and an `implementer`
+[attestation](#attestation) names a bundle by it.
+
 ### marshaling
 
 The process of serializing and deserializing data for transmission between [vats](#vat).

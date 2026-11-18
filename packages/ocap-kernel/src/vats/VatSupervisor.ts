@@ -15,6 +15,7 @@ import { RpcClient, RpcService } from '@metamask/kernel-rpc-methods';
 import type { VatKVStore } from '@metamask/kernel-store';
 import {
   mergeDisjointRecords,
+  toHex,
   waitUntilQuiescent,
 } from '@metamask/kernel-utils';
 import type { JsonRpcMessage } from '@metamask/kernel-utils';
@@ -41,6 +42,7 @@ import type {
 } from '../liveslots/types.ts';
 import { vatSyscallMethodSpecs, vatHandlers } from '../rpc/index.ts';
 import { makeVatKVStore } from '../store/vat-kv-store.ts';
+import type { InitVatResult } from '../rpc/vat/initVat.ts';
 import type { VatConfig, VatDeliveryResult, VatId } from '../types.ts';
 import { isVatConfig, coerceVatSyscallObject } from '../types.ts';
 
@@ -333,13 +335,14 @@ export class VatSupervisor {
    * @param vatConfig - Configuration object describing the vat to be intialized.
    * @param state - A Map representing the current persistent state of the vat.
    * @param allowedGlobalNames - Optional list of allowed global names to restrict the available endowments.
-   * @returns a promise for a checkpoint of the new vat.
+   * @returns a promise for a checkpoint of the new vat, with the content
+   * hash of the bundle it loaded.
    */
   async #initVat(
     vatConfig: VatConfig,
     state: Map<string, string>,
     allowedGlobalNames: AllowedGlobalName[] | undefined,
-  ): Promise<VatDeliveryResult> {
+  ): Promise<InitVatResult> {
     if (this.#loaded) {
       throw Error(
         'VatSupervisor received initVat after user code already loaded',
@@ -426,6 +429,7 @@ export class VatSupervisor {
       throw Error(`fetch of user code ${bundleSpec} failed: ${fetched.status}`);
     }
     const bundleContent = await fetched.text();
+    const bundleHash = await hashBundle(bundleContent);
     const buildVatNamespace = async (
       lsEndowments: Record<PropertyKey, unknown>,
       inescapableGlobalProperties: object,
@@ -470,6 +474,21 @@ export class VatSupervisor {
     this.#dispatch = liveslots.dispatch;
     const serParam = marshal.toCapData(harden(parameters)) as CapData<string>;
 
-    return await this.#deliver(harden(['startVat', serParam]));
+    const started = await this.#deliver(harden(['startVat', serParam]));
+    return harden([...started, bundleHash]);
   }
+}
+
+/**
+ * Name a bundle by its content.
+ *
+ * @param content - The bundle, as fetched.
+ * @returns `sha256:` and the hex SHA-256 of the content's UTF-8 bytes.
+ */
+async function hashBundle(content: string): Promise<string> {
+  const digest = await globalThis.crypto.subtle.digest(
+    'SHA-256',
+    new TextEncoder().encode(content),
+  );
+  return `sha256:${toHex(new Uint8Array(digest))}`;
 }
