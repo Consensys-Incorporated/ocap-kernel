@@ -107,7 +107,7 @@ something it saw done with an object: an [introduction](#introduction), a delive
 layer vouching for it, which for now is always the kernel. Records outlive the objects
 they describe and are deleted only by `Kernel.pruneAccountabilityRecords`. See
 [Accountability and provenance](./accountability.md) and
-[records.ts](../packages/ocap-kernel/src/store/methods/accountability-records.ts).
+[accountability-records.ts](../packages/ocap-kernel/src/store/methods/accountability-records.ts).
 
 ### introduction
 

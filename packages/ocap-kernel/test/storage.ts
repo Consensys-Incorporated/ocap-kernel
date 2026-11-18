@@ -111,13 +111,11 @@ function makeMapVatStore(_vatID: string): ClearableVatStore {
 }
 
 /**
- * Make a mock record store backed by an array.
+ * Make a mock accountability record store backed by an array.
  *
- * @returns The mock {@link AccountabilityRecordStore}, with the array behind it.
+ * @returns The mock {@link AccountabilityRecordStore}.
  */
-export function makeArrayAccountabilityRecordStore(): AccountabilityRecordStore & {
-  rows: AccountabilityRecordRow[];
-} {
+export function makeArrayAccountabilityRecordStore(): AccountabilityRecordStore {
   const rows: AccountabilityRecordRow[] = [];
   let nextSeq = 1;
   const matches =
@@ -138,7 +136,6 @@ export function makeArrayAccountabilityRecordStore(): AccountabilityRecordStore 
   ): AccountabilityRecordRow[] =>
     rows.filter(matches(filter)).slice(0, filter.limit ?? rows.length);
   return {
-    rows,
     append: (row) => {
       const seq = nextSeq;
       nextSeq += 1;

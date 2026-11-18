@@ -23,6 +23,7 @@ export function getObjectMethods(ctx: StoreContext) {
     getRevokedKey,
     getCreatedKey,
     getTrackedKey,
+    getTrackerKey,
   } = getBaseMethods(ctx.kv);
 
   /**
@@ -104,7 +105,13 @@ export function getObjectMethods(ctx: StoreContext) {
     ctx.kv.delete(refCountKey(koId));
     ctx.kv.delete(getRevokedKey(koId));
     ctx.kv.delete(getCreatedKey(koId));
-    ctx.kv.delete(getTrackedKey(koId));
+    const trackers = ctx.kv.get(getTrackedKey(koId));
+    if (trackers !== undefined) {
+      for (const tracker of Object.keys(JSON.parse(trackers))) {
+        ctx.kv.delete(getTrackerKey(tracker, koId));
+      }
+      ctx.kv.delete(getTrackedKey(koId));
+    }
   }
 
   /**

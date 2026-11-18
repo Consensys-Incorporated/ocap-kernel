@@ -833,6 +833,30 @@ describe('KernelRouter', () => {
         });
       });
 
+      it('names the kernel as the sender of a notify for a promise with no resolver', async () => {
+        const kpid = asKRef('kp123');
+        (
+          kernelStore.getKernelPromise as unknown as MockInstance
+        ).mockReturnValue({
+          state: 'fulfilled',
+          value: { body: '#"$0"', slots: [asKRef('ko7')] },
+        });
+        (kernelStore.krefToEref as unknown as MockInstance).mockReturnValueOnce(
+          'p+123',
+        );
+        (
+          kernelStore.getKpidsToRetire as unknown as MockInstance
+        ).mockReturnValueOnce([kpid]);
+
+        await kernelRouter.deliver({ type: 'notify', endpointId: v1, kpid });
+
+        expect(kernelStore.setCurrentDelivery).toHaveBeenCalledWith({
+          via: 'notify',
+          sender: 'kernel',
+        });
+        expect(kernelStore.recordConveyance).not.toHaveBeenCalled();
+      });
+
       it('returns didDelivery when promise is not in vat clist', async () => {
         const endpointId = v1;
         const kpid = asKRef('kp123');
@@ -1180,6 +1204,9 @@ describe('KernelRouter', () => {
         const result = await kernelRouter.deliver(inbound());
 
         expect(getEndpoint).toHaveBeenCalledWith(remoteId);
+        expect(kernelStore.setCurrentDelivery).toHaveBeenCalledWith({
+          via: 'ocap-url',
+        });
         expect(deliverInbound).toHaveBeenCalledWith('{"seq":1}');
         expect(result).toStrictEqual(mockCrankResult);
       });

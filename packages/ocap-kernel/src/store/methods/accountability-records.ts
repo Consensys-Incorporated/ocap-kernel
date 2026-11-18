@@ -18,11 +18,11 @@ import type { EndpointId, KRef, KernelMessage, Sender } from '../../types.ts';
 import type { StoreContext } from '../types.ts';
 
 /**
- * Create a records store object that provides functionality for the kernel's
- * accountability records and the set of tracked objects.
+ * Create an accountability records store object that provides functionality
+ * for the kernel's accountability records and the set of tracked objects.
  *
  * @param ctx - The store context.
- * @returns A records store object.
+ * @returns An accountability records store object.
  */
 // oxlint-disable-next-line typescript/explicit-function-return-type
 export function getAccountabilityRecordMethods(ctx: StoreContext) {

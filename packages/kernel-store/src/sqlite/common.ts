@@ -32,16 +32,16 @@ export const SQL_QUERIES = {
       data TEXT NOT NULL
     )
   `,
-  CREATE_INDEX_RECORDS_KREF: `
+  CREATE_INDEX_ACCOUNTABILITY_RECORDS_KREF: `
     CREATE INDEX IF NOT EXISTS accountability_records_kref ON accountability_records (kref, seq)
   `,
-  CREATE_INDEX_RECORDS_ENDPOINT: `
+  CREATE_INDEX_ACCOUNTABILITY_RECORDS_ENDPOINT: `
     CREATE INDEX IF NOT EXISTS accountability_records_endpoint ON accountability_records (endpoint, seq)
   `,
-  CREATE_INDEX_RECORDS_SENDER: `
+  CREATE_INDEX_ACCOUNTABILITY_RECORDS_SENDER: `
     CREATE INDEX IF NOT EXISTS accountability_records_sender ON accountability_records (sender, seq)
   `,
-  CREATE_INDEX_RECORDS_TRACE: `
+  CREATE_INDEX_ACCOUNTABILITY_RECORDS_TRACE: `
     CREATE INDEX IF NOT EXISTS accountability_records_trace ON accountability_records (trace, seq)
   `,
   APPEND_ACCOUNTABILITY_RECORD: `
@@ -181,6 +181,18 @@ function buildAccountabilityRecordsWhere(
 }
 
 /**
+ * Refuse a limit SQLite would not treat as one: it reads a negative limit as
+ * none at all.
+ *
+ * @param limit - The filter's limit, if any.
+ */
+function assertLimit(limit: number | undefined): void {
+  if (limit !== undefined && !(Number.isInteger(limit) && limit >= 0)) {
+    throw new Error(`limit must be a non-negative integer, not ${limit}`);
+  }
+}
+
+/**
  * Build the query reading the records a filter describes, in sequence order.
  *
  * @param filter - The filter.
@@ -190,6 +202,7 @@ export function buildAccountabilityRecordsQuery(
   filter: AccountabilityRecordFilter,
 ): BoundStatement {
   const { sql: where, params } = buildAccountabilityRecordsWhere(filter);
+  assertLimit(filter.limit);
   let sql = `SELECT ${ACCOUNTABILITY_RECORD_COLUMNS.join(', ')} FROM accountability_records${where} ORDER BY seq`;
   if (filter.limit !== undefined) {
     sql += ' LIMIT ?';
@@ -208,6 +221,7 @@ export function buildAccountabilityRecordsDelete(
   filter: AccountabilityRecordFilter,
 ): BoundStatement {
   const { sql: where, params } = buildAccountabilityRecordsWhere(filter);
+  assertLimit(filter.limit);
   if (filter.limit === undefined) {
     return { sql: `DELETE FROM accountability_records${where}`, params };
   }

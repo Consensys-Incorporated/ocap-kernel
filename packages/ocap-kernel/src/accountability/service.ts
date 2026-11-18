@@ -1,6 +1,7 @@
 import { makeDefaultExo } from '@metamask/kernel-utils/exo';
-import { assert, boolean, exactOptional, object } from '@metamask/superstruct';
+import { assert } from '@metamask/superstruct';
 
+import { TrackOptionsStruct } from './types.ts';
 import type { AccountabilityRecord, TrackOptions } from './types.ts';
 import type { KernelQueue } from '../KernelQueue.ts';
 import { krefOf } from '../liveslots/kernel-marshal.ts';
@@ -8,10 +9,6 @@ import type { SlotValue } from '../liveslots/kernel-marshal.ts';
 import type { KernelStore } from '../store/index.ts';
 import { isPromiseRef } from '../store/utils/promise-ref.ts';
 import type { KRef, Sender } from '../types.ts';
-
-const TrackOptionsStruct = object({
-  recordArgs: exactOptional(boolean()),
-});
 
 /** Who is calling, as the kernel saw it, not as the caller says. */
 export type Caller = { caller: Sender };
@@ -27,9 +24,9 @@ export type Caller = { caller: Sender };
 export type AccountabilityService = {
   /**
    * Start recording every message delivered to an object and every time it is
-   * carried to an endpoint, in this kernel. Any holder may ask; the object
-   * stays tracked until every holder that asked has untracked it, or it is
-   * collected.
+   * carried to an endpoint, in this kernel. Any holder may ask, though only
+   * the owner may ask for the arguments; the object stays tracked until every
+   * holder that asked has untracked it, or it is collected.
    */
   track(caller: Caller, obj: SlotValue, options?: TrackOptions): Promise<void>;
   /** Withdraw this caller's tracking of an object. */
@@ -87,6 +84,9 @@ export function makeAccountabilityService({
     ): Promise<void> {
       const kref = objectKrefOf(obj);
       assert(options, TrackOptionsStruct);
+      if (options.recordArgs && kernelStore.getOwner(kref) !== caller) {
+        throw Error(`only the owner of ${kref} may record its arguments`);
+      }
       await kernelQueue.writeOutsideCrank(() =>
         kernelStore.trackObject(kref, caller, options),
       );

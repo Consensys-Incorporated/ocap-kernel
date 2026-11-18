@@ -10,12 +10,14 @@ const v1 = asVatId('v1');
 const v2 = asVatId('v2');
 const r0 = asRemoteId('r0');
 
-describe('record methods', () => {
+describe('accountability record methods', () => {
+  let kdb: ReturnType<typeof makeMapKernelDatabase>;
   let kernelStore: ReturnType<typeof makeKernelStore>;
   let ko1: KRef;
 
   beforeEach(() => {
-    kernelStore = makeKernelStore(makeMapKernelDatabase());
+    kdb = makeMapKernelDatabase();
+    kernelStore = makeKernelStore(kdb);
     ko1 = kernelStore.initKernelObject(v1);
   });
 
@@ -62,6 +64,7 @@ describe('record methods', () => {
       kernelStore.trackObject(ko1, v1);
       kernelStore.deleteKernelObject(ko1);
       expect(kernelStore.isTracked(ko1)).toBe(false);
+      expect(kdb.kernelKVStore.get(`tracker.${v1}.${ko1}`)).toBeUndefined();
     });
 
     it('untracks everything a deleted endpoint tracked, and nothing else', () => {

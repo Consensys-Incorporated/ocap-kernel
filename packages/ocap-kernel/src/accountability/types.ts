@@ -1,4 +1,6 @@
 import type { CapData } from '@endo/marshal';
+import { boolean, exactOptional, object } from '@metamask/superstruct';
+import type { Infer } from '@metamask/superstruct';
 
 import type { Cause, EndpointId, KRef, Sender } from '../types.ts';
 
@@ -67,15 +69,22 @@ export type AccountabilityRecord =
 
 /** A record as written, before the store numbers and stamps it. */
 export type AccountabilityRecordInput<
-  Record extends AccountabilityRecord = AccountabilityRecord,
-> = Record extends AccountabilityRecord
-  ? Omit<Record, 'seq' | 'witness' | 'crankNumber'>
+  Kind extends AccountabilityRecord = AccountabilityRecord,
+> = Kind extends AccountabilityRecord
+  ? Omit<Kind, 'seq' | 'witness' | 'crankNumber'>
   : never;
 
-export type TrackOptions = {
-  /** Whether to keep the arguments of each message delivered to the object. */
-  recordArgs?: boolean;
-};
+/**
+ * What a tracker asks to have recorded. `recordArgs` keeps the arguments of
+ * each message delivered to the object, and only the owner may ask for it:
+ * the arguments are what other holders say to the object, and the owner is
+ * the one party already entitled to hear them.
+ */
+export const TrackOptionsStruct = object({
+  recordArgs: exactOptional(boolean()),
+});
+
+export type TrackOptions = Infer<typeof TrackOptionsStruct>;
 
 /** Which endpoints track an object, and what each asked for. */
 export type Trackers = Record<string, TrackOptions>;
