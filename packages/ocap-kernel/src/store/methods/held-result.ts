@@ -49,8 +49,10 @@ export function getHeldResultMethods(ctx: StoreContext) {
   function releaseHeldResult(kpid: KRef): void {
     isResultHeld(kpid) ||
       Fail`${kpid} is not a held result; it may have been released already`;
-    decrementRefCount(kpid, 'release|result');
+    // Before the count: were the two ever committed apart, a crash between
+    // them would leak a count, not leave a row to release twice.
     ctx.kv.delete(`${HELD_RESULT_PREFIX}${kpid}`);
+    decrementRefCount(kpid, 'release|result');
   }
 
   /**

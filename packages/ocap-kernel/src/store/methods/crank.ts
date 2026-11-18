@@ -158,6 +158,36 @@ export function getCrankMethods(ctx: StoreContext, kdb: KernelDatabase) {
   }
 
   /**
+   * Make writes that commit together or not at all, where no crank is open:
+   * before the run loop starts.
+   *
+   * @param write - The writes. A throw rolls them back and is rethrown.
+   * @returns What `write` returns.
+   */
+  function writeAtomically<Result>(write: () => Result): Result {
+    startCrank();
+    try {
+      createCrankSavepoint('atomic');
+      try {
+        return write();
+      } catch (error) {
+        try {
+          rollbackCrank('atomic');
+        } catch (rollbackError) {
+          throw new AggregateError(
+            [error, rollbackError],
+            `Atomic write failed and could not be rolled back: ${String(rollbackError)}`,
+            { cause: error },
+          );
+        }
+        throw error;
+      }
+    } finally {
+      endCrank();
+    }
+  }
+
+  /**
    * Wait until the crank is finished.
    *
    * @returns A promise that resolves when the crank is finished.
@@ -228,6 +258,7 @@ export function getCrankMethods(ctx: StoreContext, kdb: KernelDatabase) {
     createCrankSavepoint,
     rollbackCrank,
     endCrank,
+    writeAtomically,
     waitForCrank,
     bufferCrankOutput,
     flushCrankBuffer,

@@ -63,7 +63,6 @@ async function setUp(answer: Answer) {
     restartVat: async () => undefined,
     terminateVat: async () => undefined,
     applyIncarnationChange: () => ({}),
-    performControl: async () => undefined,
     logger: { error: vi.fn(), log: vi.fn() } as unknown as Logger,
   });
   vi.spyOn(console, 'debug').mockImplementation(() => undefined);
@@ -77,7 +76,7 @@ async function setUp(answer: Answer) {
     await running;
   };
 
-  return { kernelStore, kernelQueue, root, gift, start, stop, v1 };
+  return { kdb, kernelStore, kernelQueue, root, gift, start, stop, v1 };
 }
 
 describe('the hold on a queueMessage result', () => {
@@ -154,6 +153,30 @@ describe('the hold on a queueMessage result', () => {
     await stop();
   });
 
+  it('is released in a crank of its own', async () => {
+    const { kdb, kernelStore, kernelQueue, root, start, stop } =
+      await setUp(OBJECT);
+    start();
+    const { kpid } = await kernelQueue.enqueueMessage(root, 'fetch', []);
+    const before = kernelStore.getCrankNumber();
+    const inCrank: boolean[] = [];
+    const deleteRow = kdb.kernelKVStore.delete.bind(kdb.kernelKVStore);
+    vi.spyOn(kdb.kernelKVStore, 'delete').mockImplementation((key) => {
+      if (key === `heldResult.${kpid}`) {
+        inCrank.push(kernelStore.isInCrank());
+      }
+      deleteRow(key);
+    });
+
+    await kernelQueue.releaseResult(kpid as KRef);
+
+    expect({
+      inCrank,
+      cranks: kernelStore.getCrankNumber() - before,
+    }).toStrictEqual({ inCrank: [true], cranks: 1 });
+    await stop();
+  });
+
   it('cannot be released twice by the kernel', async () => {
     const { kernelQueue, root, start, stop } = await setUp(OBJECT);
     start();
@@ -192,5 +215,45 @@ describe('the hold on a queueMessage result', () => {
 
     expect(kernelStore.getHeldResults()).toStrictEqual([]);
     expect(kernelStore.auditRefCounts()).toStrictEqual([]);
+  });
+
+  it('is released for no result at start when one release fails', async () => {
+    const { kernelStore, kernelQueue, root, start, stop } = await setUp(OBJECT);
+    start();
+    const { kpid: kept } = await kernelQueue.enqueueMessage(root, 'fetch', []);
+    const { kpid: lost } = await kernelQueue.enqueueMessage(root, 'fetch', []);
+    await stop();
+    const refCount = kernelStore.getRefCount(kept as KRef);
+    while (kernelStore.getRefCount(lost as KRef) > 0) {
+      kernelStore.decrementRefCount(lost as KRef, 'test');
+    }
+    const nextKernelQueue = new KernelQueue(kernelStore, async () => undefined);
+
+    expect(() => nextKernelQueue.releaseAbandonedResults()).toThrow(
+      'refCount underflow',
+    );
+
+    expect({
+      held: kernelStore.getHeldResults(),
+      refCount: kernelStore.getRefCount(kept as KRef),
+      inCrank: kernelStore.isInCrank(),
+    }).toStrictEqual({ held: [kept, lost], refCount, inCrank: false });
+  });
+
+  it('is still held after a store fault at start', async () => {
+    const { kdb, kernelStore, kernelQueue, root, start, stop } =
+      await setUp(OBJECT);
+    start();
+    const { kpid } = await kernelQueue.enqueueMessage(root, 'fetch', []);
+    await stop();
+    vi.spyOn(kdb.kernelKVStore, 'delete').mockImplementationOnce(() => {
+      throw new Error('disk full');
+    });
+    const nextKernelQueue = new KernelQueue(kernelStore, async () => undefined);
+
+    expect(() => nextKernelQueue.releaseAbandonedResults()).toThrow(
+      'disk full',
+    );
+    expect(kernelStore.getHeldResults()).toStrictEqual([kpid]);
   });
 });

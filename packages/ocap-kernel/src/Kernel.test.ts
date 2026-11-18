@@ -16,6 +16,7 @@ import type {
   PlatformServices,
   ClusterConfig,
   CrankResult,
+  InboxOutcome,
   RunLoopItem,
   QueueMessageResult,
   RunQueueItem,
@@ -25,6 +26,7 @@ import { VatHandle } from './vats/VatHandle.ts';
 import { asKRef, asSubclusterId, asVatId } from '../test/branded.ts';
 import { KernelServiceManager } from './KernelServiceManager.ts';
 import { makeMapKernelDatabase } from '../test/storage.ts';
+import { markStoreFaults } from './store/utils/store-fault.ts';
 
 const mocks = vi.hoisted(() => {
   class KernelQueue {
@@ -36,7 +38,10 @@ const mocks = vi.hoisted(() => {
 
     releaseResultIfHeld = vi.fn().mockResolvedValue(true);
 
-    releaseAbandonedResults = vi.fn().mockReturnValue(0);
+    // On the prototype, for a test to spy on before `Kernel.make` calls it.
+    releaseAbandonedResults(): number {
+      return 0;
+    }
 
     #runLoopFailure: Error | undefined;
 
@@ -96,22 +101,34 @@ const mocks = vi.hoisted(() => {
       return { state: this.#running ? 'running' : 'idle' };
     });
 
-    // Delivered at once through the router, standing in for the operation's
-    // crank; a throw kills the run loop, as it would there.
-    enqueueControl = vi.fn(async (operation: string) => {
-      if (this.#runLoopFailure) {
-        throw new Error(`Kernel run loop died; cannot ${operation}`);
-      }
-      if (this.#stopped) {
-        throw new Error(`Kernel run loop is stopped; cannot ${operation}`);
-      }
-      try {
-        await this.#deliver?.({ type: 'control', operation } as RunLoopItem);
-      } catch (error) {
-        this.killRunLoop(error as Error);
-        throw error;
-      }
-    });
+    // Run at once, standing in for the item's crank; a throw kills the run
+    // loop, as it would there.
+    enqueueInbox = vi.fn(
+      async (
+        what: string,
+        work: () => InboxOutcome<unknown> | Promise<InboxOutcome<unknown>>,
+      ) => {
+        if (this.#runLoopFailure) {
+          throw new Error(`Kernel run loop died; cannot ${what}`);
+        }
+        if (this.#stopped) {
+          throw new Error(`Kernel run loop is stopped; cannot ${what}`);
+        }
+        let outcome: InboxOutcome<unknown>;
+        try {
+          outcome = await work();
+        } catch (error) {
+          this.killRunLoop(error as Error);
+          throw error;
+        }
+        if ('failure' in outcome) {
+          throw outcome.failure;
+        }
+        return outcome.value;
+      },
+    );
+
+    discardInbox = vi.fn();
 
     // Ends a running loop at once, standing in for the real one ending
     // between cranks.
@@ -504,12 +521,90 @@ describe('Kernel', () => {
       ).toStrictEqual([['kp7']]);
     });
 
+    it.each([
+      ['stopped', 'Kernel run loop is stopped; cannot release a result'],
+      ['failed', 'Kernel run loop died; cannot release a result'],
+    ])('resolves when the run loop has %s', async (state, refusal) => {
+      const kernel = await Kernel.make(
+        mockPlatformServices,
+        mockKernelDatabase,
+      );
+      const queue = mocks.KernelQueue.lastInstance;
+      if (state === 'stopped') {
+        await queue.endRunLoop();
+      } else {
+        queue.killRunLoop(new Error('run loop boom'));
+      }
+      queue.releaseResultIfHeld.mockRejectedValue(new Error(refusal));
+
+      await kernel.releaseResult({ kpid: asKRef('kp7') });
+
+      expect(queue.getRunLoopStatus().state).toBe(state);
+    });
+
+    it('rejects with a store fault after the run loop has stopped', async () => {
+      const kernel = await Kernel.make(
+        mockPlatformServices,
+        mockKernelDatabase,
+      );
+      const queue = mocks.KernelQueue.lastInstance;
+      const { kernelKVStore } = makeMapKernelDatabase();
+      vi.spyOn(kernelKVStore, 'delete').mockImplementation(() => {
+        throw new Error('disk full');
+      });
+      queue.releaseResultIfHeld.mockImplementation(async () =>
+        markStoreFaults(kernelKVStore).delete('heldResult.kp7'),
+      );
+      await queue.endRunLoop();
+
+      await expect(
+        kernel.releaseResult({ kpid: asKRef('kp7') }),
+      ).rejects.toThrow('disk full');
+    });
+
+    it('rejects when the release fails under a running loop', async () => {
+      const kernel = await Kernel.make(
+        mockPlatformServices,
+        mockKernelDatabase,
+      );
+      mocks.KernelQueue.lastInstance.releaseResultIfHeld.mockRejectedValue(
+        new Error('disk full'),
+      );
+
+      await expect(
+        kernel.releaseResult({ kpid: asKRef('kp7') }),
+      ).rejects.toThrow('disk full');
+    });
+
     it('releases the results a previous incarnation held when it starts', async () => {
+      const sweep = vi.spyOn(
+        mocks.KernelQueue.prototype,
+        'releaseAbandonedResults',
+      );
+
       await Kernel.make(mockPlatformServices, mockKernelDatabase);
 
-      expect(
-        mocks.KernelQueue.lastInstance.releaseAbandonedResults,
-      ).toHaveBeenCalledOnce();
+      expect(sweep).toHaveBeenCalledOnce();
+    });
+
+    it('resolves while the kernel is stopping', async () => {
+      const kernel = await Kernel.make(
+        mockPlatformServices,
+        mockKernelDatabase,
+      );
+      const queue = mocks.KernelQueue.lastInstance;
+      const ended = makePromiseKit<void>();
+      vi.spyOn(queue, 'endRunLoop').mockReturnValue(ended.promise);
+      const stopped = kernel.stop();
+      queue.releaseResultIfHeld.mockRejectedValue(
+        new Error('Kernel run loop is stopping; cannot release a result'),
+      );
+
+      await kernel.releaseResult({ kpid: asKRef('kp7') });
+
+      expect(queue.getRunLoopStatus().state).toBe('running');
+      ended.resolve();
+      await stopped;
     });
 
     it('deserializes CapData rejections into Errors', async () => {
@@ -1298,7 +1393,7 @@ describe('Kernel', () => {
     });
   });
 
-  describe('control operations', () => {
+  describe('host calls that wipe or end vats', () => {
     it.each(['clearStorage', 'reset', 'terminateAllVats'] as const)(
       'hands %s to the run loop',
       async (method) => {
@@ -1310,8 +1405,8 @@ describe('Kernel', () => {
         await kernel[method]();
 
         expect(
-          mocks.KernelQueue.lastInstance.enqueueControl,
-        ).toHaveBeenCalledExactlyOnceWith(method);
+          mocks.KernelQueue.lastInstance.enqueueInbox,
+        ).toHaveBeenCalledExactlyOnceWith(method, expect.any(Function));
       },
     );
 
@@ -1325,14 +1420,18 @@ describe('Kernel', () => {
         abandoned: 'Kernel was reset; queued work was abandoned',
       },
     ] as const)(
-      'abandons the queued and held work on $method, then releases the restart holds',
+      'abandons the queued and held work and the inbox on $method, then releases the restart holds',
       async ({ method, abandoned }) => {
         const kernel = await Kernel.make(
           mockPlatformServices,
           makeMapKernelDatabase(),
         );
-        const { discardArrivals, abandonSubscriptions, discardHeldRequests } =
-          mocks.KernelQueue.lastInstance;
+        const {
+          discardArrivals,
+          abandonSubscriptions,
+          discardHeldRequests,
+          discardInbox,
+        } = mocks.KernelQueue.lastInstance;
         const { releaseRestartHolds } = mocks.RemoteManager.lastInstance;
 
         await kernel[method]();
@@ -1342,6 +1441,9 @@ describe('Kernel', () => {
           new Error(abandoned),
         );
         expect(discardHeldRequests).toHaveBeenCalledExactlyOnceWith(
+          new Error(abandoned),
+        );
+        expect(discardInbox).toHaveBeenCalledExactlyOnceWith(
           new Error(abandoned),
         );
         expect(

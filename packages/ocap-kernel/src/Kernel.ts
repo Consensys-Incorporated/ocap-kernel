@@ -19,6 +19,7 @@ import type { RemoteCommsOptions } from './remotes/types.ts';
 import type { PingVatResult } from './rpc/index.ts';
 import { makeKernelStore } from './store/index.ts';
 import type { KernelStore } from './store/index.ts';
+import { isStoreFault } from './store/utils/store-fault.ts';
 import type {
   VatId,
   RemoteId,
@@ -34,7 +35,6 @@ import type {
   SubclusterLaunchResult,
   EndpointHandle,
   SystemSubclusterConfig,
-  ControlOperation,
   QueueMessageResult,
 } from './types.ts';
 import { isVatId, isRemoteId } from './types.ts';
@@ -241,7 +241,6 @@ export class Kernel {
       applyIncarnationChange: this.#remoteManager.applyIncarnationChange.bind(
         this.#remoteManager,
       ),
-      performControl: this.#performControl.bind(this),
       logger: this.#logger,
     });
 
@@ -402,42 +401,6 @@ export class Kernel {
   }
 
   /**
-   * Carry out a control operation, in the crank the run loop opened for it.
-   *
-   * @param operation - The operation.
-   */
-  async #performControl(operation: ControlOperation): Promise<void> {
-    switch (operation) {
-      case 'clearStorage':
-        this.#kernelStore.clear();
-        this.#abandonQueuedWork(
-          new Error('Kernel storage was cleared; queued work was abandoned'),
-        );
-        return;
-      case 'reset':
-        if (this.#ioManager) {
-          await this.#ioManager.destroyAllChannels();
-        }
-        await this.#vatManager.terminateAllVats();
-        this.#subclusterManager.clearSystemSubclusters();
-        this.#resetKernelState();
-        // Last, after every await, so a request made during the reset is
-        // abandoned with the rest.
-        this.#abandonQueuedWork(
-          new Error('Kernel was reset; queued work was abandoned'),
-        );
-        return;
-      case 'terminateAllVats':
-        await this.#vatManager.terminateAllVats();
-        return;
-      default:
-        throw new Error(
-          `unknown control operation ${String(operation satisfies never)}`,
-        );
-    }
-  }
-
-  /**
    * Tell the embedder the kernel is finished, since it owns the decision to
    * exit or restart. Deliberately not re-thrown: an unhandled rejection would
    * take the process down without giving it that chance.
@@ -582,14 +545,30 @@ export class Kernel {
    *
    * @param result - The result. Releasing one the kernel holds nothing for
    * does nothing: one without a `kpid`, one already released, or one from
-   * before the kernel last started.
+   * before the kernel last started. So does releasing once `stop` is
+   * called or the run loop has died, since the next start releases every hold.
    * @param result.kpid - The result's `kpid`.
    */
   async releaseResult({ kpid }: { kpid?: KRef | undefined }): Promise<void> {
     if (kpid === undefined) {
       return;
     }
-    if (!(await this.#kernelQueue.releaseResultIfHeld(kpid))) {
+    let held;
+    try {
+      held = await this.#kernelQueue.releaseResultIfHeld(kpid);
+    } catch (error) {
+      const { state } = this.#kernelQueue.getRunLoopStatus();
+      const stopping = this.#stopping !== undefined;
+      const closed = stopping || state === 'stopped' || state === 'failed';
+      if (isStoreFault(error) || !closed) {
+        throw error;
+      }
+      this.#logger.debug(
+        `releaseResult: run loop ${state === 'running' ? 'stopping' : state}, ${kpid} is left for the next start`,
+      );
+      return;
+    }
+    if (!held) {
       this.#logger.debug(`releaseResult: ${kpid} is not a held result`);
     }
   }
@@ -753,12 +732,18 @@ export class Kernel {
   }
 
   /**
-   * Clear the database. A failure partway rolls back its store writes and
-   * kills the run loop. Refused once `stop` is called or the run loop has
-   * died.
+   * Clear the database, in a crank of its own. A failure partway rolls back
+   * its store writes and kills the run loop. Refused once `stop` is called or
+   * the run loop has died.
    */
   async clearStorage(): Promise<void> {
-    await this.#kernelQueue.enqueueControl('clearStorage');
+    await this.#kernelQueue.enqueueInbox('clearStorage', () => {
+      this.#kernelStore.clear();
+      this.#abandonQueuedWork(
+        new Error('Kernel storage was cleared; queued work was abandoned'),
+      );
+      return { value: undefined };
+    });
   }
 
   /**
@@ -772,6 +757,7 @@ export class Kernel {
     this.#kernelQueue.abandonSubscriptions(abandoned);
     this.#remoteManager.releaseRestartHolds();
     this.#kernelQueue.discardHeldRequests(abandoned);
+    this.#kernelQueue.discardInbox(abandoned);
     this.#vatManager.abandonQueuedWork(abandoned);
   }
 
@@ -958,7 +944,7 @@ export class Kernel {
   }
 
   /**
-   * Stop all running vats and reset the kernel state.
+   * Stop all running vats and reset the kernel state, in a crank of its own.
    * This is for debugging purposes only.
    *
    * A failure partway rolls back its store writes and kills the run loop.
@@ -966,25 +952,41 @@ export class Kernel {
    * loop has died is restarted instead, with `resetStorage` to clear its state.
    */
   async reset(): Promise<void> {
-    await this.#kernelQueue.enqueueControl('reset');
+    await this.#kernelQueue.enqueueInbox('reset', async () => {
+      if (this.#ioManager) {
+        await this.#ioManager.destroyAllChannels();
+      }
+      await this.#vatManager.terminateAllVats();
+      this.#subclusterManager.clearSystemSubclusters();
+      this.#resetKernelState();
+      // Last, after every await, so a request made during the reset is
+      // abandoned with the rest.
+      this.#abandonQueuedWork(
+        new Error('Kernel was reset; queued work was abandoned'),
+      );
+      return { value: undefined };
+    });
   }
 
   /**
-   * Terminate all vats and collect garbage.
+   * Terminate all vats and collect garbage, in a crank of its own.
    * This is for debugging purposes only.
    *
    * A failure partway rolls back its store writes and kills the run loop.
    * Refused once `stop` is called or the run loop has died.
    */
   async terminateAllVats(): Promise<void> {
-    await this.#kernelQueue.enqueueControl('terminateAllVats');
+    await this.#kernelQueue.enqueueInbox('terminateAllVats', async () => {
+      await this.#vatManager.terminateAllVats();
+      return { value: undefined };
+    });
   }
 
   /**
    * Gracefully stop the kernel without deleting vats. Waits for the open crank
-   * and any control operation queued before this; if one never ends, neither
-   * does this, and the embedder has to end the process. A later call settles as
-   * this one does.
+   * and for a `clearStorage`, `reset` or `terminateAllVats` queued before
+   * this; if one never ends, neither does this, and the embedder has to end
+   * the process. A later call settles as this one does.
    */
   async stop(): Promise<void> {
     this.#stopping ??= this.#stop();

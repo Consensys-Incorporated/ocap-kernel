@@ -362,6 +362,48 @@ describe('crank methods', () => {
     });
   });
 
+  describe('writeAtomically', () => {
+    it('commits what it wrote and returns the result', () => {
+      const result = crankMethods.writeAtomically(() => context.inCrank);
+
+      expect({
+        result,
+        inCrank: context.inCrank,
+        created: vi.mocked(kdb.createSavepoint).mock.calls,
+        released: vi.mocked(kdb.releaseSavepoint).mock.calls,
+        rolledBack: vi.mocked(kdb.rollbackSavepoint).mock.calls,
+      }).toStrictEqual({
+        result: true,
+        inCrank: false,
+        created: [['t0']],
+        released: [['t0']],
+        rolledBack: [],
+      });
+    });
+
+    it('rolls back and rethrows when the write throws', () => {
+      expect(() =>
+        crankMethods.writeAtomically(() => {
+          throw new Error('boom');
+        }),
+      ).toThrow('boom');
+
+      expect({
+        inCrank: context.inCrank,
+        rolledBack: vi.mocked(kdb.rollbackSavepoint).mock.calls,
+        released: vi.mocked(kdb.releaseSavepoint).mock.calls,
+      }).toStrictEqual({ inCrank: false, rolledBack: [['t0']], released: [] });
+    });
+
+    it('does not start inside a crank', () => {
+      crankMethods.startCrank();
+
+      expect(() => crankMethods.writeAtomically(() => undefined)).toThrow(
+        'startCrank while already in a crank',
+      );
+    });
+  });
+
   describe('waitForCrank', () => {
     it('should resolve immediately when not in a crank', async () => {
       context.inCrank = false;

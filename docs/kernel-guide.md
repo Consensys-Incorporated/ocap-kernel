@@ -645,7 +645,9 @@ A result that carries krefs also has a `kpid`. The kernel keeps those krefs
 alive for the caller until the result is passed to `kernel.releaseResult`, or
 until the kernel next starts. Releasing a result the kernel holds nothing for
 does nothing, whether it has no `kpid`, was already released, or dates from
-before a restart, so a caller can release every result without looking:
+before a restart. Neither does releasing after the kernel has stopped, since
+the next start releases every hold. So a caller can release every result
+without looking, and in a `finally`:
 
 ```ts
 const result = await kernel.queueMessage(rootKref, 'getForecaster', ['Paris']);
