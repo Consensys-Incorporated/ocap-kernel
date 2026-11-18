@@ -18,6 +18,7 @@ import type {
   CrankResult,
   InboxOutcome,
   RunLoopItem,
+  QueueMessageResult,
   RunQueueItem,
   SubclusterId,
 } from './types.ts';
@@ -25,6 +26,7 @@ import { VatHandle } from './vats/VatHandle.ts';
 import { asKRef, asSubclusterId, asVatId } from '../test/branded.ts';
 import { KernelServiceManager } from './KernelServiceManager.ts';
 import { makeMapKernelDatabase } from '../test/storage.ts';
+import { markStoreFaults } from './store/utils/store-fault.ts';
 
 const mocks = vi.hoisted(() => {
   class KernelQueue {
@@ -33,6 +35,13 @@ const mocks = vi.hoisted(() => {
     enqueueMessage = vi
       .fn()
       .mockResolvedValue({ body: '{"result":"ok"}', slots: [] });
+
+    releaseResultIfHeld = vi.fn().mockResolvedValue(true);
+
+    // On the prototype, for a test to spy on before `Kernel.make` calls it.
+    releaseAbandonedResults(): number {
+      return 0;
+    }
 
     #runLoopFailure: Error | undefined;
 
@@ -485,6 +494,124 @@ describe('Kernel', () => {
       await kernel.launchSubcluster(makeSingleVatClusterConfig());
       const result = await kernel.queueMessage(asKRef('ko1'), 'hello', []);
       expect(result).toStrictEqual({ body: '{"result":"ok"}', slots: [] });
+    });
+
+    it.each([
+      ['releases', 'with', { body: '#"$0"', slots: ['ko2'], kpid: 'kp7' }, 1],
+      ['does not release', 'without', { body: '#"pong"', slots: [] }, 0],
+    ])('%s a result %s a kpid', async (_verb, _with, result, calls) => {
+      const kernel = await Kernel.make(
+        mockPlatformServices,
+        mockKernelDatabase,
+      );
+
+      await kernel.releaseResult(result as QueueMessageResult);
+
+      expect(
+        mocks.KernelQueue.lastInstance.releaseResultIfHeld.mock.calls,
+      ).toStrictEqual(calls ? [['kp7']] : []);
+    });
+
+    it('resolves when the result is not held', async () => {
+      const kernel = await Kernel.make(
+        mockPlatformServices,
+        mockKernelDatabase,
+      );
+      mocks.KernelQueue.lastInstance.releaseResultIfHeld.mockResolvedValue(
+        false,
+      );
+
+      await kernel.releaseResult({ kpid: asKRef('kp7') });
+
+      expect(
+        mocks.KernelQueue.lastInstance.releaseResultIfHeld.mock.calls,
+      ).toStrictEqual([['kp7']]);
+    });
+
+    it.each([
+      ['stopped', 'Kernel run loop is stopped; cannot release a result'],
+      ['failed', 'Kernel run loop died; cannot release a result'],
+    ])('resolves when the run loop has %s', async (state, refusal) => {
+      const kernel = await Kernel.make(
+        mockPlatformServices,
+        mockKernelDatabase,
+      );
+      const queue = mocks.KernelQueue.lastInstance;
+      if (state === 'stopped') {
+        await queue.endRunLoop();
+      } else {
+        queue.killRunLoop(new Error('run loop boom'));
+      }
+      queue.releaseResultIfHeld.mockRejectedValue(new Error(refusal));
+
+      await kernel.releaseResult({ kpid: asKRef('kp7') });
+
+      expect(queue.getRunLoopStatus().state).toBe(state);
+    });
+
+    it('rejects with a store fault after the run loop has stopped', async () => {
+      const kernel = await Kernel.make(
+        mockPlatformServices,
+        mockKernelDatabase,
+      );
+      const queue = mocks.KernelQueue.lastInstance;
+      const { kernelKVStore } = makeMapKernelDatabase();
+      vi.spyOn(kernelKVStore, 'delete').mockImplementation(() => {
+        throw new Error('disk full');
+      });
+      queue.releaseResultIfHeld.mockImplementation(async () =>
+        markStoreFaults(kernelKVStore).delete('heldResult.kp7'),
+      );
+      await queue.endRunLoop();
+
+      await expect(
+        kernel.releaseResult({ kpid: asKRef('kp7') }),
+      ).rejects.toThrow('disk full');
+    });
+
+    it('rejects when the release fails under a running loop', async () => {
+      const kernel = await Kernel.make(
+        mockPlatformServices,
+        mockKernelDatabase,
+      );
+      mocks.KernelQueue.lastInstance.releaseResultIfHeld.mockRejectedValue(
+        new Error('disk full'),
+      );
+
+      await expect(
+        kernel.releaseResult({ kpid: asKRef('kp7') }),
+      ).rejects.toThrow('disk full');
+    });
+
+    it('releases the results a previous incarnation held when it starts', async () => {
+      const sweep = vi.spyOn(
+        mocks.KernelQueue.prototype,
+        'releaseAbandonedResults',
+      );
+
+      await Kernel.make(mockPlatformServices, mockKernelDatabase);
+
+      expect(sweep).toHaveBeenCalledOnce();
+    });
+
+    it('resolves while the kernel is stopping', async () => {
+      const kernel = await Kernel.make(
+        mockPlatformServices,
+        mockKernelDatabase,
+      );
+      const queue = mocks.KernelQueue.lastInstance;
+      const ended = makePromiseKit<void>();
+      vi.spyOn(queue, 'endRunLoop').mockReturnValue(ended.promise);
+      const stopped = kernel.stop();
+      queue.releaseResultIfHeld.mockRejectedValue(
+        new Error('Kernel run loop is stopping; cannot release a result'),
+      );
+
+      await kernel.releaseResult({ kpid: asKRef('kp7') });
+
+      expect(queue.getRunLoopStatus().state).toBe('running');
+      ended.resolve();
+      await stopped;
     });
 
     it('deserializes CapData rejections into Errors', async () => {

@@ -19,6 +19,7 @@ import type { RemoteCommsOptions } from './remotes/types.ts';
 import type { PingVatResult } from './rpc/index.ts';
 import { makeKernelStore } from './store/index.ts';
 import type { KernelStore } from './store/index.ts';
+import { isStoreFault } from './store/utils/store-fault.ts';
 import type {
   VatId,
   RemoteId,
@@ -34,6 +35,7 @@ import type {
   SubclusterLaunchResult,
   EndpointHandle,
   SystemSubclusterConfig,
+  QueueMessageResult,
 } from './types.ts';
 import { isVatId, isRemoteId } from './types.ts';
 import type { AllowedGlobalName } from './vats/endowments.ts';
@@ -347,6 +349,10 @@ export class Kernel {
       );
     }
 
+    // Results held for callers of a previous incarnation, whose promises
+    // died with it.
+    this.#kernelQueue.releaseAbandonedResults();
+
     // Before the vats start, so a throw leaves no worker running, and before
     // the run loop, which may find a delivery to any remote already queued.
     this.#remoteManager.restoreRemotes();
@@ -512,13 +518,16 @@ export class Kernel {
    * @param target - The object to which the message is directed.
    * @param method - The method to be invoked.
    * @param args - Message arguments.
-   * @returns A promise for the CapData encoded result of the message invocation.
+   * @returns A promise for the CapData encoded result of the message
+   * invocation. If it carries slots it also has a `kpid`, and the kernel keeps
+   * the krefs in it alive until it is passed to `releaseResult`, or until the
+   * kernel next starts.
    */
   async queueMessage(
     target: KRef,
     method: string,
     args: unknown[],
-  ): Promise<CapData<KRef>> {
+  ): Promise<QueueMessageResult> {
     try {
       return await this.#kernelQueue.enqueueMessage(target, method, args);
     } catch (rejection) {
@@ -526,6 +535,40 @@ export class Kernel {
         throw kunser(rejection as CapData<KRef>);
       }
       throw rejection;
+    }
+  }
+
+  /**
+   * Give up the krefs in a `queueMessage` result, or in the `bootstrapResult`
+   * of `launchSubcluster`. Anything else that holds them keeps them alive.
+   *
+   * @param result - The result. Releasing one the kernel holds nothing for
+   * does nothing: one without a `kpid`, one already released, or one from
+   * before the kernel last started. So does releasing once `stop` is
+   * called or the run loop has died, since the next start releases every hold.
+   * @param result.kpid - The result's `kpid`.
+   */
+  async releaseResult({ kpid }: { kpid?: KRef | undefined }): Promise<void> {
+    if (kpid === undefined) {
+      return;
+    }
+    let held;
+    try {
+      held = await this.#kernelQueue.releaseResultIfHeld(kpid);
+    } catch (error) {
+      const { state } = this.#kernelQueue.getRunLoopStatus();
+      const stopping = this.#stopping !== undefined;
+      const closed = stopping || state === 'stopped' || state === 'failed';
+      if (isStoreFault(error) || !closed) {
+        throw error;
+      }
+      this.#logger.debug(
+        `releaseResult: run loop ${state === 'running' ? 'stopping' : state}, ${kpid} is left for the next start`,
+      );
+      return;
+    }
+    if (!held) {
+      this.#logger.debug(`releaseResult: ${kpid} is not a held result`);
     }
   }
 

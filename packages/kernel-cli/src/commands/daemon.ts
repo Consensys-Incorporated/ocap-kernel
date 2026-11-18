@@ -384,10 +384,17 @@ export async function handleDaemonQueueMessage({
   }
 
   let output: unknown;
-  if (raw || !isCapData(response.result)) {
+  // A result that carries krefs also names the promise the kernel holds for
+  // it, which is not part of the CapData. The hold is left for the daemon's
+  // next start to release, so that a later command can use the krefs.
+  const { kpid: _kpid, ...capData } =
+    typeof response.result === 'object' && response.result !== null
+      ? (response.result as Record<string, unknown>)
+      : {};
+  if (raw || !isCapData(capData)) {
     output = response.result;
   } else {
-    output = prettifySmallcaps(response.result);
+    output = prettifySmallcaps(capData);
   }
 
   const isTTY = process.stdout.isTTY ?? false;

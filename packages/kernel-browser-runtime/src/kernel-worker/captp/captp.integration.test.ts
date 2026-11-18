@@ -53,6 +53,7 @@ describe('CapTP Integration', () => {
         body: '#{"result":"message-sent"}',
         slots: [],
       }),
+      releaseResult: vi.fn().mockResolvedValue(undefined),
       reset: vi.fn().mockResolvedValue(undefined),
       terminateSubcluster: vi.fn().mockResolvedValue(undefined),
       registerKernelServiceObject: vi.fn(),

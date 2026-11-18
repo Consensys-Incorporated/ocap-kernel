@@ -12,6 +12,7 @@ import type { KernelStore } from '../store/index.ts';
 import type {
   VatId,
   KRef,
+  QueueMessageResult,
   SubclusterId,
   ClusterConfig,
   Subcluster,
@@ -431,7 +432,7 @@ export class SubclusterManager {
     config: ClusterConfig,
   ): Promise<{
     rootKref: KRef;
-    bootstrapResult: CapData<KRef> | undefined;
+    bootstrapResult: QueueMessageResult | undefined;
     vatRootKrefs: Record<string, KRef>;
   }> {
     const vatEntries = Object.entries(config.vats);
@@ -549,6 +550,10 @@ export class SubclusterManager {
     // If any peer vats failed to launch, propagate after bootstrap has had a
     // chance to observe and handle the failures.
     if (firstPeerFailure !== undefined) {
+      // The caller gets the failure, not the result it would release.
+      if (bootstrapResult.kpid !== undefined) {
+        await this.#kernelQueue.releaseResult(bootstrapResult.kpid);
+      }
       throw firstPeerFailure;
     }
 
@@ -693,6 +698,9 @@ export class SubclusterManager {
     for (const { name, config } of newConfigs) {
       const result = await this.launchSubcluster(config, { isSystem: true });
       this.#systemSubclusterRoots.set(name, result.rootKref);
+      if (result.bootstrapResult?.kpid !== undefined) {
+        await this.#kernelQueue.releaseResult(result.bootstrapResult.kpid);
+      }
 
       // Persist the mapping
       this.#kernelStore.setSystemSubclusterMapping(name, result.subclusterId);
