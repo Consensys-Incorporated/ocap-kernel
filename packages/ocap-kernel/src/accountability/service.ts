@@ -1,8 +1,15 @@
 import { makeDefaultExo } from '@metamask/kernel-utils/exo';
 import { assert } from '@metamask/superstruct';
 
+import { buildChain } from './chain.ts';
+import type { Chain } from './chain.ts';
+import type { KernelSigner, Signed } from './signing.ts';
 import { TrackOptionsStruct } from './types.ts';
-import type { AccountabilityRecordView, TrackOptions } from './types.ts';
+import type {
+  AccountabilityRecordView,
+  DeliveryRecord,
+  TrackOptions,
+} from './types.ts';
 import { viewRecords } from './view.ts';
 import { attempt } from '../KernelQueue.ts';
 import type { KernelQueue } from '../KernelQueue.ts';
@@ -11,15 +18,28 @@ import type { SlotValue } from '../liveslots/kernel-marshal.ts';
 import type { KernelStore } from '../store/index.ts';
 import { isPromiseRef } from '../store/utils/promise-ref.ts';
 import { isVatId } from '../types.ts';
-import type { EndpointId, KRef, Sender } from '../types.ts';
+import type { Cause, EndpointId, KRef, Sender } from '../types.ts';
 
-/** Who is calling, as the kernel saw it, not as the caller says. */
-export type Caller = { caller: Sender };
+/**
+ * Who is calling and from which delivery, as the kernel saw it, not as the
+ * caller says.
+ */
+export type CallContext = {
+  caller: Sender;
+  /** The crank the call was issued in, or `'async'` if it was issued outside one. */
+  cause: Cause;
+};
+
+/**
+ * The kernel's signed statement that a delivery happened, for the vat that
+ * handled it to hand to whoever needs proof.
+ */
+export type Receipt = Signed<{ kind: 'receipt'; delivery: DeliveryRecord }>;
 
 /**
  * The kernel service through which a holder of an object asks for a record of
- * what is done with it, and reads the record back. Its methods take the
- * caller first, supplied by the kernel; a vat calls them without it.
+ * what is done with it, and reads the record back. Its methods take the call
+ * context first, supplied by the kernel; a vat calls them without it.
  *
  * The caller's identity is for the record, not for deciding who may do what.
  * Nothing here changes who may send what to whom.
@@ -31,15 +51,36 @@ export type AccountabilityService = {
    * the owner may ask for the arguments; the object stays tracked until every
    * holder that asked has untracked it, or it is collected.
    */
-  track(caller: Caller, obj: SlotValue, options?: TrackOptions): Promise<void>;
+  track(
+    context: CallContext,
+    obj: SlotValue,
+    options?: TrackOptions,
+  ): Promise<void>;
   /** Withdraw this caller's tracking of an object. */
-  untrack(caller: Caller, obj: SlotValue): Promise<void>;
+  untrack(context: CallContext, obj: SlotValue): Promise<void>;
   /**
    * Read the records about an object, as a vat reads them. The owner sees
    * every record; another holder sees only its own chain of custody and the
    * deliveries it sent.
    */
-  history(caller: Caller, obj: SlotValue): Promise<AccountabilityRecordView[]>;
+  history(
+    context: CallContext,
+    obj: SlotValue,
+  ): Promise<AccountabilityRecordView[]>;
+  /**
+   * The caller's chain of custody for an object, back to its owner, each
+   * holder resolved to the parties answerable for it.
+   */
+  chain(context: CallContext, obj: SlotValue): Promise<Chain>;
+  /**
+   * A signed receipt for the delivery the caller is handling. The kernel
+   * knows which from the call's cause, so there is nothing to pass.
+   *
+   * @throws If the call was made outside a delivery, or the delivery left no
+   * record, which it does unless its target was tracked or the host
+   * attributed it.
+   */
+  receipt(context: CallContext): Promise<Receipt>;
 };
 
 /**
@@ -71,14 +112,17 @@ function objectKrefOf(obj: SlotValue): KRef {
  * @param options - Options bag.
  * @param options.kernelStore - The kernel's store.
  * @param options.kernelQueue - The kernel's run queue.
+ * @param options.signer - The kernel's signer.
  * @returns The service.
  */
 export function makeAccountabilityService({
   kernelStore,
   kernelQueue,
+  signer,
 }: {
   kernelStore: KernelStore;
   kernelQueue: KernelQueue;
+  signer: KernelSigner;
 }): AccountabilityService {
   const endpointExists = (endpointId: EndpointId | 'kernel'): boolean =>
     isVatId(endpointId)
@@ -87,7 +131,7 @@ export function makeAccountabilityService({
 
   return makeDefaultExo('accountabilityService', {
     async track(
-      { caller }: Caller,
+      { caller }: CallContext,
       obj: SlotValue,
       options: TrackOptions = {},
     ): Promise<void> {
@@ -113,7 +157,7 @@ export function makeAccountabilityService({
       );
     },
 
-    async untrack({ caller }: Caller, obj: SlotValue): Promise<void> {
+    async untrack({ caller }: CallContext, obj: SlotValue): Promise<void> {
       const kref = objectKrefOf(obj);
       await kernelQueue.enqueueInbox('untrack an object', async () =>
         attempt(() => {
@@ -123,7 +167,7 @@ export function makeAccountabilityService({
     },
 
     async history(
-      { caller }: Caller,
+      { caller }: CallContext,
       obj: SlotValue,
     ): Promise<AccountabilityRecordView[]> {
       const kref = objectKrefOf(obj);
@@ -141,6 +185,45 @@ export function makeAccountabilityService({
           ),
         ),
       );
+    },
+
+    async chain({ caller }: CallContext, obj: SlotValue): Promise<Chain> {
+      const kref = objectKrefOf(obj);
+      return kernelQueue.enqueueInbox('read a chain of custody', async () =>
+        attempt(() =>
+          harden(
+            buildChain({
+              kernelStore,
+              kref,
+              holder: caller,
+              peerId: kernelStore.getRemoteIdentityValue('peerId'),
+            }),
+          ),
+        ),
+      );
+    },
+
+    async receipt({ caller, cause }: CallContext): Promise<Receipt> {
+      if (cause === 'async') {
+        throw Error('the call was made outside a delivery');
+      }
+      const [delivery] = (await kernelQueue.enqueueInbox(
+        'read a delivery record',
+        async () =>
+          attempt(() =>
+            kernelStore.getAccountabilityRecords({
+              kind: 'delivery',
+              endpoint: caller,
+              crank: cause,
+            }),
+          ),
+      )) as DeliveryRecord[];
+      if (delivery === undefined) {
+        throw Error(
+          `no record of the delivery to ${caller} in crank ${cause}; its target was not tracked`,
+        );
+      }
+      return signer.sign({ kind: 'receipt', delivery });
     },
   });
 }

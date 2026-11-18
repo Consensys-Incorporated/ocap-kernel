@@ -29,6 +29,8 @@ import * as storeModule from './store/index.ts';
 import { makeKernelStore } from './store/index.ts';
 import type { KernelStore } from './store/index.ts';
 import { makeMapKernelDatabase } from '../test/storage.ts';
+import { makeTestParty, seedIdentity } from '../test/identity.ts';
+import { verifyKernelSignature } from './accountability/signing.ts';
 import { markStoreFaults } from './store/utils/store-fault.ts';
 
 const mocks = vi.hoisted(() => {
@@ -2048,7 +2050,8 @@ describe('Kernel', () => {
       ).toHaveLength(expected);
     });
 
-    it('exports and prunes records', async () => {
+    it('exports the records and attestations signed, and prunes records', async () => {
+      const peerId = await seedIdentity(mockKernelDatabase.kernelKVStore);
       const kernel = await Kernel.make(
         mockPlatformServices,
         mockKernelDatabase,
@@ -2072,30 +2075,142 @@ describe('Kernel', () => {
           carrier: 'ko1',
         }),
       });
-      expect(
-        await kernel.exportAccountabilityRecords({ kref: 'ko1' }),
-      ).toStrictEqual([
-        {
-          seq: 1,
-          kind: 'conveyance',
-          witness: 'kernel',
-          crankNumber: 1,
-          kref: 'ko1',
-          sender: 'v2',
-          to: 'v1',
-          via: 'message',
-          carrier: 'ko1',
+      const exported = await kernel.exportAccountabilityRecords({
+        kref: 'ko1',
+      });
+      expect(exported).toStrictEqual({
+        payload: {
+          records: [
+            {
+              seq: 1,
+              kind: 'conveyance',
+              witness: 'kernel',
+              crankNumber: 1,
+              kref: 'ko1',
+              sender: 'v2',
+              to: 'v1',
+              via: 'message',
+              carrier: 'ko1',
+            },
+          ],
+          attestations: [],
         },
-      ]);
+        signer: peerId,
+        incarnationId: expect.any(String),
+        signature: expect.any(String),
+      });
+      expect(await verifyKernelSignature(exported)).toBe(true);
       expect(await kernel.pruneAccountabilityRecords({ kref: 'ko2' })).toBe(0);
       expect(await kernel.pruneAccountabilityRecords()).toBe(1);
-      expect(await kernel.exportAccountabilityRecords()).toStrictEqual([]);
+      expect(
+        (await kernel.exportAccountabilityRecords()).payload.records,
+      ).toStrictEqual([]);
+    });
+
+    it('passes what the host says about an act to the queue', async () => {
+      const kernel = await Kernel.make(
+        mockPlatformServices,
+        mockKernelDatabase,
+      );
+      const attribution = { onBehalfOf: 'ed25519:00' };
+      await kernel.queueMessage(asKRef('ko1'), 'hello', [], attribution);
+      expect(
+        mocks.KernelQueue.lastInstance.enqueueMessage,
+      ).toHaveBeenCalledWith(asKRef('ko1'), 'hello', [], attribution);
+    });
+
+    it.each([
+      [
+        'an intent whose signature does not check',
+        async (): Promise<object> => ({
+          intent: {
+            ...(await (
+              await makeTestParty()
+            ).attest({ kind: 'intent', subject: 'ko1', payload: null })),
+            subject: 'ko2',
+          },
+        }),
+        'does not check',
+      ],
+      [
+        'an attribution it does not understand',
+        async (): Promise<object> => ({ bogus: 1 }),
+        'bogus',
+      ],
+    ])('refuses %s before queuing anything', async (_what, make, problem) => {
+      const kernel = await Kernel.make(
+        mockPlatformServices,
+        mockKernelDatabase,
+      );
+      await expect(
+        kernel.queueMessage(
+          asKRef('ko1'),
+          'hello',
+          [],
+          (await make()) as never,
+        ),
+      ).rejects.toThrow(problem);
+      expect(
+        mocks.KernelQueue.lastInstance.enqueueMessage,
+      ).not.toHaveBeenCalled();
+    });
+
+    it('installs the operator attestation at start, countersigned', async () => {
+      const peerId = await seedIdentity(mockKernelDatabase.kernelKVStore);
+      const party = await makeTestParty();
+      const operator = await party.attest({
+        kind: 'operator',
+        subject: peerId,
+        payload: { name: 'Operator' },
+      });
+      const kernel = await Kernel.make(
+        mockPlatformServices,
+        mockKernelDatabase,
+        { accountability: { operator } },
+      );
+      expect(await kernel.getAttestations({ kind: 'operator' })).toStrictEqual([
+        {
+          ...operator,
+          countersignature: expect.objectContaining({ signer: peerId }),
+        },
+      ]);
+    });
+
+    it('keeps an attestation and reads it back', async () => {
+      const kernel = await Kernel.make(
+        mockPlatformServices,
+        mockKernelDatabase,
+      );
+      const party = await makeTestParty();
+      const implementer = await party.attest({
+        kind: 'implementer',
+        subject: 'sha256:00',
+        payload: null,
+      });
+      await kernel.attest(implementer);
+      expect(
+        await kernel.getAttestations({
+          kind: 'implementer',
+          subject: 'sha256:00',
+        }),
+      ).toStrictEqual([implementer]);
+    });
+
+    it("reports a vat's bundle hash", async () => {
+      const kernel = await Kernel.make(
+        mockPlatformServices,
+        mockKernelDatabase,
+      );
+      expect(kernel.getVatBundleHash(asVatId('v1'))).toBeUndefined();
+      mockKernelDatabase.kernelKVStore.set('v1.bundleHash', 'sha256:00');
+      expect(kernel.getVatBundleHash(asVatId('v1'))).toBe('sha256:00');
     });
 
     it.each([
       ['a field left undefined', { kref: undefined }],
       ['a field it does not know', { krefs: 'ko1' }],
     ])('refuses a filter with %s, deleting nothing', async (_what, filter) => {
+      await seedIdentity(mockKernelDatabase.kernelKVStore);
       const kernel = await Kernel.make(
         mockPlatformServices,
         mockKernelDatabase,
@@ -2116,7 +2231,9 @@ describe('Kernel', () => {
       await expect(
         kernel.exportAccountabilityRecords(filter as never),
       ).rejects.toThrow(/kref/u);
-      expect(await kernel.exportAccountabilityRecords()).toHaveLength(1);
+      expect(
+        (await kernel.exportAccountabilityRecords()).payload.records,
+      ).toHaveLength(1);
     });
   });
 

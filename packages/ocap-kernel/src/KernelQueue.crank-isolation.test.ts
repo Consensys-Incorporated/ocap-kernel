@@ -565,7 +565,7 @@ describe('a writer acting while a crank aborts', () => {
     serviceManager.invokeKernelService(
       kref,
       { methargs: kser(['work', []]), result: kpid },
-      'kernel',
+      { sender: 'kernel', cause: 1 },
     );
     const enqueueInbox = vi.spyOn(kernelQueue, 'enqueueInbox');
     const delivered = await abortACrankWhile(harness, async () => {

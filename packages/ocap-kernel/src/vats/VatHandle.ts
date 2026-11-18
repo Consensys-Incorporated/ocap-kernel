@@ -74,6 +74,8 @@ export class VatHandle implements EndpointHandle {
   readonly #allowedGlobalNames: AllowedGlobalName[] | undefined;
 
   /** Storage holding this vat's persistent state */
+  readonly #kernelStore: KernelStore;
+
   readonly #vatStore: VatStore;
 
   /** The vat's syscall */
@@ -120,6 +122,7 @@ export class VatHandle implements EndpointHandle {
     this.#allowedGlobalNames = allowedGlobalNames;
     this.#vatStream = vatStream;
     this.#onStreamFailure = onStreamFailure;
+    this.#kernelStore = kernelStore;
     this.#vatStore = kernelStore.makeVatStore(vatId);
     this.#vatSyscall = new VatSyscall({
       vatId,
@@ -189,7 +192,7 @@ export class VatHandle implements EndpointHandle {
         this.#reportStreamFailure(error);
       });
 
-    return await this.sendVatCommand({
+    const result = await this.sendVatCommand({
       method: 'initVat',
       params: {
         vatConfig: this.config,
@@ -199,6 +202,11 @@ export class VatHandle implements EndpointHandle {
           : {}),
       },
     });
+    const [checkpoint, error, bundleHash] = result;
+    if (!error) {
+      this.#kernelStore.setVatBundleHash(this.vatId, bundleHash);
+    }
+    return [checkpoint, error];
   }
 
   /**

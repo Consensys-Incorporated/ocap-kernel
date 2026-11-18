@@ -50,6 +50,7 @@ describe('kernel store', () => {
       const ks = makeKernelStore(mockKernelDatabase);
       expect(Object.keys(ks).sort()).toStrictEqual([
         'addAnonymousKernelObject',
+        'addAttestation',
         'addCListEntry',
         'addGCActions',
         'addPromiseSubscriber',
@@ -100,6 +101,7 @@ describe('kernel store', () => {
         'getAllSystemSubclusterMappings',
         'getAllVatRecords',
         'getAnonymousKernelObjects',
+        'getAttestations',
         'getCrankNumber',
         'getCurrentDelivery',
         'getGCActions',
@@ -141,6 +143,7 @@ describe('kernel store', () => {
         'getSystemSubclusterMapping',
         'getTerminatedVats',
         'getTrackers',
+        'getVatBundleHash',
         'getVatConfig',
         'getVatIDs',
         'getVatSubcluster',
@@ -211,6 +214,7 @@ describe('kernel store', () => {
         'setRemoteStartSeq',
         'setRevoked',
         'setSystemSubclusterMapping',
+        'setVatBundleHash',
         'setVatConfig',
         'startCrank',
         'trackObject',

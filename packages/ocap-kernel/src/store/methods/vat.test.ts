@@ -253,6 +253,15 @@ describe('vat store methods', () => {
     });
   });
 
+  describe('bundle hash', () => {
+    it('keeps the hash under the vat prefix, for its cleanup to sweep', () => {
+      expect(vatMethods.getVatBundleHash(vatID1)).toBeUndefined();
+      vatMethods.setVatBundleHash(vatID1, 'sha256:00');
+      expect(vatMethods.getVatBundleHash(vatID1)).toBe('sha256:00');
+      expect(mockKV.get('v1.bundleHash')).toBe('sha256:00');
+    });
+  });
+
   describe('deleteVatConfig', () => {
     it('removes vat configuration from storage', () => {
       mockKV.set(`vatConfig.${vatID1}`, JSON.stringify(vatConfig1));

@@ -11,6 +11,7 @@ import { parseRef } from './store/utils/parse-ref.ts';
 import { isPromiseRef } from './store/utils/promise-ref.ts';
 import { isStoreFault } from './store/utils/store-fault.ts';
 import type {
+  Cause,
   EndpointId,
   EndpointHandle,
   ERef,
@@ -55,7 +56,7 @@ type KernelRouterOptions = {
   invokeKernelService: (
     target: KRef,
     message: KernelMessage,
-    sender: Sender,
+    provenance: { sender: Sender; cause: Cause },
   ) => void;
   restartVat: (vatId: VatId) => Promise<CrankResult | undefined>;
   terminateVat: (
@@ -86,7 +87,7 @@ export class KernelRouter {
   readonly #invokeKernelService: (
     target: KRef,
     message: KernelMessage,
-    sender: Sender,
+    provenance: { sender: Sender; cause: Cause },
   ) => void;
 
   /**
@@ -440,11 +441,10 @@ export class KernelRouter {
         }
       } else if (isKernelServiceMessage) {
         this.#recordSend(item, target, endpointId);
-        crankResult = this.#deliverKernelServiceMessage(
-          target,
-          message,
+        crankResult = this.#deliverKernelServiceMessage(target, message, {
           sender,
-        );
+          cause,
+        });
       } else {
         Fail`no owner for kernel object ${target}`;
       }
@@ -462,6 +462,9 @@ export class KernelRouter {
         message,
         sender,
         cause,
+        ...(item.attribution === undefined
+          ? {}
+          : { attribution: item.attribution }),
       });
       this.#kernelStore.decrementRefCount(item.target, 'requeue|target');
       if (message.result) {
@@ -477,10 +480,11 @@ export class KernelRouter {
 
   /**
    * Record what a send does with tracked objects: a delivery, if its target is
-   * tracked, and a conveyance of each tracked reference it carries. Written
-   * once the delivery is made, inside the crank's savepoint: a delivery that
-   * is rolled back takes its records with it, and one a remote fails, which
-   * the crank survives, leaves none.
+   * tracked or the host attributed the send to a party, and a conveyance of
+   * each tracked reference it carries. Written once the delivery is made,
+   * inside the crank's savepoint: a delivery that is rolled back takes its
+   * records with it, and one a remote fails, which the crank survives, leaves
+   * none.
    *
    * @param item - The send.
    * @param target - The object it is delivered to, which may not be the one
@@ -492,8 +496,8 @@ export class KernelRouter {
     target: KRef,
     endpointId: EndpointId | 'kernel',
   ): void {
-    const { message, sender, cause } = item;
-    if (this.#kernelStore.isTracked(target)) {
+    const { message, sender, cause, attribution } = item;
+    if (attribution !== undefined || this.#kernelStore.isTracked(target)) {
       this.#kernelStore.recordDelivery({
         target,
         targetEndpoint: endpointId,
@@ -501,6 +505,7 @@ export class KernelRouter {
         cause,
         method: kmethodName(message.methargs),
         message,
+        attribution,
       });
     }
     this.#recordConveyances({
@@ -553,15 +558,15 @@ export class KernelRouter {
    *
    * @param target - The kernel reference of the target service object.
    * @param message - The message to deliver to the service.
-   * @param sender - Who sent it.
+   * @param provenance - Who sent it, and from which crank.
    * @returns The crank result indicating the delivery was to the kernel.
    */
   #deliverKernelServiceMessage(
     target: KRef,
     message: KernelMessage,
-    sender: Sender,
+    provenance: { sender: Sender; cause: Cause },
   ): CrankResult {
-    this.#invokeKernelService(target, message, sender);
+    this.#invokeKernelService(target, message, provenance);
     return { didDelivery: 'kernel' };
   }
 
