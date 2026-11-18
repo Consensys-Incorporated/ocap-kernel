@@ -118,8 +118,8 @@ test.describe('Remote Communications', () => {
     await expect(targetSelect).toBeVisible();
     const options = await targetSelect.locator('option').all();
     expect(options.length).toBeGreaterThan(1);
-    await targetSelect.selectOption({ value: 'ko4' });
-    expect(await targetSelect.inputValue()).toBe('ko4');
+    await targetSelect.selectOption({ value: 'ko5' });
+    expect(await targetSelect.inputValue()).toBe('ko5');
 
     // Set method to doRunRun (the remote communication method)
     const methodInput = popupPage1.locator('[data-testid="message-method"]');
