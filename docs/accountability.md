@@ -363,13 +363,22 @@ and are the only records whose content comes from outside the kernel:
 
 ```
 attestation {
-  kind: 'operator' | 'implementer' | 'intent' | 'segment' | 'receipt',
-  subject,                    // peerId, bundle hash, deliveryId, or kref
+  kind: 'operator' | 'implementer' | 'intent',
+  subject,                    // peerId, bundle hash, or the act's target
   party: PartyRef,
-  issuedBy: PartyRef | peerId,
-  payload, signature
+  payload,
+  signature,                  // by the party, over the other four fields
+  countersignature?           // by the kernel, on an operator attestation
 }
 ```
+
+A party-issued attestation is signed by the party it names, over the
+canonical JSON of its kind, subject, party and payload. What a kernel issues
+in its own name, a `segment` or a `receipt`, is a signed statement of a
+different shape, `Signed<payload>`, carrying the kernel's peer ID as signer,
+its `incarnationId`, and its signature over the three. The incarnation is
+there because a crank number names a delivery only within one incarnation of
+one kernel: a database reset under the same key starts the count again.
 
 - **operator**: a party declares itself answerable for a kernel, identified
   by peer ID. Signed by the party's key and countersigned by the kernel's
@@ -386,9 +395,19 @@ attestation {
   kref, attached when a tracked reference is exported to a remote. See
   [Crossing kernels](#crossing-kernels).
 - **receipt**: a kernel's signed statement that a particular delivery
-  happened, for the receiving vat to hand to whoever needs proof.
+  happened, for the receiving vat to hand to whoever needs proof. It carries
+  the delivery record, so a receipt for an attributed act carries the intent.
 
-`PartyRef` is an opaque string to the kernel, and this design does not prescribe a scheme for it. Any identifier that names a party and comes with a way to verify that party's signatures will serve: a DID, a bare public key, an account on some blockchain. The kernel verifies its own Ed25519 signatures. Verifying a party's signature is delegated to a platform service keyed by scheme, so each verifier is supplied by the host and the kernel takes on no dependency on any particular ecosystem. A blockchain account attesting that it operates a kernel, with the kernel countersigning, is one scheme a host could support; it is not a default.
+`PartyRef` is an opaque string to the kernel but for its scheme, the part
+before the first colon, and this design does not prescribe a scheme. Any
+identifier that names a party and comes with a way to verify that party's
+signatures will serve: a DID, a bare public key, an account on some
+blockchain. The kernel verifies its own Ed25519 signatures, and those of
+`ed25519:<hex public key>` parties. Verifying any other party's signature is
+delegated to a verifier the host supplies for the scheme, so the kernel takes
+on no dependency on any particular ecosystem. A blockchain account attesting
+that it operates a kernel, with the kernel countersigning, is one scheme a
+host could support; it is not a default.
 
 The kernel does not resolve a `PartyRef` to a name. That is a registry's job.
 
@@ -600,8 +619,16 @@ of everyone else who holds it. The owner exported it and sees all of it.
 
 The service learns who is calling from the kernel, not from the caller: a
 kernel service registered with `withCaller` has each method called with
-`{ caller }`, the sending endpoint as the router saw it, ahead of the caller's
-own arguments.
+`{ caller, cause }`, the sending endpoint as the router saw it and the crank
+the call was sent in, ahead of the caller's own arguments. `receipt()` is
+what the `cause` is for: it finds the delivery record the kernel wrote in that
+crank for that endpoint, and refuses a call made outside a delivery, or for a
+delivery that left no record, which it does unless its target was tracked or
+the host attributed it. `chain()` walks the conveyances of the object to the
+caller, or failing those its introduction, and the same for each sender in
+turn, back to the owner; each holder is resolved to its parties by the
+attestations the kernel holds: for a vat, the operator of this kernel and the
+implementer of the vat's bundle; for a remote, the operator of that kernel.
 
 ### Delivery context
 
@@ -624,26 +651,38 @@ call, which it is not.
 
 ### Host and operator
 
-- `Kernel.make(…, { accountability: { recordIntroductions?, operator? } })`
-  turns the always-on records off for hosts that do not want them and
-  installs the operator attestation.
+- `Kernel.make(…, { accountability: { recordIntroductions?, operator?, partySignatureVerifiers? } })`
+  turns the always-on records off for hosts that do not want them, installs
+  the operator attestation once the run loop is up, and supplies verifiers for
+  the party schemes the host supports.
 - `kernel.queueMessage(target, method, args, { onBehalfOf, intent, trace })`
   lets the host attribute an external act to a party, attach the party's
-  signed intent, and start a trace from it.
-- `kernel.attest(attestation)` stores an implementer or operator attestation.
+  signed intent, and start a trace from it. An attributed send is recorded
+  as a delivery whether or not its target is tracked, with the attribution
+  on the record; an intent whose signature does not check is refused before
+  anything is queued. The kernel does not check that the intent matches the
+  act: what the party signed is for the auditor to compare.
+- `kernel.attest(attestation)` stores an implementer or operator attestation
+  once its signature checks, countersigning an operator attestation for this
+  kernel and requiring the countersignature on one for another;
+  `kernel.getAttestations(filter)` reads them back.
 - `kernel.exportAccountabilityRecords(filter)` and `kernel.pruneAccountabilityRecords(filter)` are the
-  retention operations. Export produces a signed bundle that stands on its
-  own (unsigned until Phase 2 gives the kernel a signing key); prune is the
-  only thing that deletes records, and it is never implicit.
+  retention operations. Export produces a signed bundle of the records and the
+  attestations that stands on its own; prune is the only thing that deletes
+  records, and it is never implicit.
+- `kernel.getVatBundleHash(vatId)` is the bundle hash below.
 
 ### Bundle identity
 
-Implementer attestations need something to bind to. The bundle loader gains
-a content hash of each loaded bundle, stored in the vat's persistent config,
+Implementer attestations need something to bind to. The supervisor hashes
+each bundle as it fetches it, SHA-256 over the bytes, and reports the hash in
+its `initVat` reply; the kernel keeps it under the vat's prefix in the store,
 so that a vat can be asked what code it is running and the answer matched
 against an attestation. This is useful on its own and is a prerequisite for the
 `validatedClient` contact model already sketched in
-`service-discovery-types`.
+`service-discovery-types`. The hash is computed in the vat's process, before
+the bundle is loaded, by code the bundle cannot reach; it is as trustworthy
+as the supervisor, which is the kernel's own code running there.
 
 ## Tradeoffs considered
 
@@ -678,6 +717,21 @@ wrong tool here: the problem statement asks for selected actions at a cost
 their implementers choose. Traces propagate selection causally so that the
 implementer of the root act does not need to know, or instrument, everything
 downstream.
+
+**Attestations in the kv store, not the records table.** Attestations are
+declarations about subjects, few, looked up by kind and subject, and
+replaceable; records are events, many, append-only, and looked up by kref,
+endpoint, and crank. Kept under `attestation.<kind>.<subject>` in the kv
+store, and exported alongside the records in the signed bundle, which is
+where a reader needs both.
+
+**Party verifiers as a kernel option, not a platform service.** The first
+draft had a `verifyPartySignature` platform service. A platform service is
+an RPC boundary in the browser runtime, with a method spec, a client and a
+server to extend, and the host's verifiers would still have to reach the
+server somehow. A function map on `Kernel.make` reaches the kernel wherever
+it is constructed, and a platform service can be layered under it for a host
+that cannot supply functions there.
 
 **Delivery context in vat code.** Left out. A `vatPowers.deliveryContext()`
 was the first design, so a vat could name the call it was handling; the
@@ -741,15 +795,13 @@ records from `KernelRouter.#deliverSend` for tracked targets and `conveyance`
 records from the slot walks in `#deliverSend` and `#deliverNotify` for tracked
 slots; `exportAccountabilityRecords` and `pruneAccountabilityRecords` on the kernel. Records resolve to endpoints only; party resolution is Phase 2.
 
-**Phase 2: parties.** Bundle hashing in the loader; the attestation record
-kind; `operator`, `implementer`, and `intent` attestations; kernel signing
-with the identity key, which `remote-comms` already derives, and the
-kernel's `incarnationId` on everything it signs, since a crank number names a
-delivery only within one incarnation of one kernel and a database reset under
-the same key starts the count again; the
-`verifyPartySignature` platform service, keyed by scheme, with verifiers
-supplied by the host; `onBehalfOf` and `intent` on `queueMessage`; `chain` and
-`receipt` on the service.
+**Phase 2: parties.** Bundle hashing in the supervisor; `operator`,
+`implementer`, and `intent` attestations; kernel signing with the identity
+key, which `remote-comms` already derives, and the kernel's `incarnationId`
+on everything it signs; party signature verifiers keyed by scheme, `ed25519`
+built in and the rest supplied by the host; `onBehalfOf` and `intent` on
+`queueMessage`; `chain` and `receipt` on the service, and `cause` in the call
+context the kernel gives a service.
 
 **Phase 3: traces.** Trace context on sends and notifies; propagation
 through `bufferCrankOutput` and `resolvePromises`; the `trace` option on

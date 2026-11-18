@@ -253,6 +253,43 @@ describe('VatSupervisor', () => {
     });
   });
 
+  describe('initVat', () => {
+    it('replies with the content hash of the bundle it loaded', async () => {
+      const dispatch = vi.fn();
+      const bundle =
+        '{"moduleFormat":"iife","code":"var __vatExports__ = {};"}';
+      const mockFetchBlob: FetchBlob = vi.fn().mockResolvedValue({
+        ok: true,
+        text: vi.fn().mockResolvedValue(bundle),
+      });
+      const { stream } = await makeVatSupervisor({
+        dispatch,
+        fetchBlob: mockFetchBlob,
+      });
+      await stream.receiveInput({
+        id: 'test-init',
+        method: 'initVat',
+        params: { vatConfig: { bundleSpec: 'test.bundle' }, state: [] },
+        jsonrpc: '2.0',
+      });
+      await delay(50);
+
+      const digest = await globalThis.crypto.subtle.digest(
+        'SHA-256',
+        new TextEncoder().encode(bundle),
+      );
+      const digestHex = [...new Uint8Array(digest)]
+        .map((byte) => byte.toString(16).padStart(2, '0'))
+        .join('');
+      expect(dispatch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 'test-init',
+          result: [expect.anything(), null, `sha256:${digestHex}`],
+        }),
+      );
+    });
+  });
+
   describe('platform configuration', () => {
     it('accepts makePlatform and platformOptions parameters', async () => {
       const makePlatform = vi.fn().mockResolvedValue({});

@@ -26,8 +26,18 @@ describe('queueMessageSpec', () => {
     // Invalid parameters should fail validation
     const invalidParams = ['ko123', 123, [1, 'string']];
     expect(() => queueMessageSpec.params.create(invalidParams)).toThrow(
-      'Expected a string',
+      'Expected the value to satisfy a union',
     );
+  });
+
+  it('accepts an attribution as a fourth parameter', () => {
+    const attribution = { onBehalfOf: 'ed25519:00' };
+    expect(
+      queueMessageSpec.params.create(['ko123', 'methodName', [], attribution]),
+    ).toStrictEqual(['ko123', 'methodName', [], attribution]);
+    expect(() =>
+      queueMessageSpec.params.create(['ko123', 'methodName', [], { bogus: 1 }]),
+    ).toThrow('Expected the value to satisfy a union');
   });
 
   it('should define the correct result structure', () => {
@@ -65,8 +75,29 @@ describe('queueMessageHandler', () => {
       [target, method, args],
     );
 
-    expect(mockKernel.queueMessage).toHaveBeenCalledWith(target, method, args);
+    expect(mockKernel.queueMessage).toHaveBeenCalledWith(
+      target,
+      method,
+      args,
+      undefined,
+    );
     expect(result).toStrictEqual(expectedResult);
+  });
+
+  it('forwards the attribution', async () => {
+    const attribution = { onBehalfOf: 'ed25519:00' };
+    await queueMessageHandler.implementation({ kernel: mockKernel }, [
+      'ko1' as KRef,
+      'poke',
+      [],
+      attribution,
+    ]);
+    expect(mockKernel.queueMessage).toHaveBeenCalledWith(
+      'ko1',
+      'poke',
+      [],
+      attribution,
+    );
   });
 
   it('propagates rejections from kernel.queueMessage', async () => {

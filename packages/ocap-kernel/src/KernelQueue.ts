@@ -30,6 +30,7 @@ import type {
   VatId,
 } from './types.ts';
 import { insistKRef } from './types.ts';
+import type { Attribution } from './accountability/types.ts';
 import { Fail } from './utils/assert.ts';
 
 /**
@@ -50,6 +51,7 @@ type HeldMessage = {
   type: 'queueMessage';
   target: KRef;
   methargs: CapData<KRef>;
+  attribution: Attribution | undefined;
   subscription: Subscription;
 };
 
@@ -825,6 +827,7 @@ export class KernelQueue {
    * @param target - The object to which the message is directed.
    * @param method - The method to be invoked.
    * @param args - Message arguments.
+   * @param attribution - What the host says about the act, if anything.
    *
    * @returns a promise for the (CapData encoded) result of the message
    * invocation, with the `kpid` to pass to `releaseResult` if it carries
@@ -835,6 +838,7 @@ export class KernelQueue {
     target: KRef,
     method: string,
     args: unknown[],
+    attribution?: Attribution,
   ): Promise<QueueMessageResult> {
     // Nothing is draining the run queue, so a returned promise could never settle.
     this.assertRunLoopAlive('queue a message');
@@ -847,6 +851,7 @@ export class KernelQueue {
       type: 'queueMessage',
       target,
       methargs: kser([method, args]),
+      attribution,
       subscription: { resolve, reject },
     });
     return promise;
@@ -859,7 +864,7 @@ export class KernelQueue {
    * @param message - The call.
    */
   #writeMessage(message: HeldMessage): void {
-    const { target, methargs, subscription } = message;
+    const { target, methargs, attribution, subscription } = message;
     // Checked first: outside a crank nothing rolls back, and `enqueueSend`
     // refusing a missing kref partway would keep what it charged before it.
     const missing = [target, ...methargs.slots].find(
@@ -878,7 +883,11 @@ export class KernelQueue {
     // The caller has no c-list, so until it releases the result this is what
     // keeps the krefs in it alive.
     this.#kernelStore.holdResult(result);
-    this.enqueueSend(target, { methargs, result }, { sender: 'kernel' });
+    this.enqueueSend(
+      target,
+      { methargs, result },
+      { sender: 'kernel', attribution },
+    );
     // Last: a write that threw must leave no subscription behind.
     this.subscriptions.set(result, subscription);
   }
@@ -987,6 +996,8 @@ export class KernelQueue {
    * waited on a promise, which keeps the cause it was issued with.
    * @param options.immediate - If true (the default), enqueue immediately; if
    * false, buffer for crank completion.
+   * @param options.attribution - What the host said about the act, on a send
+   * it queued.
    */
   enqueueSend(
     target: KRef,
@@ -997,7 +1008,13 @@ export class KernelQueue {
         ? this.#kernelStore.getCrankNumber()
         : 'async',
       immediate = true,
-    }: { sender: Sender; cause?: Cause; immediate?: boolean },
+      attribution,
+    }: {
+      sender: Sender;
+      cause?: Cause;
+      immediate?: boolean;
+      attribution?: Attribution | undefined;
+    },
   ): void {
     this.#kernelStore.incrementRefCount(target, 'queue|target');
     if (message.result) {
@@ -1012,6 +1029,7 @@ export class KernelQueue {
       message,
       sender,
       cause,
+      ...(attribution === undefined ? {} : { attribution }),
     };
     if (immediate) {
       this.#enqueueRun(item);
@@ -1357,8 +1375,13 @@ export class KernelQueue {
       });
 
       // Enqueue the queued messages (immediate or buffered based on flag).
-      for (const { message, sender, cause } of queuedMessages) {
-        this.enqueueSend(kpid, message, { sender, cause, immediate });
+      for (const { message, sender, cause, attribution } of queuedMessages) {
+        this.enqueueSend(kpid, message, {
+          sender,
+          cause,
+          immediate,
+          attribution,
+        });
       }
 
       // A held result stays held only while a caller is about to be handed

@@ -21,6 +21,7 @@ import type {
   CrankResult,
   EndpointHandle,
   RemoteId,
+  Cause,
   Sender,
   VatId,
   KRef,
@@ -45,7 +46,11 @@ describe('KernelRouter', () => {
     (item: RunQueueItemPeerIncarnation) => CrankResult
   >;
   let mockInvokeKernelService: Mock<
-    (target: KRef, message: KernelMessage, sender: Sender) => void
+    (
+      target: KRef,
+      message: KernelMessage,
+      provenance: { sender: Sender; cause: Cause },
+    ) => void
   >;
 
   beforeEach(() => {
@@ -262,7 +267,35 @@ describe('KernelRouter', () => {
         expect(kernelStore.recordConveyance).not.toHaveBeenCalled();
       });
 
-      it('passes the sender to a kernel service', async () => {
+      it('records a delivery the host attributed to a party, to an untracked object', async () => {
+        (kernelStore.getOwner as unknown as MockInstance).mockReturnValueOnce(
+          v1,
+        );
+        const message: KernelMessage = {
+          methargs: kser(['poke', []]),
+          result: null,
+        };
+        const attribution = { onBehalfOf: 'ed25519:00' };
+        await kernelRouter.deliver({
+          type: 'send',
+          target: asKRef('ko123'),
+          message,
+          sender: 'kernel',
+          cause: 'async',
+          attribution,
+        });
+        expect(kernelStore.recordDelivery).toHaveBeenCalledWith({
+          target: 'ko123',
+          targetEndpoint: v1,
+          sender: 'kernel',
+          cause: 'async',
+          method: 'poke',
+          message,
+          attribution,
+        });
+      });
+
+      it('passes the sender and cause to a kernel service', async () => {
         const target = asKRef('ko123');
         (kernelStore.getOwner as unknown as MockInstance).mockReturnValueOnce(
           'kernel',
@@ -277,11 +310,10 @@ describe('KernelRouter', () => {
           sender: asVatId('v2'),
           cause: 3,
         });
-        expect(mockInvokeKernelService).toHaveBeenCalledWith(
-          target,
-          message,
-          'v2',
-        );
+        expect(mockInvokeKernelService).toHaveBeenCalledWith(target, message, {
+          sender: 'v2',
+          cause: 3,
+        });
       });
 
       it('splats a message when target is revoked and returns undefined', async () => {
@@ -446,6 +478,32 @@ describe('KernelRouter', () => {
           target,
           'requeue|target',
         );
+      });
+
+      it('queues an attributed message on a promise with its attribution', async () => {
+        const target = asKRef('kp123');
+        (
+          kernelStore.getKernelPromise as unknown as MockInstance
+        ).mockReturnValueOnce({ state: 'unresolved' });
+        const message: KernelMessage = {
+          methargs: { body: 'method args', slots: [] },
+          result: null,
+        };
+        const attribution = { onBehalfOf: 'ed25519:00' };
+        await kernelRouter.deliver({
+          type: 'send',
+          target,
+          message,
+          sender: 'kernel',
+          cause: 'async',
+          attribution,
+        });
+        expect(kernelStore.enqueuePromiseMessage).toHaveBeenCalledWith(target, {
+          message,
+          sender: 'kernel',
+          cause: 'async',
+          attribution,
+        });
       });
 
       it('hands over every reference a requeued message carries', async () => {

@@ -1,15 +1,23 @@
 import { E } from '@endo/eventual-send';
 import { makeDefaultExo } from '@metamask/kernel-utils/exo';
-import type { AccountabilityRecord, TrackOptions } from '@metamask/ocap-kernel';
+import type {
+  AccountabilityRecord,
+  Chain,
+  Receipt,
+  TrackOptions,
+} from '@metamask/ocap-kernel';
 
 type Accountability = {
   track(obj: unknown, options?: TrackOptions): Promise<void>;
   untrack(obj: unknown): Promise<void>;
   history(obj: unknown): Promise<AccountabilityRecord[]>;
+  chain(obj: unknown): Promise<Chain>;
+  receipt(): Promise<Receipt>;
 };
 
 type Peer = {
-  receive(obj: unknown): Promise<string>;
+  receive(obj: unknown, accountability: Accountability): Promise<string>;
+  receiptFromHeld(): Promise<Receipt>;
 };
 
 /**
@@ -23,10 +31,19 @@ type Peer = {
 export function buildRootObject() {
   let accountability: Accountability;
   let holder: Peer;
+  let held: unknown;
 
   const thing = makeDefaultExo('thing', {
     poke(): string {
       return 'poked';
+    },
+    /**
+     * A receipt for this delivery.
+     *
+     * @returns The receipt.
+     */
+    async receipt(): Promise<Receipt> {
+      return E(accountability).receipt();
     },
   });
 
@@ -53,14 +70,42 @@ export function buildRootObject() {
      * @returns What the poke returned.
      */
     async handOver(): Promise<string> {
-      return E(holder).receive(thing);
+      return E(holder).receive(thing, accountability);
     },
 
     async history(): Promise<AccountabilityRecord[]> {
       return E(accountability).history(thing);
     },
 
-    async receive(obj: { poke(): string }): Promise<string> {
+    /**
+     * The holder's chain of custody for what it was handed.
+     *
+     * @returns The chain.
+     */
+    async chain(): Promise<Chain> {
+      return E(accountability).chain(held);
+    },
+
+    /**
+     * Have the holder ask the thing for a receipt, so the delivery the
+     * receipt is for crosses vats and the kernel sees it.
+     *
+     * @returns The receipt.
+     */
+    async receipt(): Promise<Receipt> {
+      return E(holder).receiptFromHeld();
+    },
+
+    async receiptFromHeld(): Promise<Receipt> {
+      return E(held as { receipt(): Promise<Receipt> }).receipt();
+    },
+
+    async receive(
+      obj: { poke(): string },
+      service: Accountability,
+    ): Promise<string> {
+      held = obj;
+      accountability = service;
       return E(obj).poke();
     },
   });

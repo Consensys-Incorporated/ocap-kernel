@@ -73,7 +73,11 @@ describe('VatHandle', () => {
     mockKernelStore = makeKernelStore(makeMapKernelDatabase());
     sendVatCommandMock = vi
       .spyOn(VatHandle.prototype, 'sendVatCommand')
-      .mockResolvedValueOnce(['fake', null] as unknown as VatDeliveryResult);
+      .mockResolvedValueOnce([
+        'fake',
+        null,
+        'sha256:00',
+      ] as unknown as VatDeliveryResult);
   });
 
   describe('init', () => {
@@ -90,6 +94,11 @@ describe('VatHandle', () => {
           },
         },
       });
+    });
+
+    it('keeps the bundle hash the worker reports', async () => {
+      await makeVat();
+      expect(mockKernelStore.getVatBundleHash(asVatId('v0'))).toBe('sha256:00');
     });
 
     it.each([
@@ -426,6 +435,7 @@ describe('VatHandle', () => {
                 result: [
                   [[['big', 'x'.repeat(MAX_VAT_MESSAGE_LENGTH)]], ['kept']],
                   null,
+                  'sha256:00',
                 ],
               })
               .catch(() => undefined);

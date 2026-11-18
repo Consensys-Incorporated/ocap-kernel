@@ -16,6 +16,8 @@ describe('index', () => {
       'VatHandle',
       'VatIdStruct',
       'VatSupervisor',
+      'attestationSigningBytes',
+      'canonicalJson',
       'createDefaultEndowments',
       'generateMnemonic',
       'initTransport',
@@ -31,8 +33,12 @@ describe('index', () => {
       'kunser',
       'makeKernelFacet',
       'makeKernelStore',
+      'makePartyVerifier',
       'mnemonicToSeed',
       'parseRef',
+      'partyScheme',
+      'signingBytes',
+      'verifyKernelSignature',
     ]);
   });
 });

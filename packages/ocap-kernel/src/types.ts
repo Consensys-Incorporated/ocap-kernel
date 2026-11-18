@@ -32,6 +32,7 @@ import type { Infer } from '@metamask/superstruct';
 import type { Json } from '@metamask/utils';
 import { UnsafeJsonStruct } from '@metamask/utils';
 
+import { AttributionStruct } from './accountability/types.ts';
 import type {
   RemoteMessageHandler,
   SendRemoteMessage,
@@ -362,6 +363,8 @@ const RunQueueItemSendStruct = object({
   message: KernelMessageStruct,
   sender: SenderStruct,
   cause: CauseStruct,
+  /** What the host said about the act, on a send it queued. */
+  attribution: exactOptional(AttributionStruct),
 });
 
 export type RunQueueItemSend = Infer<typeof RunQueueItemSendStruct>;
@@ -375,6 +378,7 @@ export const PromiseQueueEntryStruct = object({
   message: KernelMessageStruct,
   sender: SenderStruct,
   cause: CauseStruct,
+  attribution: exactOptional(AttributionStruct),
 });
 
 export type PromiseQueueEntry = Infer<typeof PromiseQueueEntryStruct>;

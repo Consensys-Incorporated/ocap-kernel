@@ -174,6 +174,28 @@ describe('accountability record methods', () => {
       ]);
     });
 
+    it('keeps what the host said about an attributed send', () => {
+      const intent = {
+        kind: 'intent' as const,
+        subject: ko1,
+        party: 'ed25519:00',
+        payload: { method: 'doIt' },
+        signature: '00',
+      };
+      kernelStore.recordDelivery({
+        target: ko1,
+        targetEndpoint: v1,
+        sender: 'kernel',
+        cause: 'async',
+        method: 'doIt',
+        message: { methargs: message.methargs },
+        attribution: { onBehalfOf: 'ed25519:00', intent },
+      });
+      expect(kernelStore.getAccountabilityRecords()[0]).toStrictEqual(
+        expect.objectContaining({ onBehalfOf: 'ed25519:00', intent }),
+      );
+    });
+
     it('keeps the arguments when a tracker asked for them', () => {
       kernelStore.trackObject(ko1, v1);
       kernelStore.trackObject(ko1, v2, { recordArgs: true });
@@ -188,6 +210,49 @@ describe('accountability record methods', () => {
       expect(kernelStore.getAccountabilityRecords()[0]).toStrictEqual(
         expect.objectContaining({ args: message.methargs, result: null }),
       );
+    });
+  });
+
+  describe('attestations', () => {
+    const attestation = (subject: string, signature: string) => ({
+      kind: 'implementer' as const,
+      subject,
+      party: 'ed25519:00',
+      payload: null,
+      signature,
+    });
+
+    it('keeps each attestation once, and reads them back by kind and subject', () => {
+      kernelStore.addAttestation(attestation('sha256:00', 'a'));
+      kernelStore.addAttestation(attestation('sha256:00', 'a'));
+      kernelStore.addAttestation(attestation('sha256:00', 'b'));
+      kernelStore.addAttestation(attestation('sha256:01', 'c'));
+      kernelStore.addAttestation({
+        ...attestation('peer', 'd'),
+        kind: 'operator',
+        countersignature: {
+          signer: 'peer',
+          incarnationId: 'i',
+          signature: 'e',
+        },
+      });
+      const signatures = (
+        filter?: Parameters<typeof kernelStore.getAttestations>[0],
+      ) =>
+        kernelStore.getAttestations(filter).map(({ signature }) => signature);
+      expect(signatures()).toStrictEqual(['a', 'b', 'c', 'd']);
+      expect(signatures({ kind: 'implementer' })).toStrictEqual([
+        'a',
+        'b',
+        'c',
+      ]);
+      expect(
+        signatures({ kind: 'implementer', subject: 'sha256:01' }),
+      ).toStrictEqual(['c']);
+      expect(signatures({ subject: 'peer' })).toStrictEqual(['d']);
+      expect(
+        kernelStore.getAttestations({ kind: 'operator' })[0],
+      ).toHaveProperty('countersignature');
     });
   });
 

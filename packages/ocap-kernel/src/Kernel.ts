@@ -5,6 +5,7 @@ import type {
 } from '@metamask/kernel-store';
 import { isCapData } from '@metamask/kernel-utils';
 import { Logger } from '@metamask/logger';
+import { assert } from '@metamask/superstruct';
 
 import { IOManager } from './io/IOManager.ts';
 import type { IOListenerFactory } from './io/types.ts';
@@ -12,8 +13,25 @@ import { makeKernelFacet } from './kernel-facet.ts';
 import type { KernelFacet } from './kernel-facet.ts';
 import { KernelQueue } from './KernelQueue.ts';
 import { KernelRouter } from './KernelRouter.ts';
+import { makeAttestationKeeper } from './accountability/attestations.ts';
+import type {
+  AttestationFilter,
+  AttestationKeeper,
+} from './accountability/attestations.ts';
+import { makePartyVerifier } from './accountability/parties.ts';
+import type {
+  PartySignatureVerifier,
+  PartyVerifier,
+} from './accountability/parties.ts';
 import { makeAccountabilityService } from './accountability/service.ts';
-import type { AccountabilityRecord } from './accountability/types.ts';
+import { makeKernelSigner } from './accountability/signing.ts';
+import type { KernelSigner, Signed } from './accountability/signing.ts';
+import { AttributionStruct } from './accountability/types.ts';
+import type {
+  AccountabilityRecord,
+  Attribution,
+  StoredAttestation,
+} from './accountability/types.ts';
 import { KernelServiceManager } from './KernelServiceManager.ts';
 import type { KernelService } from './KernelServiceManager.ts';
 import { kslot, kunser } from './liveslots/kernel-marshal.ts';
@@ -61,9 +79,52 @@ import { VatManager } from './vats/VatManager.ts';
  * @param options.keySeed - Optional seed for libp2p key generation.
  * @returns A new {@link Kernel}.
  */
+/** What `Kernel.make` takes under `accountability`. */
+export type AccountabilityOptions = {
+  /**
+   * Whether to record each endpoint's first acquisition of each object, one
+   * record per c-list entry. Defaults to `true`.
+   */
+  recordIntroductions?: boolean;
+  /**
+   * The operator attestation to install at start: a party's signed statement
+   * that it answers for this kernel, which the kernel countersigns.
+   */
+  operator?: StoredAttestation;
+  /**
+   * How to check a party's signature, by the scheme of its identifier. The
+   * kernel checks `ed25519` itself.
+   */
+  partySignatureVerifiers?: Record<string, PartySignatureVerifier>;
+};
+
+/**
+ * What `exportAccountabilityRecords` produces: the records and the
+ * attestations that resolve their endpoints to parties, signed by the kernel.
+ */
+export type AccountabilityExport = Signed<{
+  records: AccountabilityRecord[];
+  attestations: StoredAttestation[];
+}>;
+
+/**
+ *
+ */
 export class Kernel {
   /** Manages vat lifecycle operations */
   readonly #vatManager: VatManager;
+
+  /** Signs with the kernel's identity key */
+  readonly #signer: KernelSigner;
+
+  /** Checks parties' signatures */
+  readonly #partyVerifier: PartyVerifier;
+
+  /** Keeps the attestations binding endpoints to parties */
+  readonly #attestations: AttestationKeeper;
+
+  /** The operator attestation to install once the run loop starts */
+  readonly #operator: StoredAttestation | undefined;
 
   /** Manages subcluster operations */
   readonly #subclusterManager: SubclusterManager;
@@ -126,8 +187,6 @@ export class Kernel {
    * @param options.kernelServices - Kernel services to register before the run
    * loop starts.
    * @param options.accountability - Accountability options.
-   * @param options.accountability.recordIntroductions - Whether to record each
-   * endpoint's first acquisition of each object. Defaults to `true`.
    */
   // oxlint-disable-next-line ocap/no-restricted-syntax
   private constructor(
@@ -144,7 +203,7 @@ export class Kernel {
       vatRelaunchTimeoutMs?: number;
       auditRefCounts?: boolean;
       kernelServices?: { name: string; service: object }[];
-      accountability?: { recordIntroductions?: boolean };
+      accountability?: AccountabilityOptions;
     } = {},
   ) {
     this.#platformServices = platformServices;
@@ -198,6 +257,21 @@ export class Kernel {
       remoteManager: this.#remoteManager,
       kernelStore: this.#kernelStore,
     });
+
+    this.#signer = makeKernelSigner({
+      kernelStore: this.#kernelStore,
+      ensureIdentity: async () => this.#remoteManager.initIdentity(),
+    });
+    this.#partyVerifier = makePartyVerifier(
+      options.accountability?.partySignatureVerifiers,
+    );
+    this.#attestations = makeAttestationKeeper({
+      kernelStore: this.#kernelStore,
+      kernelQueue: this.#kernelQueue,
+      signer: this.#signer,
+      partyVerifier: this.#partyVerifier,
+    });
+    this.#operator = options.accountability?.operator;
 
     this.#kernelServiceManager = new KernelServiceManager({
       kernelStore: this.#kernelStore,
@@ -272,6 +346,7 @@ export class Kernel {
       makeAccountabilityService({
         kernelStore: this.#kernelStore,
         kernelQueue: this.#kernelQueue,
+        signer: this.#signer,
       }),
       { withCaller: true },
     );
@@ -302,10 +377,9 @@ export class Kernel {
    * @param options.kernelServices - Kernel services to register before the run
    * loop starts. Registering one later writes the store into whatever crank is
    * open (#1171).
-   * @param options.accountability - Accountability options.
-   * @param options.accountability.recordIntroductions - Whether to record each
-   * endpoint's first acquisition of each object, one record per c-list entry.
-   * Defaults to `true`.
+   * @param options.accountability - Accountability options: whether to
+   * record introductions, the operator attestation to install, and how to
+   * check parties' signatures.
    * @returns A promise for the new kernel instance.
    */
   static async make(
@@ -323,7 +397,7 @@ export class Kernel {
       vatRelaunchTimeoutMs?: number;
       auditRefCounts?: boolean;
       kernelServices?: { name: string; service: object }[];
-      accountability?: { recordIntroductions?: boolean };
+      accountability?: AccountabilityOptions;
     } = {},
   ): Promise<Kernel> {
     const kernel = new Kernel(platformServices, kernelDatabase, options);
@@ -423,6 +497,10 @@ export class Kernel {
 
     // Launch new system subclusters (requires queue to be running)
     await this.#subclusterManager.launchNewSystemSubclusters(configs);
+
+    if (this.#operator !== undefined) {
+      await this.attest(this.#operator);
+    }
   }
 
   /**
@@ -544,18 +622,40 @@ export class Kernel {
    * @param target - The object to which the message is directed.
    * @param method - The method to be invoked.
    * @param args - Message arguments.
+   * @param attribution - What the host says about the act: the party it is
+   * done for, and that party's signed intent. Either has the delivery
+   * recorded, with the attribution on the record.
    * @returns A promise for the CapData encoded result of the message
    * invocation. If it carries slots it also has a `kpid`, and the kernel keeps
    * the krefs in it alive until it is passed to `releaseResult`, or until the
    * kernel next starts.
+   * @throws If the intent's signature does not check, before anything is
+   * queued.
    */
   async queueMessage(
     target: KRef,
     method: string,
     args: unknown[],
+    attribution?: Attribution,
   ): Promise<QueueMessageResult> {
+    if (attribution !== undefined) {
+      assert(attribution, AttributionStruct);
+      if (
+        attribution.intent !== undefined &&
+        !(await this.#partyVerifier.verifyAttestation(attribution.intent))
+      ) {
+        throw Error(
+          `the signature on the intent by ${attribution.intent.party} does not check`,
+        );
+      }
+    }
     try {
-      return await this.#kernelQueue.enqueueMessage(target, method, args);
+      return await this.#kernelQueue.enqueueMessage(
+        target,
+        method,
+        args,
+        attribution,
+      );
     } catch (rejection) {
       if (isCapData(rejection)) {
         throw kunser(rejection as CapData<KRef>);
@@ -599,19 +699,57 @@ export class Kernel {
   }
 
   /**
-   * Read the kernel's accountability records, in the order written. Waits for
-   * the open crank, if any, so a record that crank may still roll back is not
-   * read.
+   * Read the kernel's accountability records, in the order written, with
+   * the attestations the kernel holds, as a bundle signed by the kernel.
+   * Waits for the open crank, if any, so a record that crank may still roll
+   * back is not read.
    *
    * @param filter - Which records; all of them if omitted.
-   * @returns The records.
+   * @returns The signed bundle.
    */
   async exportAccountabilityRecords(
     filter?: AccountabilityRecordFilter,
-  ): Promise<AccountabilityRecord[]> {
-    return this.#kernelQueue.writeOutsideCrank(() =>
-      this.#kernelStore.getAccountabilityRecords(filter),
-    );
+  ): Promise<AccountabilityExport> {
+    const payload = await this.#kernelQueue.writeOutsideCrank(() => ({
+      records: this.#kernelStore.getAccountabilityRecords(filter),
+      attestations: this.#kernelStore.getAttestations(),
+    }));
+    return this.#signer.sign(payload);
+  }
+
+  /**
+   * Keep a party's attestation: an `operator` attestation, that the party
+   * answers for a kernel, or an `implementer` attestation, that it answers
+   * for a bundle. The party's signature is checked first. An operator
+   * attestation for this kernel is countersigned with the kernel's key.
+   *
+   * @param attestation - The attestation.
+   */
+  async attest(attestation: StoredAttestation): Promise<void> {
+    await this.#attestations.attest(attestation);
+  }
+
+  /**
+   * Read the attestations the kernel holds.
+   *
+   * @param filter - Which attestations; all of them if omitted.
+   * @returns The attestations.
+   */
+  async getAttestations(
+    filter?: AttestationFilter,
+  ): Promise<StoredAttestation[]> {
+    return this.#attestations.getAttestations(filter);
+  }
+
+  /**
+   * Get the content hash of the bundle a vat runs, as its worker reported
+   * on loading it, for matching against an implementer attestation.
+   *
+   * @param vatId - The vat.
+   * @returns The hash, or undefined if the vat has not reported one.
+   */
+  getVatBundleHash(vatId: VatId): string | undefined {
+    return this.#kernelStore.getVatBundleHash(vatId);
   }
 
   /**
