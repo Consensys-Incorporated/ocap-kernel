@@ -11,6 +11,7 @@ import {
   krefOf,
   kser,
   kunser,
+  kmethodName,
   makeKernelError,
   makeFatalKernelError,
 } from './kernel-marshal.ts';
@@ -127,6 +128,26 @@ describe('kernel-marshal', () => {
 
       expect(passStyleOf(deserialized.obj)).toBe('remotable');
       expect(passStyleOf(deserialized.promise)).toBe('promise');
+    });
+  });
+
+  describe('kmethodName', () => {
+    it.each([
+      ['poke', 'poke'],
+      ['@at', '@at'],
+      ['!bang', '!bang'],
+      ['#hash', '#hash'],
+      [Symbol.for('sym'), 'Symbol(sym)'],
+      [Symbol.asyncIterator, 'Symbol(Symbol.asyncIterator)'],
+    ])('names the method of %s', (method, name) => {
+      expect(kmethodName(kser([method, [1, 'x']]))).toBe(name);
+    });
+
+    it.each([
+      ['truncated', '#["poke",[1'],
+      ['not a method', '#[1,[]]'],
+    ])('answers ? for a body it cannot read: %s', (_what, body) => {
+      expect(kmethodName({ body, slots: [] })).toBe('?');
     });
   });
 

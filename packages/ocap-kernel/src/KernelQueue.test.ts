@@ -934,6 +934,22 @@ describe('KernelQueue', () => {
   });
 
   describe('enqueueSend', () => {
+    it('charges a send issued in a crank to that crank', () => {
+      (kernelStore.isInCrank as unknown as MockInstance).mockReturnValue(true);
+      (kernelStore.getCrankNumber as unknown as MockInstance).mockReturnValue(
+        7,
+      );
+      const message = { methargs: { body: '', slots: [] } } as KernelMessage;
+      kernelQueue.enqueueSend(asKRef('ko123'), message, { sender: v1 });
+      expect(kernelStore.enqueueRun).toHaveBeenCalledWith({
+        type: 'send',
+        target: 'ko123',
+        message,
+        sender: v1,
+        cause: 7,
+      });
+    });
+
     it('enqueues a send message and increments reference counts', () => {
       const target = asKRef('ko123');
       const message: KernelMessage = {
@@ -1613,6 +1629,29 @@ describe('KernelQueue', () => {
       expect(resolveHandler).not.toHaveBeenCalled();
       // Subscription is still registered, will be invoked during flush
       expect(kernelQueue.subscriptions.has(kpid)).toBe(true);
+    });
+
+    it('re-enqueues the messages queued on a promise with their own provenance', () => {
+      const kpid = asKRef('kp123');
+      const message = { methargs: { body: '', slots: [] } } as KernelMessage;
+      (kernelStore.getKernelPromise as unknown as MockInstance).mockReturnValue(
+        { state: 'unresolved', decider: v1, subscribers: [] },
+      );
+      (
+        kernelStore.resolveKernelPromise as unknown as MockInstance
+      ).mockReturnValueOnce([{ message, sender: asVatId('v3'), cause: 5 }]);
+
+      kernelQueue.resolvePromises(v1, [
+        [kpid, false, { body: '', slots: [] } as CapData<KRef>],
+      ]);
+
+      expect(kernelStore.enqueueRun).toHaveBeenCalledWith({
+        type: 'send',
+        target: kpid,
+        message,
+        sender: 'v3',
+        cause: 5,
+      });
     });
 
     it('handles resolutions with undefined vatId (kernel decider)', () => {

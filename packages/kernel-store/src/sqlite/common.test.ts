@@ -53,10 +53,10 @@ describe('SQL_QUERIES', () => {
       'CLEAR_ACCOUNTABILITY_RECORDS',
       'CLEAR_VS',
       'COMMIT_TRANSACTION',
-      'CREATE_INDEX_RECORDS_ENDPOINT',
-      'CREATE_INDEX_RECORDS_KREF',
-      'CREATE_INDEX_RECORDS_SENDER',
-      'CREATE_INDEX_RECORDS_TRACE',
+      'CREATE_INDEX_ACCOUNTABILITY_RECORDS_ENDPOINT',
+      'CREATE_INDEX_ACCOUNTABILITY_RECORDS_KREF',
+      'CREATE_INDEX_ACCOUNTABILITY_RECORDS_SENDER',
+      'CREATE_INDEX_ACCOUNTABILITY_RECORDS_TRACE',
       'CREATE_SAVEPOINT',
       'CREATE_TABLE',
       'CREATE_TABLE_ACCOUNTABILITY_RECORDS',
@@ -150,6 +150,18 @@ describe('buildAccountabilityRecordsDelete', () => {
       params: ['ko1', 5],
     });
   });
+
+  it.each([-1, 1.5, Number.NaN])(
+    'refuses the limit %s in a query and a delete',
+    (limit) => {
+      expect(() => buildAccountabilityRecordsQuery({ limit })).toThrow(
+        'limit must be a non-negative integer',
+      );
+      expect(() => buildAccountabilityRecordsDelete({ limit })).toThrow(
+        'limit must be a non-negative integer',
+      );
+    },
+  );
 
   it('applies a limit through a subquery, earliest first', () => {
     expect(

@@ -501,14 +501,46 @@ export class KernelRouter {
         message,
       });
     }
-    for (const slot of new Set(message.methargs.slots)) {
+    this.#recordConveyances({
+      slots: message.methargs.slots,
+      sender,
+      to: endpointId,
+      via: 'message',
+      carrier: target,
+    });
+  }
+
+  /**
+   * Record the conveyance of each tracked reference among a delivery's slots.
+   *
+   * @param options - Options bag.
+   * @param options.slots - The slots, repeats included.
+   * @param options.sender - Who sent them.
+   * @param options.to - Who receives them.
+   * @param options.via - What carries them.
+   * @param options.carrier - The target or promise carrying them.
+   */
+  #recordConveyances({
+    slots,
+    sender,
+    to,
+    via,
+    carrier,
+  }: {
+    slots: KRef[];
+    sender: Sender;
+    to: EndpointId | 'kernel';
+    via: 'message' | 'notify';
+    carrier: KRef;
+  }): void {
+    for (const slot of new Set(slots)) {
       if (this.#kernelStore.isTracked(slot)) {
         this.#kernelStore.recordConveyance({
           kref: slot,
           sender,
-          to: endpointId,
-          via: 'message',
-          carrier: target,
+          to,
+          via,
+          carrier,
         });
       }
     }
@@ -631,17 +663,13 @@ export class KernelRouter {
       // Per promise: a notify can carry several, each settled by someone.
       const sender = tPromise.resolver ?? 'kernel';
       this.#kernelStore.setCurrentDelivery({ via: 'notify', sender });
-      for (const slot of new Set(tPromise.value.slots)) {
-        if (this.#kernelStore.isTracked(slot)) {
-          this.#kernelStore.recordConveyance({
-            kref: slot,
-            sender,
-            to: endpointId,
-            via: 'notify',
-            carrier: toResolve,
-          });
-        }
-      }
+      this.#recordConveyances({
+        slots: tPromise.value.slots,
+        sender,
+        to: endpointId,
+        via: 'notify',
+        carrier: toResolve,
+      });
       resolutions.push([
         this.#kernelStore.translateRefKtoE(endpointId, toResolve, true),
         tPromise.state === 'rejected',

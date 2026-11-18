@@ -214,17 +214,17 @@ function bindIfAny(
  * @param db - The (open) database to use.
  * @param options - Options for the store.
  * @param options.guardWrite - The transaction methods' write guard.
- * @returns A record store using the given database.
+ * @returns An accountability record store using the given database.
  */
 function makeAccountabilityRecordStore(
   db: Database,
   { guardWrite }: Pick<TransactionMethods, 'guardWrite'>,
 ): AccountabilityRecordStore {
   db.exec(SQL_QUERIES.CREATE_TABLE_ACCOUNTABILITY_RECORDS);
-  db.exec(SQL_QUERIES.CREATE_INDEX_RECORDS_KREF);
-  db.exec(SQL_QUERIES.CREATE_INDEX_RECORDS_ENDPOINT);
-  db.exec(SQL_QUERIES.CREATE_INDEX_RECORDS_SENDER);
-  db.exec(SQL_QUERIES.CREATE_INDEX_RECORDS_TRACE);
+  db.exec(SQL_QUERIES.CREATE_INDEX_ACCOUNTABILITY_RECORDS_KREF);
+  db.exec(SQL_QUERIES.CREATE_INDEX_ACCOUNTABILITY_RECORDS_ENDPOINT);
+  db.exec(SQL_QUERIES.CREATE_INDEX_ACCOUNTABILITY_RECORDS_SENDER);
+  db.exec(SQL_QUERIES.CREATE_INDEX_ACCOUNTABILITY_RECORDS_TRACE);
   const sqlAppend = db.prepare(SQL_QUERIES.APPEND_ACCOUNTABILITY_RECORD);
 
   /**

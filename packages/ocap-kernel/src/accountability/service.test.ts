@@ -33,10 +33,8 @@ describe('accountability service', () => {
   });
 
   it('tracks and untracks an object for the caller the kernel names', async () => {
-    await service.track({ caller: holder }, kslot(ko1), { recordArgs: true });
-    expect(kernelStore.getTrackers(ko1)).toStrictEqual({
-      v2: { recordArgs: true },
-    });
+    await service.track({ caller: holder }, kslot(ko1));
+    expect(kernelStore.getTrackers(ko1)).toStrictEqual({ v2: {} });
     await service.untrack({ caller: holder }, kslot(ko1));
     expect(kernelStore.isTracked(ko1)).toBe(false);
   });
@@ -53,6 +51,17 @@ describe('accountability service', () => {
     await expect(
       service.track({ caller: holder }, arg as never),
     ).rejects.toThrow(problem);
+  });
+
+  it('records the arguments for the owner and refuses to for another holder', async () => {
+    await expect(
+      service.track({ caller: holder }, kslot(ko1), { recordArgs: true }),
+    ).rejects.toThrow(`only the owner of ${ko1} may record its arguments`);
+    expect(kernelStore.isTracked(ko1)).toBe(false);
+    await service.track({ caller: owner }, kslot(ko1), { recordArgs: true });
+    expect(kernelStore.getTrackers(ko1)).toStrictEqual({
+      v1: { recordArgs: true },
+    });
   });
 
   it('rejects track options it does not know', async () => {

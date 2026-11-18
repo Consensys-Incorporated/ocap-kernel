@@ -302,7 +302,9 @@ tracked references yields two.
 Arguments are not recorded by default. They are the bulk of the bytes, they
 are the private content of the interaction, and the slots they carry are
 already captured. An option on `track` records them for the cases that need
-it.
+it, and only the owner may ask for it: the arguments are what other holders
+say to the object, and the owner is the one party already entitled to hear
+them.
 
 Tracking is per kernel: each kernel records what it sees. Any holder may track
 a reference, since the cost falls on the holder's own kernel, and a tracked

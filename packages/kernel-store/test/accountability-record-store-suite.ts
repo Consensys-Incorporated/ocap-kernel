@@ -32,7 +32,7 @@ export function makeAccountabilityRecord(
 export function describeAccountabilityRecordStore(
   makeDb: () => Promise<KernelDatabase>,
 ): void {
-  describe('records', () => {
+  describe('accountability records', () => {
     it('numbers appended records in order and reads them back', async () => {
       const { accountabilityRecords: records } = await makeDb();
       expect(records.append(makeAccountabilityRecord({ data: 'first' }))).toBe(
