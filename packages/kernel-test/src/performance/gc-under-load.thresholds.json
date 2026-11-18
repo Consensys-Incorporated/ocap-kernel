@@ -1,0 +1,30 @@
+{
+  "ping": {
+    "objects": 0,
+    "promises": 1,
+    "clistRows": 2,
+    "vatstoreRows": 0,
+    "kvRows": 5
+  },
+  "pingHeld": {
+    "objects": 0,
+    "promises": 2,
+    "clistRows": 6,
+    "vatstoreRows": 0,
+    "kvRows": 12
+  },
+  "churn": {
+    "objects": 10,
+    "promises": 3,
+    "clistRows": 30,
+    "vatstoreRows": 0,
+    "kvRows": 59
+  },
+  "fetch": {
+    "objects": 1,
+    "promises": 2,
+    "clistRows": 8,
+    "vatstoreRows": 0,
+    "kvRows": 17
+  }
+}

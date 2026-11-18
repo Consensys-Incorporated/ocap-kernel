@@ -25,6 +25,14 @@ from many clients at once, each sending its next message when its last is
 answered, recording throughput and latency. To run one profile, name it:
 `yarn workspace @ocap/kernel-test test:perf concurrent-load`.
 
+`gc-under-load.perf.test.ts` counts what the store keeps after rounds of
+messages, each followed by a reap of every vat. It runs four workloads over
+a fixed number of live krefs, and fails one that leaves more per message than
+[`gc-under-load.thresholds.json`](./src/performance/gc-under-load.thresholds.json)
+allows: objects, promises, c-list rows, vatstore rows and KV rows in all. The
+thresholds are what the kernel leaks today, so a change that leaks more
+fails, and one that leaks less should lower them.
+
 Their settings are in
 [`src/performance/constants.ts`](./src/performance/constants.ts), and an
 environment variable of the same name overrides any one of them for a run,
