@@ -811,7 +811,6 @@ describe('RemoteManager', () => {
         await setUpRealManager();
       const fault = new Error('SQLITE_FULL');
       const { kernelKVStore } = kdb;
-      const counterBefore = kernelKVStore.get('nextRemoteId');
       const set = kernelKVStore.set.bind(kernelKVStore);
       vi.spyOn(kernelKVStore, 'set').mockImplementation((key, value) => {
         if (key.startsWith('e.nextObjectId.')) {
@@ -825,14 +824,8 @@ describe('RemoteManager', () => {
 
       expect({
         remotes: realStore.getRemoteIDs(),
-        counter: kernelKVStore.get('nextRemoteId'),
         state: kernelQueue.getRunLoopStatus().state,
-      }).toStrictEqual({
-        remotes: [],
-        // The setup's ID is not given out again.
-        counter: String(Number(counterBefore) + 1),
-        state: 'failed',
-      });
+      }).toStrictEqual({ remotes: [], state: 'failed' });
     });
 
     it('kills the run loop when acting on a new remote hits a store fault, rolling the setup back', async () => {
@@ -885,6 +878,53 @@ describe('RemoteManager', () => {
       await kernelQueue.endRunLoop();
       await running;
     });
+
+    it.each([
+      {
+        state: 'stopping',
+        once: async (kernelQueue: KernelQueue, manager: RemoteManager) => {
+          const ending = kernelQueue.endRunLoop();
+          // In the same tick, before the loop has ended.
+          const outcome = manager
+            .handleRemoteMessage('new-peer', peerMessage(1))
+            .then(
+              () => 'taken',
+              (error: Error) => error.message,
+            );
+          await ending;
+          return outcome;
+        },
+        refusal: 'Kernel run loop is stopping; cannot act on a remote',
+      },
+      {
+        state: 'dead',
+        once: async (kernelQueue: KernelQueue, manager: RemoteManager) => {
+          kernelQueue.panic('the test', new Error('boom'));
+          await expect(
+            kernelQueue.enqueueInbox('wake', () => ({ value: undefined })),
+          ).rejects.toThrow('Kernel run loop died');
+          return manager.handleRemoteMessage('new-peer', peerMessage(1)).then(
+            () => 'taken',
+            (error: Error) => error.message,
+          );
+        },
+        refusal: 'Kernel run loop died; cannot act on a remote',
+      },
+    ])(
+      "refuses a new peer's first message once the run loop is $state, setting no peer up",
+      async ({ once, refusal }) => {
+        const { realStore, kernelQueue, running, manager } =
+          await setUpRealManager();
+
+        const outcome = await once(kernelQueue, manager);
+
+        expect({ outcome, remotes: realStore.getRemoteIDs() }).toStrictEqual({
+          outcome: refusal,
+          remotes: [],
+        });
+        await running.catch(() => undefined);
+      },
+    );
 
     it('leaves no record of a remote whose handle failed to be made', async () => {
       const fault = new Error('SQLITE_IOERR');

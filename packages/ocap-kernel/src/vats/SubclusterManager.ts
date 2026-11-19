@@ -250,8 +250,9 @@ export class SubclusterManager {
    * @returns A promise that resolves when termination is complete.
    */
   async terminateSubcluster(subclusterId: SubclusterId): Promise<void> {
-    // A dead run loop ends no member, and the record must not go without them.
-    this.#kernelQueue.assertRunLoopAlive('terminate a subcluster');
+    // A dead or stopping run loop ends no member, and the record must not go
+    // without them.
+    this.#kernelQueue.assertInboxOpen('terminate a subcluster');
     const subcluster = this.#kernelStore.getSubcluster(subclusterId);
     if (!subcluster) {
       throw new SubclusterNotFoundError(subclusterId);

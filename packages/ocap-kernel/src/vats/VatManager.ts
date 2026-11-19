@@ -796,6 +796,9 @@ export class VatManager {
     if (!this.#isVatKnown(vatId)) {
       throw new VatNotFoundError(vatId);
     }
+    // The superseded path below queues nothing of its own, so nothing else
+    // would refuse it while the kernel is stopping.
+    this.#kernelQueue.assertInboxOpen('restart a vat');
     if (this.#pendingTerminations.has(vatId)) {
       // Answered by the termination's crank, with no item of its own: a
       // restart item still queued ahead of the termination would take this
@@ -803,7 +806,7 @@ export class VatManager {
       return await this.#awaitQueuedWork(
         this.#supersededRestarts,
         vatId,
-        async () => this.#kernelQueue.assertRunLoopAlive('restart a vat'),
+        async () => undefined,
       );
     }
     // The handle this restart made, rather than whatever `#vats` holds once

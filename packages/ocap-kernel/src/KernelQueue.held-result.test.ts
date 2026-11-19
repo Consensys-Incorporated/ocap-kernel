@@ -132,6 +132,22 @@ describe('the hold on a queueMessage result', () => {
     await stop();
   });
 
+  it('is taken by `writeMessage` in the crank that writes the message, and named in the answer', async () => {
+    const { kernelStore, kernelQueue, root, gift, start, stop } =
+      await setUp(OBJECT);
+    start();
+
+    const { answer } = await kernelQueue.enqueueInbox('bootstrap', () => ({
+      value: kernelQueue.writeMessage(root, 'fetch', []),
+    }));
+    const result = await answer;
+
+    const [kpid] = kernelStore.getHeldResults();
+    expect(result).toStrictEqual({ ...kser(kslot(gift)), kpid });
+    expect(kernelStore.auditRefCounts()).toStrictEqual([]);
+    await stop();
+  });
+
   it('keeps the krefs in the answer alive until it is released', async () => {
     const { kernelStore, kernelQueue, root, gift, start, stop, v1 } =
       await setUp(OBJECT);

@@ -6,7 +6,7 @@ import { KernelQueue } from './KernelQueue.ts';
 import { makeKernelStore } from './store/index.ts';
 import type { RunQueueItem } from './types.ts';
 import { makeGCAction } from './types.ts';
-import { asRRef, asRemoteId, asVatId } from '../test/branded.ts';
+import { asKRef, asRRef, asRemoteId, asVatId } from '../test/branded.ts';
 import { watch } from '../test/real-kernel.ts';
 
 const arrival = {
@@ -476,14 +476,36 @@ describe('ending the run loop', () => {
     expect(taken).toStrictEqual(['send', 'reset']);
   });
 
-  it('refuses an inbox item asked for after it', async () => {
+  it.each([
+    {
+      what: 'reset',
+      ask: async (kernelQueue: KernelQueue) =>
+        kernelQueue.enqueueInbox('reset', () => ({ value: undefined })),
+    },
+    {
+      what: 'queue a message',
+      ask: async (kernelQueue: KernelQueue) =>
+        kernelQueue.enqueueMessage(asKRef('ko1'), 'hello', []),
+    },
+    {
+      what: 'restart a vat',
+      ask: async (kernelQueue: KernelQueue) =>
+        kernelQueue.enqueueRestartVat(asVatId('v1')),
+    },
+    {
+      what: 'terminate a vat',
+      ask: async (kernelQueue: KernelQueue) =>
+        kernelQueue.enqueueTerminateVat(asVatId('v1')),
+    },
+  ])('refuses to $what once asked', async ({ what, ask }) => {
     const { kernelQueue } = await makeFixture(0);
+    vi.spyOn(console, 'debug').mockImplementation(() => undefined);
     const running = kernelQueue.run(async () => undefined);
     const ending = kernelQueue.endRunLoop();
 
-    await expect(
-      kernelQueue.enqueueInbox('reset', () => ({ value: undefined })),
-    ).rejects.toThrow('Kernel run loop is stopping; cannot reset');
+    await expect(ask(kernelQueue)).rejects.toThrow(
+      `Kernel run loop is stopping; cannot ${what}`,
+    );
     await ending;
     await running;
   });
