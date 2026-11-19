@@ -342,19 +342,29 @@ describe('Remote Communications (Integration Tests)', () => {
     expect(receiverBootstrap.ocapURL).toMatch(/^ocap:/u);
   });
 
-  it('records an issued URL after the promise that carried it is retired', async () => {
-    const { ocapURL } = (await runTestVats(
-      kernel1,
-      makeSenderSubclusterConfig('Sender1'),
-    )) as BootstrapResult;
+  it('mints another URL for an object that has one issued', async () => {
+    await runTestVats(kernel1, makeSenderSubclusterConfig('Sender1'));
+    const issued = (): unknown[] =>
+      kernelDatabase1.executeQuery(
+        `SELECT key, value FROM kv WHERE key GLOB 'ocapURLObjects.*'`,
+      );
+    const before = issued();
+    const [{ key }] = before as [{ key: string }];
+    const kref = key.slice('ocapURLObjects.'.length) as KRef;
 
+    const url = await kernel1.getIssuedOcapURL(kref);
+
+    expect({ url, after: issued() }).toStrictEqual({
+      url: expect.stringMatching(/^ocap:/u),
+      after: before,
+    });
+    expect(await kernel1.redeemOcapURL(url)).toBe(kref);
+    // The promise that carried the first URL to its vat is retired.
     expect(
       kernelDatabase1.executeQuery(
-        `SELECT key, value FROM kv WHERE key GLOB 'ocapURLString.*' OR key GLOB 'v*.c.kp*'`,
+        `SELECT key FROM kv WHERE key GLOB 'v*.c.kp*'`,
       ),
-    ).toStrictEqual([
-      { key: expect.stringMatching(/^ocapURLString\.ko\d+$/u), value: ocapURL },
-    ]);
+    ).toStrictEqual([]);
   });
 
   it('should send remote message between kernels via ocap URLs', async () => {
