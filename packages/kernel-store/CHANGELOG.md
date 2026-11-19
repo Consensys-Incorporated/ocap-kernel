@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `KernelDatabase.accountabilityRecords`, an `AccountabilityRecordStore` over an `accountability_records` table: `append`, `query` and `delete`, the last two by an `AccountabilityRecordFilter`. `clear` empties it with the rest ([#1308](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1308), [#PR2](https://github.com/Consensys-Incorporated/ocap-kernel/pull/PR2))
+- `KernelDatabase.accountabilityRecords`, an `AccountabilityRecordStore` over an `accountability_records` table: `append`, `query` and `delete`, the last two by an `AccountabilityRecordFilter`. `clear` empties it with the rest ([#1308](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1308), [#1316](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1316))
 
 ### Changed
 
