@@ -27,3 +27,12 @@ export const LOAD_PERF_CONCURRENCY = fromEnv(
 ) ?? [1, 4, 16, 64, 256];
 export const LOAD_PERF_MESSAGES =
   fromEnv('LOAD_PERF_MESSAGES', coerceNat) ?? 1000;
+
+// gc-under-load: KREFS live krefs over PAIRS pairs, then ROUNDS rounds of
+// MESSAGES messages from CONCURRENCY clients, collecting after each round.
+export const GC_PERF_KREFS = fromEnv('GC_PERF_KREFS', coerceNat) ?? 10_000;
+export const GC_PERF_PAIRS = fromEnv('GC_PERF_PAIRS', coerceNat) ?? 4;
+export const GC_PERF_ROUNDS = fromEnv('GC_PERF_ROUNDS', coerceNat) ?? 5;
+export const GC_PERF_MESSAGES = fromEnv('GC_PERF_MESSAGES', coerceNat) ?? 500;
+export const GC_PERF_CONCURRENCY =
+  fromEnv('GC_PERF_CONCURRENCY', coerceNat) ?? 16;
