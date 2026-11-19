@@ -13,7 +13,6 @@ import {
 import type { Infer } from '@metamask/superstruct';
 import { JsonStruct } from '@metamask/utils';
 
-import type { Signed } from './signing.ts';
 import type { Cause, EndpointId, KRef, Sender } from '../types.ts';
 
 /**
@@ -83,14 +82,26 @@ export type Attestation = Infer<typeof AttestationStruct>;
 /** What a party signs: an attestation without its signature. */
 export type AttestationClaim = Omit<Attestation, 'signature'>;
 
+export const IntentStruct = object({
+  ...AttestationStruct.schema,
+  kind: literal('intent'),
+});
+
+export type Intent = Infer<typeof IntentStruct>;
+
 /**
  * An attestation the kernel holds. One answering for this kernel carries the
  * kernel's countersignature, which proves possession of the key behind the
  * peer ID the party answers for.
  */
-export type StoredAttestation = Attestation & {
-  countersignature?: Omit<Signed<AttestationClaim>, 'payload'>;
-};
+export const StoredAttestationStruct = object({
+  ...AttestationStruct.schema,
+  countersignature: exactOptional(
+    object({ signer: string(), incarnationId: string(), signature: string() }),
+  ),
+});
+
+export type StoredAttestation = Infer<typeof StoredAttestationStruct>;
 
 /**
  * What the host says about an act it performs through `queueMessage`:
@@ -99,7 +110,7 @@ export type StoredAttestation = Attestation & {
  */
 export const AttributionStruct = object({
   onBehalfOf: exactOptional(PartyRefStruct),
-  intent: exactOptional(AttestationStruct),
+  intent: exactOptional(IntentStruct),
 });
 
 export type Attribution = Infer<typeof AttributionStruct>;
@@ -152,7 +163,7 @@ export type DeliveryRecord = AccountabilityRecordBase & {
   /** The party the host did this for, if it said. */
   onBehalfOf?: PartyRef;
   /** The party's signed intent, if the host passed one. */
-  intent?: Attestation;
+  intent?: Intent;
 };
 
 /** A tracked object carried to an endpoint in a message or a resolution. */

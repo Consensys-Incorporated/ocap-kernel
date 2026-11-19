@@ -5,7 +5,6 @@ import { toHex } from '@metamask/kernel-utils';
 
 import { attestationSigningBytes } from '../src/accountability/parties.ts';
 import type {
-  Attestation,
   AttestationClaim,
   PartyRef,
 } from '../src/accountability/types.ts';
@@ -30,7 +29,9 @@ export async function seedIdentity(kv: KVStore, seedByte = 1): Promise<string> {
 export type TestParty = {
   party: PartyRef;
   sign(data: Uint8Array): Promise<string>;
-  attest(claim: Omit<AttestationClaim, 'party'>): Promise<Attestation>;
+  attest<Claim extends Omit<AttestationClaim, 'party'>>(
+    claim: Claim,
+  ): Promise<Claim & { party: PartyRef; signature: string }>;
 };
 
 /**

@@ -671,18 +671,21 @@ that kernel's name for one of its own cranks.
   lets the host attribute an external act to a party, attach the party's
   signed intent, and start a trace from it. An attributed send is recorded
   as a delivery whether or not its target is tracked, with the attribution
-  on the record; an intent whose signature does not check is refused before
-  anything is queued. The kernel does not check that the intent matches the
-  act: what the party signed is for the auditor to compare.
+  on the record; an intent of another kind, or whose signature does not
+  check, is refused before anything is queued. The kernel does not check that
+  the intent matches the act: what the party signed is for the auditor to
+  compare, and since nothing ties an intent to one send, a verifier of a
+  receipt compares the intent's subject, and any nonce in its payload, with
+  the act itself. The facet handed to system vats takes no attribution.
 - `kernel.attest(attestation)` stores an implementer or operator attestation
   once its signature checks, countersigning an operator attestation for this
   kernel and requiring the countersignature on one for another;
   `kernel.getAttestations(filter)` reads them back.
 - `kernel.exportAccountabilityRecords(filter)` and `kernel.pruneAccountabilityRecords(filter)` are the
-  retention operations. Export produces a signed bundle of the records and the
-  attestations that stands on its own; prune is the only operation that
-  deletes records, short of clearing the kernel's storage whole, and it is
-  never implicit.
+  retention operations. Export produces a signed bundle of the filter, the
+  records it selected and the attestations, which stands on its own; prune is
+  the only operation that deletes records, short of clearing the kernel's
+  storage whole, and it is never implicit.
 - `kernel.getVatBundleHash(vatId)` is the bundle hash below.
 
 ### Bundle identity

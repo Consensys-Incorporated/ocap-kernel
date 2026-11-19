@@ -1,5 +1,5 @@
 import { generateKeyPairFromSeed } from '@libp2p/crypto/keys';
-import type { PrivateKey } from '@libp2p/interface';
+import type { PrivateKey, PublicKey } from '@libp2p/interface';
 import { peerIdFromString } from '@libp2p/peer-id';
 import { fromHex, toHex } from '@metamask/kernel-utils';
 import { hexToBytes } from '@metamask/utils';
@@ -32,15 +32,15 @@ export type KernelSigner = {
 
 /**
  * Serialize a value so that equal values give equal bytes: JSON with object
- * keys in sorted order at every depth, and properties that are undefined
- * left out, as `JSON.stringify` leaves them out.
+ * keys in sorted order at every depth, and undefined treated as
+ * `JSON.stringify` treats it: left out of objects, null in arrays.
  *
  * @param value - The value.
  * @returns Its canonical JSON.
  */
 export function canonicalJson(value: unknown): string {
   if (Array.isArray(value)) {
-    return `[${value.map(canonicalJson).join(',')}]`;
+    return `[${value.map((item) => (item === undefined ? 'null' : canonicalJson(item))).join(',')}]`;
   }
   if (value !== null && typeof value === 'object') {
     const record = value as Record<string, unknown>;
@@ -72,19 +72,19 @@ export function signingBytes(value: unknown): Uint8Array {
  */
 export async function verifyKernelSignature(signed: Signed): Promise<boolean> {
   const { payload, signer, incarnationId, signature } = signed;
-  let publicKey;
+  let publicKey: PublicKey | undefined;
   try {
     publicKey = peerIdFromString(signer).publicKey;
+    if (!publicKey) {
+      return false;
+    }
+    return await publicKey.verify(
+      signingBytes({ payload, signer, incarnationId }),
+      hexToBytes(signature),
+    );
   } catch {
     return false;
   }
-  if (!publicKey) {
-    return false;
-  }
-  return publicKey.verify(
-    signingBytes({ payload, signer, incarnationId }),
-    hexToBytes(signature),
-  );
 }
 
 /**
@@ -104,28 +104,33 @@ export function makeKernelSigner({
   kernelStore: KernelStore;
   ensureIdentity: () => Promise<void>;
 }): KernelSigner {
-  let key: { privateKey: PrivateKey; peerId: string } | undefined;
+  type Key = { privateKey: PrivateKey; peerId: string };
+  let cached: { seed: string; key: Promise<Key> } | undefined;
+  let initializing: Promise<void> | undefined;
 
   /**
-   * Derive the identity key from the store, initializing the identity if the
-   * store has none.
+   * The identity key: derived from the seed in the store, once per seed, so
+   * that a cleared store gives a new key; the identity is initialized first
+   * if the store has none, once however many callers ask at a time.
    *
    * @returns The key and the peer ID it belongs to.
    */
-  async function getKey(): Promise<{ privateKey: PrivateKey; peerId: string }> {
-    if (key) {
-      return key;
-    }
+  async function getKey(): Promise<Key> {
     if (kernelStore.getRemoteIdentityValue('keySeed') === undefined) {
-      await ensureIdentity();
+      initializing ??= ensureIdentity().finally(() => {
+        initializing = undefined;
+      });
+      await initializing;
     }
     const seed = kernelStore.getRemoteIdentityValueRequired('keySeed');
-    const peerId = kernelStore.getRemoteIdentityValueRequired('peerId');
-    key = {
-      privateKey: await generateKeyPairFromSeed('Ed25519', fromHex(seed)),
-      peerId,
-    };
-    return key;
+    if (cached?.seed !== seed) {
+      const peerId = kernelStore.getRemoteIdentityValueRequired('peerId');
+      const key = generateKeyPairFromSeed('Ed25519', fromHex(seed)).then(
+        (privateKey) => ({ privateKey, peerId }),
+      );
+      cached = { seed, key };
+    }
+    return cached.key;
   }
 
   return harden({

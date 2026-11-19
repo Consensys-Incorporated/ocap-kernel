@@ -73,9 +73,10 @@ export class VatHandle implements EndpointHandle {
   /** Optional list of allowed global names for vat endowments */
   readonly #allowedGlobalNames: AllowedGlobalName[] | undefined;
 
-  /** Storage holding this vat's persistent state */
+  /** The kernel's store */
   readonly #kernelStore: KernelStore;
 
+  /** Storage holding this vat's persistent state */
   readonly #vatStore: VatStore;
 
   /** The vat's syscall */

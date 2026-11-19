@@ -8,7 +8,6 @@ import {
 } from '@metamask/ocap-kernel';
 import type {
   AccountabilityRecordView,
-  Attestation,
   AttestationClaim,
   Chain,
   DeliveryRecord,
@@ -33,7 +32,9 @@ const makeParty = async (
   seedByte: number,
 ): Promise<{
   party: string;
-  attest: (claim: Omit<AttestationClaim, 'party'>) => Promise<Attestation>;
+  attest: <Claim extends Omit<AttestationClaim, 'party'>>(
+    claim: Claim,
+  ) => Promise<Claim & { party: string; signature: string }>;
 }> => {
   const keyPair = await generateKeyPairFromSeed(
     'Ed25519',

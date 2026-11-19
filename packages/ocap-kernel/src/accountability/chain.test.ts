@@ -4,7 +4,7 @@ import { buildChain, resolveParties } from './chain.ts';
 import { makeKernelStore } from '../store/index.ts';
 import type { KernelStore } from '../store/index.ts';
 import type { KRef } from '../types.ts';
-import { asRemoteId, asVatId } from '../../test/branded.ts';
+import { asKRef, asRemoteId, asVatId } from '../../test/branded.ts';
 import { makeMapKernelDatabase } from '../../test/storage.ts';
 
 const owner = asVatId('v1');
@@ -51,7 +51,7 @@ describe('resolveParties', () => {
     );
   });
 
-  it('resolves nothing for a kernel with no identity', () => {
+  it('resolves no operator for a kernel with no identity', () => {
     expect(
       resolveParties({ kernelStore, endpoint: owner, peerId: undefined }),
     ).toStrictEqual(['ed25519:impl', 'ed25519:op']);
@@ -87,7 +87,7 @@ describe('buildChain', () => {
       sender: other,
       to: holder,
       via: 'notify',
-      carrier: 'kp1' as KRef,
+      carrier: asKRef('kp1'),
     });
     expect(
       buildChain({ kernelStore, kref: ko1, holder, peerId: undefined }),
@@ -157,6 +157,88 @@ describe('buildChain', () => {
         { endpoint: 'kernel', parties: [], acquisitions: [] },
       ],
     });
+  });
+
+  it('stops at an introduction with no sender', () => {
+    kernelStore.startCrank();
+    kernelStore.incrementCrankNumber();
+    kernelStore.setCurrentDelivery({ via: 'ocap-url' });
+    kernelStore.recordIntroduction({ kref: ko1, endpoint: holder });
+    kernelStore.endCrank();
+    expect(
+      buildChain({ kernelStore, kref: ko1, holder, peerId: undefined }),
+    ).toStrictEqual({
+      kref: ko1,
+      owner,
+      hops: [
+        {
+          endpoint: holder,
+          parties: [],
+          acquisitions: [
+            {
+              kind: 'introduction',
+              sender: null,
+              via: 'ocap-url',
+              seq: 1,
+            },
+          ],
+        },
+      ],
+    });
+  });
+
+  it('resolves a remote hop to the operator of its kernel', () => {
+    kernelStore.setRemoteInfo(remote, { peerId: 'remote-peer' });
+    kernelStore.addAttestation({
+      kind: 'operator',
+      subject: 'remote-peer',
+      party: 'ed25519:remote-op',
+      payload: null,
+      signature: 'sig',
+    });
+    kernelStore.recordConveyance({
+      kref: ko1,
+      sender: owner,
+      to: remote,
+      via: 'message',
+      carrier: ko1,
+    });
+    kernelStore.recordConveyance({
+      kref: ko1,
+      sender: remote,
+      to: holder,
+      via: 'message',
+      carrier: ko1,
+    });
+    expect(
+      buildChain({ kernelStore, kref: ko1, holder, peerId: undefined }).hops,
+    ).toStrictEqual([
+      {
+        endpoint: holder,
+        parties: [],
+        acquisitions: [
+          {
+            kind: 'conveyance',
+            sender: remote,
+            via: 'message',
+            seq: 2,
+          },
+        ],
+      },
+      {
+        endpoint: remote,
+        parties: ['ed25519:remote-op'],
+        acquisitions: [
+          {
+            kind: 'conveyance',
+            sender: owner,
+            via: 'message',
+            seq: 1,
+          },
+        ],
+      },
+      { endpoint: owner, parties: [], acquisitions: [] },
+    ]);
   });
 
   it('is just the owner for the owner', () => {

@@ -88,6 +88,9 @@ const verifyEd25519: PartySignatureVerifier = async ({
 export function makePartyVerifier(
   verifiers: Record<string, PartySignatureVerifier> = {},
 ): PartyVerifier {
+  if (Object.hasOwn(verifiers, 'ed25519')) {
+    throw Error('the ed25519 scheme is built in');
+  }
   const byScheme = new Map<string, PartySignatureVerifier>([
     ['ed25519', verifyEd25519],
     ...Object.entries(verifiers),
