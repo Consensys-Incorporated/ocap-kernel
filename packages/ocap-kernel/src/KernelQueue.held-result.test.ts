@@ -132,6 +132,22 @@ describe('the hold on a queueMessage result', () => {
     await stop();
   });
 
+  it('is taken by `writeMessage` in the crank that writes the message, and named in the answer', async () => {
+    const { kernelStore, kernelQueue, root, gift, start, stop } =
+      await setUp(OBJECT);
+    start();
+
+    const { answer } = await kernelQueue.enqueueInbox('bootstrap', () => ({
+      value: kernelQueue.writeMessage(root, 'fetch', []),
+    }));
+    const result = await answer;
+
+    const [kpid] = kernelStore.getHeldResults();
+    expect(result).toStrictEqual({ ...kser(kslot(gift)), kpid });
+    expect(kernelStore.auditRefCounts()).toStrictEqual([]);
+    await stop();
+  });
+
   it('keeps the krefs in the answer alive until it is released', async () => {
     const { kernelStore, kernelQueue, root, gift, start, stop, v1 } =
       await setUp(OBJECT);
@@ -140,7 +156,10 @@ describe('the hold on a queueMessage result', () => {
     const kpid = result.kpid as KRef;
     // The kernel does not yet retire the vat's entry for a settled promise
     // (#1229), which would keep the promise whether or not it is held.
-    await kernelQueue.writeOutsideCrank(() => kernelStore.forgetKref(v1, kpid));
+    await kernelQueue.enqueueInbox('forget a kref', () => {
+      kernelStore.forgetKref(v1, kpid);
+      return { value: undefined };
+    });
     await kernelQueue.enqueueMessage(root, 'fetch', []);
     expect(kernelStore.getObjectRefCount(gift).reachable).toBe(2);
 

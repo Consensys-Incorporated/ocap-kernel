@@ -81,13 +81,16 @@ export class MockRemotesFactory {
       acceptPeerIncarnation: vi.fn(),
       waitingIncarnations: vi.fn().mockReturnValue([]),
       resolvePromises: vi.fn(),
-      assertRunLoopAlive: vi.fn(),
+      // Runs the work at once, as the queue does before its run loop starts.
+      enqueueInbox: vi.fn<KernelQueue['enqueueInbox']>(async (_what, work) => {
+        const outcome = await work();
+        if ('failure' in outcome) {
+          throw outcome.failure;
+        }
+        return outcome.value;
+      }),
       panic: vi.fn<KernelQueue['panic']>(
         (problem, cause) => new Error(`Kernel panic: ${problem}`, { cause }),
-      ),
-      waitForCrank: vi.fn(),
-      writeOutsideCrank: vi.fn<KernelQueue['writeOutsideCrank']>(
-        async (write) => write(),
       ),
       run: vi.fn(),
     } as unknown as KernelQueue;

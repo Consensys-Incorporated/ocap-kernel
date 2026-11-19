@@ -222,7 +222,6 @@ export class Kernel {
       vatManager: this.#vatManager,
       getKernelService: (name) =>
         this.#kernelServiceManager.getKernelService(name),
-      queueMessage: this.queueMessage.bind(this),
       ...(this.#ioManager ? { ioManager: this.#ioManager } : {}),
       logger: this.#logger.subLogger({ tags: ['SubclusterManager'] }),
     });
@@ -514,7 +513,8 @@ export class Kernel {
   }
 
   /**
-   * Send a message from the kernel to an object in a vat.
+   * Send a message from the kernel to an object in a vat. Refused once `stop`
+   * is called or the run loop has died.
    *
    * @param target - The object to which the message is directed.
    * @param method - The method to be invoked.
@@ -595,7 +595,8 @@ export class Kernel {
   }
 
   /**
-   * Redeem an OCAP URL to get the kernel reference it represents.
+   * Redeem an OCAP URL to get the kernel reference it represents. A remote
+   * URL's redemption is refused once `stop` is called or the run loop has died.
    *
    * @param url - The OCAP URL to redeem.
    * @returns A promise for the kref of the object referenced by the OCAP URL.
@@ -627,7 +628,8 @@ export class Kernel {
   }
 
   /**
-   * Launches a sub-cluster of vats.
+   * Launches a sub-cluster of vats. Refused once `stop` is called or the run
+   * loop has died.
    *
    * @param config - Configuration object for sub-cluster.
    * @returns A promise for the subcluster ID and the (CapData encoded) result
@@ -641,8 +643,8 @@ export class Kernel {
 
   /**
    * Terminates a named sub-cluster of vats, each by way of `terminateVat`.
-   * Refused on a dead run loop. A member that survives keeps the subcluster
-   * and its IO channels, and makes this reject.
+   * Refused once `stop` is called or the run loop has died. A member that
+   * survives keeps the subcluster and its IO channels, and makes this reject.
    *
    * @param subclusterId - The id of the subcluster to terminate.
    * @returns A promise that resolves when termination is complete.
@@ -717,8 +719,8 @@ export class Kernel {
 
   /**
    * Restarts a vat. The run loop carries the restart out, so this waits behind
-   * the run queue and rejects if the run loop dies. A vat whose relaunch fails
-   * is terminated.
+   * the run queue and rejects if the run loop dies, or once `stop` is called. A
+   * vat whose relaunch fails is terminated.
    *
    * @param vatId - The ID of the vat to restart.
    * @returns A promise for the restarted vat handle.
@@ -730,8 +732,8 @@ export class Kernel {
   /**
    * Terminate a vat with extreme prejudice. The run loop carries it out in a
    * crank of its own, so this waits behind the run queue, and rejects if the
-   * run loop dies or the kernel is stopped, reset or has its storage cleared
-   * first.
+   * run loop dies or the kernel is stopping, stopped, reset or has its storage
+   * cleared first.
    *
    * @param vatId - The ID of the vat to terminate.
    * @param reason - The reason for the termination, if any. It must carry no
@@ -767,7 +769,6 @@ export class Kernel {
     this.#kernelQueue.discardArrivals();
     this.#kernelQueue.abandonSubscriptions(abandoned);
     this.#remoteManager.releaseRestartHolds();
-    this.#kernelQueue.discardHeldRequests(abandoned);
     this.#kernelQueue.discardInbox(abandoned);
     this.#vatManager.abandonQueuedWork(abandoned);
   }
@@ -995,8 +996,8 @@ export class Kernel {
 
   /**
    * Gracefully stop the kernel without deleting vats. Waits for the open crank
-   * and for a `clearStorage`, `reset` or `terminateAllVats` queued before
-   * this; if one never ends, neither does this, and the embedder has to end
+   * and for the inbox items queued before this, a `reset` or a `queueMessage`
+   * say; if one never ends, neither does this, and the embedder has to end
    * the process. A later call settles as this one does.
    */
   async stop(): Promise<void> {

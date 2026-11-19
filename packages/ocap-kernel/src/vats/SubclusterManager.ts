@@ -1,4 +1,6 @@
+import type { CapData } from '@endo/marshal';
 import { SubclusterNotFoundError } from '@metamask/kernel-errors';
+import { isCapData } from '@metamask/kernel-utils';
 import { Logger } from '@metamask/logger';
 
 import type { IOManager } from '../io/IOManager.ts';
@@ -27,11 +29,6 @@ type SubclusterManagerOptions = {
   getKernelService: (
     name: string,
   ) => { kref: KRef; systemOnly: boolean } | undefined;
-  queueMessage: (
-    target: KRef,
-    method: string,
-    args: unknown[],
-  ) => Promise<QueueMessageResult>;
   ioManager?: IOManager;
   logger?: Logger;
 };
@@ -54,13 +51,6 @@ export class SubclusterManager {
     name: string,
   ) => { kref: KRef; systemOnly: boolean } | undefined;
 
-  /** Function to queue messages */
-  readonly #queueMessage: (
-    target: KRef,
-    method: string,
-    args: unknown[],
-  ) => Promise<QueueMessageResult>;
-
   /** Logger for diagnostic output */
   readonly #logger: Logger;
 
@@ -78,7 +68,6 @@ export class SubclusterManager {
    * @param options.kernelQueue - The kernel's message queue for scheduling deliveries.
    * @param options.vatManager - Manager for creating and managing vat instances.
    * @param options.getKernelService - Function to retrieve a kernel service by its kref.
-   * @param options.queueMessage - Function to queue messages for delivery to targets.
    * @param options.ioManager - Optional IO manager for IO channel lifecycle.
    * @param options.logger - Optional logger for diagnostic output.
    */
@@ -87,7 +76,6 @@ export class SubclusterManager {
     kernelQueue,
     vatManager,
     getKernelService,
-    queueMessage,
     ioManager,
     logger,
   }: SubclusterManagerOptions) {
@@ -95,7 +83,6 @@ export class SubclusterManager {
     this.#kernelQueue = kernelQueue;
     this.#vatManager = vatManager;
     this.#getKernelService = getKernelService;
-    this.#queueMessage = queueMessage;
     this.#ioManager = ioManager;
     this.#logger = logger ?? new Logger('SubclusterManager');
     harden(this);
@@ -116,9 +103,10 @@ export class SubclusterManager {
     { isSystem = false }: { isSystem?: boolean } = {},
   ): Promise<SubclusterLaunchResult> {
     await this.#kernelQueue.waitForCrank();
-    // It would fail at the bootstrap message anyway, but only refusing here fails
-    // before spawning a worker per vat, which the catch below leaks.
-    this.#kernelQueue.assertRunLoopAlive('launch a subcluster');
+    // It would be refused at the bootstrap message anyway, but only refusing
+    // here fails before the subcluster is written and a worker spawned per vat,
+    // which the catch below could not then retire.
+    this.#kernelQueue.assertInboxOpen('launch a subcluster');
     isClusterConfig(config) || Fail`invalid cluster config`;
     if (!config.vats[config.bootstrap]) {
       Fail`invalid bootstrap vat name ${config.bootstrap}`;
@@ -262,8 +250,9 @@ export class SubclusterManager {
    * @returns A promise that resolves when termination is complete.
    */
   async terminateSubcluster(subclusterId: SubclusterId): Promise<void> {
-    // A dead run loop ends no member, and the record must not go without them.
-    this.#kernelQueue.assertRunLoopAlive('terminate a subcluster');
+    // A dead or stopping run loop ends no member, and the record must not go
+    // without them.
+    this.#kernelQueue.assertInboxOpen('terminate a subcluster');
     const subcluster = this.#kernelStore.getSubcluster(subclusterId);
     if (!subcluster) {
       throw new SubclusterNotFoundError(subclusterId);
@@ -526,24 +515,34 @@ export class SubclusterManager {
     }
     const vatRootKrefs = Object.fromEntries(vatRootKrefsEntries);
 
-    // A failed peer's promise is made in the same write as the message, which
-    // `queueMessage` writes at once outside a crank: one made sooner, rejected
-    // and named by nothing else yet, would be collected by an open crank
-    // before the held message took its reference.
-    const { answer } = await this.#kernelQueue.writeOutsideCrank(() => {
-      const roots = Object.fromEntries(
-        rootsEntries.map(([vatName, root]): [string, SlotValue] => [
-          vatName,
-          root instanceof Error
-            ? this.#makeRejectedRoot(root)
-            : kslot(root, 'vatRoot'),
-        ]),
-      );
-      return {
-        answer: this.#queueMessage(rootKref, 'bootstrap', [roots, services]),
-      };
+    // A failed peer's promise is made in the crank that writes the message:
+    // one made sooner, rejected and named by nothing else yet, would be
+    // collected by a crank before the message took its reference.
+    const { answer } = await this.#kernelQueue.enqueueInbox(
+      'bootstrap a subcluster',
+      () => {
+        const roots = Object.fromEntries(
+          rootsEntries.map(([vatName, root]): [string, SlotValue] => [
+            vatName,
+            root instanceof Error
+              ? this.#makeRejectedRoot(root)
+              : kslot(root, 'vatRoot'),
+          ]),
+        );
+        const written = this.#kernelQueue.writeMessage(rootKref, 'bootstrap', [
+          roots,
+          services,
+        ]);
+        written.answer.catch(() => undefined);
+        return { value: written };
+      },
+    );
+    const bootstrapResult = await answer.catch((rejection: unknown) => {
+      // Reported as `Kernel.queueMessage` reports a rejected answer.
+      throw isCapData(rejection)
+        ? kunser(rejection as CapData<KRef>)
+        : rejection;
     });
-    const bootstrapResult = await answer;
     const unserialized = kunser(bootstrapResult);
     if (unserialized instanceof Error) {
       throw unserialized;

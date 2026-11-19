@@ -146,13 +146,11 @@ const mocks = vi.hoisted(() => {
 
     // A stand-in for the run loop: the item is delivered through the router,
     // on a later turn, exactly as a crank would deliver it.
-    enqueueRestartVat = vi.fn((vatId: string) => {
+    enqueueRestartVat = vi.fn(async (vatId: string) => {
       this.#deliverLater({ type: 'restartVat', vatId } as RunQueueItem);
     });
 
-    discardHeldRequests = vi.fn();
-
-    enqueueTerminateVat = vi.fn((vatId: string, reason?: unknown) => {
+    enqueueTerminateVat = vi.fn(async (vatId: string, reason?: unknown) => {
       this.#deliverLater({
         type: 'terminateVat',
         vatId,
@@ -201,6 +199,13 @@ const mocks = vi.hoisted(() => {
       }
     });
 
+    assertInboxOpen = vi.fn((what: string) => {
+      this.assertRunLoopAlive(what);
+      if (this.#stopped) {
+        throw new Error(`Kernel run loop is stopped; cannot ${what}`);
+      }
+    });
+
     stop = vi.fn();
 
     constructor() {
@@ -209,7 +214,9 @@ const mocks = vi.hoisted(() => {
 
     waitForCrank = vi.fn().mockResolvedValue(undefined);
 
-    writeOutsideCrank = vi.fn(async (write: () => unknown) => write());
+    writeMessage = vi.fn(() => ({
+      answer: Promise.resolve({ body: '{"result":"ok"}', slots: [] }),
+    }));
 
     resolvePromises = vi.fn();
   }
@@ -1024,8 +1031,8 @@ describe('Kernel', () => {
           mockKernelDatabase,
         );
         await kernel.launchSubcluster(makeSingleVatClusterConfig());
-        mocks.KernelQueue.lastInstance.enqueueTerminateVat.mockImplementationOnce(
-          () => undefined,
+        mocks.KernelQueue.lastInstance.enqueueTerminateVat.mockResolvedValueOnce(
+          undefined,
         );
 
         const terminating = kernel.terminateVat(asVatId('v1'));
@@ -1420,27 +1427,20 @@ describe('Kernel', () => {
         abandoned: 'Kernel was reset; queued work was abandoned',
       },
     ] as const)(
-      'abandons the queued and held work and the inbox on $method, then releases the restart holds',
+      'abandons the queued work and the inbox on $method, then releases the restart holds',
       async ({ method, abandoned }) => {
         const kernel = await Kernel.make(
           mockPlatformServices,
           makeMapKernelDatabase(),
         );
-        const {
-          discardArrivals,
-          abandonSubscriptions,
-          discardHeldRequests,
-          discardInbox,
-        } = mocks.KernelQueue.lastInstance;
+        const { discardArrivals, abandonSubscriptions, discardInbox } =
+          mocks.KernelQueue.lastInstance;
         const { releaseRestartHolds } = mocks.RemoteManager.lastInstance;
 
         await kernel[method]();
 
         expect(discardArrivals).toHaveBeenCalledOnce();
         expect(abandonSubscriptions).toHaveBeenCalledExactlyOnceWith(
-          new Error(abandoned),
-        );
-        expect(discardHeldRequests).toHaveBeenCalledExactlyOnceWith(
           new Error(abandoned),
         );
         expect(discardInbox).toHaveBeenCalledExactlyOnceWith(
@@ -1554,7 +1554,7 @@ describe('Kernel', () => {
       );
       await kernel.launchSubcluster(makeSingleVatClusterConfig());
       const queue = mocks.KernelQueue.lastInstance;
-      queue.enqueueRestartVat.mockImplementationOnce(() => undefined);
+      queue.enqueueRestartVat.mockResolvedValueOnce(undefined);
 
       const restarting = kernel.restartVat(asVatId('v1'));
       queue.killRunLoop(new Error('run loop boom'));
@@ -1574,8 +1574,8 @@ describe('Kernel', () => {
           mockKernelDatabase,
         );
         await kernel.launchSubcluster(makeSingleVatClusterConfig());
-        mocks.KernelQueue.lastInstance.enqueueRestartVat.mockImplementationOnce(
-          () => undefined,
+        mocks.KernelQueue.lastInstance.enqueueRestartVat.mockResolvedValueOnce(
+          undefined,
         );
 
         const restarting = kernel.restartVat(asVatId('v1'));

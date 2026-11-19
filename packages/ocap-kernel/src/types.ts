@@ -397,8 +397,6 @@ const RunQueueItemRestartVatStruct = object({
   vatId: VatIdStruct,
 });
 
-export type RunQueueItemRestartVat = Infer<typeof RunQueueItemRestartVatStruct>;
-
 /**
  * A request to terminate a vat, queued so the run loop performs it.
  */
@@ -407,10 +405,6 @@ const RunQueueItemTerminateVatStruct = object({
   vatId: VatIdStruct,
   reason: exactOptional(KernelCapDataStruct),
 });
-
-export type RunQueueItemTerminateVat = Infer<
-  typeof RunQueueItemTerminateVatStruct
->;
 
 export type RunQueueItemRemoteInbound = {
   type: 'remoteInbound';
