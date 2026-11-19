@@ -239,9 +239,14 @@ describe('RemoteComms', () => {
     expect(screen.queryByTestId('peer-id-display')).not.toBeInTheDocument();
   });
 
-  it('should display exported ocap URLs when available', () => {
+  it('asks the kernel for a URL for each object that has one issued', async () => {
+    const callKernelMethod = vi.fn(
+      async ({ params }: { params: { kref: string } }) =>
+        `ocap:${params.kref}@peer`,
+    );
     mockUsePanelContext.mockReturnValue(
       createMockPanelContext({
+        callKernelMethod,
         status: {
           vats: [],
           subclusters: [],
@@ -256,16 +261,8 @@ describe('RemoteComms', () => {
           terminatedVats: '[]',
           vats: {},
           ocapUrls: [
-            {
-              kref: 'ko1',
-              owner: 'v1',
-              ocapUrl: 'ocap://example.com/capability1',
-            },
-            {
-              kref: 'ko2',
-              owner: 'v2',
-              ocapUrl: 'ocap://example.com/capability2',
-            },
+            { kref: 'ko1', owner: 'v1' },
+            { kref: 'ko2', owner: null },
           ],
         },
       }),
@@ -273,27 +270,52 @@ describe('RemoteComms', () => {
 
     render(<RemoteComms />);
 
-    // Check that the exported URLs section is visible
     expect(screen.getByTestId('exported-urls-text')).toBeInTheDocument();
-
-    // Check that both URLs are displayed
-    const url1Input = screen.getByTestId('ocap-url-ko1');
-    expect(url1Input).toBeInTheDocument();
-    expect(url1Input).toHaveValue('ocap://example.com/capability1');
+    const url1Input = await screen.findByTestId('ocap-url-ko1');
+    expect(url1Input).toHaveValue('ocap:ko1@peer');
     expect(url1Input).toHaveAttribute('readonly');
-
-    const url2Input = screen.getByTestId('ocap-url-ko2');
-    expect(url2Input).toBeInTheDocument();
-    expect(url2Input).toHaveValue('ocap://example.com/capability2');
-    expect(url2Input).toHaveAttribute('readonly');
-
-    // Check owners are displayed
+    expect(await screen.findByTestId('ocap-url-ko2')).toHaveValue(
+      'ocap:ko2@peer',
+    );
+    expect(callKernelMethod.mock.calls).toStrictEqual([
+      [{ method: 'getIssuedOcapURL', params: { kref: 'ko1' } }],
+      [{ method: 'getIssuedOcapURL', params: { kref: 'ko2' } }],
+    ]);
     expect(screen.getByText('Owner v1')).toBeInTheDocument();
-    expect(screen.getByText('Owner v2')).toBeInTheDocument();
-
-    // Check krefs are displayed
+    expect(screen.getByText('Owner none')).toBeInTheDocument();
     expect(screen.getByText('(ko1)')).toBeInTheDocument();
     expect(screen.getByText('(ko2)')).toBeInTheDocument();
+  });
+
+  it('shows no URL field for an object the kernel gives no URL for', async () => {
+    const logMessage = vi.fn();
+    mockUsePanelContext.mockReturnValue(
+      createMockPanelContext({
+        callKernelMethod: vi.fn().mockRejectedValue(new Error('no identity')),
+        logMessage,
+        status: {
+          vats: [],
+          subclusters: [],
+          remoteComms: { state: 'disconnected' },
+        },
+        objectRegistry: {
+          gcActions: '[]',
+          reapQueue: '[]',
+          terminatedVats: '[]',
+          vats: {},
+          ocapUrls: [{ kref: 'ko1', owner: 'v1' }],
+        },
+      }),
+    );
+
+    render(<RemoteComms />);
+
+    await vi.waitFor(() =>
+      expect(logMessage.mock.calls).toStrictEqual([
+        ['Failed to get an ocap URL for ko1: no identity', 'error'],
+      ]),
+    );
+    expect(screen.queryByTestId('ocap-url-ko1')).not.toBeInTheDocument();
   });
 
   it('should not display exported ocap URLs section when empty', () => {

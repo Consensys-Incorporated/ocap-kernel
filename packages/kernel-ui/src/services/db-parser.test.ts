@@ -262,7 +262,7 @@ describe('parseObjectRegistry', () => {
     expect(result).toStrictEqual(expectedResult);
   });
 
-  it('lists the latest URL issued for each object, with its owner', () => {
+  it('lists each object that has a URL issued, with its owner', () => {
     const entries = [
       { key: 'gcActions', value: '[]' },
       { key: 'reapQueue', value: '[]' },
@@ -274,10 +274,8 @@ describe('parseObjectRegistry', () => {
       },
       { key: 'ko1.owner', value: 'v1' },
       { key: 'ocapURLObjects.ko1', value: '2' },
-      { key: 'ocapURLString.ko1', value: 'ocap:first@peer' },
       { key: 'ko2.owner', value: 'kernel' },
       { key: 'ocapURLObjects.ko2', value: '1' },
-      { key: 'ocapURLString.ko2', value: 'ocap:second@peer' },
       // A settled promise whose value is a URL string is not a source.
       { key: 'kp1.state', value: 'fulfilled' },
       {
@@ -291,8 +289,8 @@ describe('parseObjectRegistry', () => {
     const result = parseObjectRegistry(entries);
 
     expect(result.ocapUrls).toStrictEqual([
-      { kref: 'ko1', owner: 'v1', ocapUrl: 'ocap:first@peer' },
-      { kref: 'ko2', owner: 'kernel', ocapUrl: 'ocap:second@peer' },
+      { kref: 'ko1', owner: 'v1' },
+      { kref: 'ko2', owner: 'kernel' },
     ]);
   });
 });
