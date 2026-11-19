@@ -48,7 +48,13 @@ describe('IOManager', () => {
 
     registerService = vi.fn((name: string, service: object): KernelService => {
       registeredServices.set(name, service as unknown as ListenerFacet);
-      return { name, kref: `ko${name}` as KRef, service, systemOnly: false };
+      return {
+        name,
+        kref: `ko${name}` as KRef,
+        service,
+        systemOnly: false,
+        withCaller: false,
+      };
     });
     unregisterService = vi.fn();
     registerAnonymous = vi.fn((): KRef => {

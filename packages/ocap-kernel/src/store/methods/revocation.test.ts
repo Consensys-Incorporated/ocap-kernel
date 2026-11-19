@@ -25,6 +25,7 @@ describe('revocation-methods', () => {
     objectStore = getObjectMethods({
       kv,
       nextObjectId,
+      crankNumber: { get: () => '7' },
     } as StoreContext);
 
     revocation = getRevocationMethods({

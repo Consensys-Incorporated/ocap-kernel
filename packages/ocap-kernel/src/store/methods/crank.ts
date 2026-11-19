@@ -2,6 +2,7 @@ import { Fail, q } from '@endo/errors';
 import { makePromiseKit } from '@endo/promise-kit';
 import type { KernelDatabase } from '@metamask/kernel-store';
 
+import type { DeliveryContext } from '../../types.ts';
 import type { CrankBufferItem, Savepoint, StoreContext } from '../types.ts';
 
 /**
@@ -152,6 +153,7 @@ export function getCrankMethods(ctx: StoreContext, kdb: KernelDatabase) {
       releaseAllSavepoints();
     } finally {
       ctx.inCrank = false;
+      ctx.currentDelivery = undefined;
       ctx.resolveCrank?.();
       ctx.resolveCrank = undefined;
     }
@@ -245,6 +247,28 @@ export function getCrankMethods(ctx: StoreContext, kdb: KernelDatabase) {
   }
 
   /**
+   * Say how the crank in progress hands out references, for the record of
+   * each reference an endpoint acquires during it. Cleared when the crank
+   * ends.
+   *
+   * @param context - The context, or undefined for a crank that hands out
+   * nothing.
+   */
+  function setCurrentDelivery(context: DeliveryContext | undefined): void {
+    ctx.inCrank || Fail`setCurrentDelivery outside of crank`;
+    ctx.currentDelivery = context;
+  }
+
+  /**
+   * Get how the crank in progress hands out references.
+   *
+   * @returns The context, or undefined if there is none.
+   */
+  function getCurrentDelivery(): DeliveryContext | undefined {
+    return ctx.currentDelivery;
+  }
+
+  /**
    * Check whether the kernel is currently inside a crank.
    *
    * @returns True if a crank is in progress.
@@ -264,6 +288,8 @@ export function getCrankMethods(ctx: StoreContext, kdb: KernelDatabase) {
     flushCrankBuffer,
     incrementCrankNumber,
     getCrankNumber,
+    setCurrentDelivery,
+    getCurrentDelivery,
     isInCrank,
   };
 }

@@ -7,7 +7,7 @@ import { KernelServiceManager } from './KernelServiceManager.ts';
 import { kser, kslot, makeKernelError } from './liveslots/kernel-marshal.ts';
 import { makeKernelStore } from './store/index.ts';
 import type { KernelMessage } from './types.ts';
-import { asKRef } from '../test/branded.ts';
+import { asKRef, asVatId } from '../test/branded.ts';
 import { makeMapKernelDatabase } from '../test/storage.ts';
 
 /**
@@ -302,11 +302,32 @@ describe('KernelServiceManager', () => {
         methargs: kser(['testMethod', ['arg1', 'arg2']]),
       };
 
-      serviceManager.invokeKernelService(registered.kref, message);
+      serviceManager.invokeKernelService(registered.kref, message, 'kernel');
       await delay();
 
       expect(calls).toStrictEqual([['arg1', 'arg2']]);
       expect(mockKernelQueue.resolvePromises).not.toHaveBeenCalled();
+    });
+
+    it('calls a service registered with `withCaller` with the sender first', async () => {
+      const { method: testMethod, calls } = makeTrackableMethod();
+      const registered = serviceManager.registerKernelServiceObject(
+        'testService',
+        { testMethod },
+        { withCaller: true },
+      );
+      const message: KernelMessage = {
+        methargs: kser(['testMethod', ['arg1']]),
+      };
+
+      serviceManager.invokeKernelService(
+        registered.kref,
+        message,
+        asVatId('v1'),
+      );
+      await delay();
+
+      expect(calls).toStrictEqual([[{ caller: 'v1' }, 'arg1']]);
     });
 
     it('successfully invokes a service method with result', async () => {
@@ -325,7 +346,7 @@ describe('KernelServiceManager', () => {
         result: asKRef('kp123'),
       };
 
-      serviceManager.invokeKernelService(registered.kref, message);
+      serviceManager.invokeKernelService(registered.kref, message, 'kernel');
       await delay();
 
       expect(calls).toStrictEqual([['arg1']]);
@@ -351,7 +372,7 @@ describe('KernelServiceManager', () => {
         result: asKRef('kp123'),
       };
 
-      serviceManager.invokeKernelService(registered.kref, message);
+      serviceManager.invokeKernelService(registered.kref, message, 'kernel');
       await delay();
 
       expect(mockKernelQueue.resolvePromises).toHaveBeenCalledWith('kernel', [
@@ -376,7 +397,7 @@ describe('KernelServiceManager', () => {
         methargs: kser(['testMethod', []]),
       };
 
-      serviceManager.invokeKernelService(registered.kref, message);
+      serviceManager.invokeKernelService(registered.kref, message, 'kernel');
       await delay();
 
       expect(loggerErrorSpy).toHaveBeenCalledWith(
@@ -396,7 +417,7 @@ describe('KernelServiceManager', () => {
       // loop, and this is reachable whenever an anonymous kernel object
       // outlives the process that hosted it.
       expect(() =>
-        serviceManager.invokeKernelService(asKRef('ko999'), message),
+        serviceManager.invokeKernelService(asKRef('ko999'), message, 'kernel'),
       ).not.toThrow();
       expect(mockKernelQueue.resolvePromises).toHaveBeenCalledWith('kernel', [
         [
@@ -417,7 +438,7 @@ describe('KernelServiceManager', () => {
       };
 
       expect(() =>
-        serviceManager.invokeKernelService(asKRef('ko999'), message),
+        serviceManager.invokeKernelService(asKRef('ko999'), message, 'kernel'),
       ).not.toThrow();
       expect(loggerErrorSpy).toHaveBeenCalledWith(
         'Error in kernel service method:',
@@ -441,7 +462,7 @@ describe('KernelServiceManager', () => {
         result: asKRef('kp123'),
       };
 
-      serviceManager.invokeKernelService(registered.kref, message);
+      serviceManager.invokeKernelService(registered.kref, message, 'kernel');
       await delay();
 
       expect(mockKernelQueue.resolvePromises).toHaveBeenCalledWith('kernel', [
@@ -470,7 +491,7 @@ describe('KernelServiceManager', () => {
         methargs: kser(['unknownMethod', []]),
       };
 
-      serviceManager.invokeKernelService(registered.kref, message);
+      serviceManager.invokeKernelService(registered.kref, message, 'kernel');
       await delay();
 
       expect(loggerErrorSpy).toHaveBeenCalledWith(
@@ -495,7 +516,7 @@ describe('KernelServiceManager', () => {
         result: asKRef('kp123'),
       };
 
-      serviceManager.invokeKernelService(registered.kref, message);
+      serviceManager.invokeKernelService(registered.kref, message, 'kernel');
       await delay();
 
       expect(mockKernelQueue.resolvePromises).toHaveBeenCalledWith('kernel', [
@@ -535,7 +556,7 @@ describe('KernelServiceManager', () => {
         result: asKRef('kp123'),
       };
 
-      serviceManager.invokeKernelService(registered.kref, message);
+      serviceManager.invokeKernelService(registered.kref, message, 'kernel');
       await delay();
 
       expect(calls).toStrictEqual([['arg1']]);
@@ -559,7 +580,7 @@ describe('KernelServiceManager', () => {
         result: asKRef('kp123'),
       };
 
-      serviceManager.invokeKernelService(registered.kref, message);
+      serviceManager.invokeKernelService(registered.kref, message, 'kernel');
       await delay();
 
       expect(mockKernelQueue.resolvePromises).toHaveBeenCalledWith('kernel', [
@@ -622,10 +643,14 @@ describe('KernelServiceManager', () => {
         'io-connection',
       );
 
-      serviceManager.invokeKernelService(kref, {
-        methargs: kser(['ping', ['hello']]),
-        result: asKRef('kp200'),
-      });
+      serviceManager.invokeKernelService(
+        kref,
+        {
+          methargs: kser(['ping', ['hello']]),
+          result: asKRef('kp200'),
+        },
+        'kernel',
+      );
       await delay();
 
       expect(calls).toStrictEqual([['hello']]);

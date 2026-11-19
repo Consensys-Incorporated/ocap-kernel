@@ -48,6 +48,25 @@ describe('crank methods', () => {
     crankMethods = getCrankMethods(context, kdb);
   });
 
+  describe('setCurrentDelivery', () => {
+    it('refuses outside a crank', () => {
+      expect(() =>
+        crankMethods.setCurrentDelivery({ via: 'ocap-url' }),
+      ).toThrow('setCurrentDelivery outside of crank');
+    });
+
+    it('holds the context until the crank ends', () => {
+      crankMethods.startCrank();
+      crankMethods.setCurrentDelivery({ via: 'message', sender: 'kernel' });
+      expect(crankMethods.getCurrentDelivery()).toStrictEqual({
+        via: 'message',
+        sender: 'kernel',
+      });
+      crankMethods.endCrank();
+      expect(crankMethods.getCurrentDelivery()).toBeUndefined();
+    });
+  });
+
   describe('startCrank', () => {
     it('should set inCrank to true and create a settlement promise', () => {
       crankMethods.startCrank();

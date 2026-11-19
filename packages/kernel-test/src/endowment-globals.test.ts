@@ -20,7 +20,7 @@ import {
 
 describe('global endowments', () => {
   const vatId = 'v1' as VatId;
-  const v1Root = 'ko4' as KRef;
+  const v1Root = 'ko5' as KRef;
 
   const setup = async ({
     globals,

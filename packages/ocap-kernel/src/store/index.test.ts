@@ -95,11 +95,13 @@ describe('kernel store', () => {
         'forgetKref',
         'forgetTerminatedVat',
         'formatRefCountViolations',
+        'getAccountabilityRecords',
         'getAllRemoteRecords',
         'getAllSystemSubclusterMappings',
         'getAllVatRecords',
         'getAnonymousKernelObjects',
         'getCrankNumber',
+        'getCurrentDelivery',
         'getGCActions',
         'getHeldResults',
         'getImporters',
@@ -112,6 +114,7 @@ describe('kernel store', () => {
         'getNextPromiseId',
         'getNextRemoteId',
         'getNextVatId',
+        'getObjectCreationCrank',
         'getObjectRefCount',
         'getOcapURLIssuanceCount',
         'getOcapURLObjects',
@@ -137,6 +140,7 @@ describe('kernel store', () => {
         'getSubclusters',
         'getSystemSubclusterMapping',
         'getTerminatedVats',
+        'getTrackers',
         'getVatConfig',
         'getVatIDs',
         'getVatSubcluster',
@@ -156,6 +160,7 @@ describe('kernel store', () => {
         'isResultHeld',
         'isRevoked',
         'isRootObject',
+        'isTracked',
         'isVatActive',
         'isVatTerminated',
         'kernelRefExists',
@@ -169,7 +174,11 @@ describe('kernel store', () => {
         'orphanKernelObject',
         'pinObject',
         'provideIncarnationId',
+        'pruneAccountabilityRecords',
         'recomputeRefCounts',
+        'recordConveyance',
+        'recordDelivery',
+        'recordIntroduction',
         'recordLastActiveTime',
         'releaseHeldResult',
         'releaseOcapURLRetentions',
@@ -183,7 +192,9 @@ describe('kernel store', () => {
         'rollbackCrank',
         'runQueueLength',
         'scheduleReap',
+        'setCurrentDelivery',
         'setGCActions',
+        'setIntroductionRecording',
         'setKernelServiceKref',
         'setObjectRefCount',
         'setPeerIncarnation',
@@ -201,6 +212,7 @@ describe('kernel store', () => {
         'setSystemSubclusterMapping',
         'setVatConfig',
         'startCrank',
+        'trackObject',
         'translateCapDataEtoK',
         'translateCapDataKtoE',
         'translateMessageEtoK',
@@ -210,6 +222,9 @@ describe('kernel store', () => {
         'translateSyscallVtoK',
         'undoOcapURLRetention',
         'unpinObject',
+        'untrackAll',
+        'untrackEndpoint',
+        'untrackObject',
         'waitForCrank',
         'writeAtomically',
       ]);
@@ -327,19 +342,27 @@ describe('kernel store', () => {
       expect(ks.getKernelPromise(asKRef('kp1'))).toStrictEqual(kp1);
       expect(ks.getKernelPromise(asKRef('kp2'))).toStrictEqual(kp2);
       const msg1 = {
-        methargs: {
-          body: 'first message to kp1',
-          slots: [],
+        message: {
+          methargs: {
+            body: 'first message to kp1',
+            slots: [],
+          },
+          result: null,
         },
-        result: null,
+        sender: 'kernel' as const,
+        cause: 'async' as const,
       };
       ks.enqueuePromiseMessage(asKRef('kp1'), msg1);
       const msg2 = {
-        methargs: {
-          body: 'second message to kp1',
-          slots: [],
+        message: {
+          methargs: {
+            body: 'second message to kp1',
+            slots: [],
+          },
+          result: null,
         },
-        result: null,
+        sender: 'kernel' as const,
+        cause: 'async' as const,
       };
       ks.enqueuePromiseMessage(asKRef('kp1'), msg2);
       expect(ks.getKernelPromiseMessageQueue(asKRef('kp1'))).toStrictEqual([
@@ -348,11 +371,15 @@ describe('kernel store', () => {
       ]);
       expect(ks.getKernelPromiseMessageQueue(asKRef('kp1'))).toStrictEqual([]);
       ks.enqueuePromiseMessage(asKRef('kp1'), {
-        methargs: {
-          body: 'sacrificial message',
-          slots: [],
+        message: {
+          methargs: {
+            body: 'sacrificial message',
+            slots: [],
+          },
+          result: null,
         },
-        result: null,
+        sender: 'kernel',
+        cause: 'async',
       });
       ks.deleteKernelPromise(asKRef('kp1'));
       expect(() => ks.getKernelPromise(asKRef('kp1'))).toThrow(

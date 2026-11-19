@@ -18,6 +18,8 @@ export type {
   KernelMessage,
   QueueMessageResult,
   EndpointMessage,
+  Sender,
+  Cause,
   VatId,
   VatPowers,
   PlatformServices,
@@ -44,6 +46,18 @@ export type {
   OcapURLIssuerService,
   OcapURLRedemptionService,
 } from './remotes/kernel/OcapURLManager.ts';
+export type {
+  AccountabilityService,
+  Caller,
+} from './accountability/service.ts';
+export type {
+  AccountabilityRecord,
+  ConveyanceRecord,
+  DeliveryRecord,
+  IntroductionRecord,
+  TrackOptions,
+  Witness,
+} from './accountability/types.ts';
 export {
   isVatId,
   isKRef,

@@ -12,7 +12,7 @@ import {
 } from './utils.ts';
 
 const vatId = 'v1' as VatId;
-const v1Root = 'ko4' as KRef;
+const v1Root = 'ko5' as KRef;
 const goodHost = 'good-url.test';
 const badHost = 'bad-url.test';
 

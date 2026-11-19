@@ -7,6 +7,7 @@ import { processGCActionSet } from './garbage-collection/garbage-collection.ts';
 import { kser, makeKernelError } from './liveslots/kernel-marshal.ts';
 import type { KernelStore } from './store/index.ts';
 import type {
+  Cause,
   CrankResult,
   EndpointId,
   InboxOutcome,
@@ -25,6 +26,7 @@ import type {
   RunQueueItemTerminateVat,
   QueueMessageResult,
   RunQueueItemSend,
+  Sender,
   VatId,
 } from './types.ts';
 import { insistKRef } from './types.ts';
@@ -876,7 +878,7 @@ export class KernelQueue {
     // The caller has no c-list, so until it releases the result this is what
     // keeps the krefs in it alive.
     this.#kernelStore.holdResult(result);
-    this.enqueueSend(target, { methargs, result });
+    this.enqueueSend(target, { methargs, result }, { sender: 'kernel' });
     // Last: a write that threw must leave no subscription behind.
     this.subscriptions.set(result, subscription);
   }
@@ -978,9 +980,25 @@ export class KernelQueue {
    *
    * @param target - The object to which the message is directed.
    * @param message - The message to be delivered.
-   * @param immediate - If true (the default), enqueue immediately; if false, buffer for crank completion.
+   * @param options - Options bag.
+   * @param options.sender - Who is sending it.
+   * @param options.cause - The crank it was issued in. Defaults to the open
+   * crank, or `'async'` if none is open; given only for a message that
+   * waited on a promise, which keeps the cause it was issued with.
+   * @param options.immediate - If true (the default), enqueue immediately; if
+   * false, buffer for crank completion.
    */
-  enqueueSend(target: KRef, message: KernelMessage, immediate = true): void {
+  enqueueSend(
+    target: KRef,
+    message: KernelMessage,
+    {
+      sender,
+      cause = this.#kernelStore.isInCrank()
+        ? this.#kernelStore.getCrankNumber()
+        : 'async',
+      immediate = true,
+    }: { sender: Sender; cause?: Cause; immediate?: boolean },
+  ): void {
     this.#kernelStore.incrementRefCount(target, 'queue|target');
     if (message.result) {
       this.#kernelStore.incrementRefCount(message.result, 'queue|result');
@@ -988,7 +1006,13 @@ export class KernelQueue {
     for (const slot of message.methargs.slots || []) {
       this.#kernelStore.incrementRefCount(slot, 'queue|slot');
     }
-    const item: RunQueueItemSend = { type: 'send', target, message };
+    const item: RunQueueItemSend = {
+      type: 'send',
+      target,
+      message,
+      sender,
+      cause,
+    };
     if (immediate) {
       this.#enqueueRun(item);
     } else {
@@ -1325,15 +1349,16 @@ export class KernelQueue {
       }
 
       // Update promise state and get any queued messages to it.
-      const queuedMessages = this.#kernelStore.resolveKernelPromise(
+      const queuedMessages = this.#kernelStore.resolveKernelPromise({
         kpid,
         rejected,
-        data,
-      );
+        value: data,
+        resolver: endpointId ?? 'kernel',
+      });
 
       // Enqueue the queued messages (immediate or buffered based on flag).
-      for (const [target, message] of queuedMessages) {
-        this.enqueueSend(target, message, immediate);
+      for (const { message, sender, cause } of queuedMessages) {
+        this.enqueueSend(kpid, message, { sender, cause, immediate });
       }
 
       // A held result stays held only while a caller is about to be handed

@@ -141,6 +141,38 @@ export function kunser(serializedValue: CapData<KRef>): unknown {
 }
 
 /**
+ * Get the name of the method a message invokes, without decoding its
+ * arguments: a vat wrote them, and the kernel has no business failing on them.
+ *
+ * @param methargs - The message's method and arguments, as serialized by `kser`.
+ * @returns The method name, a symbol-named one as `Symbol(name)`, or `?` for a
+ * body the kernel cannot read, which is left for the receiving vat to reject.
+ */
+export function kmethodName(methargs: CapData<KRef>): string {
+  let method: unknown;
+  try {
+    [method] = JSON.parse(methargs.body.slice(1)) as [unknown, unknown];
+  } catch {
+    return '?';
+  }
+  if (typeof method !== 'string') {
+    return '?';
+  }
+  // Smallcaps: `!` escapes a string with a leading special character, and `%`
+  // marks a symbol, `%@@` a well-known one.
+  if (method.startsWith('!')) {
+    return method.slice(1);
+  }
+  if (method.startsWith('%@@')) {
+    return `Symbol(Symbol.${method.slice(3)})`;
+  }
+  if (method.startsWith('%')) {
+    return `Symbol(${method.slice(1)})`;
+  }
+  return method;
+}
+
+/**
  * Produce a serialized expected kernel error with a machine-readable code.
  * The resulting error message has the format `[KERNEL:<CODE>] <detail>`.
  *

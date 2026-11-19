@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `KernelDatabase.accountabilityRecords`, an `AccountabilityRecordStore` over an `accountability_records` table: `append`, `query` and `delete`, the last two by an `AccountabilityRecordFilter`. `clear` empties it with the rest ([#1308](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1308))
+
 ### Changed
 
 - **BREAKING:** Bump `better-sqlite3` from `^12.4.1` to `^13.0.3`, which requires Node 22 or later — the same floor this package already declares ([#1113](https://github.com/MetaMask/ocap-kernel/pull/1113))

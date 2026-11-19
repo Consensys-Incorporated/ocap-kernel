@@ -5,11 +5,23 @@ import { mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 
-import { SQL_QUERIES, DEFAULT_DB_FILENAME } from './common.ts';
+import {
+  SQL_QUERIES,
+  DEFAULT_DB_FILENAME,
+  buildAccountabilityRecordsDelete,
+  buildAccountabilityRecordsQuery,
+} from './common.ts';
 import { getDBFolder } from './env.ts';
 import { makeTransactionMethods } from './transactions.ts';
 import type { TransactionMethods } from './transactions.ts';
-import type { KVStore, VatStore, KernelDatabase } from '../types.ts';
+import type {
+  KVStore,
+  VatStore,
+  KernelDatabase,
+  AccountabilityRecordFilter,
+  AccountabilityRecordRow,
+  AccountabilityRecordStore,
+} from '../types.ts';
 
 export type Database = SqliteDatabase & {
   // savepoint names, innermost last
@@ -119,6 +131,78 @@ function makeKVStore(
 }
 
 /**
+ * Makes a {@link AccountabilityRecordStore} on top of a SQLite database.
+ *
+ * @param db - The (open) database to use.
+ * @param options - Options for the store.
+ * @param options.guardWrite - The transaction methods' write guard.
+ * @returns An accountability record store using the given database.
+ */
+function makeAccountabilityRecordStore(
+  db: Database,
+  { guardWrite }: Pick<TransactionMethods, 'guardWrite'>,
+): AccountabilityRecordStore {
+  db.prepare(SQL_QUERIES.CREATE_TABLE_ACCOUNTABILITY_RECORDS).run();
+  db.prepare(SQL_QUERIES.CREATE_INDEX_ACCOUNTABILITY_RECORDS_KREF).run();
+  db.prepare(SQL_QUERIES.CREATE_INDEX_ACCOUNTABILITY_RECORDS_ENDPOINT).run();
+  db.prepare(SQL_QUERIES.CREATE_INDEX_ACCOUNTABILITY_RECORDS_SENDER).run();
+  db.prepare(SQL_QUERIES.CREATE_INDEX_ACCOUNTABILITY_RECORDS_TRACE).run();
+  const sqlAppend = db.prepare(SQL_QUERIES.APPEND_ACCOUNTABILITY_RECORD);
+
+  /**
+   * Append a record.
+   *
+   * @param row - The record, without its sequence number.
+   * @returns The sequence number it was given.
+   */
+  function append(row: Omit<AccountabilityRecordRow, 'seq'>): number {
+    const { lastInsertRowid } = sqlAppend.run(
+      row.kind,
+      row.witness,
+      row.crank,
+      row.kref,
+      row.endpoint,
+      row.sender,
+      row.trace,
+      row.data,
+    );
+    return Number(lastInsertRowid);
+  }
+
+  /**
+   * Read records, in sequence order.
+   *
+   * @param filter - Which records.
+   * @returns The records.
+   */
+  function query(
+    filter: AccountabilityRecordFilter = {},
+  ): AccountabilityRecordRow[] {
+    const { sql, params } = buildAccountabilityRecordsQuery(filter);
+    return db.prepare(sql).all(...params) as AccountabilityRecordRow[];
+  }
+
+  /**
+   * Delete records.
+   *
+   * @param filter - Which records.
+   * @returns How many were deleted.
+   */
+  function deleteAccountabilityRecords(
+    filter: AccountabilityRecordFilter = {},
+  ): number {
+    const { sql, params } = buildAccountabilityRecordsDelete(filter);
+    return db.prepare(sql).run(...params).changes;
+  }
+
+  return {
+    append: guardWrite(append),
+    query,
+    delete: guardWrite(deleteAccountabilityRecords),
+  };
+}
+
+/**
  * Makes a {@link KernelDatabase} for low-level persistent storage.
  *
  * @param options - The options for the database.
@@ -149,12 +233,18 @@ export async function makeSQLKernelDatabase({
     });
 
   const kvStore = makeKVStore(db, { guardWrite });
+  const accountabilityRecords = makeAccountabilityRecordStore(db, {
+    guardWrite,
+  });
 
   const sqlKVInitVS = db.prepare(SQL_QUERIES.CREATE_TABLE_VS);
   sqlKVInitVS.run();
 
   const sqlKVClear = db.prepare(SQL_QUERIES.CLEAR);
   const sqlKVClearVS = db.prepare(SQL_QUERIES.CLEAR_VS);
+  const sqlClearAccountabilityRecords = db.prepare(
+    SQL_QUERIES.CLEAR_ACCOUNTABILITY_RECORDS,
+  );
   const sqlVatstoreGetAll = db.prepare(SQL_QUERIES.GET_ALL_VS);
   const sqlVatstoreSet = db.prepare(SQL_QUERIES.SET_VS);
   const sqlVatstoreDelete = db.prepare(SQL_QUERIES.DELETE_VS);
@@ -166,6 +256,7 @@ export async function makeSQLKernelDatabase({
   function kvClear(): void {
     sqlKVClear.run();
     sqlKVClearVS.run();
+    sqlClearAccountabilityRecords.run();
   }
 
   /**
@@ -239,6 +330,7 @@ export async function makeSQLKernelDatabase({
 
   return {
     kernelKVStore: kvStore,
+    accountabilityRecords,
     executeQuery: kvExecuteQuery,
     clear: guardWrite(db.transaction(kvClear)),
     makeVatStore,

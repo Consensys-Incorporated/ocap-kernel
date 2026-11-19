@@ -64,6 +64,48 @@ export function getBaseMethods(kv: KVStore) {
   }
 
   /**
+   * Generate the storage key for the number of the crank a kernel object was
+   * created in.
+   *
+   * @param kref - The KRef of interest.
+   * @returns the key to store the crank number at.
+   */
+  function getCreatedKey(kref: KRef): string {
+    return `${kref}.created`;
+  }
+
+  /**
+   * Generate the storage key for the endpoints tracking a kernel object.
+   *
+   * @param kref - The KRef of interest.
+   * @returns the key to store the trackers at.
+   */
+  function getTrackedKey(kref: KRef): string {
+    return `tracked.${kref}`;
+  }
+
+  /**
+   * Generate the prefix shared by the keys naming what an endpoint tracks.
+   *
+   * @param endpoint - The endpoint, or `'kernel'`.
+   * @returns the prefix of its tracker keys.
+   */
+  function getTrackerPrefix(endpoint: string): string {
+    return `tracker.${endpoint}.`;
+  }
+
+  /**
+   * Generate the storage key marking that an endpoint tracks a kernel object.
+   *
+   * @param endpoint - The endpoint, or `'kernel'`.
+   * @param kref - The KRef of interest.
+   * @returns the key to mark it at.
+   */
+  function getTrackerKey(endpoint: string, kref: KRef): string {
+    return `${getTrackerPrefix(endpoint)}${kref}`;
+  }
+
+  /**
    * Increment the value of a persistently stored counter.
    *
    * Note that the while the value is interpreted as an integer (in order to
@@ -228,6 +270,10 @@ export function getBaseMethods(kv: KVStore) {
     refCountKey,
     getOwnerKey,
     getRevokedKey,
+    getCreatedKey,
+    getTrackedKey,
+    getTrackerPrefix,
+    getTrackerKey,
     incCounter,
     provideCachedStoredValue,
     provideRawStoredValue,

@@ -108,7 +108,7 @@ test.describe('Object Registry', () => {
 
   test('should revoke an object', async () => {
     const owner = 'v1';
-    const v1Root = 'ko4';
+    const v1Root = 'ko5';
     const [target, method, params] = [v1Root, 'hello', '["Bob"]'];
 
     // Before revoking, we should be able to send a message to the object
