@@ -17,9 +17,9 @@
       "enabled": false
     },
     {
-      "description": "Pin and group GitHub Actions updates for actions/* and MetaMask/*",
+      "description": "Pin and group GitHub Actions updates for actions/*",
       "matchManagers": ["github-actions"],
-      "matchPackagePrefixes": ["actions/", "MetaMask/"],
+      "matchPackagePrefixes": ["actions/"],
       "enabled": true,
       "pinDigests": true,
       "minimumReleaseAge": "7 days",
@@ -34,7 +34,7 @@
       "minimumReleaseAge": "0 days"
     },
     {
-      "description": "Group npm dependency updates for allowed packages. @metamask/* is excluded on purpose; it is updated outside Renovate.",
+      "description": "Group npm dependency updates for allowed packages.",
       "matchManagers": ["npm"],
       "matchPackagePrefixes": ["@agoric/", "@endo/"],
       "matchPackageNames": ["ses"],
