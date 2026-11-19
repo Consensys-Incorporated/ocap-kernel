@@ -1,3 +1,4 @@
+import { Fail } from '@endo/errors';
 import { Far } from '@endo/marshal';
 
 import { parseOcapURL } from './remote-comms.ts';
@@ -130,9 +131,8 @@ export class OcapURLManager {
     // exists, so the target must already be retained. Minting also awaits, and
     // a collection crank can run in that window. See `retainForOcapURL`.
     this.#kernelStore.retainForOcapURL(kref);
-    let url: string;
     try {
-      url = await identity.issueOcapURL(kref);
+      return await identity.issueOcapURL(kref);
     } catch (error) {
       // Nothing else undoes this. A rejected kernel-service call is reported to
       // the caller rather than thrown out of the crank, so the crank commits
@@ -143,11 +143,22 @@ export class OcapURLManager {
       this.#kernelStore.undoOcapURLRetention(kref);
       throw error;
     }
-    // For the debug UI's list of exported URLs. Written after the await, so it
-    // lands in whichever crank is open and is lost if that crank aborts; the
-    // URL itself stays valid.
-    this.#kernelStore.recordOcapURL(kref, url);
-    return url;
+  }
+
+  /**
+   * Mint another URL for an object that already has one issued, without
+   * retaining the object again: the URLs already issued keep it. For showing
+   * a URL to someone entitled to issue one. Writes nothing.
+   *
+   * @param kref - The kref of the object.
+   * @returns a promise for an OCAP URL naming the object.
+   * @throws if no URL is issued for `kref`, or if remote identity is not
+   * initialized.
+   */
+  async getIssuedOcapURL(kref: KRef): Promise<string> {
+    this.#kernelStore.getOcapURLIssuanceCount(kref) > 0 ||
+      Fail`no ocap URL is issued for ${kref}`;
+    return await this.#remoteManager.getRemoteIdentity().issueOcapURL(kref);
   }
 
   /**

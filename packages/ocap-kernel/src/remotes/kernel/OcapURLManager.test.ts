@@ -7,10 +7,8 @@ import type { RemoteHandle } from './RemoteHandle.ts';
 import type { RemoteManager } from './RemoteManager.ts';
 import { asKRef } from '../../../test/branded.ts';
 import { createMockRemotesFactory } from '../../../test/remotes-mocks.ts';
-import { makeMapKernelDatabase } from '../../../test/storage.ts';
 import type { SlotValue } from '../../liveslots/kernel-marshal.ts';
 import { kslot } from '../../liveslots/kernel-marshal.ts';
-import { makeKernelStore } from '../../store/index.ts';
 import type { KernelStore } from '../../store/index.ts';
 import type { KRef } from '../../types.ts';
 import type { RemoteComms } from '../types.ts';
@@ -123,22 +121,6 @@ describe('OcapURLManager', () => {
       expect(mockKernelStore.kernelRefExists(objectKRef)).toBe(true);
     });
 
-    it('records the issued URL for display', async () => {
-      const kernelDatabase = makeMapKernelDatabase();
-      const kernelStore = makeKernelStore(kernelDatabase);
-      const kref = kernelStore.initKernelObject('kernel');
-      const manager = new OcapURLManager({
-        remoteManager: mockRemoteManager,
-        kernelStore,
-      });
-
-      const url = await manager.issueOcapURL(kref);
-
-      expect(kernelDatabase.kernelKVStore.get(`ocapURLString.${kref}`)).toBe(
-        url,
-      );
-    });
-
     it('counts a retention per URL naming the target, on the one pin', async () => {
       await ocapURLManager.issueOcapURL(objectKRef);
       await ocapURLManager.issueOcapURL(objectKRef);
@@ -232,6 +214,30 @@ describe('OcapURLManager', () => {
       await expect(
         ocapURLManager.issueOcapURL(asKRef('ko123')),
       ).rejects.toThrow('Remote identity not initialized');
+    });
+  });
+
+  describe('getIssuedOcapURL', () => {
+    it('mints a URL for an object that has one issued, retaining nothing more', async () => {
+      await ocapURLManager.issueOcapURL(objectKRef);
+      vi.mocked(mockRemoteComms.issueOcapURL).mockResolvedValueOnce(
+        'ocap:another@local-peer-id',
+      );
+
+      const url = await ocapURLManager.getIssuedOcapURL(objectKRef);
+
+      expect({
+        url,
+        issuances: mockKernelStore.getOcapURLIssuanceCount(objectKRef),
+      }).toStrictEqual({ url: 'ocap:another@local-peer-id', issuances: 1 });
+    });
+
+    it('does not mint a URL for an object that has none issued', async () => {
+      await expect(
+        ocapURLManager.getIssuedOcapURL(otherObjectKRef),
+      ).rejects.toThrow(`no ocap URL is issued for "${otherObjectKRef}"`);
+
+      expect(mockRemoteComms.issueOcapURL).not.toHaveBeenCalled();
     });
   });
 
