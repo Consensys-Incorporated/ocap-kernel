@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Launching a subcluster releases its bootstrap result, which the kernel otherwise holds until it next starts ([#1311](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1311))
 - List exported ocap URLs from the record of issued URLs that `@metamask/ocap-kernel` keeps, instead of from settled promises in c-lists. URLs issued by a kernel without that record are not listed ([#1229](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1229))
 
 ### Removed
