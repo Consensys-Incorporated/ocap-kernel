@@ -1,5 +1,5 @@
 import type { PlatformFactory } from '@metamask/kernel-platforms';
-import { delay, isJsonRpcMessage } from '@metamask/kernel-utils';
+import { delay, isJsonRpcMessage, toHex } from '@metamask/kernel-utils';
 import type { JsonRpcMessage } from '@metamask/kernel-utils';
 import { Logger } from '@metamask/logger';
 import { rpcErrors } from '@metamask/rpc-errors';
@@ -250,6 +250,44 @@ describe('VatSupervisor', () => {
         done: true,
         value: undefined,
       });
+    });
+  });
+
+  describe('initVat', () => {
+    it('replies with the content hash of the bundle it loaded', async () => {
+      const dispatch = vi.fn();
+      const bundle =
+        '{"moduleFormat":"iife","code":"var __vatExports__ = {};"}';
+      const mockFetchBlob: FetchBlob = vi.fn().mockResolvedValue({
+        ok: true,
+        text: vi.fn().mockResolvedValue(bundle),
+      });
+      const { stream } = await makeVatSupervisor({
+        dispatch,
+        fetchBlob: mockFetchBlob,
+      });
+      await stream.receiveInput({
+        id: 'test-init',
+        method: 'initVat',
+        params: { vatConfig: { bundleSpec: 'test.bundle' }, state: [] },
+        jsonrpc: '2.0',
+      });
+      await delay(50);
+
+      const digest = await globalThis.crypto.subtle.digest(
+        'SHA-256',
+        new TextEncoder().encode(bundle),
+      );
+      expect(dispatch).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: 'test-init',
+          result: [
+            expect.anything(),
+            null,
+            `sha256:${toHex(new Uint8Array(digest))}`,
+          ],
+        }),
+      );
     });
   });
 

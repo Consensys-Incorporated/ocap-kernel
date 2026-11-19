@@ -129,6 +129,7 @@ export function makeArrayAccountabilityRecordStore(): AccountabilityRecordStore 
       (filter.involving === undefined ||
         row.endpoint === filter.involving ||
         row.sender === filter.involving) &&
+      (filter.crank === undefined || row.crank === filter.crank) &&
       (filter.throughCrank === undefined || row.crank <= filter.throughCrank) &&
       (filter.afterSeq === undefined || row.seq > filter.afterSeq);
   const select = (

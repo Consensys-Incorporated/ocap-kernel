@@ -756,6 +756,17 @@ describe('KernelQueue', () => {
       expect(result).toStrictEqual(resultValue);
     });
 
+    it('puts what the host said about the act on the send', async () => {
+      const attribution = { onBehalfOf: 'ed25519:00' };
+      kernelQueue
+        .enqueueMessage(asKRef('ko123'), 'test', [], attribution)
+        .catch(() => undefined);
+      await Promise.resolve();
+      expect(kernelStore.enqueueRun).toHaveBeenCalledWith(
+        expect.objectContaining({ type: 'send', attribution }),
+      );
+    });
+
     it('refuses a target that is not a kref', async () => {
       await expect(
         kernelQueue.enqueueMessage('not-a-kref' as KRef, 'test', []),
@@ -1881,6 +1892,28 @@ describe('KernelQueue', () => {
         sender: 'v3',
         cause: 5,
       });
+    });
+
+    it('re-enqueues a queued message with its attribution', () => {
+      const kpid = asKRef('kp123');
+      const message = { methargs: { body: '', slots: [] } } as KernelMessage;
+      const attribution = { onBehalfOf: 'ed25519:00' };
+      (kernelStore.getKernelPromise as unknown as MockInstance).mockReturnValue(
+        { state: 'unresolved', decider: v1, subscribers: [] },
+      );
+      (
+        kernelStore.resolveKernelPromise as unknown as MockInstance
+      ).mockReturnValueOnce([
+        { message, sender: 'kernel', cause: 5, attribution },
+      ]);
+
+      kernelQueue.resolvePromises(v1, [
+        [kpid, false, { body: '', slots: [] } as CapData<KRef>],
+      ]);
+
+      expect(kernelStore.enqueueRun).toHaveBeenCalledWith(
+        expect.objectContaining({ target: kpid, attribution }),
+      );
     });
 
     it('handles resolutions with undefined vatId (kernel decider)', () => {

@@ -52,6 +52,8 @@ export type AccountabilityRecordFilter = {
   /** Rows whose endpoint or sender is this. */
   involving?: string;
   trace?: string;
+  /** Rows written in this crank. */
+  crank?: number;
   /** Rows written in cranks up to and including this one. */
   throughCrank?: number;
   /** Rows after this sequence number. */

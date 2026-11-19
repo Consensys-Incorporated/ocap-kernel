@@ -1,6 +1,7 @@
 import { makeDefaultExo } from '@metamask/kernel-utils';
 
 import type { Kernel } from './Kernel.ts';
+import type { KRef, QueueMessageResult } from './types.ts';
 
 const kernelFacetMethodNames = [
   'getPresence',
@@ -31,7 +32,13 @@ export type KernelFacetSource = Pick<
  * This is the interface provided as a vatpower to the bootstrap vat of a
  * system vat. It enables privileged kernel operations.
  */
-export type KernelFacet = KernelFacetSource & {
+export type KernelFacet = Omit<KernelFacetSource, 'queueMessage'> & {
+  /** As the kernel's, less the attribution, which only the host gives. */
+  queueMessage: (
+    target: KRef,
+    method: string,
+    args: unknown[],
+  ) => Promise<QueueMessageResult>;
   /**
    * Ping the kernel.
    *
@@ -56,6 +63,11 @@ export function makeKernelFacet(kernel: KernelFacetSource): KernelFacet {
   }
   return makeDefaultExo('kernelFacet', {
     ...bound,
+    queueMessage: async (
+      target: KRef,
+      method: string,
+      args: unknown[],
+    ): Promise<QueueMessageResult> => kernel.queueMessage(target, method, args),
     ping: () => 'pong' as const,
   }) as unknown as KernelFacet;
 }

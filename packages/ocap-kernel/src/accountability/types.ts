@@ -1,8 +1,88 @@
 import type { CapData } from '@endo/marshal';
-import { boolean, exactOptional, object } from '@metamask/superstruct';
+import {
+  boolean,
+  exactOptional,
+  literal,
+  object,
+  refine,
+  string,
+  union,
+} from '@metamask/superstruct';
 import type { Infer } from '@metamask/superstruct';
+import { JsonStruct } from '@metamask/utils';
 
 import type { Cause, EndpointId, KRef, Sender } from '../types.ts';
+
+/**
+ * An identifier for a party, opaque to the kernel but for its scheme, the
+ * part before the first colon, which names the way its signatures are
+ * verified: `ed25519:<hex public key>` is built in, and a host supplies the
+ * rest.
+ */
+export const PartyRefStruct = refine(
+  string(),
+  'PartyRef',
+  (value) =>
+    value.indexOf(':') > 0 ||
+    `Expected a party identifier with a scheme prefix, but received: ${JSON.stringify(value)}`,
+);
+
+export type PartyRef = Infer<typeof PartyRefStruct>;
+
+/**
+ * A party's signed statement. An `operator` attestation answers for a kernel,
+ * named by its peer ID; an `implementer` attestation answers for a bundle,
+ * named by its content hash; an `intent` attestation is a party's statement
+ * that it meant one act, named by its target, and rides in with the
+ * `queueMessage` that performs it. The party signs the canonical JSON of the
+ * other four fields.
+ */
+export const AttestationStruct = object({
+  kind: union([literal('operator'), literal('implementer'), literal('intent')]),
+  subject: string(),
+  party: PartyRefStruct,
+  payload: JsonStruct,
+  /** Hex, by the party's key. */
+  signature: string(),
+});
+
+export type Attestation = Infer<typeof AttestationStruct>;
+
+/** What a party signs: an attestation without its signature. */
+export type AttestationClaim = Omit<Attestation, 'signature'>;
+
+export const IntentStruct = object({
+  ...AttestationStruct.schema,
+  kind: literal('intent'),
+});
+
+export type Intent = Infer<typeof IntentStruct>;
+
+/**
+ * An attestation the kernel holds. One answering for this kernel carries the
+ * kernel's countersignature, which proves possession of the key behind the
+ * peer ID the party answers for.
+ */
+export const StoredAttestationStruct = object({
+  ...AttestationStruct.schema,
+  countersignature: exactOptional(
+    object({ signer: string(), incarnationId: string(), signature: string() }),
+  ),
+});
+
+export type StoredAttestation = Infer<typeof StoredAttestationStruct>;
+
+/**
+ * What the host says about an act it performs through `queueMessage`:
+ * which party, among those the operator answers for, it was done for, and
+ * that party's signed intent, if the act warranted one.
+ */
+export const AttributionStruct = object({
+  onBehalfOf: exactOptional(PartyRefStruct),
+  intent: exactOptional(IntentStruct),
+});
+
+export type Attribution = Infer<typeof AttributionStruct>;
 
 /**
  * The layer vouching for a record. The kernel saw what a kernel-witnessed
@@ -49,6 +129,10 @@ export type DeliveryRecord = AccountabilityRecordBase & {
   args?: CapData<KRef>;
   /** When the kernel delivered it, in epoch milliseconds. */
   wallClock: number;
+  /** The party the host did this for, if it said. */
+  onBehalfOf?: PartyRef;
+  /** The party's signed intent, if the host passed one. */
+  intent?: Intent;
 };
 
 /** A tracked object carried to an endpoint in a message or a resolution. */

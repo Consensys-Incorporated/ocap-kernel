@@ -1,8 +1,10 @@
 import type { MethodSpec, Handler } from '@metamask/kernel-rpc-methods';
-import { tuple, string, array } from '@metamask/superstruct';
+import { tuple, string, array, union } from '@metamask/superstruct';
 import { UnsafeJsonStruct } from '@metamask/utils';
 import type { Json } from '@metamask/utils';
 
+import { AttributionStruct } from '../../accountability/types.ts';
+import type { Attribution } from '../../accountability/types.ts';
 import type { Kernel } from '../../Kernel.ts';
 import { kslot } from '../../liveslots/kernel-marshal.ts';
 import type { KRef, QueueMessageResult } from '../../types.ts';
@@ -12,16 +14,24 @@ import {
   QueueMessageResultStruct,
 } from '../../types.ts';
 
+type QueueMessageParams =
+  | [KRef, string, Json[]]
+  | [KRef, string, Json[], Attribution];
+
 /**
- * Enqueue a message to a vat via the kernel's crank queue.
+ * Enqueue a message to a vat via the kernel's crank queue, with what the
+ * host says about the act, if anything.
  */
 export const queueMessageSpec: MethodSpec<
   'queueMessage',
-  [KRef, string, Json[]],
+  QueueMessageParams,
   QueueMessageResult
 > = {
   method: 'queueMessage',
-  params: tuple([KRefStruct, string(), array(UnsafeJsonStruct)]),
+  params: union([
+    tuple([KRefStruct, string(), array(UnsafeJsonStruct)]),
+    tuple([KRefStruct, string(), array(UnsafeJsonStruct), AttributionStruct]),
+  ]),
   result: QueueMessageResultStruct,
 };
 
@@ -98,7 +108,7 @@ function expandRefMarkers(value: unknown): unknown {
 
 export const queueMessageHandler: Handler<
   'queueMessage',
-  [KRef, string, Json[]],
+  QueueMessageParams,
   Promise<QueueMessageResult>,
   QueueMessageHooks
 > = {
@@ -106,9 +116,9 @@ export const queueMessageHandler: Handler<
   hooks: { kernel: true },
   implementation: async (
     { kernel }: QueueMessageHooks,
-    [target, method, args],
+    [target, method, args, attribution],
   ): Promise<QueueMessageResult> => {
     const expandedArgs = expandRefMarkers(args) as unknown[];
-    return kernel.queueMessage(target, method, expandedArgs);
+    return kernel.queueMessage(target, method, expandedArgs, attribution);
   },
 };

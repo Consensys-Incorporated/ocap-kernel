@@ -98,8 +98,15 @@ function makeWorkers() {
         }
       },
     };
-    const answer = async (id: string): Promise<void> =>
-      receive({ jsonrpc: '2.0', id, result: [[[], []], null] });
+    const answer = async (id: string, method: string): Promise<void> =>
+      receive({
+        jsonrpc: '2.0',
+        id,
+        result:
+          method === 'initVat'
+            ? [[[], []], null, 'sha256:00']
+            : [[[], []], null],
+      });
     const stream = await TestDuplexStream.make<JsonRpcMessage, JsonRpcMessage>(
       (request) => {
         const { id, method, params } = request as {
@@ -117,14 +124,14 @@ function makeWorkers() {
               await initHooks.get(vatId)?.(worker);
             }
             if (method !== 'deliver') {
-              await answer(id);
+              await answer(id, method);
               return;
             }
             delivered.set(vatId, [...(delivered.get(vatId) ?? []), params]);
             const hook = hooks.get(vatId);
             const outcome = hook ? await hook(worker, params) : 'answer';
             if (outcome === 'answer') {
-              await answer(id);
+              await answer(id, method);
             }
           })().catch(() => undefined);
         }, 0);
