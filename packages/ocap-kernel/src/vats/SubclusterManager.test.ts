@@ -97,6 +97,7 @@ describe('SubclusterManager', () => {
       writeMessage: vi.fn(() => ({
         answer: Promise.resolve({ body: '{"result":"ok"}', slots: [] }),
       })),
+      releaseResult: vi.fn().mockResolvedValue(undefined),
     } as unknown as Mocked<KernelQueue>;
 
     mockVatManager = {
@@ -221,6 +222,13 @@ describe('SubclusterManager', () => {
       mockVatManager.launchVat
         .mockResolvedValueOnce('ko1' as KRef)
         .mockRejectedValueOnce(bobError);
+      mockKernelQueue.writeMessage.mockReturnValueOnce({
+        answer: Promise.resolve({
+          body: '{"result":"ok"}',
+          slots: ['ko9' as KRef],
+          kpid: 'kp7' as KRef,
+        }),
+      });
 
       await expect(subclusterManager.launchSubcluster(config)).rejects.toThrow(
         'bob exploded',
@@ -239,6 +247,9 @@ describe('SubclusterManager', () => {
       expect(mockKernelQueue.resolvePromises).toHaveBeenCalledWith('kernel', [
         ['kp1', true, makeKernelError('VAT_TERMINATED', 'bob exploded')],
       ]);
+      expect(mockKernelQueue.releaseResult).toHaveBeenCalledExactlyOnceWith(
+        'kp7',
+      );
     });
 
     it("makes a failed peer's promise in the same crank as the bootstrap message", async () => {
@@ -909,7 +920,7 @@ describe('SubclusterManager', () => {
     it('refuses once the run loop is dead', async () => {
       const subcluster = createMockSubcluster(s1, createMockClusterConfig());
       mockKernelStore.getSubcluster.mockReturnValue(subcluster);
-      mockKernelQueue.assertRunLoopAlive.mockImplementationOnce(() => {
+      mockKernelQueue.assertInboxOpen.mockImplementationOnce(() => {
         throw new Error('Kernel run loop died; cannot terminate a subcluster');
       });
 
@@ -1399,8 +1410,15 @@ describe('SubclusterManager', () => {
       expect(mockVatManager.launchVat).not.toHaveBeenCalled();
     });
 
-    it('persists mappings for newly launched subclusters', async () => {
+    it('persists mappings for newly launched subclusters, releasing the bootstrap result', async () => {
       mockKernelStore.addSubcluster.mockReturnValue(s1);
+      mockKernelQueue.writeMessage.mockReturnValueOnce({
+        answer: Promise.resolve({
+          body: '{"result":"ok"}',
+          slots: ['ko9' as KRef],
+          kpid: 'kp7' as KRef,
+        }),
+      });
 
       await subclusterManager.launchNewSystemSubclusters([
         makeSystemConfig('newSys'),
@@ -1411,6 +1429,9 @@ describe('SubclusterManager', () => {
         's1',
       );
       expect(subclusterManager.getSystemSubclusterRoot('newSys')).toBe('ko1');
+      expect(mockKernelQueue.releaseResult).toHaveBeenCalledExactlyOnceWith(
+        'kp7',
+      );
     });
   });
 

@@ -1,12 +1,16 @@
-import type { CapData } from '@endo/marshal';
 import type { MethodSpec, Handler } from '@metamask/kernel-rpc-methods';
 import { object, nullable, type as structType } from '@metamask/superstruct';
 
 import type { Kernel } from '../../Kernel.ts';
-import type { ClusterConfig, KRef, SubclusterId } from '../../types.ts';
+import type {
+  ClusterConfig,
+  KRef,
+  QueueMessageResult,
+  SubclusterId,
+} from '../../types.ts';
 import {
   ClusterConfigStruct,
-  KernelCapDataStruct,
+  QueueMessageResultStruct,
   SubclusterIdStruct,
   KRefStruct,
 } from '../../types.ts';
@@ -18,13 +22,13 @@ import {
 type LaunchSubclusterRpcResult = {
   subclusterId: SubclusterId;
   rootKref: KRef;
-  bootstrapResult: CapData<KRef> | null;
+  bootstrapResult: QueueMessageResult | null;
 };
 
 const LaunchSubclusterRpcResultStruct = structType({
   subclusterId: SubclusterIdStruct,
   rootKref: KRefStruct,
-  bootstrapResult: nullable(KernelCapDataStruct),
+  bootstrapResult: nullable(QueueMessageResultStruct),
 });
 
 export const launchSubclusterSpec: MethodSpec<

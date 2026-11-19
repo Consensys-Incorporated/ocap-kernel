@@ -5,20 +5,6 @@ import type { KernelDatabase } from '@metamask/kernel-store';
 import type { CrankBufferItem, Savepoint, StoreContext } from '../types.ts';
 
 /**
- * The counters a rollback leaves where the crank took them, so that no number
- * the crank handed out, which a caller or another crank may have seen, is
- * given out again.
- */
-const KEPT_COUNTERS = [
-  'crankNumber',
-  'nextVatId',
-  'nextSubclusterId',
-  'nextObjectId',
-  'nextPromiseId',
-  'nextRemoteId',
-] as const;
-
-/**
  * Get the crank methods.
  *
  * @param ctx - The store context.
@@ -63,9 +49,7 @@ export function getCrankMethods(ctx: StoreContext, kdb: KernelDatabase) {
   function rollbackCrank(savepoint: string): void {
     ctx.inCrank || Fail`rollbackCrank outside of crank`;
     ctx.crankBuffer.length = 0; // Discard buffered outputs
-    const counters = KEPT_COUNTERS.map(
-      (field) => [field, Number(ctx[field].get())] as const,
-    );
+    const crankNumber = getCrankNumber();
     for (const ordinal of ctx.savepoints.keys()) {
       const restored = ctx.savepoints[ordinal];
       if (restored?.name === savepoint) {
@@ -85,12 +69,10 @@ export function getCrankMethods(ctx: StoreContext, kdb: KernelDatabase) {
           throw error;
         }
         revertStateBeneathRollback(restored);
-        for (const [field, value] of counters) {
-          // Only upward: a crank that wiped the store took the counters down,
-          // and the rollback has just put them back.
-          if (value > Number(ctx[field].get())) {
-            ctx[field].set(`${value}`);
-          }
+        // The rollback undoes the crank's delivery, not the crank: it keeps
+        // the number it took, so no later crank gets the same one.
+        if (getCrankNumber() !== crankNumber) {
+          ctx.crankNumber.set(`${crankNumber}`);
         }
         return;
       }
@@ -176,6 +158,36 @@ export function getCrankMethods(ctx: StoreContext, kdb: KernelDatabase) {
   }
 
   /**
+   * Make writes that commit together or not at all, where no crank is open:
+   * before the run loop starts.
+   *
+   * @param write - The writes. A throw rolls them back and is rethrown.
+   * @returns What `write` returns.
+   */
+  function writeAtomically<Result>(write: () => Result): Result {
+    startCrank();
+    try {
+      createCrankSavepoint('atomic');
+      try {
+        return write();
+      } catch (error) {
+        try {
+          rollbackCrank('atomic');
+        } catch (rollbackError) {
+          throw new AggregateError(
+            [error, rollbackError],
+            `Atomic write failed and could not be rolled back: ${String(rollbackError)}`,
+            { cause: error },
+          );
+        }
+        throw error;
+      }
+    } finally {
+      endCrank();
+    }
+  }
+
+  /**
    * Wait until the crank is finished.
    *
    * @returns A promise that resolves when the crank is finished.
@@ -246,6 +258,7 @@ export function getCrankMethods(ctx: StoreContext, kdb: KernelDatabase) {
     createCrankSavepoint,
     rollbackCrank,
     endCrank,
+    writeAtomically,
     waitForCrank,
     bufferCrankOutput,
     flushCrankBuffer,

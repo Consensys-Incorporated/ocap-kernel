@@ -168,7 +168,10 @@ export class OcapURLManager {
     // writes the store, so it runs in the remote's crank, with the request.
     return this.#remoteManager.withRemote(host, {
       hints,
-      use: async (remote) => {
+      // Not `async`: a store fault in the relay write must throw into the
+      // crank, not reject.
+      // oxlint-disable-next-line typescript/promise-function-async
+      use: (remote) => {
         identity.addKnownRelays(hints);
         return remote.redeemOcapURL(url);
       },

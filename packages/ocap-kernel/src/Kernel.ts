@@ -20,6 +20,7 @@ import type { PingVatResult } from './rpc/index.ts';
 import { makeKernelStore } from './store/index.ts';
 import type { KernelStore } from './store/index.ts';
 import { isPromiseRef } from './store/utils/promise-ref.ts';
+import { isStoreFault } from './store/utils/store-fault.ts';
 import type {
   VatId,
   RemoteId,
@@ -35,6 +36,7 @@ import type {
   SubclusterLaunchResult,
   EndpointHandle,
   SystemSubclusterConfig,
+  QueueMessageResult,
 } from './types.ts';
 import { isVatId, isRemoteId } from './types.ts';
 import type { AllowedGlobalName } from './vats/endowments.ts';
@@ -348,6 +350,10 @@ export class Kernel {
       );
     }
 
+    // Results held for callers of a previous incarnation, whose promises
+    // died with it.
+    this.#kernelQueue.releaseAbandonedResults();
+
     // Before the vats start, so a throw leaves no worker running, and before
     // the run loop, which may find a delivery to any remote already queued.
     this.#remoteManager.restoreRemotes();
@@ -508,18 +514,22 @@ export class Kernel {
   }
 
   /**
-   * Send a message from the kernel to an object in a vat.
+   * Send a message from the kernel to an object in a vat. Refused once `stop`
+   * is called or the run loop has died.
    *
    * @param target - The object to which the message is directed.
    * @param method - The method to be invoked.
    * @param args - Message arguments.
-   * @returns A promise for the CapData encoded result of the message invocation.
+   * @returns A promise for the CapData encoded result of the message
+   * invocation. If it carries slots it also has a `kpid`, and the kernel keeps
+   * the krefs in it alive until it is passed to `releaseResult`, or until the
+   * kernel next starts.
    */
   async queueMessage(
     target: KRef,
     method: string,
     args: unknown[],
-  ): Promise<CapData<KRef>> {
+  ): Promise<QueueMessageResult> {
     try {
       return await this.#kernelQueue.enqueueMessage(target, method, args);
     } catch (rejection) {
@@ -527,6 +537,40 @@ export class Kernel {
         throw kunser(rejection as CapData<KRef>);
       }
       throw rejection;
+    }
+  }
+
+  /**
+   * Give up the krefs in a `queueMessage` result, or in the `bootstrapResult`
+   * of `launchSubcluster`. Anything else that holds them keeps them alive.
+   *
+   * @param result - The result. Releasing one the kernel holds nothing for
+   * does nothing: one without a `kpid`, one already released, or one from
+   * before the kernel last started. So does releasing once `stop` is
+   * called or the run loop has died, since the next start releases every hold.
+   * @param result.kpid - The result's `kpid`.
+   */
+  async releaseResult({ kpid }: { kpid?: KRef | undefined }): Promise<void> {
+    if (kpid === undefined) {
+      return;
+    }
+    let held;
+    try {
+      held = await this.#kernelQueue.releaseResultIfHeld(kpid);
+    } catch (error) {
+      const { state } = this.#kernelQueue.getRunLoopStatus();
+      const stopping = this.#stopping !== undefined;
+      const closed = stopping || state === 'stopped' || state === 'failed';
+      if (isStoreFault(error) || !closed) {
+        throw error;
+      }
+      this.#logger.debug(
+        `releaseResult: run loop ${state === 'running' ? 'stopping' : state}, ${kpid} is left for the next start`,
+      );
+      return;
+    }
+    if (!held) {
+      this.#logger.debug(`releaseResult: ${kpid} is not a held result`);
     }
   }
 
@@ -541,7 +585,8 @@ export class Kernel {
   }
 
   /**
-   * Redeem an OCAP URL to get the kernel reference it represents.
+   * Redeem an OCAP URL to get the kernel reference it represents. A remote
+   * URL's redemption is refused once `stop` is called or the run loop has died.
    *
    * @param url - The OCAP URL to redeem.
    * @returns A promise for the kref of the object referenced by the OCAP URL.
@@ -579,7 +624,8 @@ export class Kernel {
   }
 
   /**
-   * Launches a sub-cluster of vats.
+   * Launches a sub-cluster of vats. Refused once `stop` is called or the run
+   * loop has died.
    *
    * @param config - Configuration object for sub-cluster.
    * @returns A promise for the subcluster ID and the (CapData encoded) result
@@ -593,8 +639,8 @@ export class Kernel {
 
   /**
    * Terminates a named sub-cluster of vats, each by way of `terminateVat`.
-   * Refused on a dead run loop. A member that survives keeps the subcluster
-   * and its IO channels, and makes this reject.
+   * Refused once `stop` is called or the run loop has died. A member that
+   * survives keeps the subcluster and its IO channels, and makes this reject.
    *
    * @param subclusterId - The id of the subcluster to terminate.
    * @returns A promise that resolves when termination is complete.
@@ -669,8 +715,8 @@ export class Kernel {
 
   /**
    * Restarts a vat. The run loop carries the restart out, so this waits behind
-   * the run queue and rejects if the run loop dies. A vat whose relaunch fails
-   * is terminated.
+   * the run queue and rejects if the run loop dies, or once `stop` is called. A
+   * vat whose relaunch fails is terminated.
    *
    * @param vatId - The ID of the vat to restart.
    * @returns A promise for the restarted vat handle.
@@ -682,8 +728,8 @@ export class Kernel {
   /**
    * Terminate a vat with extreme prejudice. The run loop carries it out in a
    * crank of its own, so this waits behind the run queue, and rejects if the
-   * run loop dies or the kernel is stopped, reset or has its storage cleared
-   * first.
+   * run loop dies or the kernel is stopping, stopped, reset or has its storage
+   * cleared first.
    *
    * @param vatId - The ID of the vat to terminate.
    * @param reason - The reason for the termination, if any. It must carry no

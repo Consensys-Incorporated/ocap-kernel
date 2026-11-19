@@ -25,6 +25,7 @@ import {
   registerLocationHintsHandler,
   registerLocationHintsSpec,
 } from './register-location-hints.ts';
+import { releaseResultHandler, releaseResultSpec } from './release-result.ts';
 import { restartVatHandler, restartVatSpec } from './restart-vat.ts';
 import { revokeHandler, revokeSpec } from './revoke.ts';
 import {
@@ -53,6 +54,7 @@ export const rpcHandlers = {
   isRevoked: isRevokedHandler,
   restartVat: restartVatHandler,
   queueMessage: queueMessageHandler,
+  releaseResult: releaseResultHandler,
   terminateAllVats: terminateAllVatsHandler,
   collectGarbage: collectGarbageHandler,
   terminateVat: terminateVatHandler,
@@ -71,6 +73,7 @@ export const rpcHandlers = {
   isRevoked: typeof isRevokedHandler;
   restartVat: typeof restartVatHandler;
   queueMessage: typeof queueMessageHandler;
+  releaseResult: typeof releaseResultHandler;
   terminateAllVats: typeof terminateAllVatsHandler;
   collectGarbage: typeof collectGarbageHandler;
   terminateVat: typeof terminateVatHandler;
@@ -94,6 +97,7 @@ export const rpcMethodSpecs = {
   isRevoked: isRevokedSpec,
   restartVat: restartVatSpec,
   queueMessage: queueMessageSpec,
+  releaseResult: releaseResultSpec,
   terminateAllVats: terminateAllVatsSpec,
   collectGarbage: collectGarbageSpec,
   terminateVat: terminateVatSpec,
@@ -112,6 +116,7 @@ export const rpcMethodSpecs = {
   isRevoked: typeof isRevokedSpec;
   restartVat: typeof restartVatSpec;
   queueMessage: typeof queueMessageSpec;
+  releaseResult: typeof releaseResultSpec;
   terminateAllVats: typeof terminateAllVatsSpec;
   collectGarbage: typeof collectGarbageSpec;
   terminateVat: typeof terminateVatSpec;

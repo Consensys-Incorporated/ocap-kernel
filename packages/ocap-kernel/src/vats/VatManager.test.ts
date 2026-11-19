@@ -1369,6 +1369,35 @@ describe('VatManager', () => {
       expect(mockPlatformServices.launch).toHaveBeenCalledTimes(3);
     });
 
+    it('is refused before a waiter is registered when the kernel is stopping', async () => {
+      await vatManager.runVat(v1, createMockVatConfig());
+      mockKernelQueue.assertInboxOpen.mockImplementationOnce(() => {
+        throw new Error('Kernel run loop is stopping; cannot restart a vat');
+      });
+
+      await expect(vatManager.restartVat(v1)).rejects.toThrow(
+        'Kernel run loop is stopping',
+      );
+
+      expect(mockKernelQueue.enqueueRestartVat).toHaveBeenCalledTimes(0);
+    });
+
+    it('keeps an earlier caller waiting when a later request is refused', async () => {
+      await vatManager.runVat(v1, createMockVatConfig());
+      leaveRequestQueued();
+      const first = vatManager.restartVat(v1);
+      mockKernelQueue.enqueueRestartVat.mockRejectedValueOnce(
+        new Error('Kernel run loop is stopping; cannot restart a vat'),
+      );
+
+      await expect(vatManager.restartVat(v1)).rejects.toThrow(
+        'cannot restart a vat',
+      );
+      await runRestartCrank(v1);
+
+      expect(await first).toBe(vatHandles[1]);
+    });
+
     it('rejects its caller rather than the waiter when the queue refuses', async () => {
       await vatManager.runVat(v1, createMockVatConfig());
       const unhandled = vi.fn();
