@@ -55,11 +55,20 @@ describe('a store fault in a syscall', () => {
       first.kernelDatabase,
       (key, value) => /^kp\d+\.state$/u.test(key) && value !== 'unresolved',
     );
+    let before: Record<string, unknown> | undefined;
+    const release = first.kernelDatabase.releaseSavepoint.bind(
+      first.kernelDatabase,
+    );
+    vi.spyOn(first.kernelDatabase, 'releaseSavepoint').mockImplementation(
+      (name) => {
+        release(name);
+        // The commit of the message's own crank: written, not yet taken.
+        before ??= dumpStore(first.kernelDatabase);
+      },
+    );
     const settlement = watch(
       first.kernel.queueMessage(first.doomedRoot, 'answer', []),
     );
-    // Queued and not yet taken: the crank starts once this turn ends.
-    const before = dumpStore(first.kernelDatabase);
 
     await vi.waitFor(async () =>
       expect((await first.kernel.getStatus()).runLoop.state).toBe('failed'),

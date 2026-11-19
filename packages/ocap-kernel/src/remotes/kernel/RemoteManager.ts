@@ -5,6 +5,7 @@ import { RemoteHandle } from './RemoteHandle.ts';
 import type { KernelQueue } from '../../KernelQueue.ts';
 import { makeKernelError } from '../../liveslots/kernel-marshal.ts';
 import type { KernelStore } from '../../store/index.ts';
+import { isStoreFault } from '../../store/utils/store-fault.ts';
 import type {
   CrankResult,
   PlatformServices,
@@ -37,6 +38,9 @@ export class RemoteManager {
 
   /** Currently active remote kernel connections, by remote Peer ID */
   readonly #remotesByPeer: Map<string, RemoteHandle> = new Map();
+
+  /** How many messages from each peer are waiting in the run loop's inbox. */
+  readonly #queuedFromPeer: Map<string, number> = new Map();
 
   /** Platform services for network operations */
   readonly #platformServices: PlatformServices;
@@ -475,8 +479,8 @@ export class RemoteManager {
 
   /**
    * Set up bookkeeping for a newly established remote connection, at once.
-   * Call it only through {@link withRemote}, which waits for the open crank to
-   * end.
+   * Call it only through {@link withRemote}, which gives it a crank of its
+   * own.
    *
    * @param peerId - Peer ID of the kernel at the other end of the connection.
    * @param hints - Optional list of possible relays via which the requested peer might be contacted.
@@ -537,18 +541,20 @@ export class RemoteManager {
   }
 
   /**
-   * Act on the RemoteHandle for a peer, setting one up if it has none. A new
-   * one is set up once the open crank, if any, has ended: set up inside it,
-   * an abort would give its ID to the next new remote while its handle lives
-   * on. `use` runs as soon as the handle exists, never after an `await`, so a
-   * peer's messages are taken in the order they came.
+   * Act on the RemoteHandle for a peer, in a crank of its own, setting one up
+   * if it has none. Set up inside whatever crank was open, an abort would take
+   * back its records while its handle lives on. `use` runs in that crank, as
+   * soon as the handle exists, so what it writes before its first `await`
+   * commits with the setup. What it throws is the caller's to hear, and leaves
+   * the setup committed, unless it is a store fault, which rolls the setup
+   * back and kills the run loop; a fault it rejects with instead, as an
+   * `async` `use` must, only the caller hears.
    *
    * @param peerId - The libp2p peer for which a handle is sought.
    * @param options - Options bag.
    * @param options.hints - Possible relays via which the peer might be
    * contacted.
-   * @param options.use - What to do with the handle. For a new peer, only
-   * what it writes before its first `await` is held with the setup.
+   * @param options.use - What to do with the handle.
    * @returns A promise for what `use` returns.
    */
   async withRemote<Result>(
@@ -564,18 +570,32 @@ export class RemoteManager {
     // A stored peer has a handle from boot, but until remote comms are up it
     // could not acknowledge or answer a message, nor send a redemption.
     this.getRemoteComms();
-    if (this.#remotesByPeer.has(peerId)) {
-      return use(this.#provideRemote(peerId, hints));
-    }
-    this.#kernelQueue.assertRunLoopAlive('set up a remote');
-    // Boxed, since `writeOutsideCrank` refuses a promise; one `use` returns is
-    // the caller's to await.
-    const { used } = await this.#kernelQueue.writeOutsideCrank(() => ({
-      // `#provideRemote`, not `establishRemote`: a setup held for an
-      // earlier caller may run first.
-      used: use(this.#provideRemote(peerId, hints)),
-    }));
-    return used;
+    // Boxed, as `enqueueInbox` takes no promise for a value: the caller awaits
+    // the answer once the crank has committed.
+    const { used } = await this.#kernelQueue.enqueueInbox(
+      'act on a remote',
+      () => {
+        // `#provideRemote`, not `establishRemote`: a setup queued for an
+        // earlier caller may have run first.
+        const remote = this.#provideRemote(peerId, hints);
+        let answer: Promise<Result>;
+        try {
+          answer = Promise.resolve(use(remote));
+        } catch (error) {
+          // A store fault is the crank's to report; any other throw from
+          // `use` rejects its answer, not the crank.
+          if (isStoreFault(error)) {
+            throw error;
+          }
+          answer = Promise.reject(error);
+        }
+        // Awaited once the crank commits; a crank that dies first abandons
+        // the answer with nobody holding it.
+        answer.catch(() => undefined);
+        return { value: { used: answer } };
+      },
+    );
+    return await used;
   }
 
   /**
@@ -618,7 +638,13 @@ export class RemoteManager {
   }
 
   /**
-   * Handle a message from a remote kernel.
+   * Handle a message from a remote kernel. A known peer's is handed to its
+   * handle at once, with no `await` before it: a message read late off the
+   * old incarnation's channel must reach the queue before the run loop
+   * records the restart, or it is taken against the new one. A new peer's
+   * waits for the crank that sets the peer up, and so does each later one
+   * while it waits: handed over first, a later message would have the handle
+   * drop the earlier one as a duplicate.
    *
    * @param from - The peer ID of the sender.
    * @param message - The message content.
@@ -629,9 +655,25 @@ export class RemoteManager {
     from: string,
     message: string,
   ): Promise<string | null> {
-    await this.withRemote(from, {
-      use: (remote) => remote.receiveFromPeer(message),
-    });
+    this.getRemoteComms();
+    const known = this.#remotesByPeer.get(from);
+    if (known && !this.#queuedFromPeer.has(from)) {
+      known.receiveFromPeer(message);
+      return null;
+    }
+    this.#queuedFromPeer.set(from, (this.#queuedFromPeer.get(from) ?? 0) + 1);
+    try {
+      await this.withRemote(from, {
+        use: (remote) => remote.receiveFromPeer(message),
+      });
+    } finally {
+      const queued = (this.#queuedFromPeer.get(from) ?? 0) - 1;
+      if (queued > 0) {
+        this.#queuedFromPeer.set(from, queued);
+      } else {
+        this.#queuedFromPeer.delete(from);
+      }
+    }
     return null;
   }
 
