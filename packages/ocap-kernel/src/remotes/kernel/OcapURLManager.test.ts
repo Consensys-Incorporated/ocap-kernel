@@ -217,6 +217,30 @@ describe('OcapURLManager', () => {
     });
   });
 
+  describe('getIssuedOcapURL', () => {
+    it('mints a URL for an object that has one issued, retaining nothing more', async () => {
+      await ocapURLManager.issueOcapURL(objectKRef);
+      vi.mocked(mockRemoteComms.issueOcapURL).mockResolvedValueOnce(
+        'ocap:another@local-peer-id',
+      );
+
+      const url = await ocapURLManager.getIssuedOcapURL(objectKRef);
+
+      expect({
+        url,
+        issuances: mockKernelStore.getOcapURLIssuanceCount(objectKRef),
+      }).toStrictEqual({ url: 'ocap:another@local-peer-id', issuances: 1 });
+    });
+
+    it('does not mint a URL for an object that has none issued', async () => {
+      await expect(
+        ocapURLManager.getIssuedOcapURL(otherObjectKRef),
+      ).rejects.toThrow(`no ocap URL is issued for "${otherObjectKRef}"`);
+
+      expect(mockRemoteComms.issueOcapURL).not.toHaveBeenCalled();
+    });
+  });
+
   describe('redeemOcapURL', () => {
     it('redeems local OCAP URL', async () => {
       const url = 'ocap:abc123@local-peer-id';

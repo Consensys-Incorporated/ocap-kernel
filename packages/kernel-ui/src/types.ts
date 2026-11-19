@@ -20,9 +20,8 @@ export type ObjectRegistry = {
 };
 
 export type ExportedOcapURL = {
-  vatId: string;
-  promiseId: string;
-  ocapUrl: string;
+  kref: KRef;
+  owner: string | null;
 };
 
 /**

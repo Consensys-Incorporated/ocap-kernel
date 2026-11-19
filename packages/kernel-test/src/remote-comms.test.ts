@@ -342,6 +342,25 @@ describe('Remote Communications (Integration Tests)', () => {
     expect(receiverBootstrap.ocapURL).toMatch(/^ocap:/u);
   });
 
+  it('mints another URL for an object that has one issued', async () => {
+    await runTestVats(kernel1, makeSenderSubclusterConfig('Sender1'));
+    const issued = (): unknown[] =>
+      kernelDatabase1.executeQuery(
+        `SELECT key, value FROM kv WHERE key GLOB 'ocapURLObjects.*'`,
+      );
+    const before = issued();
+    const [{ key }] = before as [{ key: string }];
+    const kref = key.slice('ocapURLObjects.'.length) as KRef;
+
+    const url = await kernel1.getIssuedOcapURL(kref);
+
+    expect({ url, after: issued() }).toStrictEqual({
+      url: expect.stringMatching(/^ocap:/u),
+      after: before,
+    });
+    expect(await kernel1.redeemOcapURL(url)).toBe(kref);
+  });
+
   it('should send remote message between kernels via ocap URLs', async () => {
     // Launch sender vat on kernel1
     const senderConfig = makeSenderSubclusterConfig('Sender1');

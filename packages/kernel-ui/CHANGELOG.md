@@ -12,6 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Show a banner when `getStatus` reports the kernel's run loop as failed; the vat and subcluster tables keep rendering their last known contents, so a dead kernel otherwise looks like a healthy idle one ([#1005](https://github.com/MetaMask/ocap-kernel/pull/1005))
   - The banner's details section shows `runLoop.detail`, the whole cause chain: when a crank dies and its rollback then fails, the headline names the rollback and only the chain names what killed the kernel
 
+### Changed
+
+- List each object the kernel has issued an ocap URL for, with a button that asks the kernel for a URL to show, instead of reading the URLs out of settled promises in c-lists ([#1229](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1229))
+
 ### Removed
 
 - **BREAKING:** Remove the CommonJS build; the package is ESM-only. Its entry points are `.js` and `.d.ts` files, formerly `.mjs`/`.cjs` and `.d.mts`/`.d.cts` ([#1186](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1186))

@@ -575,8 +575,7 @@ export class KernelRouter {
     }
     // TODO(#1006 follow-up): SwingSet also tears down the c-list entry for each
     // promise in the batch here, since the endpoint can never refer to a
-    // settled promise by that eref again. Left alone for now because the
-    // debug UI discovers exported ocap URLs by scanning these entries.
+    // settled promise by that eref again.
     return await this.#deliverUnlessLost(endpointId, async () =>
       endpoint.deliverNotify(resolutions),
     );

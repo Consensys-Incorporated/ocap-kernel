@@ -97,7 +97,8 @@ test.describe('Remote Communications', () => {
       timeout: 10000,
     });
 
-    // Get the first exported ocap URL (should be the bob vat from bootstrap)
+    // Get a URL for the first exported object (should be the bob vat from bootstrap)
+    await popupPage2.locator('[data-testid^="show-ocap-url-"]').first().click();
     const firstOcapUrlInput = popupPage2
       .locator('[data-testid^="ocap-url-"]')
       .first();
