@@ -418,7 +418,7 @@ describe('Remote Communications (Integration Tests)', () => {
     expect(kunser(beforeResult)).toContain('pong from Target target');
 
     // step 3: revoke the target on A through the public API
-    kernel1.revoke(targetKRef);
+    await kernel1.revoke(targetKRef);
 
     // step 4: B's next invocation fails
     await expect(
@@ -780,7 +780,7 @@ describe('Remote Communications (Integration Tests)', () => {
       isDone: () =>
         !kernelStore2.getReachableFlag(importerOnGiver, giftOnGiver),
       poke: async () => {
-        kernel1.reapVats((vatId) => vatId === importerVatId);
+        await kernel1.reapVats((vatId) => vatId === importerVatId);
         await kernel1.queueMessage(importerRoot, 'noop', []);
       },
     });
@@ -803,7 +803,7 @@ describe('Remote Communications (Integration Tests)', () => {
     await pokeUntil({
       isDone: () => !kernelStore1.kernelRefExists(giftOnImporter),
       poke: async () => {
-        kernel2.reapVats((vatId) => vatId === giverVatId);
+        await kernel2.reapVats((vatId) => vatId === giverVatId);
         await kernel2.queueMessage(giverRoot, 'noop', []);
         await kernel1.queueMessage(importerRoot, 'noop', []);
       },

@@ -8,12 +8,12 @@ describe('collectGarbageHandler', () => {
 
   beforeEach(() => {
     mockKernel = {
-      collectGarbage: vi.fn(),
+      collectGarbage: vi.fn().mockResolvedValue(undefined),
     } as unknown as Kernel;
   });
 
-  it('collects garbage', () => {
-    const result = collectGarbageHandler.implementation(
+  it('collects garbage', async () => {
+    const result = await collectGarbageHandler.implementation(
       { kernel: mockKernel },
       [],
     );
@@ -22,13 +22,11 @@ describe('collectGarbageHandler', () => {
     expect(result).toBeNull();
   });
 
-  it('should propagate errors from collectGarbage', async () => {
+  it('propagates errors from collectGarbage', async () => {
     const error = new Error('Collect garbage failed');
-    vi.mocked(mockKernel.collectGarbage).mockImplementationOnce(() => {
-      throw error;
-    });
-    expect(() =>
+    vi.mocked(mockKernel.collectGarbage).mockRejectedValueOnce(error);
+    await expect(
       collectGarbageHandler.implementation({ kernel: mockKernel }, []),
-    ).toThrow(error);
+    ).rejects.toThrow(error);
   });
 });

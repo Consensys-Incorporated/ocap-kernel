@@ -6,8 +6,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 import {
   initRemoteIdentity,
-  initRemoteComms,
   parseOcapURL,
+  prepareRemoteComms,
+  startRemoteComms,
   DEFAULT_MAX_URL_RELAY_HINTS,
   DEFAULT_MAX_KNOWN_RELAYS,
 } from './remote-comms.ts';
@@ -17,7 +18,13 @@ import type { KernelStore, RelayEntry } from '../../store/index.ts';
 import { makeKernelStore } from '../../store/index.ts';
 import type { KRef, PlatformServices } from '../../types.ts';
 import { mnemonicToSeed } from '../../utils/bip39.ts';
-import type { RemoteMessageHandler } from '../types.ts';
+import type {
+  OnIncarnationChange,
+  OnRemoteGiveUp,
+  RemoteComms,
+  RemoteCommsOptions,
+  RemoteMessageHandler,
+} from '../types.ts';
 
 /**
  * Build learned (non-bootstrap) relay entries from address strings.
@@ -31,6 +38,32 @@ function makeLearnedRelayEntries(
   lastSeen = 100,
 ): RelayEntry[] {
   return addrs.map((addr) => ({ addr, lastSeen, isBootstrap: false }));
+}
+
+// Prepare remote comms and start them, as `RemoteManager` does on either side
+// of its crank.
+async function initRemoteComms(
+  kernelStore: KernelStore,
+  platformServices: PlatformServices,
+  remoteMessageHandler: RemoteMessageHandler,
+  options?: RemoteCommsOptions,
+  logger?: Logger,
+  keySeed?: string,
+  onRemoteGiveUp?: OnRemoteGiveUp,
+  incarnationId?: string,
+  onIncarnationChange?: OnIncarnationChange,
+): Promise<RemoteComms> {
+  return startRemoteComms(
+    await prepareRemoteComms(kernelStore, options, logger, keySeed),
+    {
+      platformServices,
+      remoteMessageHandler,
+      logger,
+      onRemoteGiveUp,
+      incarnationId,
+      onIncarnationChange,
+    },
+  );
 }
 
 describe('remote-comms', () => {

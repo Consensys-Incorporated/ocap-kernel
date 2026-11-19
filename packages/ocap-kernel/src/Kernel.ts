@@ -7,7 +7,7 @@ import { IOManager } from './io/IOManager.ts';
 import type { IOListenerFactory } from './io/types.ts';
 import { makeKernelFacet } from './kernel-facet.ts';
 import type { KernelFacet } from './kernel-facet.ts';
-import { KernelQueue } from './KernelQueue.ts';
+import { attempt, KernelQueue } from './KernelQueue.ts';
 import { KernelRouter } from './KernelRouter.ts';
 import { KernelServiceManager } from './KernelServiceManager.ts';
 import type { KernelService } from './KernelServiceManager.ts';
@@ -19,6 +19,7 @@ import type { RemoteCommsOptions } from './remotes/types.ts';
 import type { PingVatResult } from './rpc/index.ts';
 import { makeKernelStore } from './store/index.ts';
 import type { KernelStore } from './store/index.ts';
+import { isPromiseRef } from './store/utils/promise-ref.ts';
 import { isStoreFault } from './store/utils/store-fault.ts';
 import type {
   VatId,
@@ -185,6 +186,7 @@ export class Kernel {
     this.#ocapURLManager = new OcapURLManager({
       remoteManager: this.#remoteManager,
       kernelStore: this.#kernelStore,
+      kernelQueue: this.#kernelQueue,
     });
 
     this.#kernelServiceManager = new KernelServiceManager({
@@ -279,8 +281,7 @@ export class Kernel {
    * @param options.auditRefCounts - If true, verify reference counts against
    * ground truth at the end of each crank and throw on any mismatch.
    * @param options.kernelServices - Kernel services to register before the run
-   * loop starts. Registering one later writes the store into whatever crank is
-   * open (#1171).
+   * loop starts.
    * @returns A promise for the new kernel instance.
    */
   static async make(
@@ -595,24 +596,30 @@ export class Kernel {
   }
 
   /**
-   * Register a kernel service object.
+   * Register a kernel service object, in a crank of its own.
    *
    * @param name - The name of the service.
    * @param object - The service object to register.
    * @param options - Registration options.
    * @param options.systemOnly - Whether the service is only available to system
    * subclusters. Defaults to `false`.
-   * @returns The registration details including the kref.
+   * @returns A promise for the registration details including the kref.
    */
-  registerKernelServiceObject(
+  async registerKernelServiceObject(
     name: string,
     object: object,
     options?: { systemOnly?: boolean },
-  ): KernelService {
-    return this.#kernelServiceManager.registerKernelServiceObject(
-      name,
-      object,
-      options,
+  ): Promise<KernelService> {
+    return this.#kernelQueue.enqueueInbox(
+      'register a kernel service',
+      async () =>
+        attempt(() =>
+          this.#kernelServiceManager.registerKernelServiceObject(
+            name,
+            object,
+            options,
+          ),
+        ),
     );
   }
 
@@ -803,13 +810,20 @@ export class Kernel {
   }
 
   /**
-   * Revoke an exported object. Idempotent. Revoking promises is not supported.
+   * Revoke an exported object, in a crank of its own. Idempotent. Revoking
+   * promises is not supported.
    *
    * @param kref - The KRef of the object to revoke.
    * @throws If the object is a promise.
    */
-  revoke(kref: KRef): void {
-    this.#kernelStore.revoke(kref);
+  async revoke(kref: KRef): Promise<void> {
+    if (isPromiseRef(kref)) {
+      throw Error(`cannot revoke promise ${kref}`);
+    }
+    await this.#kernelQueue.enqueueInbox('revoke an object', () => {
+      this.#kernelStore.revoke(kref);
+      return { value: undefined };
+    });
   }
 
   /**
@@ -865,41 +879,53 @@ export class Kernel {
   }
 
   /**
-   * Reap vats that match the filter.
+   * Schedule a reap of the vats that match the filter, in a crank of its own.
    *
    * @param filter - A function that returns true if the vat should be reaped.
    */
-  reapVats(filter: (vatId: VatId) => boolean = () => true): void {
-    this.#vatManager.reapVats(filter);
+  async reapVats(
+    filter: (vatId: VatId) => boolean = () => true,
+  ): Promise<void> {
+    await this.#kernelQueue.enqueueInbox('reap vats', async () =>
+      attempt(() => this.#vatManager.reapVats(filter)),
+    );
   }
 
   /**
-   * Reap remotes that match the filter.
-   * This is for debugging and testing purposes only.
+   * Schedule a reap of the remotes that match the filter, in a crank of its
+   * own. This is for debugging and testing purposes only.
    *
    * @param filter - A function that returns true if the remote should be reaped.
    */
-  reapRemotes(filter: (remoteId: RemoteId) => boolean = () => true): void {
-    this.#remoteManager.reapRemotes(filter);
+  async reapRemotes(
+    filter: (remoteId: RemoteId) => boolean = () => true,
+  ): Promise<void> {
+    await this.#kernelQueue.enqueueInbox('reap remotes', async () =>
+      attempt(() => this.#remoteManager.reapRemotes(filter)),
+    );
   }
 
   /**
-   * Pin a vat root.
+   * Pin a vat root, in a crank of its own.
    *
    * @param vatId - The ID of the vat whose root to pin.
-   * @returns The KRef of the pinned vat root.
+   * @returns A promise for the KRef of the pinned vat root.
    */
-  pinVatRoot(vatId: VatId): KRef {
-    return this.#vatManager.pinVatRoot(vatId);
+  async pinVatRoot(vatId: VatId): Promise<KRef> {
+    return this.#kernelQueue.enqueueInbox('pin a vat root', async () =>
+      attempt(() => this.#vatManager.pinVatRoot(vatId)),
+    );
   }
 
   /**
-   * Unpin a vat root.
+   * Unpin a vat root, in a crank of its own.
    *
    * @param vatId - The ID of the vat whose root to unpin.
    */
-  unpinVatRoot(vatId: VatId): void {
-    this.#vatManager.unpinVatRoot(vatId);
+  async unpinVatRoot(vatId: VatId): Promise<void> {
+    await this.#kernelQueue.enqueueInbox('unpin a vat root', async () =>
+      attempt(() => this.#vatManager.unpinVatRoot(vatId)),
+    );
   }
 
   /**
@@ -1056,11 +1082,14 @@ export class Kernel {
   }
 
   /**
-   * Collect garbage.
+   * Collect garbage, in a crank of its own.
    * This is for debugging purposes only.
    */
-  collectGarbage(): void {
-    this.#vatManager.collectGarbage();
+  async collectGarbage(): Promise<void> {
+    await this.#kernelQueue.enqueueInbox('collect garbage', () => {
+      this.#vatManager.collectGarbage();
+      return { value: undefined };
+    });
   }
 }
 harden(Kernel);

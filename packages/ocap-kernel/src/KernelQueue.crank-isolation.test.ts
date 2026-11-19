@@ -12,7 +12,7 @@ import {
   kunser,
   makeFatalKernelError,
 } from './liveslots/kernel-marshal.ts';
-import { initRemoteComms } from './remotes/kernel/remote-comms.ts';
+import { startRemoteComms } from './remotes/kernel/remote-comms.ts';
 import { OcapURLManager } from './remotes/kernel/OcapURLManager.ts';
 import { RemoteManager } from './remotes/kernel/RemoteManager.ts';
 import type { RemoteComms } from './remotes/types.ts';
@@ -41,7 +41,7 @@ import { asRRef, asVatId, asVRef } from '../test/branded.ts';
 
 vi.mock('./remotes/kernel/remote-comms.ts', async () => {
   const actual = await vi.importActual('./remotes/kernel/remote-comms.ts');
-  return { ...actual, initRemoteComms: vi.fn() };
+  return { ...actual, startRemoteComms: vi.fn() };
 });
 
 const KILL_RUN_LOOP = 'test: kill run loop';
@@ -132,7 +132,7 @@ async function setUp() {
     sendRemoteMessage: vi.fn().mockResolvedValue(undefined),
     registerLocationHints: vi.fn().mockResolvedValue(undefined),
   } as unknown as RemoteComms;
-  vi.mocked(initRemoteComms).mockResolvedValue(remoteComms);
+  vi.mocked(startRemoteComms).mockResolvedValue(remoteComms);
   const remoteManager = new RemoteManager({
     platformServices,
     kernelStore,
@@ -141,9 +141,9 @@ async function setUp() {
   });
   remoteManager.setMessageHandler(vi.fn());
   await remoteManager.initRemoteComms();
-  const initArgs = vi.mocked(initRemoteComms).mock.lastCall ?? [];
-  const onGiveUp = initArgs[6] as (peerId: string) => void;
-  const onIncarnationChange = initArgs[8] as (
+  const started = vi.mocked(startRemoteComms).mock.lastCall?.[1];
+  const onGiveUp = started?.onRemoteGiveUp as (peerId: string) => void;
+  const onIncarnationChange = started?.onIncarnationChange as (
     peerId: string,
     incarnation: string,
   ) => Promise<boolean>;
@@ -406,8 +406,12 @@ describe('a writer acting while a crank aborts', () => {
 
   it('ocap URL redemption, new peer: the remote and its request are written once the aborted crank ends', async () => {
     const harness = await setUp();
-    const { kernelStore, remote, remoteManager } = harness;
-    const ocapURLManager = new OcapURLManager({ remoteManager, kernelStore });
+    const { kernelStore, kernelQueue, remote, remoteManager } = harness;
+    const ocapURLManager = new OcapURLManager({
+      remoteManager,
+      kernelStore,
+      kernelQueue,
+    });
     await abortACrankWhile(harness, async () => {
       ocapURLManager
         .redeemOcapURL(`ocap:token@${NEW_PEER_ID}`)
@@ -428,8 +432,18 @@ describe('a writer acting while a crank aborts', () => {
 
   it('ocap URL redemption, known peer: its request lands in a crank of its own', async () => {
     const harness = await setUp();
-    const { kernelStore, remote, remoteManager, persistedForPeer } = harness;
-    const ocapURLManager = new OcapURLManager({ remoteManager, kernelStore });
+    const {
+      kernelStore,
+      kernelQueue,
+      remote,
+      remoteManager,
+      persistedForPeer,
+    } = harness;
+    const ocapURLManager = new OcapURLManager({
+      remoteManager,
+      kernelStore,
+      kernelQueue,
+    });
     await abortACrankWhile(harness, async () => {
       ocapURLManager
         .redeemOcapURL(`ocap:token@${PEER_ID}`)
