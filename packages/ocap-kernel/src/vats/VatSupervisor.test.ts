@@ -1,5 +1,5 @@
 import type { PlatformFactory } from '@metamask/kernel-platforms';
-import { delay, isJsonRpcMessage } from '@metamask/kernel-utils';
+import { delay, isJsonRpcMessage, toHex } from '@metamask/kernel-utils';
 import type { JsonRpcMessage } from '@metamask/kernel-utils';
 import { Logger } from '@metamask/logger';
 import { rpcErrors } from '@metamask/rpc-errors';
@@ -278,13 +278,14 @@ describe('VatSupervisor', () => {
         'SHA-256',
         new TextEncoder().encode(bundle),
       );
-      const digestHex = [...new Uint8Array(digest)]
-        .map((byte) => byte.toString(16).padStart(2, '0'))
-        .join('');
       expect(dispatch).toHaveBeenCalledWith(
         expect.objectContaining({
           id: 'test-init',
-          result: [expect.anything(), null, `sha256:${digestHex}`],
+          result: [
+            expect.anything(),
+            null,
+            `sha256:${toHex(new Uint8Array(digest))}`,
+          ],
         }),
       );
     });

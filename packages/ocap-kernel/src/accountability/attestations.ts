@@ -3,7 +3,7 @@ import { assert } from '@metamask/superstruct';
 import type { PartyVerifier } from './parties.ts';
 import { verifyKernelSignature } from './signing.ts';
 import type { KernelSigner } from './signing.ts';
-import { AttestationStruct } from './types.ts';
+import { StoredAttestationStruct } from './types.ts';
 import type { StoredAttestation } from './types.ts';
 import { attempt } from '../KernelQueue.ts';
 import type { KernelQueue } from '../KernelQueue.ts';
@@ -11,7 +11,6 @@ import type { KernelStore } from '../store/index.ts';
 
 export type AttestationFilter = {
   kind?: StoredAttestation['kind'];
-  /** Needs `kind`. */
   subject?: string;
 };
 
@@ -66,7 +65,7 @@ export function makeAttestationKeeper({
     const claim = { kind, subject, party, payload };
     if (subject === (await signer.getPeerId())) {
       const signed = await signer.sign(claim);
-      return {
+      return harden({
         ...claim,
         signature,
         countersignature: {
@@ -74,7 +73,7 @@ export function makeAttestationKeeper({
           incarnationId: signed.incarnationId,
           signature: signed.signature,
         },
-      };
+      });
     }
     if (
       countersignature === undefined ||
@@ -85,13 +84,13 @@ export function makeAttestationKeeper({
         `an operator attestation for ${subject} needs that kernel's countersignature`,
       );
     }
-    return { ...claim, signature, countersignature };
+    return harden({ ...claim, signature, countersignature });
   }
 
   return harden({
     async attest(attestation: StoredAttestation): Promise<void> {
+      assert(attestation, StoredAttestationStruct);
       const { countersignature: _countersignature, ...bare } = attestation;
-      assert(bare, AttestationStruct);
       if (bare.kind === 'intent') {
         throw Error(
           'an intent is attested by the queueMessage it is passed to',
