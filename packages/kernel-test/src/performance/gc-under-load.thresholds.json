@@ -21,10 +21,10 @@
     "kvRows": 0
   },
   "fetch": {
-    "objects": 1,
-    "promises": 1,
-    "clistRows": 2,
+    "objects": 0,
+    "promises": 0,
+    "clistRows": 0,
     "vatstoreRows": 0,
-    "kvRows": 8
+    "kvRows": 0
   }
 }

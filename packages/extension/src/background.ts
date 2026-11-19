@@ -152,6 +152,7 @@ async function startDefaultSubcluster(): Promise<void> {
       defaultSubcluster,
     );
     logger.info(`Default subcluster launched: ${JSON.stringify(result)}`);
+    await E(globalThis.kernel).releaseResult(result.bootstrapResult ?? {});
   } else {
     logger.info('Subclusters already exist. Not launching default subcluster.');
   }

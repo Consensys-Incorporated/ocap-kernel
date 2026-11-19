@@ -65,9 +65,25 @@ export function useKernelActions(): {
         method: 'launchSubcluster',
         params: { config },
       })
-        .then(() => logMessage('Subcluster launched', 'success'))
+        .then(({ bootstrapResult }) => {
+          logMessage('Subcluster launched', 'success');
+          return bootstrapResult?.kpid;
+        })
+        .catch((error) => {
+          logMessage(`Failed to launch subcluster: ${error.message}`, 'error');
+          return undefined;
+        })
+        // Nothing here uses the krefs in the bootstrap's answer.
+        .then(async (kpid) =>
+          kpid === undefined
+            ? null
+            : callKernelMethod({ method: 'releaseResult', params: [kpid] }),
+        )
         .catch((error) =>
-          logMessage(`Failed to launch subcluster: ${error.message}`, 'error'),
+          logMessage(
+            `Failed to release the bootstrap result: ${error.message}`,
+            'error',
+          ),
         );
     },
     [callKernelMethod, logMessage],

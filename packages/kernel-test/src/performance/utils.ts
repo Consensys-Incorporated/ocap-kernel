@@ -142,6 +142,12 @@ export type ProfileKernel = {
   getDbBytes: () => Promise<number>;
   /** Send to the holder of pair `pair % pairs`, and unserialize the reply. */
   send: (pair: number, method: string, args?: unknown[]) => Promise<unknown>;
+  /** As `send`, but the raw `queueMessage` result. */
+  sendRaw: (
+    pair: number,
+    method: string,
+    args?: unknown[],
+  ) => ReturnType<Kernel['queueMessage']>;
   /** How many tokens each pair's holder holds. */
   held: number[];
   /** Grow every pair's holdings to at least `perPair` tokens. */
@@ -200,14 +206,17 @@ export async function makeProfileKernel(pairs: number): Promise<ProfileKernel> {
   }
   const running = kernel;
 
+  const sendRaw = async (
+    pair: number,
+    method: string,
+    args: unknown[] = [],
+  ): ReturnType<Kernel['queueMessage']> =>
+    running.queueMessage(holders[pair % pairs] as KRef, method, args);
   const send = async (
     pair: number,
     method: string,
     args: unknown[] = [],
-  ): Promise<unknown> =>
-    kunser(
-      await running.queueMessage(holders[pair % pairs] as KRef, method, args),
-    );
+  ): Promise<unknown> => kunser(await sendRaw(pair, method, args));
 
   const held: number[] = Array.from({ length: pairs }, () => 0);
   const grow = async (perPair: number): Promise<void> => {
@@ -229,6 +238,7 @@ export async function makeProfileKernel(pairs: number): Promise<ProfileKernel> {
     kernelDatabase,
     getDbBytes: async () => (await stat(dbFilename)).size,
     send,
+    sendRaw,
     held,
     grow,
     dispose,
