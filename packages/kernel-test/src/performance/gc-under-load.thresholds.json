@@ -1,30 +1,30 @@
 {
   "ping": {
     "objects": 0,
-    "promises": 1,
-    "clistRows": 2,
+    "promises": 0,
+    "clistRows": 0,
     "vatstoreRows": 0,
-    "kvRows": 5
+    "kvRows": 0
   },
   "pingHeld": {
     "objects": 0,
-    "promises": 2,
-    "clistRows": 6,
+    "promises": 0,
+    "clistRows": 0,
     "vatstoreRows": 0,
-    "kvRows": 12
+    "kvRows": 0
   },
   "churn": {
-    "objects": 10,
-    "promises": 3,
-    "clistRows": 30,
+    "objects": 0,
+    "promises": 0,
+    "clistRows": 0,
     "vatstoreRows": 0,
-    "kvRows": 59
+    "kvRows": 0
   },
   "fetch": {
     "objects": 1,
-    "promises": 2,
-    "clistRows": 8,
+    "promises": 1,
+    "clistRows": 2,
     "vatstoreRows": 0,
-    "kvRows": 17
+    "kvRows": 8
   }
 }

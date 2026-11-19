@@ -359,6 +359,12 @@ describe('Remote Communications (Integration Tests)', () => {
       after: before,
     });
     expect(await kernel1.redeemOcapURL(url)).toBe(kref);
+    // The promise that carried the first URL to its vat is retired.
+    expect(
+      kernelDatabase1.executeQuery(
+        `SELECT key FROM kv WHERE key GLOB 'v*.c.kp*'`,
+      ),
+    ).toStrictEqual([]);
   });
 
   it('should send remote message between kernels via ocap URLs', async () => {
