@@ -163,6 +163,22 @@ describe('useKernelActions', () => {
       );
     });
 
+    it('releases a bootstrap result the kernel holds', async () => {
+      const { useKernelActions } = await import('./useKernelActions.ts');
+      const { result } = renderHook(() => useKernelActions());
+      mockSendMessage.mockResolvedValueOnce({
+        bootstrapResult: { body: '#"$0"', slots: ['ko7'], kpid: 'kp3' },
+      });
+      mockSendMessage.mockResolvedValueOnce(null);
+      result.current.launchSubcluster(clusterConfig);
+      await waitFor(() => {
+        expect(mockSendMessage.mock.calls).toStrictEqual([
+          [{ method: 'launchSubcluster', params: { config: clusterConfig } }],
+          [{ method: 'releaseResult', params: ['kp3'] }],
+        ]);
+      });
+    });
+
     it('logs error on failure', async () => {
       const { useKernelActions } = await import('./useKernelActions.ts');
       const { result } = renderHook(() => useKernelActions());

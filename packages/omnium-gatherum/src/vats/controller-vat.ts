@@ -27,6 +27,7 @@ type VatPowers = {
  */
 type KernelFacet = {
   launchSubcluster: (config: ClusterConfig) => Promise<SubclusterLaunchResult>;
+  releaseResult: (result: { kpid?: string | undefined }) => Promise<void>;
   terminateSubcluster: (subclusterId: string) => Promise<void>;
   getPresence: (kref: string, iface?: string) => Promise<unknown>;
 };
@@ -64,8 +65,14 @@ async function initializeCapletController(options: {
         adapter: storageAdapter,
         launchSubcluster: async (
           config: ClusterConfig,
-        ): Promise<SubclusterLaunchResult> =>
-          E(kernelFacet).launchSubcluster(config),
+        ): Promise<SubclusterLaunchResult> => {
+          const result = await E(kernelFacet).launchSubcluster(config);
+          // The controller keeps the root, not what the bootstrap answered.
+          await E(kernelFacet).releaseResult({
+            kpid: result.bootstrapResult?.kpid,
+          });
+          return result;
+        },
         terminateSubcluster: async (subclusterId: string): Promise<void> =>
           E(kernelFacet).terminateSubcluster(subclusterId),
         getVatRoot: async (krefString: string): Promise<unknown> =>

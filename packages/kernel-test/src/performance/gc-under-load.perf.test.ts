@@ -180,7 +180,7 @@ describe('garbage collection under load', () => {
     async (workload) => {
       const profile = await makeProfileKernel(PAIRS);
       ({ dispose } = profile);
-      const { kernelDatabase, send, grow } = profile;
+      const { kernel, kernelDatabase, send, sendRaw, grow } = profile;
       const perPair = Math.ceil(KREFS / PAIRS);
       await grow(perPair);
 
@@ -201,9 +201,11 @@ describe('garbage collection under load', () => {
         churn: async (message) => {
           expect(await send(message, 'churn', [CHURN_TOKENS])).toBe('pong');
         },
-        // A host's message, answered with a new object the host never uses.
+        // A host's message, answered with a new object the host gives up.
         fetch: async (message) => {
-          expect(await send(message, 'fetch')).toBeDefined();
+          const result = await sendRaw(message, 'fetch');
+          expect(result.slots).toHaveLength(1);
+          await kernel.releaseResult(result);
         },
       };
 
