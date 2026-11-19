@@ -2086,6 +2086,7 @@ describe('Kernel', () => {
       });
       expect(exported).toStrictEqual({
         payload: {
+          filter: { kref: 'ko1' },
           records: [
             {
               seq: 1,
@@ -2113,52 +2114,45 @@ describe('Kernel', () => {
       ).toStrictEqual([]);
     });
 
-    it('passes what the host says about an act to the queue', async () => {
+    it.each([
+      [
+        'what the host says about an act',
+        { onBehalfOf: 'ed25519:00' },
+        { onBehalfOf: 'ed25519:00' },
+      ],
+      ['nothing when the host says nothing', {}, undefined],
+    ])('passes %s to the queue', async (_what, attribution, passed) => {
       const kernel = await Kernel.make(
         mockPlatformServices,
         mockKernelDatabase,
       );
-      const attribution = { onBehalfOf: 'ed25519:00' };
       await kernel.queueMessage(asKRef('ko1'), 'hello', [], attribution);
       expect(
         mocks.KernelQueue.lastInstance.enqueueMessage,
-      ).toHaveBeenCalledWith(asKRef('ko1'), 'hello', [], attribution);
+      ).toHaveBeenCalledWith(asKRef('ko1'), 'hello', [], passed);
     });
 
-    it.each([
-      [
-        'an intent whose signature does not check',
-        async (): Promise<object> => ({
-          intent: {
-            ...(await (
-              await makeTestParty()
-            ).attest({ kind: 'intent', subject: 'ko1', payload: null })),
-            subject: 'ko2',
-          },
-        }),
-        'does not check',
-      ],
-      [
-        'an attribution it does not understand',
-        async (): Promise<object> => ({ bogus: 1 }),
-        'bogus',
-      ],
-    ])('refuses %s before queuing anything', async (_what, make, problem) => {
+    it('makes the kernel an identity, in a crank of its own, the first time it signs', async () => {
       const kernel = await Kernel.make(
         mockPlatformServices,
         mockKernelDatabase,
       );
-      await expect(
-        kernel.queueMessage(
-          asKRef('ko1'),
-          'hello',
-          [],
-          (await make()) as never,
-        ),
-      ).rejects.toThrow(problem);
+      mocks.RemoteManager.lastInstance.initIdentity.mockImplementationOnce(
+        async () => {
+          await seedIdentity(mockKernelDatabase.kernelKVStore);
+        },
+      );
+      const exported = await kernel.exportAccountabilityRecords();
       expect(
-        mocks.KernelQueue.lastInstance.enqueueMessage,
-      ).not.toHaveBeenCalled();
+        mocks.KernelQueue.lastInstance.enqueueInbox,
+      ).toHaveBeenCalledExactlyOnceWith(
+        'initialize the identity',
+        expect.any(Function),
+      );
+      expect(exported.signer).toBe(
+        mockKernelDatabase.kernelKVStore.get('peerId'),
+      );
+      expect(await verifyKernelSignature(exported)).toBe(true);
     });
 
     it('installs the operator attestation at start, countersigned', async () => {
@@ -2182,6 +2176,60 @@ describe('Kernel', () => {
       ]);
     });
 
+    it('refuses to start with an operator attestation that does not check', async () => {
+      const peerId = await seedIdentity(mockKernelDatabase.kernelKVStore);
+      const party = await makeTestParty();
+      const operator = await party.attest({
+        kind: 'operator',
+        subject: peerId,
+        payload: { name: 'Operator' },
+      });
+      await expect(
+        Kernel.make(mockPlatformServices, mockKernelDatabase, {
+          accountability: { operator: { ...operator, payload: 'changed' } },
+        }),
+      ).rejects.toThrow('does not check');
+    });
+
+    it("checks a party of the host's scheme with the host's verifier", async () => {
+      const kernel = await Kernel.make(
+        mockPlatformServices,
+        mockKernelDatabase,
+        {
+          accountability: {
+            partySignatureVerifiers: {
+              test: ({ signature }) => signature === 'ok',
+            },
+          },
+        },
+      );
+      const implementer = {
+        kind: 'implementer' as const,
+        subject: 'sha256:00',
+        party: 'test:alice',
+        payload: null,
+        signature: 'ok',
+      };
+      await kernel.attest(implementer);
+      expect(
+        await kernel.getAttestations({ kind: 'implementer' }),
+      ).toStrictEqual([implementer]);
+      await expect(
+        kernel.attest({ ...implementer, signature: 'bad' }),
+      ).rejects.toThrow('does not check');
+      const intent = {
+        kind: 'intent' as const,
+        subject: 'ko1',
+        party: 'test:alice',
+        payload: null,
+        signature: 'ok',
+      };
+      await kernel.queueMessage(asKRef('ko1'), 'hello', [], { intent });
+      expect(
+        mocks.KernelQueue.lastInstance.enqueueMessage,
+      ).toHaveBeenCalledWith(asKRef('ko1'), 'hello', [], { intent });
+    });
+
     it('keeps an attestation and reads it back', async () => {
       const kernel = await Kernel.make(
         mockPlatformServices,
@@ -2203,12 +2251,20 @@ describe('Kernel', () => {
     });
 
     it("reports a vat's bundle hash", async () => {
+      let kernelStore: KernelStore | undefined;
+      vi.spyOn(storeModule, 'makeKernelStore').mockImplementationOnce(
+        (...args) => {
+          kernelStore = makeKernelStore(...args);
+          return kernelStore;
+        },
+      );
       const kernel = await Kernel.make(
         mockPlatformServices,
         mockKernelDatabase,
       );
+      assert(kernelStore);
       expect(kernel.getVatBundleHash(asVatId('v1'))).toBeUndefined();
-      mockKernelDatabase.kernelKVStore.set('v1.bundleHash', 'sha256:00');
+      kernelStore.setVatBundleHash(asVatId('v1'), 'sha256:00');
       expect(kernel.getVatBundleHash(asVatId('v1'))).toBe('sha256:00');
     });
   });

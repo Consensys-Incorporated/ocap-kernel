@@ -1,7 +1,22 @@
 import { describe, it, expect, vi } from 'vitest';
 
-import { initVatHandler } from './initVat.ts';
+import { initVatHandler, initVatSpec } from './initVat.ts';
 import type { InitVat } from './initVat.ts';
+
+describe('initVatSpec', () => {
+  it('accepts a checkpoint, an error and a bundle hash', () => {
+    expect(
+      initVatSpec.result.is([[[['k', 'v']], ['d']], null, 'sha256:00']),
+    ).toBe(true);
+    expect(
+      initVatSpec.result.is([[[['k', 'v']], ['d']], 'boom', 'sha256:00']),
+    ).toBe(true);
+  });
+
+  it('refuses a result without the bundle hash', () => {
+    expect(initVatSpec.result.is([[[['k', 'v']], ['d']], null])).toBe(false);
+  });
+});
 
 describe('initVatHandler', () => {
   it('should initialize a vat', async () => {

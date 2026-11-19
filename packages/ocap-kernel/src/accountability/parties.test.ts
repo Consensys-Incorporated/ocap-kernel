@@ -83,6 +83,12 @@ describe('makePartyVerifier', () => {
     ).rejects.toThrow('no verifier for the party scheme "did"');
   });
 
+  it('refuses a host verifier for the built-in scheme', () => {
+    expect(() => makePartyVerifier({ ed25519: () => true })).toThrow(
+      'the ed25519 scheme is built in',
+    );
+  });
+
   it('does not take a scheme from the object prototype', async () => {
     const verifier = makePartyVerifier();
     await expect(

@@ -66,19 +66,6 @@ import { SubclusterManager } from './vats/SubclusterManager.ts';
 import type { VatHandle } from './vats/VatHandle.ts';
 import { VatManager } from './vats/VatManager.ts';
 
-/**
- * The main class for the ocap kernel. It is responsible for
- * managing the lifecycle of the kernel and the vats.
- *
- * @param commandStream - Command channel from whatever external software is driving the kernel.
- * @param platformServices - Service to do things the kernel worker can't.
- * @param kernelDatabase - Database holding the kernel's persistent state.
- * @param options - Options for the kernel constructor.
- * @param options.resetStorage - If true, the storage will be cleared.
- * @param options.logger - Optional logger for error and diagnostic output.
- * @param options.keySeed - Optional seed for libp2p key generation.
- * @returns A new {@link Kernel}.
- */
 /** What `Kernel.make` takes under `accountability`. */
 export type AccountabilityOptions = {
   /**
@@ -103,12 +90,24 @@ export type AccountabilityOptions = {
  * attestations that resolve their endpoints to parties, signed by the kernel.
  */
 export type AccountabilityExport = Signed<{
+  /** What the records were selected by. */
+  filter: AccountabilityRecordFilter;
   records: AccountabilityRecord[];
   attestations: StoredAttestation[];
 }>;
 
 /**
+ * The main class for the ocap kernel. It is responsible for
+ * managing the lifecycle of the kernel and the vats.
  *
+ * @param commandStream - Command channel from whatever external software is driving the kernel.
+ * @param platformServices - Service to do things the kernel worker can't.
+ * @param kernelDatabase - Database holding the kernel's persistent state.
+ * @param options - Options for the kernel constructor.
+ * @param options.resetStorage - If true, the storage will be cleared.
+ * @param options.logger - Optional logger for error and diagnostic output.
+ * @param options.keySeed - Optional seed for libp2p key generation.
+ * @returns A new {@link Kernel}.
  */
 export class Kernel {
   /** Manages vat lifecycle operations */
@@ -260,7 +259,11 @@ export class Kernel {
 
     this.#signer = makeKernelSigner({
       kernelStore: this.#kernelStore,
-      ensureIdentity: async () => this.#remoteManager.initIdentity(),
+      ensureIdentity: async () =>
+        this.#kernelQueue.enqueueInbox('initialize the identity', async () => {
+          await this.#remoteManager.initIdentity();
+          return { value: undefined };
+        }),
     });
     this.#partyVerifier = makePartyVerifier(
       options.accountability?.partySignatureVerifiers,
@@ -638,6 +641,7 @@ export class Kernel {
     args: unknown[],
     attribution?: Attribution,
   ): Promise<QueueMessageResult> {
+    let said: Attribution | undefined;
     if (attribution !== undefined) {
       assert(attribution, AttributionStruct);
       if (
@@ -648,14 +652,15 @@ export class Kernel {
           `the signature on the intent by ${attribution.intent.party} does not check`,
         );
       }
+      if (
+        attribution.onBehalfOf !== undefined ||
+        attribution.intent !== undefined
+      ) {
+        said = attribution;
+      }
     }
     try {
-      return await this.#kernelQueue.enqueueMessage(
-        target,
-        method,
-        args,
-        attribution,
-      );
+      return await this.#kernelQueue.enqueueMessage(target, method, args, said);
     } catch (rejection) {
       if (isCapData(rejection)) {
         throw kunser(rejection as CapData<KRef>);
@@ -711,6 +716,7 @@ export class Kernel {
     filter?: AccountabilityRecordFilter,
   ): Promise<AccountabilityExport> {
     const payload = await this.#kernelQueue.writeOutsideCrank(() => ({
+      filter: filter ?? {},
       records: this.#kernelStore.getAccountabilityRecords(filter),
       attestations: this.#kernelStore.getAttestations(),
     }));

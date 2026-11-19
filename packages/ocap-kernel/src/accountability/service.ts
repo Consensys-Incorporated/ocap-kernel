@@ -186,7 +186,7 @@ export function makeAccountabilityService({
       )) as DeliveryRecord[];
       if (delivery === undefined) {
         throw Error(
-          `no record of the delivery to ${caller} in crank ${cause}; its target was not tracked`,
+          `no record of the delivery to ${caller} in crank ${cause}; its target was not tracked and the host did not attribute it`,
         );
       }
       return signer.sign({ kind: 'receipt', delivery });

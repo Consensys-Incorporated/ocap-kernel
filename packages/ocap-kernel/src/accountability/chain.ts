@@ -85,7 +85,7 @@ export function resolveParties({
   } else {
     parties.push(...partiesOf('operator', peerId));
   }
-  return [...new Set(parties)];
+  return harden([...new Set(parties)]);
 }
 
 /**
@@ -124,7 +124,7 @@ export function buildChain({
     const acquisitions =
       endpoint === owner || endpoint === 'kernel'
         ? []
-        : acquisitionsOf(kernelStore, kref, endpoint);
+        : acquisitionsOf({ kernelStore, kref, endpoint });
     hops.push({
       endpoint,
       parties: resolveParties({ kernelStore, endpoint, peerId }),
@@ -136,47 +136,56 @@ export function buildChain({
       }
     }
   }
-  return { kref, owner, hops };
+  return harden({ kref, owner, hops });
 }
 
 /**
  * How an endpoint came to hold an object: every conveyance of it to the
  * endpoint, or failing those its introduction.
  *
- * @param kernelStore - The kernel's store.
- * @param kref - The object.
- * @param endpoint - The holder.
+ * @param options - Options bag.
+ * @param options.kernelStore - The kernel's store.
+ * @param options.kref - The object.
+ * @param options.endpoint - The holder.
  * @returns The acquisitions, in the order recorded.
  */
-function acquisitionsOf(
-  kernelStore: KernelStore,
-  kref: KRef,
-  endpoint: Sender,
-): Acquisition[] {
+function acquisitionsOf({
+  kernelStore,
+  kref,
+  endpoint,
+}: {
+  kernelStore: KernelStore;
+  kref: KRef;
+  endpoint: Sender;
+}): Acquisition[] {
   const conveyances = kernelStore.getAccountabilityRecords({
     kind: 'conveyance',
     kref,
     endpoint,
   }) as ConveyanceRecord[];
   if (conveyances.length > 0) {
-    return conveyances.map(({ sender, via, crankNumber, seq }) => ({
-      kind: 'conveyance',
-      sender,
-      via,
-      crankNumber,
-      seq,
-    }));
+    return harden(
+      conveyances.map(({ sender, via, crankNumber, seq }) => ({
+        kind: 'conveyance',
+        sender,
+        via,
+        crankNumber,
+        seq,
+      })),
+    );
   }
   const introductions = kernelStore.getAccountabilityRecords({
     kind: 'introduction',
     kref,
     endpoint,
   }) as IntroductionRecord[];
-  return introductions.map(({ sender, via, crankNumber, seq }) => ({
-    kind: 'introduction',
-    sender,
-    via,
-    crankNumber,
-    seq,
-  }));
+  return harden(
+    introductions.map(({ sender, via, crankNumber, seq }) => ({
+      kind: 'introduction',
+      sender,
+      via,
+      crankNumber,
+      seq,
+    })),
+  );
 }

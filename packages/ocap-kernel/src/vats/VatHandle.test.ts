@@ -22,6 +22,7 @@ import type {
 } from '../types.ts';
 import { MAX_VAT_MESSAGE_LENGTH } from './vat-limits.ts';
 import { VatHandle } from './VatHandle.ts';
+import type { InitVatResult } from '../rpc/vat/initVat.ts';
 import { makeMapKernelDatabase } from '../../test/storage.ts';
 
 vi.mock('@endo/eventual-send', () => ({
@@ -77,7 +78,7 @@ describe('VatHandle', () => {
         'fake',
         null,
         'sha256:00',
-      ] as unknown as VatDeliveryResult);
+      ] as unknown as InitVatResult);
   });
 
   describe('init', () => {
@@ -99,6 +100,18 @@ describe('VatHandle', () => {
     it('keeps the bundle hash the worker reports', async () => {
       await makeVat();
       expect(mockKernelStore.getVatBundleHash(asVatId('v0'))).toBe('sha256:00');
+    });
+
+    it('keeps no bundle hash when the first delivery failed', async () => {
+      sendVatCommandMock
+        .mockReset()
+        .mockResolvedValueOnce([
+          'fake',
+          'boom',
+          'sha256:00',
+        ] as unknown as InitVatResult);
+      await makeVat();
+      expect(mockKernelStore.getVatBundleHash(asVatId('v0'))).toBeUndefined();
     });
 
     it.each([

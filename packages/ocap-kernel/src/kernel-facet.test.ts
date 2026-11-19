@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 
 import type { KernelFacetSource } from './kernel-facet.ts';
 import { makeKernelFacet } from './kernel-facet.ts';
@@ -40,6 +40,23 @@ const makeMockKernel = (): KernelFacetSource => ({
 });
 
 describe('makeKernelFacet', () => {
+  it('passes queueMessage no attribution', async () => {
+    const kernel = makeMockKernel();
+    const queueMessage = vi.spyOn(kernel, 'queueMessage');
+    const facet = makeKernelFacet(kernel);
+    await (facet.queueMessage as (...args: unknown[]) => Promise<unknown>)(
+      asKRef('ko1'),
+      'hello',
+      [],
+      { onBehalfOf: 'x:anyone' },
+    );
+    expect(queueMessage).toHaveBeenCalledExactlyOnceWith(
+      asKRef('ko1'),
+      'hello',
+      [],
+    );
+  });
+
   it('creates an exo with all dependency methods and ping', () => {
     const facet = makeKernelFacet(makeMockKernel());
 

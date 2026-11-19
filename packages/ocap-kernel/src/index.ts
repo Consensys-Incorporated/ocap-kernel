@@ -56,6 +56,7 @@ export type {
   Attestation,
   AttestationClaim,
   Attribution,
+  Intent,
   ConveyanceRecord,
   DeliveryRecord,
   IntroductionRecord,

@@ -5,6 +5,7 @@ import type { AttestationKeeper } from './attestations.ts';
 import { makePartyVerifier } from './parties.ts';
 import { makeKernelSigner, verifyKernelSignature } from './signing.ts';
 import type { KernelSigner } from './signing.ts';
+import type { AttestationClaim, StoredAttestation } from './types.ts';
 import type { KernelQueue } from '../KernelQueue.ts';
 import { makeKernelStore } from '../store/index.ts';
 import type { KernelStore } from '../store/index.ts';
@@ -85,41 +86,99 @@ describe('attestation keeper', () => {
     });
     const { signature: _signature, ...claim } = attestation;
     const countersignature = kept?.countersignature as NonNullable<
-      NonNullable<typeof kept>['countersignature']
+      StoredAttestation['countersignature']
     >;
     expect(
       await verifyKernelSignature({ payload: claim, ...countersignature }),
     ).toBe(true);
   });
 
-  it("keeps an operator attestation for another kernel with that kernel's countersignature, and refuses one without", async () => {
-    const otherDb = makeMapKernelDatabase();
-    const otherPeerId = await seedIdentity(otherDb.kernelKVStore, 5);
-    const otherStore = makeKernelStore(otherDb);
-    const otherKeeper = makeKeeper(
-      otherStore,
-      makeKernelSigner({ kernelStore: otherStore, ensureIdentity: vi.fn() }),
-    );
-    const attestation = await party.attest({
-      kind: 'operator',
-      subject: otherPeerId,
-      payload: null,
+  describe('an operator attestation for another kernel', () => {
+    let otherPeerId: string;
+    let claim: AttestationClaim;
+    let countersignature: NonNullable<StoredAttestation['countersignature']>;
+    let countersigned: StoredAttestation;
+    let thirdSigner: KernelSigner;
+
+    const makeOtherSigner = async (seedByte: number): Promise<KernelSigner> => {
+      const db = makeMapKernelDatabase();
+      await seedIdentity(db.kernelKVStore, seedByte);
+      const store = makeKernelStore(db);
+      return makeKernelSigner({ kernelStore: store, ensureIdentity: vi.fn() });
+    };
+
+    beforeEach(async () => {
+      const otherSigner = await makeOtherSigner(5);
+      otherPeerId = await otherSigner.getPeerId();
+      thirdSigner = await makeOtherSigner(6);
+      const attestation = await party.attest({
+        kind: 'operator',
+        subject: otherPeerId,
+        payload: null,
+      });
+      const { signature, ...bare } = attestation;
+      claim = bare;
+      const { payload: _payload, ...rest } = await otherSigner.sign(claim);
+      countersignature = rest;
+      countersigned = { ...claim, signature, countersignature };
     });
-    await expect(keeper.attest(attestation)).rejects.toThrow(
-      `an operator attestation for ${otherPeerId} needs that kernel's countersignature`,
-    );
-    await otherKeeper.attest(attestation);
-    const [countersigned] = await otherKeeper.getAttestations();
-    await keeper.attest(countersigned as never);
-    expect(await keeper.getAttestations({ kind: 'operator' })).toStrictEqual([
-      countersigned,
-    ]);
-    await expect(
-      keeper.attest({
-        ...(countersigned as never as object),
-        payload: 'changed',
-      } as never),
-    ).rejects.toThrow('does not check');
+
+    it("keeps one with that kernel's countersignature", async () => {
+      await keeper.attest(countersigned);
+      expect(await keeper.getAttestations({ kind: 'operator' })).toStrictEqual([
+        countersigned,
+      ]);
+    });
+
+    it.each([
+      [
+        'none',
+        async (): Promise<StoredAttestation> => {
+          const { countersignature: _countersignature, ...bare } =
+            countersigned;
+          return bare;
+        },
+      ],
+      [
+        'by a third kernel',
+        async (): Promise<StoredAttestation> => {
+          const { payload: _payload, ...third } = await thirdSigner.sign(claim);
+          return { ...countersigned, countersignature: third };
+        },
+      ],
+      [
+        'that does not check',
+        async (): Promise<StoredAttestation> => {
+          const { signature } = await thirdSigner.sign(claim);
+          return {
+            ...countersigned,
+            countersignature: { ...countersignature, signature },
+          };
+        },
+      ],
+    ])('refuses one with a countersignature %s', async (_what, make) => {
+      await expect(keeper.attest(await make())).rejects.toThrow(
+        `an operator attestation for ${otherPeerId} needs that kernel's countersignature`,
+      );
+      expect(await keeper.getAttestations()).toStrictEqual([]);
+    });
+
+    it('refuses one whose countersignature it does not understand', async () => {
+      await expect(
+        keeper.attest({
+          ...countersigned,
+          countersignature: { ...countersignature, bogus: 1 },
+        } as StoredAttestation),
+      ).rejects.toThrow('bogus');
+      expect(await keeper.getAttestations()).toStrictEqual([]);
+    });
+
+    it('refuses one whose payload changed', async () => {
+      await expect(
+        keeper.attest({ ...countersigned, payload: 'changed' }),
+      ).rejects.toThrow('does not check');
+      expect(await keeper.getAttestations()).toStrictEqual([]);
+    });
   });
 
   it.each([
