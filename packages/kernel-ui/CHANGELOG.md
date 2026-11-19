@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- List an exported ocap URL for each object the kernel has issued one for, asking the kernel for a URL to show, instead of reading the URLs out of settled promises in c-lists ([#1229](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1229))
+- List each object the kernel has issued an ocap URL for, with a button that asks the kernel for a URL to show, instead of reading the URLs out of settled promises in c-lists ([#1229](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1229))
 
 ### Removed
 

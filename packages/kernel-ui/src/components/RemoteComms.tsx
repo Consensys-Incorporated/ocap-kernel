@@ -1,4 +1,7 @@
 import {
+  Button,
+  ButtonBaseSize,
+  ButtonVariant,
   Box,
   Text as TextComponent,
   TextColor,
@@ -80,31 +83,26 @@ const RemoteCommsPeerId: React.FC<{ peerId?: string | undefined }> = ({
   );
 };
 
-// ExportedUrl component displays a URL for one object that has one issued.
-// The kernel mints the URL on request, so it is not the string first issued,
-// and the field appears once the URL arrives.
+// ExportedUrl component lists one object that has a URL issued. The kernel
+// mints a URL to show on request, so it is not the string first issued.
 const ExportedUrl: React.FC<ExportedOcapURL> = ({ kref, owner }) => {
   const { callKernelMethod, logMessage } = usePanelContext();
   const [ocapUrl, setOcapUrl] = useState<string>();
 
-  useEffect(() => {
-    let current = true;
+  const showUrl = (): void => {
     callKernelMethod({ method: 'getIssuedOcapURL', params: { kref } })
-      .then((url) => current && setOcapUrl(url))
+      .then(setOcapUrl)
       .catch((error) =>
         logMessage(
           `Failed to get an ocap URL for ${kref}: ${error.message}`,
           'error',
         ),
       );
-    return () => {
-      current = false;
-    };
-  }, [callKernelMethod, kref, logMessage]);
+  };
 
   return (
     <Box className="border border-muted rounded p-3">
-      <Box className="flex items-center gap-2 mb-2">
+      <Box className="flex items-center gap-2">
         <TextComponent
           variant={TextVariant.BodyXs}
           fontWeight={FontWeight.Medium}
@@ -114,13 +112,24 @@ const ExportedUrl: React.FC<ExportedOcapURL> = ({ kref, owner }) => {
         <TextComponent variant={TextVariant.BodyXs} color={TextColor.TextMuted}>
           ({kref})
         </TextComponent>
+        {ocapUrl === undefined ? (
+          <Button
+            variant={ButtonVariant.Secondary}
+            size={ButtonBaseSize.Sm}
+            data-testid={`show-ocap-url-${kref}`}
+            onClick={showUrl}
+            className="rounded-md"
+          >
+            Show URL
+          </Button>
+        ) : null}
       </Box>
 
       {ocapUrl === undefined ? null : (
         <Input
           data-testid={`ocap-url-${kref}`}
           value={ocapUrl}
-          style={{ width: '100%', fontSize: '12px' }}
+          style={{ width: '100%', fontSize: '12px', marginTop: '8px' }}
           readOnly
         />
       )}

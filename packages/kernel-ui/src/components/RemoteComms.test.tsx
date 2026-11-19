@@ -1,5 +1,6 @@
 import type { KRef } from '@metamask/ocap-kernel';
 import { render, screen, cleanup } from '@testing-library/react';
+import { userEvent } from '@testing-library/user-event';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 import { RemoteComms } from './RemoteComms.tsx';
@@ -239,7 +240,7 @@ describe('RemoteComms', () => {
     expect(screen.queryByTestId('peer-id-display')).not.toBeInTheDocument();
   });
 
-  it('asks the kernel for a URL for each object that has one issued', async () => {
+  it('lists each object that has a URL issued, and mints a URL to show on request', async () => {
     const callKernelMethod = vi.fn(
       async ({ params }: { params: { kref: string } }) =>
         `ocap:${params.kref}@peer`,
@@ -271,15 +272,17 @@ describe('RemoteComms', () => {
     render(<RemoteComms />);
 
     expect(screen.getByTestId('exported-urls-text')).toBeInTheDocument();
+    expect(callKernelMethod).not.toHaveBeenCalled();
+    expect(screen.queryByTestId('ocap-url-ko1')).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByTestId('show-ocap-url-ko1'));
+
     const url1Input = await screen.findByTestId('ocap-url-ko1');
     expect(url1Input).toHaveValue('ocap:ko1@peer');
     expect(url1Input).toHaveAttribute('readonly');
-    expect(await screen.findByTestId('ocap-url-ko2')).toHaveValue(
-      'ocap:ko2@peer',
-    );
+    expect(screen.queryByTestId('ocap-url-ko2')).not.toBeInTheDocument();
     expect(callKernelMethod.mock.calls).toStrictEqual([
       [{ method: 'getIssuedOcapURL', params: { kref: 'ko1' } }],
-      [{ method: 'getIssuedOcapURL', params: { kref: 'ko2' } }],
     ]);
     expect(screen.getByText('Owner v1')).toBeInTheDocument();
     expect(screen.getByText('Owner none')).toBeInTheDocument();
@@ -309,6 +312,7 @@ describe('RemoteComms', () => {
     );
 
     render(<RemoteComms />);
+    await userEvent.click(screen.getByTestId('show-ocap-url-ko1'));
 
     await vi.waitFor(() =>
       expect(logMessage.mock.calls).toStrictEqual([
