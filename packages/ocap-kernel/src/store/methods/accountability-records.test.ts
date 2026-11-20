@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 
 import { kser } from '../../liveslots/kernel-marshal.ts';
+import type { ConveyanceRecord } from '../../accountability/types.ts';
 import type { KRef } from '../../types.ts';
 import { asKRef, asRemoteId, asVatId, asVRef } from '../../../test/branded.ts';
 import { makeMapKernelDatabase } from '../../../test/storage.ts';
@@ -254,6 +255,73 @@ describe('accountability record methods', () => {
         kernelStore.getAttestations({ kind: 'operator' })[0],
       ).toHaveProperty('countersignature');
     });
+  });
+
+  it('stamps a delivery and a conveyance with the trace they are on, and reads them back by it', () => {
+    const trace = { id: 'trace-1', hop: 2, hopLimit: 8 };
+    kernelStore.recordDelivery({
+      target: ko1,
+      targetEndpoint: v1,
+      sender: v2,
+      cause: 4,
+      method: 'doIt',
+      message: { methargs: { body: '', slots: [] } },
+      trace,
+    });
+    kernelStore.recordConveyance({
+      kref: ko1,
+      sender: v2,
+      to: v1,
+      via: 'message',
+      carrier: ko1,
+      trace,
+    });
+    kernelStore.recordConveyance({
+      kref: ko1,
+      sender: v2,
+      to: v1,
+      via: 'message',
+      carrier: ko1,
+    });
+    expect(
+      kernelStore
+        .getAccountabilityRecords({ trace: 'trace-1' })
+        .map((record) => {
+          const { seq, kind, traceId, hop } = record as ConveyanceRecord;
+          return [seq, kind, traceId, hop];
+        }),
+    ).toStrictEqual([
+      [1, 'delivery', 'trace-1', 2],
+      [2, 'conveyance', 'trace-1', 2],
+    ]);
+  });
+
+  it('records a resolution on a trace', () => {
+    kernelStore.recordResolution({
+      kpid: asKRef('kp3'),
+      endpoint: v1,
+      sender: v2,
+      rejected: false,
+      slots: [ko1],
+      trace: { id: 'trace-1', hop: 1, hopLimit: 8 },
+    });
+    expect(
+      kernelStore.getAccountabilityRecords({ trace: 'trace-1' }),
+    ).toStrictEqual([
+      {
+        seq: 1,
+        kind: 'resolution',
+        witness: 'kernel',
+        crankNumber: 0,
+        traceId: 'trace-1',
+        hop: 1,
+        kpid: 'kp3',
+        endpoint: v1,
+        sender: v2,
+        rejected: false,
+        slots: [ko1],
+      },
+    ]);
   });
 
   it('records a conveyance', () => {

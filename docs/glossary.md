@@ -161,6 +161,16 @@ The SHA-256 of a vat's bundle as fetched, prefixed `sha256:`, which the
 vat's prefix. `Kernel.getVatBundleHash` reads it, and an `implementer`
 [attestation](#attestation) names a bundle by it.
 
+### trace
+
+What an act went on to cause, recorded: a context `{ id, hop, hopLimit }` that every
+send and promise resolution a traced [crank](#crank) issues carries one hop further than
+the delivery that crank handled, until the count reaches the limit, so that each delivery
+and notify on it leaves an [accountability record](#accountability-record) naming the
+trace. Started by the `trace` option of a [tracked object](#tracked-object) or of
+`queueMessage`, and carried to a peer in the remote message envelope. See
+[trace.ts](../packages/ocap-kernel/src/accountability/trace.ts).
+
 ### marshaling
 
 The process of serializing and deserializing data for transmission between [vats](#vat).

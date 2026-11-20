@@ -215,11 +215,9 @@ export class RemoteManager {
     const { remoteId } = remote;
     const failure = makeKernelError('CONNECTION_LOST', connectionLost(peerId));
     for (const kpid of [...this.#kernelStore.getPromisesByDecider(remoteId)]) {
-      this.#kernelQueue.resolvePromises(
-        remoteId,
-        [[kpid, true, failure]],
-        false,
-      );
+      this.#kernelQueue.resolvePromises(remoteId, [[kpid, true, failure]], {
+        immediate: false,
+      });
     }
   }
 
@@ -366,7 +364,7 @@ export class RemoteManager {
       this.#kernelQueue.resolvePromises(
         remote.remoteId,
         [[kpid, true, failure]],
-        false,
+        { immediate: false },
       );
     }
 

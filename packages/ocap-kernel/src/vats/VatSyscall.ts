@@ -54,8 +54,9 @@ export class VatSyscall {
 
   /**
    * Whether a delivery to the vat is in flight, which makes a syscall part
-   * of the vat's answer to it. A syscall at any other time is the vat's own
-   * doing between deliveries, whatever crank happens to be open.
+   * of the vat's answer to it, on its cause and its trace. A syscall at any
+   * other time is the vat's own doing between deliveries, whatever crank
+   * happens to be open.
    */
   delivering = false;
 
@@ -98,6 +99,7 @@ export class VatSyscall {
       sender: this.vatId,
       cause: this.delivering ? this.#kernelStore.getCrankNumber() : 'async',
       immediate,
+      ...(this.delivering ? {} : { trace: null }),
     });
   }
 
@@ -110,7 +112,10 @@ export class VatSyscall {
    */
   #handleSyscallResolve(resolutions: KernelOneResolution[]): void {
     const immediate = !this.#kernelStore.isInCrank();
-    this.#kernelQueue.resolvePromises(this.vatId, resolutions, immediate);
+    this.#kernelQueue.resolvePromises(this.vatId, resolutions, {
+      immediate,
+      ...(this.delivering ? {} : { trace: null }),
+    });
   }
 
   /**

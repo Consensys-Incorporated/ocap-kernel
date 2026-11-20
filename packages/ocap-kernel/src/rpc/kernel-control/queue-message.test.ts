@@ -30,8 +30,8 @@ describe('queueMessageSpec', () => {
     );
   });
 
-  it('accepts an attribution as a fourth parameter', () => {
-    const attribution = { onBehalfOf: 'ed25519:00' };
+  it('accepts an attribution and a trace request as a fourth parameter', () => {
+    const attribution = { onBehalfOf: 'ed25519:00', trace: { hopLimit: 3 } };
     expect(
       queueMessageSpec.params.create(['ko123', 'methodName', [], attribution]),
     ).toStrictEqual(['ko123', 'methodName', [], attribution]);

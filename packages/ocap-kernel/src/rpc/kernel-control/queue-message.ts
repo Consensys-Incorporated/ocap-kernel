@@ -3,8 +3,8 @@ import { tuple, string, array, union } from '@metamask/superstruct';
 import { UnsafeJsonStruct } from '@metamask/utils';
 import type { Json } from '@metamask/utils';
 
-import { AttributionStruct } from '../../accountability/types.ts';
-import type { Attribution } from '../../accountability/types.ts';
+import { QueueMessageOptionsStruct } from '../../accountability/types.ts';
+import type { QueueMessageOptions } from '../../accountability/types.ts';
 import type { Kernel } from '../../Kernel.ts';
 import { kslot } from '../../liveslots/kernel-marshal.ts';
 import type { KRef, QueueMessageResult } from '../../types.ts';
@@ -16,11 +16,11 @@ import {
 
 type QueueMessageParams =
   | [KRef, string, Json[]]
-  | [KRef, string, Json[], Attribution];
+  | [KRef, string, Json[], QueueMessageOptions];
 
 /**
  * Enqueue a message to a vat via the kernel's crank queue, with what the
- * host says about the act, if anything.
+ * host says about the act and whether to trace what it causes, if anything.
  */
 export const queueMessageSpec: MethodSpec<
   'queueMessage',
@@ -30,7 +30,12 @@ export const queueMessageSpec: MethodSpec<
   method: 'queueMessage',
   params: union([
     tuple([KRefStruct, string(), array(UnsafeJsonStruct)]),
-    tuple([KRefStruct, string(), array(UnsafeJsonStruct), AttributionStruct]),
+    tuple([
+      KRefStruct,
+      string(),
+      array(UnsafeJsonStruct),
+      QueueMessageOptionsStruct,
+    ]),
   ]),
   result: QueueMessageResultStruct,
 };
@@ -116,9 +121,9 @@ export const queueMessageHandler: Handler<
   hooks: { kernel: true },
   implementation: async (
     { kernel }: QueueMessageHooks,
-    [target, method, args, attribution],
+    [target, method, args, options],
   ): Promise<QueueMessageResult> => {
     const expandedArgs = expandRefMarkers(args) as unknown[];
-    return kernel.queueMessage(target, method, expandedArgs, attribution);
+    return kernel.queueMessage(target, method, expandedArgs, options);
   },
 };

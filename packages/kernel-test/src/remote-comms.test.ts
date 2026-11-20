@@ -7,6 +7,7 @@ import { fromHex, waitUntilQuiescent } from '@metamask/kernel-utils';
 import { makeKernelStore, kser, kunser, Kernel } from '@metamask/ocap-kernel';
 import type {
   ClusterConfig,
+  DeliveryRecord,
   KernelStore,
   KRef,
   PlatformServices,
@@ -369,6 +370,47 @@ describe('Remote Communications (Integration Tests)', () => {
     const response = kunser(remoteCallResult);
     expect(response).toBeDefined();
     expect(response).toContain('says hello back to');
+  });
+
+  it('carries a trace across kernels', async () => {
+    await runTestVats(kernel1, makeSenderSubclusterConfig('Sender1'));
+    const senderRootRef = kernelStore1.getRootObject('v1' as VatId) as KRef;
+    const { ocapURL } = (await runTestVats(
+      kernel2,
+      makeReceiverSubclusterConfig('Receiver2'),
+    )) as BootstrapResult;
+
+    await kernel1.queueMessage(
+      senderRootRef,
+      'sendMessage',
+      [ocapURL, 'hello', ['RemoteSender from Kernel1']],
+      { trace: {} },
+    );
+
+    const sent = (
+      await kernel1.exportAccountabilityRecords({ kind: 'delivery' })
+    ).payload.records as DeliveryRecord[];
+    const toPeer = sent.find((record) => record.targetEndpoint.startsWith('r'));
+    expect(toPeer).toStrictEqual(
+      expect.objectContaining({ method: 'hello', traceId: sent[0]?.traceId }),
+    );
+    const received = (
+      await kernel2.exportAccountabilityRecords({
+        trace: toPeer?.traceId as string,
+      })
+    ).payload.records as DeliveryRecord[];
+    expect(received).toStrictEqual([
+      expect.objectContaining({
+        kind: 'delivery',
+        method: 'hello',
+        hop: toPeer?.hop,
+        sender: expect.stringMatching(/^r/u),
+      }),
+      expect.objectContaining({
+        kind: 'resolution',
+        hop: (toPeer?.hop ?? 0) + 1,
+      }),
+    ]);
   });
 
   it('revokes a cross-kernel object held by a remote peer', async () => {

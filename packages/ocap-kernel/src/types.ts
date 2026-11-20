@@ -32,7 +32,11 @@ import type { Infer } from '@metamask/superstruct';
 import type { Json } from '@metamask/utils';
 import { UnsafeJsonStruct } from '@metamask/utils';
 
-import { AttributionStruct } from './accountability/types.ts';
+import {
+  AttributionStruct,
+  TraceContextStruct,
+} from './accountability/types.ts';
+import type { TraceContext } from './accountability/types.ts';
 import type {
   RemoteMessageHandler,
   SendRemoteMessage,
@@ -365,6 +369,8 @@ const RunQueueItemSendStruct = object({
   cause: CauseStruct,
   /** What the host said about the act, on a send it queued. */
   attribution: exactOptional(AttributionStruct),
+  /** The trace it carries, if it is on one. */
+  trace: exactOptional(TraceContextStruct),
 });
 
 export type RunQueueItemSend = Infer<typeof RunQueueItemSendStruct>;
@@ -379,6 +385,7 @@ export const PromiseQueueEntryStruct = object({
   sender: SenderStruct,
   cause: CauseStruct,
   attribution: exactOptional(AttributionStruct),
+  trace: exactOptional(TraceContextStruct),
 });
 
 export type PromiseQueueEntry = Infer<typeof PromiseQueueEntryStruct>;
@@ -493,8 +500,13 @@ export type RunLoopItem = RunQueueItem | PeerArrival;
  * is a bearer token. Other cranks hand out nothing.
  */
 export type DeliveryContext =
-  | { via: 'message' | 'notify'; sender: Sender }
+  | { via: 'message' | 'notify'; sender: Sender; trace?: TraceContext }
   | { via: 'ocap-url' };
+
+/** What travels with a delivery besides the message: its trace, if any. */
+export type DeliveryEnvelope = {
+  trace?: TraceContext;
+};
 
 /**
  * Assert that a value is a valid kernel message.
@@ -554,6 +566,8 @@ export type KernelPromise = {
   value?: CapData<KRef>;
   /** Who settled it, once it is settled. */
   resolver?: Sender;
+  /** The trace its settlement carries on, if it was settled on one. */
+  trace?: TraceContext;
 };
 
 export type KernelState = {
@@ -1048,8 +1062,12 @@ export type EndpointHandle = {
   deliverMessage: (
     target: ERef,
     message: EndpointMessage,
+    envelope?: DeliveryEnvelope,
   ) => Promise<CrankResult>;
-  deliverNotify: (resolutions: VatOneResolution[]) => Promise<CrankResult>;
+  deliverNotify: (
+    resolutions: VatOneResolution[],
+    envelope?: DeliveryEnvelope,
+  ) => Promise<CrankResult>;
   deliverDropExports: (erefs: ERef[]) => Promise<CrankResult>;
   deliverRetireExports: (erefs: ERef[]) => Promise<CrankResult>;
   deliverRetireImports: (erefs: ERef[]) => Promise<CrankResult>;

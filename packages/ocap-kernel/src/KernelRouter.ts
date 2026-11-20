@@ -31,6 +31,9 @@ import type {
   Sender,
   VatId,
 } from './types.ts';
+import { startTrace } from './accountability/trace.ts';
+import { DEFAULT_HOP_LIMIT } from './accountability/types.ts';
+import type { TraceContext } from './accountability/types.ts';
 import { isRemoteId, isVatId } from './types.ts';
 import { assert, Fail } from './utils/assert.ts';
 import { makeLostVatReason } from './vats/lost-vat-reason.ts';
@@ -56,7 +59,7 @@ type KernelRouterOptions = {
   invokeKernelService: (
     target: KRef,
     message: KernelMessage,
-    provenance: { sender: Sender; cause: Cause },
+    provenance: { sender: Sender; cause: Cause; trace?: TraceContext },
   ) => void;
   restartVat: (vatId: VatId) => Promise<CrankResult | undefined>;
   terminateVat: (
@@ -87,7 +90,7 @@ export class KernelRouter {
   readonly #invokeKernelService: (
     target: KRef,
     message: KernelMessage,
-    provenance: { sender: Sender; cause: Cause },
+    provenance: { sender: Sender; cause: Cause; trace?: TraceContext },
   ) => void;
 
   /**
@@ -352,7 +355,12 @@ export class KernelRouter {
       `deliver ${endpointId} send ${target}<-${JSON.stringify(message)} from ${sender}, cause ${cause}`,
     );
     if (endpointId) {
-      this.#kernelStore.setCurrentDelivery({ via: 'message', sender });
+      const trace = item.trace ?? this.#traceAskedFor(target);
+      this.#kernelStore.setCurrentDelivery({
+        via: 'message',
+        sender,
+        ...(trace === undefined ? {} : { trace }),
+      });
       const isKernelServiceMessage = endpointId === 'kernel';
       let endpoint: EndpointHandle | null = null;
       if (!isKernelServiceMessage) {
@@ -418,9 +426,13 @@ export class KernelRouter {
         );
         try {
           crankResult = await this.#deliverUnlessLost(eid, async () =>
-            endpoint.deliverMessage(endpointTarget, endpointMessage),
+            endpoint.deliverMessage(
+              endpointTarget,
+              endpointMessage,
+              trace === undefined ? {} : { trace },
+            ),
           );
-          this.#recordSend(item, target, eid);
+          this.#recordSend(item, target, eid, trace);
         } catch (error) {
           // A peer must not be able to stop the kernel. A vat's worker
           // failures are crank results by the time they get here, so what a
@@ -440,10 +452,11 @@ export class KernelRouter {
           }
         }
       } else if (isKernelServiceMessage) {
-        this.#recordSend(item, target, endpointId);
+        this.#recordSend(item, target, endpointId, trace);
         crankResult = this.#deliverKernelServiceMessage(target, message, {
           sender,
           cause,
+          ...(trace === undefined ? {} : { trace }),
         });
       } else {
         Fail`no owner for kernel object ${target}`;
@@ -465,6 +478,7 @@ export class KernelRouter {
         ...(item.attribution === undefined
           ? {}
           : { attribution: item.attribution }),
+        ...(item.trace === undefined ? {} : { trace: item.trace }),
       });
       this.#kernelStore.decrementRefCount(item.target, 'requeue|target');
       if (message.result) {
@@ -479,25 +493,47 @@ export class KernelRouter {
   }
 
   /**
+   * The trace a delivery to an object starts, if a tracker of the object
+   * asked for one: as long as the longest asked for.
+   *
+   * @param target - The object.
+   * @returns The trace, or undefined if nobody asked.
+   */
+  #traceAskedFor(target: KRef): TraceContext | undefined {
+    const limits = Object.values(this.#kernelStore.getTrackers(target))
+      .filter((options) => options.trace !== undefined)
+      .map((options) => options.trace?.hopLimit ?? DEFAULT_HOP_LIMIT);
+    return limits.length === 0
+      ? undefined
+      : startTrace({ hopLimit: Math.max(...limits) });
+  }
+
+  /**
    * Record what a send does with tracked objects: a delivery, if its target is
-   * tracked or the host attributed the send to a party, and a conveyance of
-   * each tracked reference it carries. Written once the delivery is made,
-   * inside the crank's savepoint: a delivery that is rolled back takes its
-   * records with it, and one a remote fails, which the crank survives, leaves
-   * none.
+   * tracked, the host attributed the send to a party, or it is on a trace;
+   * and a conveyance of each tracked reference it carries. Written once the
+   * delivery is made, inside the crank's savepoint: a delivery that is rolled
+   * back takes its records with it, and one a remote fails, which the crank
+   * survives, leaves none.
    *
    * @param item - The send.
    * @param target - The object it is delivered to, which may not be the one
    * it was aimed at if that was a promise.
    * @param endpointId - The endpoint the object belongs to.
+   * @param trace - The trace the delivery is on, if any.
    */
   #recordSend(
     item: RunQueueItemSend,
     target: KRef,
     endpointId: EndpointId | 'kernel',
+    trace: TraceContext | undefined,
   ): void {
     const { message, sender, cause, attribution } = item;
-    if (attribution !== undefined || this.#kernelStore.isTracked(target)) {
+    if (
+      attribution !== undefined ||
+      trace !== undefined ||
+      this.#kernelStore.isTracked(target)
+    ) {
       this.#kernelStore.recordDelivery({
         target,
         targetEndpoint: endpointId,
@@ -506,6 +542,7 @@ export class KernelRouter {
         method: kmethodName(message.methargs),
         message,
         attribution,
+        trace,
       });
     }
     this.#recordConveyances({
@@ -514,6 +551,7 @@ export class KernelRouter {
       to: endpointId,
       via: 'message',
       carrier: target,
+      trace,
     });
   }
 
@@ -526,6 +564,7 @@ export class KernelRouter {
    * @param options.to - Who receives them.
    * @param options.via - What carries them.
    * @param options.carrier - The target or promise carrying them.
+   * @param options.trace - The trace the delivery is on, if any.
    */
   #recordConveyances({
     slots,
@@ -533,12 +572,14 @@ export class KernelRouter {
     to,
     via,
     carrier,
+    trace,
   }: {
     slots: KRef[];
     sender: Sender;
     to: EndpointId | 'kernel';
     via: 'message' | 'notify';
     carrier: KRef;
+    trace: TraceContext | undefined;
   }): void {
     for (const slot of new Set(slots)) {
       if (this.#kernelStore.isTracked(slot)) {
@@ -548,6 +589,7 @@ export class KernelRouter {
           to,
           via,
           carrier,
+          trace,
         });
       }
     }
@@ -564,7 +606,7 @@ export class KernelRouter {
   #deliverKernelServiceMessage(
     target: KRef,
     message: KernelMessage,
-    provenance: { sender: Sender; cause: Cause },
+    provenance: { sender: Sender; cause: Cause; trace?: TraceContext },
   ): CrankResult {
     this.#invokeKernelService(target, message, provenance);
     return { didDelivery: 'kernel' };
@@ -659,6 +701,10 @@ export class KernelRouter {
       return { didDelivery: endpointId };
     }
     const resolutions: VatOneResolution[] = [];
+    // The trace the endpoint's response inherits, where a batch carries
+    // several: the first.
+    let trace: TraceContext | undefined;
+    let sender: Sender = 'kernel';
     for (const toResolve of targets) {
       const tPromise = this.#kernelStore.getKernelPromise(toResolve);
       if (tPromise.state === 'unresolved') {
@@ -668,14 +714,30 @@ export class KernelRouter {
         throw Fail`target promise ${toResolve} has no value`;
       }
       // Per promise: a notify can carry several, each settled by someone.
-      const sender = tPromise.resolver ?? 'kernel';
-      this.#kernelStore.setCurrentDelivery({ via: 'notify', sender });
+      sender = tPromise.resolver ?? 'kernel';
+      trace ??= tPromise.trace;
+      this.#kernelStore.setCurrentDelivery({
+        via: 'notify',
+        sender,
+        ...(tPromise.trace === undefined ? {} : { trace: tPromise.trace }),
+      });
+      if (tPromise.trace !== undefined) {
+        this.#kernelStore.recordResolution({
+          kpid: toResolve,
+          endpoint: endpointId,
+          sender,
+          rejected: tPromise.state === 'rejected',
+          slots: [...new Set(tPromise.value.slots)],
+          trace: tPromise.trace,
+        });
+      }
       this.#recordConveyances({
         slots: tPromise.value.slots,
         sender,
         to: endpointId,
         via: 'notify',
         carrier: toResolve,
+        trace: tPromise.trace,
       });
       resolutions.push([
         this.#kernelStore.translateRefKtoE(endpointId, toResolve, true),
@@ -683,12 +745,17 @@ export class KernelRouter {
         this.#kernelStore.translateCapDataKtoE(endpointId, tPromise.value),
       ]);
     }
+    this.#kernelStore.setCurrentDelivery({
+      via: 'notify',
+      sender,
+      ...(trace === undefined ? {} : { trace }),
+    });
     // TODO(#1006 follow-up): SwingSet also tears down the c-list entry for each
     // promise in the batch here, since the endpoint can never refer to a
     // settled promise by that eref again. Left alone for now because the
     // debug UI discovers exported ocap URLs by scanning these entries.
     return await this.#deliverUnlessLost(endpointId, async () =>
-      endpoint.deliverNotify(resolutions),
+      endpoint.deliverNotify(resolutions, trace === undefined ? {} : { trace }),
     );
   }
 

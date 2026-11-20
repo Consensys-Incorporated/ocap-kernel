@@ -7,6 +7,7 @@ import { RemoteHandle } from './RemoteHandle.ts';
 import { asRRef, asRemoteId, asVatId } from '../../../test/branded.ts';
 import { createMockRemotesFactory } from '../../../test/remotes-mocks.ts';
 import { makeMapKernelDatabase } from '../../../test/storage.ts';
+import type { TraceContext } from '../../accountability/types.ts';
 import type { KernelQueue } from '../../KernelQueue.ts';
 import { makeKernelStore } from '../../store/index.ts';
 import type { KernelStore } from '../../store/index.ts';
@@ -159,6 +160,33 @@ describe('RemoteHandle', () => {
       afterCommit: expect.any(Function),
     });
   });
+
+  it.each([
+    [
+      'message',
+      async (remote: RemoteHandle, trace: TraceContext) =>
+        remote.deliverMessage(
+          asRRef('ro+1'),
+          { methargs: { body: '', slots: [] } },
+          { trace },
+        ),
+    ],
+    [
+      'notify',
+      async (remote: RemoteHandle, trace: TraceContext) =>
+        remote.deliverNotify([], { trace }),
+    ],
+  ])(
+    'puts the trace a %s delivery is on in the envelope',
+    async (_what, deliver) => {
+      const remote = makeRemote();
+      const trace = { id: 't', hop: 2, hopLimit: 8 };
+      await deliverAndCommit(deliver(remote, trace));
+      const sentString = vi.mocked(mockRemoteComms.sendRemoteMessage).mock
+        .calls[0]![1];
+      expect(JSON.parse(sentString).trace).toStrictEqual(trace);
+    },
+  );
 
   it('writes the delivery down before the crank commits, and sends it after', async () => {
     const remote = makeRemote();
@@ -686,13 +714,56 @@ describe('RemoteHandle', () => {
     expect(mockKernelQueue.enqueueSend).toHaveBeenCalledWith(
       targetKRef,
       { methargs: message.methargs, result: resultKRef },
-      { sender: remote.remoteId },
+      { sender: remote.remoteId, trace: null },
     );
     expect(mockKernelStore.translateRefEtoK(remote.remoteId, targetRRef)).toBe(
       targetKRef,
     );
     expect(mockKernelStore.translateRefEtoK(remote.remoteId, resultRRef)).toBe(
       resultKRef,
+    );
+  });
+
+  it.each([
+    [
+      'as it is',
+      { id: 't', hop: 2, hopLimit: 8 },
+      { id: 't', hop: 2, hopLimit: 8 },
+    ],
+    ['not at all when it is malformed', { id: 't' }, null],
+  ])('takes the trace a delivery carries %s', async (_what, trace, carried) => {
+    const remote = makeRemote();
+    const message: EndpointMessage = {
+      methargs: { body: '["method",[]]', slots: [] },
+      result: asRRef('rp+2'),
+    };
+    await receiveAndRunCrank(
+      remote,
+      JSON.stringify({
+        seq: 1,
+        method: 'deliver',
+        params: ['message', asRRef('ro+1'), message],
+        trace,
+      }),
+    );
+    expect(mockKernelQueue.enqueueSend).toHaveBeenCalledWith(
+      'ko1',
+      expect.objectContaining({ methargs: message.methargs }),
+      { sender: remote.remoteId, trace: carried },
+    );
+    await receiveAndRunCrank(
+      remote,
+      JSON.stringify({
+        seq: 2,
+        method: 'deliver',
+        params: ['notify', [['rp+3', false, { body: '1', slots: [] }]]],
+        trace,
+      }),
+    );
+    expect(mockKernelQueue.resolvePromises).toHaveBeenCalledWith(
+      remote.remoteId,
+      expect.any(Array),
+      { immediate: false, trace: carried },
     );
   });
 
@@ -713,7 +784,7 @@ describe('RemoteHandle', () => {
     expect(mockKernelQueue.resolvePromises).toHaveBeenCalledWith(
       remote.remoteId,
       [[promiseKRef, false, { body: '"resolved value"', slots: [] }]],
-      false,
+      { immediate: false, trace: null },
     );
   });
 
