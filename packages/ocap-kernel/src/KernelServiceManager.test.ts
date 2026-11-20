@@ -312,6 +312,41 @@ describe('KernelServiceManager', () => {
       expect(mockKernelQueue.resolvePromises).not.toHaveBeenCalled();
     });
 
+    it.each([
+      ['answers', () => 'answered', false],
+      [
+        'fails',
+        () => {
+          throw new Error('nope');
+        },
+        true,
+      ],
+    ])(
+      'carries the trace of a call on to its result when the service %s',
+      async (_what, implementation, rejected) => {
+        const { method: testMethod } = makeTrackableMethod(implementation);
+        const registered = serviceManager.registerKernelServiceObject(
+          'testService',
+          { testMethod },
+        );
+        const message: KernelMessage = {
+          methargs: kser(['testMethod', []]),
+          result: asKRef('kp1'),
+        };
+        serviceManager.invokeKernelService(registered.kref, message, {
+          sender: asVatId('v1'),
+          cause: 1,
+          trace: { id: 't', hop: 1, hopLimit: 8 },
+        });
+        await delay();
+        expect(mockKernelQueue.resolvePromises).toHaveBeenCalledWith(
+          'kernel',
+          [[asKRef('kp1'), rejected, expect.anything()]],
+          { trace: { id: 't', hop: 2, hopLimit: 8 } },
+        );
+      },
+    );
+
     it('calls a service registered with `withCaller` with the sender and cause first', async () => {
       const { method: testMethod, calls } = makeTrackableMethod();
       const registered = serviceManager.registerKernelServiceObject(
@@ -355,9 +390,11 @@ describe('KernelServiceManager', () => {
       await delay();
 
       expect(calls).toStrictEqual([['arg1']]);
-      expect(mockKernelQueue.resolvePromises).toHaveBeenCalledWith('kernel', [
-        ['kp123', false, kser('test result')],
-      ]);
+      expect(mockKernelQueue.resolvePromises).toHaveBeenCalledWith(
+        'kernel',
+        [['kp123', false, kser('test result')]],
+        { trace: null },
+      );
     });
 
     it('handles errors when invoking service method with result', async () => {
@@ -383,9 +420,17 @@ describe('KernelServiceManager', () => {
       });
       await delay();
 
-      expect(mockKernelQueue.resolvePromises).toHaveBeenCalledWith('kernel', [
-        ['kp123', true, makeKernelError('DELIVERY_FAILED', testError.message)],
-      ]);
+      expect(mockKernelQueue.resolvePromises).toHaveBeenCalledWith(
+        'kernel',
+        [
+          [
+            'kp123',
+            true,
+            makeKernelError('DELIVERY_FAILED', testError.message),
+          ],
+        ],
+        { trace: null },
+      );
     });
 
     it('handles errors when invoking service method without result', async () => {
@@ -433,16 +478,20 @@ describe('KernelServiceManager', () => {
           cause: 1,
         }),
       ).not.toThrow();
-      expect(mockKernelQueue.resolvePromises).toHaveBeenCalledWith('kernel', [
+      expect(mockKernelQueue.resolvePromises).toHaveBeenCalledWith(
+        'kernel',
         [
-          'kp1',
-          true,
-          makeKernelError(
-            'ENDPOINT_UNREACHABLE',
-            'No registered service for ko999',
-          ),
+          [
+            'kp1',
+            true,
+            makeKernelError(
+              'ENDPOINT_UNREACHABLE',
+              'No registered service for ko999',
+            ),
+          ],
         ],
-      ]);
+        { trace: null },
+      );
     });
 
     it('logs for a non-existent service when the message has no result', () => {
@@ -485,15 +534,19 @@ describe('KernelServiceManager', () => {
       });
       await delay();
 
-      expect(mockKernelQueue.resolvePromises).toHaveBeenCalledWith('kernel', [
+      expect(mockKernelQueue.resolvePromises).toHaveBeenCalledWith(
+        'kernel',
         [
-          'kp123',
-          true,
-          expect.objectContaining({
-            body: expect.stringContaining('unknownMethod'),
-          }),
+          [
+            'kp123',
+            true,
+            expect.objectContaining({
+              body: expect.stringContaining('unknownMethod'),
+            }),
+          ],
         ],
-      ]);
+        { trace: null },
+      );
     });
 
     it('handles unknown method without result', async () => {
@@ -545,15 +598,19 @@ describe('KernelServiceManager', () => {
       });
       await delay();
 
-      expect(mockKernelQueue.resolvePromises).toHaveBeenCalledWith('kernel', [
+      expect(mockKernelQueue.resolvePromises).toHaveBeenCalledWith(
+        'kernel',
         [
-          'kp123',
-          true,
-          expect.objectContaining({
-            body: expect.stringContaining('anyMethod'),
-          }),
+          [
+            'kp123',
+            true,
+            expect.objectContaining({
+              body: expect.stringContaining('anyMethod'),
+            }),
+          ],
         ],
-      ]);
+        { trace: null },
+      );
     });
 
     it('invokes methods on a proxy-based service (simulated remote presence)', async () => {
@@ -589,9 +646,11 @@ describe('KernelServiceManager', () => {
       await delay();
 
       expect(calls).toStrictEqual([['arg1']]);
-      expect(mockKernelQueue.resolvePromises).toHaveBeenCalledWith('kernel', [
-        ['kp123', false, kser('remote result')],
-      ]);
+      expect(mockKernelQueue.resolvePromises).toHaveBeenCalledWith(
+        'kernel',
+        [['kp123', false, kser('remote result')]],
+        { trace: null },
+      );
     });
 
     it('handles service method that returns undefined', async () => {
@@ -615,9 +674,11 @@ describe('KernelServiceManager', () => {
       });
       await delay();
 
-      expect(mockKernelQueue.resolvePromises).toHaveBeenCalledWith('kernel', [
-        ['kp123', false, kser(undefined)],
-      ]);
+      expect(mockKernelQueue.resolvePromises).toHaveBeenCalledWith(
+        'kernel',
+        [['kp123', false, kser(undefined)]],
+        { trace: null },
+      );
     });
   });
 
@@ -686,9 +747,11 @@ describe('KernelServiceManager', () => {
       await delay();
 
       expect(calls).toStrictEqual([['hello']]);
-      expect(mockKernelQueue.resolvePromises).toHaveBeenCalledWith('kernel', [
-        ['kp200', false, kser('pong')],
-      ]);
+      expect(mockKernelQueue.resolvePromises).toHaveBeenCalledWith(
+        'kernel',
+        [['kp200', false, kser('pong')]],
+        { trace: null },
+      );
     });
   });
 

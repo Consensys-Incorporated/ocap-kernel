@@ -80,7 +80,7 @@ describe('VatSyscall', () => {
     expect(kernelQueue.resolvePromises).toHaveBeenCalledWith(
       'v1',
       [resolution],
-      false,
+      { immediate: false },
     );
   });
 
@@ -106,7 +106,7 @@ describe('VatSyscall', () => {
     expect(kernelQueue.resolvePromises).toHaveBeenCalledWith(
       'v1',
       [resolution],
-      true,
+      { immediate: true },
     );
   });
 

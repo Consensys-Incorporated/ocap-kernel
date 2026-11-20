@@ -6,7 +6,10 @@ import {
   PeerRestartedError,
 } from '@metamask/kernel-errors';
 import { Logger } from '@metamask/logger';
+import { is } from '@metamask/superstruct';
 
+import { TraceContextStruct } from '../../accountability/types.ts';
+import type { TraceContext } from '../../accountability/types.ts';
 import {
   performDropImports,
   performRetireImports,
@@ -22,6 +25,7 @@ import type {
   EndpointMessage,
   KernelOneResolution,
   CrankResult,
+  DeliveryEnvelope,
 } from '../../types.ts';
 import { insistERef, isRRef } from '../../types.ts';
 import type { RemoteComms } from '../types.ts';
@@ -68,6 +72,8 @@ type DeliveryParams =
 type Delivery = {
   method: 'deliver';
   params: DeliveryParams;
+  /** The trace the delivery is on, if any; a peer that has no use for it ignores it. */
+  trace?: TraceContext;
 };
 
 type RedeemURLRequest = {
@@ -1101,15 +1107,19 @@ export class RemoteHandle implements RemoteEndpointHandle {
    *
    * @param target - The ref of the object to which the message is addressed.
    * @param message - The message to deliver.
+   * @param envelope - What travels with it.
+   * @param envelope.trace - The trace it is on, if any.
    * @returns the crank result.
    */
   async deliverMessage(
     target: ERef,
     message: EndpointMessage,
+    { trace }: DeliveryEnvelope = {},
   ): Promise<CrankResult> {
     return this.#deliverToPeer({
       method: 'deliver',
       params: ['message', target, message],
+      ...(trace === undefined ? {} : { trace }),
     });
   }
 
@@ -1117,12 +1127,18 @@ export class RemoteHandle implements RemoteEndpointHandle {
    * Send a 'notify' delivery to the remote.
    *
    * @param resolutions - One or more promise resolutions to deliver.
+   * @param envelope - What travels with them.
+   * @param envelope.trace - The trace they are on, if any.
    * @returns the crank result.
    */
-  async deliverNotify(resolutions: VatOneResolution[]): Promise<CrankResult> {
+  async deliverNotify(
+    resolutions: VatOneResolution[],
+    { trace }: DeliveryEnvelope = {},
+  ): Promise<CrankResult> {
     return this.#deliverToPeer({
       method: 'deliver',
       params: ['notify', resolutions],
+      ...(trace === undefined ? {} : { trace }),
     });
   }
 
@@ -1282,16 +1298,20 @@ export class RemoteHandle implements RemoteEndpointHandle {
    * Handle a delivery from the remote end.
    *
    * @param params - the delivery params, which vary based on the kind of delivery.
+   * @param trace - The trace the delivery is on, if the peer said and it is
+   * well formed.
    */
-  #handleRemoteDeliver(params: DeliveryParams): void {
+  #handleRemoteDeliver(params: DeliveryParams, trace: unknown): void {
     const [method] = params;
+    // The peer's hop count stands: the delivery is the same hop here.
+    const carried = is(trace, TraceContextStruct) ? trace : null;
     switch (method) {
       case 'message': {
         const [, target, message] = params;
         this.#kernelQueue.enqueueSend(
           this.#kernelStore.translateRefEtoK(this.remoteId, target),
           this.#kernelStore.translateMessageEtoK(this.remoteId, message),
-          { sender: this.remoteId },
+          { sender: this.remoteId, trace: carried },
         );
         break;
       }
@@ -1313,7 +1333,10 @@ export class RemoteHandle implements RemoteEndpointHandle {
         );
         // Buffered for the crank's flush, so a host caller hears nothing an
         // abort takes back.
-        this.#kernelQueue.resolvePromises(this.remoteId, kResolutions, false);
+        this.#kernelQueue.resolvePromises(this.remoteId, kResolutions, {
+          immediate: false,
+          trace: carried,
+        });
         break;
       }
       case 'dropExports': {
@@ -1527,7 +1550,7 @@ export class RemoteHandle implements RemoteEndpointHandle {
 
     switch (method) {
       case 'deliver':
-        this.#handleRemoteDeliver(params);
+        this.#handleRemoteDeliver(params, command.trace);
         break;
       case 'redeemURL':
         deferredCompletion = await this.#handleRedeemURLRequest(...params);

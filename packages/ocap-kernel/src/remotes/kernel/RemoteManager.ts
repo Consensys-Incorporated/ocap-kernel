@@ -352,7 +352,7 @@ export class RemoteManager {
       this.#kernelQueue.resolvePromises(
         remote.remoteId,
         [[kpid, true, failure]],
-        false,
+        { immediate: false },
       );
     }
 

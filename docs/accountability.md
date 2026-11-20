@@ -196,9 +196,9 @@ Two additions to in-flight state, and one persistent counter.
   crank, which is how a vat's asynchronous activity such as a `fetch` callback
   reaches the kernel, is `'async'`. The kernel cannot see what a vat does
   between deliveries, and the record should say so rather than guess.
-- **Trace context on sends and notifies.** An optional `trace: { id, hop }`,
-  described under [Traces](#traces). Absent on untraced work, which is nearly
-  all work.
+- **Trace context on sends and notifies.** An optional
+  `trace: { id, hop, hopLimit }`, described under [Traces](#traces). Absent on
+  untraced work, which is nearly all work.
 
 The store exposes the current delivery's context to the translators
 (`ctx.currentDelivery`, set by `KernelRouter` as it delivers, since a notify can
@@ -333,16 +333,26 @@ be recorded. A trace starts at a root act and propagates causally: every send
 issued in a crank that is processing a traced delivery inherits the trace with
 `hop + 1`; a resolution issued in such a crank marks the kernel promise, and the
 notifies it produces carry the trace onward. Every delivery and notify that
-carries a trace is recorded as a `delivery` or `resolution` record. The trace
-stops when `hop` reaches its limit, which defaults to 8 and is set when the
-trace starts.
+carries a trace is recorded as a `delivery` or `resolution` record, and a
+conveyance on a traced delivery or notify names the trace too. The trace
+stops when `hop` reaches its limit, which defaults to 8, is set when the
+trace starts, and travels with the trace.
+
+```
+resolution {
+  crankNumber, traceId, hop,
+  kpid, endpoint,             // the settled promise, and who is told of it
+  sender,                     // who settled it
+  rejected, slots
+}
+```
 
 Roots are:
 
 - a delivery to a tracked object whose tracker asked for `trace`, so that
   whatever the object went on to do in response, and whatever that caused in
   turn, is recorded along with the delivery itself;
-- a host call to `queueMessage` with an attribution, so an external act by a
+- a host call to `queueMessage` that asks for one, so an external act by a
   party is traced through everything it causes;
 - later, a vat's explicit request for one of its own outgoing sends, which
   needs a syscall extension and is deferred.
@@ -354,7 +364,13 @@ unrelated vat on the same kernel pays nothing.
 
 A trace crosses kernels. The trace context rides in the remote message
 envelope as an optional field; a peer that does not understand it ignores it,
-and the chain is recorded as far as it got.
+and the chain is recorded as far as it got. A peer that does understand it
+keeps counting from where the trace was.
+
+Any holder may ask to trace, since a holder tracing what its own calls cause
+is tracing its own acts. The records a trace leaves are visible to every
+endpoint that appears in them: `trace(traceId)` returns the whole trace to an
+endpoint one of its records names, and nothing to any other.
 
 ### Attestations
 
@@ -762,6 +778,18 @@ store table of
 this design, and the kernel `narrow` service, when it exists, writes one. A
 chain of custody that passes through a narrowing says so.
 
+**Trace context carries its limit.** `{ id, hop, hopLimit }` rather than
+`{ id, hop }` with the limit kept by the kernel that started the trace: the
+limit has to be known wherever the next hop is taken, a peer included, and
+carrying it settles how a trace counts across kernels, which is from where it
+was. A kernel service call keeps its trace the same way: its result is settled
+in a later turn, so the trace is taken at the call.
+
+**One trace per notify.** A notify that carries several settled promises
+records a resolution for each on its own trace, but the endpoint handles the
+batch in one crank, so what it sends in response inherits the first traced
+promise's trace.
+
 **Interaction with revocation and GC.** Neither touches records. A revoked
 object's history is the evidence that matters most. Records do not hold
 reference counts.
@@ -837,14 +865,6 @@ than a hardcoded table.
 
 ## Open questions
 
-- Should `track` by a non-owner be allowed to ask for `trace`? A holder tracing
-  what its own calls cause is tracing its own acts, which seems fine, but it
-  also records the owner's downstream sends in the holder's kernel's records,
-  where the owner cannot see them. The visibility rule may need to say that
-  trace records are visible to every endpoint that appears in them.
-- Hop limit semantics across kernels: does a trace that crosses to a peer
-  continue counting from where it was, or restart? Continuing is simpler and
-  bounds total cost; restarting lets a peer's own policy apply.
 - Whether introductions should also be written for promises. Promises are
   conveyed too, and a promise that resolves to an object is a conveyance of
   that object, which the notify path handles. The draft says objects only.

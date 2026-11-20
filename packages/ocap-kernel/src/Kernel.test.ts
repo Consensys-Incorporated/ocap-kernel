@@ -2118,15 +2118,24 @@ describe('Kernel', () => {
       [
         'what the host says about an act',
         { onBehalfOf: 'ed25519:00' },
-        { onBehalfOf: 'ed25519:00' },
+        { attribution: { onBehalfOf: 'ed25519:00' }, trace: undefined },
       ],
-      ['nothing when the host says nothing', {}, undefined],
-    ])('passes %s to the queue', async (_what, attribution, passed) => {
+      [
+        'nothing when the host says nothing',
+        {},
+        { attribution: undefined, trace: undefined },
+      ],
+      [
+        'the trace the host asks for',
+        { trace: { hopLimit: 2 } },
+        { attribution: undefined, trace: { hopLimit: 2 } },
+      ],
+    ])('passes %s to the queue', async (_what, options, passed) => {
       const kernel = await Kernel.make(
         mockPlatformServices,
         mockKernelDatabase,
       );
-      await kernel.queueMessage(asKRef('ko1'), 'hello', [], attribution);
+      await kernel.queueMessage(asKRef('ko1'), 'hello', [], options);
       expect(
         mocks.KernelQueue.lastInstance.enqueueMessage,
       ).toHaveBeenCalledWith(asKRef('ko1'), 'hello', [], passed);
@@ -2227,7 +2236,10 @@ describe('Kernel', () => {
       await kernel.queueMessage(asKRef('ko1'), 'hello', [], { intent });
       expect(
         mocks.KernelQueue.lastInstance.enqueueMessage,
-      ).toHaveBeenCalledWith(asKRef('ko1'), 'hello', [], { intent });
+      ).toHaveBeenCalledWith(asKRef('ko1'), 'hello', [], {
+        attribution: { intent },
+        trace: undefined,
+      });
     });
 
     it('keeps an attestation and reads it back', async () => {

@@ -392,6 +392,32 @@ describe('promise store methods', () => {
     });
   });
 
+  describe('trace', () => {
+    it('keeps the trace a resolution carries on, until the promise is deleted', () => {
+      const kpid = asKRef('kp123');
+      const trace = { id: 'trace-1', hop: 1, hopLimit: 8 };
+      mockKV.set(`${kpid}.state`, 'unresolved');
+      mockKV.set(`${kpid}.decider`, 'v1');
+      mockKV.set(`${kpid}.subscribers`, '[]');
+      mockQueue.dequeue.mockReturnValueOnce(undefined);
+      promiseMethods.resolveKernelPromise({
+        kpid,
+        rejected: false,
+        value: { body: 'v', slots: [] },
+        resolver: 'v1' as VatId,
+        trace,
+      });
+      expect(promiseMethods.getKernelPromise(kpid)).toStrictEqual({
+        state: 'fulfilled',
+        value: { body: 'v', slots: [] },
+        resolver: 'v1',
+        trace,
+      });
+      promiseMethods.deleteKernelPromise(kpid);
+      expect(mockKV.has(`${kpid}.trace`)).toBe(false);
+    });
+  });
+
   describe('enqueuePromiseMessage', () => {
     it('adds a message to the promise queue', () => {
       const kpid = asKRef('kp123');
