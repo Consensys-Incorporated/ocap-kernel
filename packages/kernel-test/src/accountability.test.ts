@@ -252,6 +252,73 @@ describe('accountability', () => {
     ]);
   });
 
+  it('traces what a delivery to a tracked object goes on to cause', async () => {
+    const { kernel, tracker, holder, trackerVat, holderVat } = await launch();
+    await call(kernel, tracker, 'track', [{ trace: {} }]);
+    await call(kernel, tracker, 'handOver');
+    const {
+      payload: { records },
+    } = await kernel.exportAccountabilityRecords({ kind: 'delivery' });
+    const poke = records.find(
+      (record) => record.kind === 'delivery' && record.method === 'poke',
+    ) as DeliveryRecord;
+    const traceId = poke.traceId as string;
+    const trace = (await call(kernel, tracker, 'trace', [
+      traceId,
+    ])) as AccountabilityRecordView[];
+    expect(trace.some((record) => 'crankNumber' in record)).toBe(false);
+    expect(
+      trace.map((record) => [
+        record.kind,
+        'hop' in record ? record.hop : undefined,
+        record,
+      ]),
+    ).toStrictEqual([
+      // The poke, which started the trace.
+      ['delivery', 0, expect.objectContaining({ sender: holderVat })],
+      // The poke's answer, told to the holder.
+      ['resolution', 1, expect.objectContaining({ endpoint: holderVat })],
+      // The holder's answer to `receive`, told to the tracker.
+      ['resolution', 2, expect.objectContaining({ endpoint: trackerVat })],
+    ]);
+    expect(await call(kernel, holder, 'trace', [traceId])).toStrictEqual(trace);
+  });
+
+  it('traces an act the host asks to have traced, as far as the hop limit', async () => {
+    const { kernel, tracker, holder, trackerVat, holderVat } = await launch();
+    await kernel.queueMessage(tracker, 'handOver', [], {
+      trace: { hopLimit: 2 },
+    });
+    const {
+      payload: { records },
+    } = await kernel.exportAccountabilityRecords({ kind: 'delivery' });
+    expect(
+      (records as DeliveryRecord[]).map(({ hop, target, method }) => [
+        hop,
+        target,
+        method,
+      ]),
+    ).toStrictEqual([
+      [0, tracker, 'handOver'],
+      [1, holder, 'receive'],
+    ]);
+    const [first] = records as DeliveryRecord[];
+    expect(
+      await kernel.exportAccountabilityRecords({
+        trace: first?.traceId as string,
+      }),
+    ).toStrictEqual(
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          records: [
+            expect.objectContaining({ targetEndpoint: trackerVat }),
+            expect.objectContaining({ targetEndpoint: holderVat }),
+          ],
+        }),
+      }),
+    );
+  });
+
   it('names each vat by the hash of its bundle', async () => {
     const { kernel, trackerVat } = await launch();
     const bundle = await readFile(new URL(getBundleSpec('accountability-vat')));

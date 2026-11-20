@@ -45,7 +45,7 @@ async function setUp(answer: Answer) {
       kernelQueue.resolvePromises(
         v1,
         [[kpid, answer.rejected, answer.value(gift)]],
-        false,
+        { immediate: false },
       );
       return {};
     }),

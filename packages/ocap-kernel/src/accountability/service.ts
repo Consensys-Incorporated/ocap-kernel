@@ -73,6 +73,14 @@ export type AccountabilityService = {
    */
   chain(context: CallContext, obj: SlotValue): Promise<Chain>;
   /**
+   * The records of a trace the caller took part in, in the order written and
+   * as a vat reads them; none for a trace it did not.
+   */
+  trace(
+    context: CallContext,
+    traceId: string,
+  ): Promise<AccountabilityRecordView[]>;
+  /**
    * A signed receipt for the delivery the caller is handling. The kernel
    * knows which from the call's cause, so there is nothing to pass.
    *
@@ -193,6 +201,30 @@ export function makeAccountabilityService({
               holder: caller,
               peerId: kernelStore.getRemoteIdentityValue('peerId'),
             }),
+          ),
+        ),
+      );
+    },
+
+    async trace(
+      { caller }: CallContext,
+      traceId: string,
+    ): Promise<AccountabilityRecordView[]> {
+      if (typeof traceId !== 'string') {
+        throw Error('Argument must be a trace ID');
+      }
+      return kernelQueue.enqueueInbox('read a trace', async () =>
+        attempt(() =>
+          harden(
+            viewRecords(
+              kernelStore,
+              kernelStore.getAccountabilityRecords({
+                trace: traceId,
+                involving: caller,
+              }).length === 0
+                ? []
+                : kernelStore.getAccountabilityRecords({ trace: traceId }),
+            ),
           ),
         ),
       );

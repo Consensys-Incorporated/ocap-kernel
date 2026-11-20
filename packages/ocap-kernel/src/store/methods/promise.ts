@@ -12,6 +12,7 @@ import type {
   EndpointId,
   Sender,
 } from '../../types.ts';
+import type { TraceContext } from '../../accountability/types.ts';
 import type { StoreContext } from '../types.ts';
 import { getRefCountMethods } from './refcount.ts';
 import { makeKernelSlot } from '../utils/kernel-slots.ts';
@@ -99,6 +100,10 @@ export function getPromiseMethods(ctx: StoreContext) {
           }
           result.resolver = resolver;
         }
+        const trace = ctx.kv.get(`${kpid}.trace`);
+        if (trace !== undefined) {
+          result.trace = JSON.parse(trace);
+        }
         break;
       }
       default:
@@ -118,6 +123,7 @@ export function getPromiseMethods(ctx: StoreContext) {
     ctx.kv.delete(`${kpid}.subscribers`);
     ctx.kv.delete(`${kpid}.value`);
     ctx.kv.delete(`${kpid}.resolver`);
+    ctx.kv.delete(`${kpid}.trace`);
     ctx.kv.delete(refCountKey(kpid));
     provideStoredQueue(kpid).delete();
   }
@@ -172,6 +178,7 @@ export function getPromiseMethods(ctx: StoreContext) {
    * @param options.rejected - True if the promise is being rejected, false if fulfilled.
    * @param options.value - The value the promise is being fulfilled to or rejected with.
    * @param options.resolver - Who is resolving it.
+   * @param options.trace - The trace the resolution carries on, if any.
    * @returns The messages that were waiting on this promise, with their
    * provenance.
    */
@@ -180,11 +187,13 @@ export function getPromiseMethods(ctx: StoreContext) {
     rejected,
     value,
     resolver,
+    trace,
   }: {
     kpid: KRef;
     rejected: boolean;
     value: CapData<KRef>;
     resolver: Sender;
+    trace?: TraceContext | undefined;
   }): PromiseQueueEntry[] {
     const queue = provideStoredQueue(kpid, false);
     // Releasing each queue entry's references as we go: the caller re-enqueues
@@ -196,6 +205,9 @@ export function getPromiseMethods(ctx: StoreContext) {
     ctx.kv.set(`${kpid}.state`, rejected ? 'rejected' : 'fulfilled');
     ctx.kv.set(`${kpid}.value`, JSON.stringify(value));
     ctx.kv.set(`${kpid}.resolver`, resolver);
+    if (trace !== undefined) {
+      ctx.kv.set(`${kpid}.trace`, JSON.stringify(trace));
+    }
     ctx.kv.delete(`${kpid}.decider`);
     ctx.kv.delete(`${kpid}.subscribers`);
     // The promise has been decided, so it is no longer owed a decision.

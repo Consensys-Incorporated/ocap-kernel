@@ -28,11 +28,12 @@ import { makeKernelSigner } from './accountability/signing.ts';
 import type { KernelSigner, Signed } from './accountability/signing.ts';
 import {
   AccountabilityRecordFilterStruct,
-  AttributionStruct,
+  QueueMessageOptionsStruct,
 } from './accountability/types.ts';
 import type {
   AccountabilityRecord,
   Attribution,
+  QueueMessageOptions,
   StoredAttestation,
 } from './accountability/types.ts';
 import { KernelServiceManager } from './KernelServiceManager.ts';
@@ -625,9 +626,10 @@ export class Kernel {
    * @param target - The object to which the message is directed.
    * @param method - The method to be invoked.
    * @param args - Message arguments.
-   * @param attribution - What the host says about the act: the party it is
-   * done for, and that party's signed intent. Either has the delivery
-   * recorded, with the attribution on the record.
+   * @param options - What the host says about the act: the party it is done
+   * for, and that party's signed intent, either of which has the delivery
+   * recorded with the attribution on the record; and `trace`, to record what
+   * the act goes on to cause.
    * @returns A promise for the CapData encoded result of the message
    * invocation. If it carries slots it also has a `kpid`, and the kernel keeps
    * the krefs in it alive until it is passed to `releaseResult`, or until the
@@ -639,28 +641,31 @@ export class Kernel {
     target: KRef,
     method: string,
     args: unknown[],
-    attribution?: Attribution,
+    options?: QueueMessageOptions,
   ): Promise<QueueMessageResult> {
-    let said: Attribution | undefined;
-    if (attribution !== undefined) {
-      assert(attribution, AttributionStruct);
+    let attribution: Attribution | undefined;
+    let trace: QueueMessageOptions['trace'];
+    if (options !== undefined) {
+      assert(options, QueueMessageOptionsStruct);
+      const { trace: traceOptions, ...said } = options;
+      trace = traceOptions;
       if (
-        attribution.intent !== undefined &&
-        !(await this.#partyVerifier.verifyAttestation(attribution.intent))
+        said.intent !== undefined &&
+        !(await this.#partyVerifier.verifyAttestation(said.intent))
       ) {
         throw Error(
-          `the signature on the intent by ${attribution.intent.party} does not check`,
+          `the signature on the intent by ${said.intent.party} does not check`,
         );
       }
-      if (
-        attribution.onBehalfOf !== undefined ||
-        attribution.intent !== undefined
-      ) {
-        said = attribution;
+      if (said.onBehalfOf !== undefined || said.intent !== undefined) {
+        attribution = said;
       }
     }
     try {
-      return await this.#kernelQueue.enqueueMessage(target, method, args, said);
+      return await this.#kernelQueue.enqueueMessage(target, method, args, {
+        attribution,
+        trace,
+      });
     } catch (rejection) {
       if (isCapData(rejection)) {
         throw kunser(rejection as CapData<KRef>);

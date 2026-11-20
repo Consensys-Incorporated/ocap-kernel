@@ -73,24 +73,37 @@ describe('VatSyscall', () => {
       sender: 'v1',
       cause: 'async',
       immediate: false,
+      trace: null,
     });
   });
 
   it.each([
-    ['the delivery in flight', true, 7],
-    ["nothing, while another vat's crank is open", false, 'async'],
-  ])('charges a send to %s', (_what, delivering, cause) => {
+    ['the delivery in flight, on its trace', true, { cause: 7 }],
+    [
+      "nothing, on no trace, while another vat's crank is open",
+      false,
+      { cause: 'async', trace: null },
+    ],
+  ])('charges a send to %s', (_what, delivering, expected) => {
     vatSys.delivering = delivering;
     const target = 'ko1';
     const message = {
       methargs: { body: '', slots: [] },
     } as KernelMessage;
+    const resolution = ['kp1', false, {}] as VatOneResolution;
     vatSys.handleSyscall(['send', target, message] as VatSyscallObject);
+    vatSys.handleSyscall(['resolve', [resolution]] as VatSyscallObject);
     expect(kernelQueue.enqueueSend).toHaveBeenCalledWith(target, message, {
       sender: 'v1',
-      cause,
       immediate: false,
+      ...expected,
     });
+    const { cause: _cause, ...resolveExpected } = expected;
+    expect(kernelQueue.resolvePromises).toHaveBeenCalledWith(
+      'v1',
+      [resolution],
+      { immediate: false, ...resolveExpected },
+    );
   });
 
   it('calls resolvePromises for resolve syscall', async () => {
@@ -100,7 +113,7 @@ describe('VatSyscall', () => {
     expect(kernelQueue.resolvePromises).toHaveBeenCalledWith(
       'v1',
       [resolution],
-      false,
+      { immediate: false, trace: null },
     );
   });
 
@@ -116,6 +129,7 @@ describe('VatSyscall', () => {
       sender: 'v1',
       cause: 'async',
       immediate: true,
+      trace: null,
     });
   });
 
@@ -127,7 +141,7 @@ describe('VatSyscall', () => {
     expect(kernelQueue.resolvePromises).toHaveBeenCalledWith(
       'v1',
       [resolution],
-      true,
+      { immediate: true, trace: null },
     );
   });
 
@@ -314,6 +328,7 @@ describe('VatSyscall', () => {
         sender: 'v1',
         cause: 'async',
         immediate: false,
+        trace: null,
       });
     });
 

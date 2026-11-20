@@ -12,6 +12,7 @@ type Accountability = {
   untrack(obj: unknown): Promise<void>;
   history(obj: unknown): Promise<AccountabilityRecord[]>;
   chain(obj: unknown): Promise<Chain>;
+  trace(traceId: string): Promise<AccountabilityRecord[]>;
   receipt(): Promise<Receipt>;
 };
 
@@ -75,6 +76,10 @@ export function buildRootObject() {
 
     async history(): Promise<AccountabilityRecord[]> {
       return E(accountability).history(thing);
+    },
+
+    async trace(traceId: string): Promise<AccountabilityRecord[]> {
+      return E(accountability).trace(traceId);
     },
 
     /**
