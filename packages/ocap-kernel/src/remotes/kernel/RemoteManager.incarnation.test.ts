@@ -518,6 +518,7 @@ describe('a store fault while taking a peer message', () => {
       sent,
     } = harness;
     const kernelRouter = new KernelRouter({
+      segmentIssuer: { issue: async () => [] },
       kernelStore,
       kernelQueue,
       getEndpoint: () => remote,

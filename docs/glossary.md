@@ -171,6 +171,15 @@ trace. Started by the `trace` option of a [tracked object](#tracked-object) or o
 `queueMessage`, and carried to a peer in the remote message envelope. See
 [trace.ts](../packages/ocap-kernel/src/accountability/trace.ts).
 
+### segment
+
+A kernel's signed statement of its own chain of custody for an object, sent to a peer
+with the object the first time a [tracked object](#tracked-object) crosses to it, and
+kept by the peer with any segments the sender itself received, as far as each checks
+against the peer ID it claims and the one before names. The `chain` method of the
+`accountability` [kernel service](#kernel-service) returns them. See
+[segments.ts](../packages/ocap-kernel/src/accountability/segments.ts).
+
 ### marshaling
 
 The process of serializing and deserializing data for transmission between [vats](#vat).

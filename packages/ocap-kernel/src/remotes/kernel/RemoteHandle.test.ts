@@ -7,11 +7,21 @@ import { RemoteHandle } from './RemoteHandle.ts';
 import { asKRef, asRRef, asRemoteId, asVatId } from '../../../test/branded.ts';
 import { createMockRemotesFactory } from '../../../test/remotes-mocks.ts';
 import { makeMapKernelDatabase } from '../../../test/storage.ts';
+import { seedIdentity } from '../../../test/identity.ts';
+import type { Segment } from '../../accountability/segments.ts';
+import { makeKernelSigner } from '../../accountability/signing.ts';
+import type { KernelSigner } from '../../accountability/signing.ts';
 import type { TraceContext } from '../../accountability/types.ts';
 import type { KernelQueue } from '../../KernelQueue.ts';
 import { makeKernelStore } from '../../store/index.ts';
 import type { KernelStore } from '../../store/index.ts';
-import type { CrankResult, ERef, EndpointMessage, RRef } from '../../types.ts';
+import type {
+  CrankResult,
+  ERef,
+  EndpointMessage,
+  KRef,
+  RRef,
+} from '../../types.ts';
 import type { RemoteComms } from '../types.ts';
 
 let mockKernelStore: KernelStore;
@@ -20,6 +30,25 @@ let mockKernelQueue: KernelQueue;
 const mockRemoteId = asRemoteId('r0');
 const mockRemotePeerId = 'remotePeerId';
 const traceId = 'a'.repeat(32);
+
+/**
+ * A segment as it would go on the wire, unsigned.
+ *
+ * @returns The segment.
+ */
+const segment = (): Segment =>
+  ({
+    payload: {
+      kind: 'segment',
+      ref: 'ro-5',
+      kref: 'ko1',
+      owner: 'v1',
+      hops: [],
+    },
+    signer: 'peer',
+    incarnationId: 'inc',
+    signature: 'sig',
+  }) as unknown as Segment;
 let mockFactory: ReturnType<typeof createMockRemotesFactory>;
 
 /**
@@ -216,6 +245,49 @@ describe('RemoteHandle', () => {
         trace,
       },
       { seq: 2, method: 'deliver', params: ['notify', resolutions.slice(2)] },
+    ]);
+  });
+
+  it('puts the segments a delivery carries in the command', async () => {
+    const remote = makeRemote();
+    const segments = { [asRRef('ro-5')]: [segment()] };
+    await deliverAndCommit(
+      remote.deliverMessage(
+        asRRef('ro+1'),
+        { methargs: { body: '["method",[]]', slots: [asRRef('ro-5')] } },
+        { segments },
+      ),
+    );
+    expect(JSON.parse(sentStrings()[0] as string).segments).toStrictEqual(
+      segments,
+    );
+  });
+
+  it("sends each object's segments with the first run of resolutions that carries it", async () => {
+    const remote = makeRemote();
+    const trace = { id: traceId, hop: 2, hopLimit: 8 };
+    const segments = {
+      [asRRef('ro-5')]: [segment()],
+      [asRRef('ro-6')]: [segment()],
+    };
+    await deliverAndCommit(
+      remote.deliverNotify(
+        [
+          [asRRef('rp-1'), false, { body: '#"$0"', slots: [asRRef('ro-5')] }],
+          [
+            asRRef('rp-2'),
+            false,
+            { body: '#["$0","$1"]', slots: [asRRef('ro-5'), asRRef('ro-6')] },
+          ],
+        ],
+        { traces: { [asRRef('rp-2')]: trace }, segments },
+      ),
+    );
+    expect(
+      sentStrings().map((sent) => JSON.parse(sent).segments),
+    ).toStrictEqual([
+      { [asRRef('ro-5')]: segments[asRRef('ro-5')] },
+      { [asRRef('ro-6')]: segments[asRRef('ro-6')] },
     ]);
   });
 
@@ -871,6 +943,111 @@ describe('RemoteHandle', () => {
       [[promiseKRef, false, { body: '"resolved value"', slots: [] }]],
       { immediate: false, trace: null },
     );
+  });
+
+  describe('segments from the peer', () => {
+    /**
+     * A handle for a peer whose segments can be signed.
+     *
+     * @param seedByte - The byte the peer's key seed is filled with.
+     * @returns The handle and the peer's signer.
+     */
+    const makeSigningPeer = async (
+      seedByte: number,
+    ): Promise<{ remote: RemoteHandle; signer: KernelSigner }> => {
+      const kdb = makeMapKernelDatabase();
+      const peerId = await seedIdentity(kdb.kernelKVStore, seedByte);
+      const signer = makeKernelSigner({
+        kernelStore: makeKernelStore(kdb),
+        ensureIdentity: async () => undefined,
+      });
+      const remote = RemoteHandle.make({
+        remoteId: mockRemoteId,
+        peerId,
+        kernelStore: mockKernelStore,
+        kernelQueue: mockKernelQueue,
+        remoteComms: mockRemoteComms,
+      });
+      return { remote, signer };
+    };
+
+    /**
+     * A segment for a ref, signed by a peer.
+     *
+     * @param signer - The peer's signer.
+     * @param ref - The ref.
+     * @returns The segment.
+     */
+    const signedFor = async (
+      signer: KernelSigner,
+      ref: RRef,
+    ): Promise<Segment> =>
+      signer.sign({
+        kind: 'segment',
+        ref,
+        kref: asKRef('ko9'),
+        owner: asVatId('v9'),
+        hops: [],
+      });
+
+    it.each([
+      ['keeps', "the peer's own object", 1, true],
+      ['ignores', "an object of this kernel's own", 1, false],
+      ['ignores', 'one signed by another kernel', 2, false],
+    ])(
+      '%s the segments a message carries for %s',
+      async (_does, what, signerSeed, kept) => {
+        const { remote, signer: peer } = await makeSigningPeer(1);
+        const { signer } =
+          signerSeed === 1 ? { signer: peer } : await makeSigningPeer(2);
+        mockKernelStore.initEndpoint(mockRemoteId);
+        const ours = mockKernelStore.initKernelObject(asVatId('v1'));
+        mockKernelStore.translateRefKtoE(mockRemoteId, ours, true);
+        // The peer names what it sends in this kernel's frame.
+        const ref =
+          what === "an object of this kernel's own"
+            ? (mockKernelStore.krefToEref(mockRemoteId, ours) as RRef)
+            : asRRef('ro+7');
+        const segments = { [ref]: [await signedFor(signer, ref)] };
+        const message: EndpointMessage = {
+          methargs: { body: '["method",["$0"]]', slots: [ref] },
+          result: asRRef('rp+2'),
+        };
+        await receiveAndRunCrank(
+          remote,
+          JSON.stringify({
+            seq: 1,
+            method: 'deliver',
+            params: ['message', asRRef('ro+1'), message],
+            segments,
+          }),
+        );
+        const kref = mockKernelStore.erefToKref(mockRemoteId, ref) as KRef;
+        expect(mockKernelStore.getSegments(kref)).toStrictEqual(
+          kept ? segments[ref] : [],
+        );
+      },
+    );
+
+    it('keeps the segments a notify carries', async () => {
+      const { remote, signer } = await makeSigningPeer(1);
+      const ref = asRRef('ro+7');
+      const segments = { [ref]: [await signedFor(signer, ref)] };
+      await receiveAndRunCrank(
+        remote,
+        JSON.stringify({
+          seq: 1,
+          method: 'deliver',
+          params: [
+            'notify',
+            [['rp+3', false, { body: '#"$0"', slots: [ref] }]],
+          ],
+          segments,
+        }),
+      );
+      const kref = mockKernelStore.erefToKref(mockRemoteId, ref) as KRef;
+      expect(mockKernelStore.getSegments(kref)).toStrictEqual(segments[ref]);
+    });
   });
 
   it('takes delivery of deliver dropExports', async () => {

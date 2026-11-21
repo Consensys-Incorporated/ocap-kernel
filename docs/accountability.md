@@ -545,13 +545,33 @@ time, it attaches a **segment**: its own chain of custody for that kref as
 far as it knows it, signed with its identity key. If that chain itself begins
 with a segment received from an earlier kernel, that segment is included
 verbatim, so the receiver holds a list of per-kernel segments back to the
-origin. The receiving kernel stores it with the introduction record.
+origin. The receiving kernel stores the list by kref, alongside the
+attestations, and `chain` returns it with the local hops.
+
+```
+segment: Signed<{
+  kind: 'segment',
+  ref,                        // the rref the object goes to the peer under
+  kref, owner, hops,          // the sender's own chain, from the exporting endpoint
+  from?                       // the peer ID the owner remote is, if it is one
+}>
+```
+
+The list goes in the delivery's envelope, keyed by the ref, for each tracked
+object the delivery carries to the peer for the first time; a notify split
+by trace sends each object's segments with the first run that carries it.
+On receipt, a segment is kept only for an object the peer owns, and the list
+only as far as it checks: the first segment must be the peer's own and name
+the ref the object came under, and each after it must be signed by the
+kernel the one before names in `from`. A list the peer sends again for the
+same object replaces the one before. At most 64 segments are sent or taken.
 
 Verification is local: peer IDs are hashes of public keys, so each segment
-checks against the peer ID it claims. What cannot be checked is omission. A
-kernel can present a reference with no segment, or a segment that starts with
-itself. The principle above handles this: the chain then begins with that
-kernel's party, and that is who is answerable. A party who wants to pass
+checks against the peer ID it claims. What cannot be checked is omission or
+substitution. A kernel can present a reference with no segment, a segment
+that starts with itself, or an upstream segment about some other object.
+The principle above handles this: the chain then begins with that kernel's
+party, and that is who is answerable. A party who wants to pass
 responsibility upstream has every incentive to keep the segments it was
 given.
 
@@ -661,6 +681,9 @@ caller, or failing those its introduction, and the same for each sender in
 turn, back to the owner; each holder is resolved to its parties by the
 attestations the kernel holds: for a vat, the operator of this kernel and the
 implementer of the vat's bundle; for a remote, the operator of that kernel.
+Where the owner is a remote, the chain also carries the segments the object
+came with, from that kernel's back to the origin's, as verified on receipt.
+
 A remote is one endpoint however many vats stand behind it, so every vat of a
 peer kernel is the same caller here, and sees what any of them may: the peer
 kernel is the party that answers for what it lets through.
@@ -756,6 +779,19 @@ self-contained evidence and do not depend on anyone being online later.
 without a global registry of every conveyance, which would be both infeasible
 and a privacy disaster. Resolved by assigning responsibility to the last
 documented holder.
+
+**Segments as a flat list, each naming the next.** Nesting each kernel's
+segment inside the next would have the whole upstream list under the
+sender's signature. A flat list keeps each segment as its kernel signed it,
+so a receiver can verify every one in the same way; the link between them is
+the `from` each signs, which names the peer the next must be signed by.
+What the sender vouches for is which upstream segment it passes on, and that
+is the sender's self-report in either shape.
+
+**Segments in the kv store, by kref.** A segment is a statement about one
+object from the peer that owns it, replaceable and looked up by the object,
+like an attestation and unlike a record. They are not pruned with records,
+and like attestations and records they outlive the object.
 
 **Traces versus logging everything.** Logging everything is the Agoric
 slogger model, which is the right tool for debugging a single kernel and the

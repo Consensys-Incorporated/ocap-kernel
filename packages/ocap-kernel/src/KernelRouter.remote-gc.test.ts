@@ -32,6 +32,7 @@ describe('a GC action for a remote restored at boot', () => {
       kernelQueue,
     });
     const kernelRouter = new KernelRouter({
+      segmentIssuer: { issue: async () => [] },
       kernelStore,
       kernelQueue,
       getEndpoint: () => remote,

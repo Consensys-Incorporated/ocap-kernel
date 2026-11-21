@@ -208,6 +208,7 @@ function boot(
   });
   kernel.vatManager = vatManager;
   const kernelRouter = new KernelRouter({
+    segmentIssuer: { issue: async () => [] },
     kernelStore,
     kernelQueue,
     getEndpoint: (endpointId: EndpointId) =>

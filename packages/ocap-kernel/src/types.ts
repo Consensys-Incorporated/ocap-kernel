@@ -36,6 +36,7 @@ import {
   AttributionStruct,
   TraceContextStruct,
 } from './accountability/types.ts';
+import type { Segment } from './accountability/segments.ts';
 import type { TraceContext } from './accountability/types.ts';
 import type {
   RemoteMessageHandler,
@@ -503,17 +504,31 @@ export type DeliveryContext =
   | { via: 'message' | 'notify'; sender: Sender; trace?: TraceContext }
   | { via: 'ocap-url' };
 
-/** What travels with a delivery besides the message: its trace, if any. */
+/**
+ * What travels with a delivery besides the message: its trace, if any, and
+ * the segments for what it carries across kernels.
+ */
 export type DeliveryEnvelope = {
   trace?: TraceContext;
+  /**
+   * The segments to send with each tracked object the message carries to
+   * the endpoint for the first time, by the object's eref.
+   */
+  segments?: Record<ERef, Segment[]>;
 };
 
 /**
  * What travels with a notify besides the resolutions: the trace each settled
- * promise on one is on, by the promise's eref.
+ * promise on one is on, by the promise's eref, and the segments for what the
+ * resolutions carry across kernels.
  */
 export type NotifyEnvelope = {
   traces?: Record<ERef, TraceContext>;
+  /**
+   * The segments to send with each tracked object the resolutions carry to
+   * the endpoint for the first time, by the object's eref.
+   */
+  segments?: Record<ERef, Segment[]>;
 };
 
 /**

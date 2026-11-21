@@ -1,3 +1,4 @@
+import type { Segment } from './segments.ts';
 import type {
   ConveyanceRecord,
   IntroductionRecord,
@@ -27,15 +28,23 @@ export type ChainHop = {
 };
 
 /**
- * A chain of custody: the holders of an object from one holder back to its
+ * The holders of an object in this kernel, from one holder back to its
  * owner, each resolved to the parties answerable for it. A graph rather
  * than a path where a holder was given the object by several senders.
  */
-export type Chain = {
+export type Custody = {
   kref: KRef;
   owner: Sender;
   /** From the holder asked about, in the order reached. */
   hops: ChainHop[];
+};
+
+/**
+ * A chain of custody: this kernel's, and where the owner is a remote, the
+ * segments the object came with, from that kernel's back to the origin's.
+ */
+export type Chain = Custody & {
+  segments: Segment[];
 };
 
 /**
@@ -135,7 +144,7 @@ export function buildChain({
       }
     }
   }
-  return harden({ kref, owner, hops });
+  return harden({ kref, owner, hops, segments: kernelStore.getSegments(kref) });
 }
 
 /**
