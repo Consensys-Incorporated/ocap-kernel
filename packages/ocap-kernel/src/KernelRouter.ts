@@ -31,6 +31,7 @@ import type {
   Sender,
   VatId,
 } from './types.ts';
+import type { Segment, SegmentIssuer } from './accountability/segments.ts';
 import { startTrace } from './accountability/trace.ts';
 import { DEFAULT_HOP_LIMIT } from './accountability/types.ts';
 import type { TraceContext, Trackers } from './accountability/types.ts';
@@ -55,6 +56,7 @@ type MessageRoute = {
 type KernelRouterOptions = {
   kernelStore: KernelStore;
   kernelQueue: KernelQueue;
+  segmentIssuer: SegmentIssuer;
   getEndpoint: (endpointId: EndpointId) => EndpointHandle;
   invokeKernelService: (
     target: KRef,
@@ -82,6 +84,9 @@ export class KernelRouter {
 
   /** The kernel's queue. */
   readonly #kernelQueue: KernelQueue;
+
+  /** Issues the segments a tracked object crosses to a peer with. */
+  readonly #segmentIssuer: SegmentIssuer;
 
   /** A function that returns an endpoint handle for a given endpoint id. */
   readonly #getEndpoint: (endpointId: EndpointId) => EndpointHandle;
@@ -126,6 +131,8 @@ export class KernelRouter {
    * @param options - Options bag.
    * @param options.kernelStore - The kernel's store.
    * @param options.kernelQueue - The kernel's queue.
+   * @param options.segmentIssuer - The issuer of the segments a tracked
+   * object crosses to a peer with.
    * @param options.getEndpoint - A function that returns an endpoint handle for a given endpoint id.
    * @param options.invokeKernelService - A function that calls a method on a kernel service object.
    * @param options.restartVat - A function that replaces a vat's worker.
@@ -136,6 +143,7 @@ export class KernelRouter {
   constructor({
     kernelStore,
     kernelQueue,
+    segmentIssuer,
     getEndpoint,
     invokeKernelService,
     restartVat,
@@ -145,6 +153,7 @@ export class KernelRouter {
   }: KernelRouterOptions) {
     this.#kernelStore = kernelStore;
     this.#kernelQueue = kernelQueue;
+    this.#segmentIssuer = segmentIssuer;
     this.#getEndpoint = getEndpoint;
     this.#invokeKernelService = invokeKernelService;
     this.#restartVat = restartVat;
@@ -416,6 +425,10 @@ export class KernelRouter {
         // endpoint is only set when !isKernelServiceMessage, so endpointId
         // is narrowed to EndpointId here (TS can't infer this).
         const eid = endpointId as EndpointId;
+        const firstExports = this.#firstExports(
+          eid,
+          this.#trackedAmong(message.methargs.slots),
+        );
         const endpointTarget = this.#kernelStore.translateRefKtoE(
           eid,
           target,
@@ -425,13 +438,13 @@ export class KernelRouter {
           eid,
           message,
         );
+        const segments = await this.#segmentsFor(eid, firstExports, sender);
         try {
           crankResult = await this.#deliverUnlessLost(eid, async () =>
-            endpoint.deliverMessage(
-              endpointTarget,
-              endpointMessage,
-              trace === undefined ? {} : { trace },
-            ),
+            endpoint.deliverMessage(endpointTarget, endpointMessage, {
+              ...(trace === undefined ? {} : { trace }),
+              ...(segments === undefined ? {} : { segments }),
+            }),
           );
           this.#recordSend(item, target, eid, {
             trace,
@@ -561,6 +574,18 @@ export class KernelRouter {
   }
 
   /**
+   * The tracked objects among some slots, each once.
+   *
+   * @param slots - The slots, repeats included.
+   * @returns The tracked ones.
+   */
+  #trackedAmong(slots: KRef[]): KRef[] {
+    return [...new Set(slots)].filter((slot) =>
+      this.#kernelStore.isTracked(slot),
+    );
+  }
+
+  /**
    * Record the conveyance of each tracked reference among a delivery's slots.
    *
    * @param options - Options bag.
@@ -570,6 +595,7 @@ export class KernelRouter {
    * @param options.via - What carries them.
    * @param options.carrier - The target or promise carrying them.
    * @param options.trace - The trace the delivery is on, if any.
+   * @returns The tracked slots, each once.
    */
   #recordConveyances({
     slots,
@@ -585,19 +611,62 @@ export class KernelRouter {
     via: 'message' | 'notify';
     carrier: KRef;
     trace: TraceContext | undefined;
-  }): void {
-    for (const slot of new Set(slots)) {
-      if (this.#kernelStore.isTracked(slot)) {
-        this.#kernelStore.recordConveyance({
-          kref: slot,
-          sender,
-          to,
-          via,
-          carrier,
-          trace,
-        });
-      }
+  }): KRef[] {
+    const tracked = this.#trackedAmong(slots);
+    for (const slot of tracked) {
+      this.#kernelStore.recordConveyance({
+        kref: slot,
+        sender,
+        to,
+        via,
+        carrier,
+        trace,
+      });
     }
+    return tracked;
+  }
+
+  /**
+   * Which of some tracked objects a remote is about to hold for the first
+   * time. Asked before they are translated, which is what gives the remote
+   * its reference to them.
+   *
+   * @param endpointId - The endpoint they are going to.
+   * @param tracked - The tracked objects.
+   * @returns Those the remote has no reference to; none for a vat.
+   */
+  #firstExports(endpointId: EndpointId, tracked: KRef[]): KRef[] {
+    return isRemoteId(endpointId)
+      ? tracked.filter(
+          (kref) =>
+            this.#kernelStore.krefToEref(endpointId, kref) === undefined,
+        )
+      : [];
+  }
+
+  /**
+   * The segments to send with the objects a remote is about to hold for the
+   * first time, by the reference each is going under.
+   *
+   * @param endpointId - The remote.
+   * @param firstExports - The objects, already translated for it.
+   * @param holder - The endpoint sending them.
+   * @returns The segments, or undefined if there are none to send.
+   */
+  async #segmentsFor(
+    endpointId: EndpointId,
+    firstExports: KRef[],
+    holder: Sender,
+  ): Promise<Record<ERef, Segment[]> | undefined> {
+    if (firstExports.length === 0) {
+      return undefined;
+    }
+    const segments: Record<ERef, Segment[]> = {};
+    for (const kref of firstExports) {
+      const ref = this.#kernelStore.translateRefKtoE(endpointId, kref, false);
+      segments[ref] = await this.#segmentIssuer.issue({ kref, ref, holder });
+    }
+    return segments;
   }
 
   /**
@@ -707,6 +776,7 @@ export class KernelRouter {
     }
     const resolutions: VatOneResolution[] = [];
     const traces: Record<ERef, TraceContext> = {};
+    let segments: Record<ERef, Segment[]> | undefined;
     // The trace the endpoint's response inherits, where a batch carries
     // several: the first.
     let trace: TraceContext | undefined;
@@ -737,7 +807,7 @@ export class KernelRouter {
           trace: tPromise.trace,
         });
       }
-      this.#recordConveyances({
+      const trackedSlots = this.#recordConveyances({
         slots: tPromise.value.slots,
         sender,
         to: endpointId,
@@ -745,6 +815,7 @@ export class KernelRouter {
         carrier: toResolve,
         trace: tPromise.trace,
       });
+      const firstExports = this.#firstExports(endpointId, trackedSlots);
       const eref = this.#kernelStore.translateRefKtoE(
         endpointId,
         toResolve,
@@ -758,6 +829,10 @@ export class KernelRouter {
         tPromise.state === 'rejected',
         this.#kernelStore.translateCapDataKtoE(endpointId, tPromise.value),
       ]);
+      const issued = await this.#segmentsFor(endpointId, firstExports, sender);
+      if (issued !== undefined) {
+        segments = { ...segments, ...issued };
+      }
     }
     this.#kernelStore.setCurrentDelivery({
       via: 'notify',
@@ -769,10 +844,10 @@ export class KernelRouter {
     // settled promise by that eref again. Left alone for now because the
     // debug UI discovers exported ocap URLs by scanning these entries.
     return await this.#deliverUnlessLost(endpointId, async () =>
-      endpoint.deliverNotify(
-        resolutions,
-        Object.keys(traces).length === 0 ? {} : { traces },
-      ),
+      endpoint.deliverNotify(resolutions, {
+        ...(Object.keys(traces).length === 0 ? {} : { traces }),
+        ...(segments === undefined ? {} : { segments }),
+      }),
     );
   }
 

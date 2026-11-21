@@ -18,10 +18,12 @@ import type {
   TrackOptions,
   Trackers,
 } from '../../accountability/types.ts';
+import type { Segment } from '../../accountability/segments.ts';
 import type { EndpointId, KRef, KernelMessage, Sender } from '../../types.ts';
 import type { StoreContext } from '../types.ts';
 
 const ATTESTATION_BASE = 'attestation.';
+const SEGMENT_BASE = 'segment.';
 
 /**
  * Create an accountability records store object that provides functionality
@@ -401,6 +403,29 @@ export function getAccountabilityRecordMethods(ctx: StoreContext) {
       );
   }
 
+  /**
+   * Keep the segments an object came with from the peer that owns it,
+   * replacing any it came with before.
+   *
+   * @param kref - The object.
+   * @param segments - The segments, as verified.
+   */
+  function setSegments(kref: KRef, segments: Segment[]): void {
+    ctx.kv.set(`${SEGMENT_BASE}${kref}`, JSON.stringify(segments));
+  }
+
+  /**
+   * Read the segments an object came with.
+   *
+   * @param kref - The object.
+   * @returns The segments, from the peer's own back to the origin's; none
+   * for an object that came with none, or did not come from a peer.
+   */
+  function getSegments(kref: KRef): Segment[] {
+    const raw = ctx.kv.get(`${SEGMENT_BASE}${kref}`);
+    return raw === undefined ? [] : (JSON.parse(raw) as Segment[]);
+  }
+
   return {
     getTrackers,
     isTracked,
@@ -417,5 +442,7 @@ export function getAccountabilityRecordMethods(ctx: StoreContext) {
     setIntroductionRecording,
     addAttestation,
     getAttestations,
+    setSegments,
+    getSegments,
   };
 }

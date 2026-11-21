@@ -23,6 +23,7 @@ import type {
   PartySignatureVerifier,
   PartyVerifier,
 } from './accountability/parties.ts';
+import { makeSegmentIssuer } from './accountability/segments.ts';
 import { makeAccountabilityService } from './accountability/service.ts';
 import { makeKernelSigner } from './accountability/signing.ts';
 import type { KernelSigner, Signed } from './accountability/signing.ts';
@@ -320,6 +321,10 @@ export class Kernel {
     this.#kernelRouter = new KernelRouter({
       kernelStore: this.#kernelStore,
       kernelQueue: this.#kernelQueue,
+      segmentIssuer: makeSegmentIssuer({
+        kernelStore: this.#kernelStore,
+        signer: this.#signer,
+      }),
       getEndpoint: this.#getEndpoint.bind(this),
       invokeKernelService: this.#kernelServiceManager.invokeKernelService.bind(
         this.#kernelServiceManager,

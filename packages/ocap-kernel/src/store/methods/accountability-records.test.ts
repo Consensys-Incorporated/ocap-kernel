@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 
 import { kser } from '../../liveslots/kernel-marshal.ts';
+import type { Segment } from '../../accountability/segments.ts';
 import type { ConveyanceRecord } from '../../accountability/types.ts';
 import type { KRef } from '../../types.ts';
 import { asKRef, asRemoteId, asVatId, asVRef } from '../../../test/branded.ts';
@@ -255,6 +256,29 @@ describe('accountability record methods', () => {
         kernelStore.getAttestations({ kind: 'operator' })[0],
       ).toHaveProperty('countersignature');
     });
+  });
+
+  it('keeps the segments an object came with, the latest only', () => {
+    const segment = (signer: string) =>
+      ({
+        payload: {
+          kind: 'segment',
+          ref: 'ro+1',
+          kref: 'ko9',
+          owner: 'v9',
+          hops: [],
+        },
+        signer,
+        incarnationId: 'inc',
+        signature: 'sig',
+      }) as unknown as Segment;
+    expect(kernelStore.getSegments(asKRef('ko1'))).toStrictEqual([]);
+    kernelStore.setSegments(asKRef('ko1'), [segment('a'), segment('b')]);
+    kernelStore.setSegments(asKRef('ko1'), [segment('c')]);
+    expect(kernelStore.getSegments(asKRef('ko1'))).toStrictEqual([
+      segment('c'),
+    ]);
+    expect(kernelStore.getSegments(asKRef('ko2'))).toStrictEqual([]);
   });
 
   it('stamps a delivery and a conveyance with the trace they are on, and reads them back by it', () => {

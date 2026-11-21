@@ -39,6 +39,7 @@ describe('index', () => {
       'partyScheme',
       'signingBytes',
       'verifyKernelSignature',
+      'verifySegments',
     ]);
   });
 });

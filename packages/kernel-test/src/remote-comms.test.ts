@@ -4,8 +4,15 @@ import { NodejsPlatformServices } from '@metamask/kernel-node-runtime';
 import type { KernelDatabase } from '@metamask/kernel-store';
 import { makeSQLKernelDatabase } from '@metamask/kernel-store/sqlite/nodejs';
 import { fromHex, waitUntilQuiescent } from '@metamask/kernel-utils';
-import { makeKernelStore, kser, kunser, Kernel } from '@metamask/ocap-kernel';
+import {
+  makeKernelStore,
+  kser,
+  kunser,
+  Kernel,
+  verifyKernelSignature,
+} from '@metamask/ocap-kernel';
 import type {
+  Chain,
   ClusterConfig,
   DeliveryRecord,
   KernelStore,
@@ -411,6 +418,116 @@ describe('Remote Communications (Integration Tests)', () => {
         hop: (toPeer?.hop ?? 0) + 1,
       }),
     ]);
+  });
+
+  it('sends a chain of custody with a tracked object, kernel to kernel', async () => {
+    const kernelDatabase3 = await makeSQLKernelDatabase({
+      dbFilename: ':memory:',
+    });
+    const kernel3 = await makeTestKernel(
+      'kernel3',
+      kernelDatabase3,
+      directNetwork,
+      true,
+      'kernel3-peer',
+      '03',
+    );
+    const peerIdOf = (kernelDatabase: KernelDatabase): string =>
+      makeKernelStore(kernelDatabase).getRemoteIdentityValueRequired('peerId');
+    const launch = async (
+      kernel: Kernel,
+      services: string[],
+    ): Promise<{ root: KRef; vatId: VatId }> => {
+      const { subclusterId, vatRootKrefs } = await kernel.launchSubcluster({
+        bootstrap: 'root',
+        forceReset: true,
+        services: ['accountability', ...services],
+        vats: {
+          root: {
+            bundleSpec: getBundleSpec('accountability-vat'),
+            parameters: {},
+          },
+        },
+      });
+      return {
+        root: vatRootKrefs.root as KRef,
+        vatId: kernel.getSubclusterVats(subclusterId)[0] as VatId,
+      };
+    };
+    const call = async (
+      kernel: Kernel,
+      target: KRef,
+      method: string,
+      args: unknown[] = [],
+    ): Promise<unknown> =>
+      kunser(await kernel.queueMessage(target, method, args));
+
+    const first = await launch(kernel1, ['ocapURLRedemptionService']);
+    const second = await launch(kernel2, [
+      'ocapURLIssuerService',
+      'ocapURLRedemptionService',
+    ]);
+    const third = await launch(kernel3, ['ocapURLIssuerService']);
+    const secondURL = await call(kernel2, second.root, 'issue');
+    const thirdURL = await call(kernel3, third.root, 'issue');
+
+    await call(kernel1, first.root, 'track');
+    await call(kernel1, first.root, 'handOverTo', [secondURL, 'thing']);
+    const chain2 = (await call(kernel2, second.root, 'chain')) as Chain;
+    expect(chain2).toStrictEqual({
+      kref: expect.stringMatching(/^ko\d+$/u),
+      owner: expect.stringMatching(/^r\d+$/u),
+      hops: [
+        {
+          endpoint: second.vatId,
+          parties: [],
+          acquisitions: [
+            expect.objectContaining({
+              kind: 'introduction',
+              sender: chain2.owner,
+              via: 'message',
+            }),
+          ],
+        },
+        { endpoint: chain2.owner, parties: [], acquisitions: [] },
+      ],
+      segments: [
+        {
+          payload: {
+            kind: 'segment',
+            ref: expect.stringMatching(/^ro\+\d+$/u),
+            kref: expect.stringMatching(/^ko\d+$/u),
+            owner: first.vatId,
+            hops: [{ endpoint: first.vatId, parties: [], acquisitions: [] }],
+          },
+          signer: peerIdOf(kernelDatabase1),
+          incarnationId: expect.any(String),
+          signature: expect.any(String),
+        },
+      ],
+    });
+
+    await call(kernel2, second.root, 'trackHeld');
+    await call(kernel2, second.root, 'handOverTo', [thirdURL, 'held']);
+    const chain3 = (await call(kernel3, third.root, 'chain')) as Chain;
+    expect(chain3.segments).toStrictEqual([
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          owner: chain2.owner,
+          from: peerIdOf(kernelDatabase1),
+          hops: [
+            expect.objectContaining({ endpoint: second.vatId }),
+            { endpoint: chain2.owner, parties: [], acquisitions: [] },
+          ],
+        }),
+        signer: peerIdOf(kernelDatabase2),
+      }),
+      chain2.segments[0],
+    ]);
+    expect(
+      await Promise.all(chain3.segments.map(verifyKernelSignature)),
+    ).toStrictEqual([true, true]);
+    await kernel3.stop();
   });
 
   it('revokes a cross-kernel object held by a remote peer', async () => {

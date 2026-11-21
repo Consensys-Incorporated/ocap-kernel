@@ -72,7 +72,14 @@ export type {
   Witness,
 } from './accountability/types.ts';
 export type { DeliveryEnvelope, NotifyEnvelope } from './types.ts';
-export type { Acquisition, Chain, ChainHop } from './accountability/chain.ts';
+export type {
+  Acquisition,
+  Chain,
+  ChainHop,
+  Custody,
+} from './accountability/chain.ts';
+export { verifySegments } from './accountability/segments.ts';
+export type { Segment, SegmentPayload } from './accountability/segments.ts';
 export type {
   AttestationFilter,
   AttestationKeeper,
