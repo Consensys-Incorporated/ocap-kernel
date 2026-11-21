@@ -1018,6 +1018,17 @@ describe('KernelQueue', () => {
       expect('trace' in item).toBe(expected !== undefined);
     });
 
+    it('carries no trace on a send issued while an ocap URL is redeemed', () => {
+      (
+        kernelStore.getCurrentDelivery as unknown as MockInstance
+      ).mockReturnValue({ via: 'ocap-url' });
+      const message = { methargs: { body: '', slots: [] } } as KernelMessage;
+      kernelQueue.enqueueSend(asKRef('ko123'), message, { sender: v1 });
+      const [item] = (kernelStore.enqueueRun as unknown as MockInstance).mock
+        .calls[0] as [RunQueueItemSend];
+      expect('trace' in item).toBe(false);
+    });
+
     it('enqueues a send message and increments reference counts', () => {
       const target = asKRef('ko123');
       const message: KernelMessage = {

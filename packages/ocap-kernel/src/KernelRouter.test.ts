@@ -218,8 +218,11 @@ describe('KernelRouter', () => {
         (kernelStore.getOwner as unknown as MockInstance).mockReturnValueOnce(
           v1,
         );
+        (kernelStore.getTrackers as unknown as MockInstance).mockReturnValue({
+          v1: {},
+        });
         (kernelStore.isTracked as unknown as MockInstance).mockImplementation(
-          (kref: KRef) => kref === target || kref === 'ko2',
+          (kref: KRef) => kref === 'ko2',
         );
         const message: KernelMessage = {
           methargs: kser([
@@ -258,12 +261,9 @@ describe('KernelRouter', () => {
         (kernelStore.getOwner as unknown as MockInstance).mockReturnValueOnce(
           v1,
         );
-        (kernelStore.isTracked as unknown as MockInstance).mockReturnValue(
-          true,
-        );
         (kernelStore.getTrackers as unknown as MockInstance).mockReturnValue({
-          v1: { trace: { hopLimit: 3 } },
-          v2: { trace: {} },
+          v1: { trace: { hopLimit: 5 } },
+          v2: { trace: { hopLimit: 3 } },
           v3: { recordArgs: true },
         });
         const message: KernelMessage = {
@@ -277,7 +277,7 @@ describe('KernelRouter', () => {
           sender: asVatId('v2'),
           cause: 3,
         });
-        const trace = { id: expect.any(String), hop: 0, hopLimit: 8 };
+        const trace = { id: expect.any(String), hop: 0, hopLimit: 5 };
         expect(kernelStore.setCurrentDelivery).toHaveBeenCalledWith({
           via: 'message',
           sender: 'v2',
@@ -291,6 +291,30 @@ describe('KernelRouter', () => {
           message,
           { trace },
         );
+      });
+
+      it('keeps the trace a send arrives on at an object whose tracker asked for one', async () => {
+        const target = asKRef('ko123');
+        const trace = { id: 't', hop: 2, hopLimit: 8 };
+        (kernelStore.getOwner as unknown as MockInstance).mockReturnValueOnce(
+          v1,
+        );
+        (kernelStore.getTrackers as unknown as MockInstance).mockReturnValue({
+          v1: { trace: {} },
+        });
+        await kernelRouter.deliver({
+          type: 'send',
+          target,
+          message: { methargs: kser(['poke', []]), result: null },
+          sender: asVatId('v2'),
+          cause: 3,
+          trace,
+        });
+        expect(kernelStore.setCurrentDelivery).toHaveBeenCalledWith({
+          via: 'message',
+          sender: 'v2',
+          trace,
+        });
       });
 
       it('records a traced delivery to an untracked object, and hands the trace on', async () => {
@@ -371,8 +395,9 @@ describe('KernelRouter', () => {
         });
       });
 
-      it('passes the sender and cause to a kernel service', async () => {
+      it('passes the sender, cause and trace to a kernel service', async () => {
         const target = asKRef('ko123');
+        const trace = { id: 't', hop: 2, hopLimit: 8 };
         (kernelStore.getOwner as unknown as MockInstance).mockReturnValueOnce(
           'kernel',
         );
@@ -385,10 +410,12 @@ describe('KernelRouter', () => {
           message,
           sender: asVatId('v2'),
           cause: 3,
+          trace,
         });
         expect(mockInvokeKernelService).toHaveBeenCalledWith(target, message, {
           sender: 'v2',
           cause: 3,
+          trace,
         });
       });
 
@@ -1041,7 +1068,51 @@ describe('KernelRouter', () => {
         );
         expect(endpointHandle.deliverNotify).toHaveBeenCalledWith(
           expect.any(Array),
-          { trace },
+          { traces: { [`translated-${kpid}`]: trace } },
+        );
+      });
+
+      it('records each settled promise in a batch on its own trace, and hands the endpoint the first', async () => {
+        const kpid = asKRef('kp123');
+        const other = asKRef('kp124');
+        const traces = {
+          [kpid]: { id: 't', hop: 3, hopLimit: 8 },
+          [other]: { id: 'u', hop: 1, hopLimit: 8 },
+        };
+        (
+          kernelStore.getKernelPromise as unknown as MockInstance
+        ).mockImplementation((which: KRef) => ({
+          state: 'fulfilled',
+          value: { body: '1', slots: [] },
+          resolver: asVatId('v2'),
+          trace: traces[which],
+        }));
+        (kernelStore.krefToEref as unknown as MockInstance).mockReturnValueOnce(
+          'p+123',
+        );
+        (
+          kernelStore.getKpidsToRetire as unknown as MockInstance
+        ).mockReturnValueOnce([kpid, other]);
+
+        await kernelRouter.deliver({ type: 'notify', endpointId: v1, kpid });
+
+        expect(kernelStore.recordResolution).toHaveBeenCalledTimes(2);
+        expect(kernelStore.recordResolution).toHaveBeenCalledWith(
+          expect.objectContaining({ kpid: other, trace: traces[other] }),
+        );
+        expect(kernelStore.setCurrentDelivery).toHaveBeenLastCalledWith({
+          via: 'notify',
+          sender: 'v2',
+          trace: traces[kpid],
+        });
+        expect(endpointHandle.deliverNotify).toHaveBeenCalledWith(
+          expect.any(Array),
+          {
+            traces: {
+              [`translated-${kpid}`]: traces[kpid],
+              [`translated-${other}`]: traces[other],
+            },
+          },
         );
       });
 

@@ -293,6 +293,9 @@ export class KernelServiceManager {
       trace,
     }: { sender: Sender; cause: Cause; trace?: TraceContext | undefined },
   ): void {
+    // Taken now: the result is settled in a later turn, when the crank that
+    // delivered the call, and its trace, are gone.
+    const carried = nextHop(trace) ?? null;
     const kernelService = this.#kernelServicesByObject.get(target);
     if (!kernelService) {
       // Reachable, and not necessarily a kernel bug: an anonymous kernel
@@ -312,6 +315,7 @@ export class KernelServiceManager {
         message.result,
         'ENDPOINT_UNREACHABLE',
         `No registered service for ${target}`,
+        carried,
       );
       return;
     }
@@ -319,10 +323,6 @@ export class KernelServiceManager {
     const [method, args] = kunser(methargs) as [string, unknown[]];
     assert.typeof(method, 'string');
     assert(Array.isArray(args));
-    // Taken now: the result is settled in a later turn, when the crank that
-    // delivered the call, and its trace, are gone.
-    const carried = nextHop(trace) ?? null;
-
     // Use E() so this works for both local objects and remote presences
     // (CapTP proxies whose methods aren't enumerable).
     try {

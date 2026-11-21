@@ -26,6 +26,7 @@ import type {
   KernelOneResolution,
   CrankResult,
   DeliveryEnvelope,
+  NotifyEnvelope,
 } from '../../types.ts';
 import { insistERef, isRRef } from '../../types.ts';
 import type { RemoteComms } from '../types.ts';
@@ -150,6 +151,35 @@ type RemoteCommand = {
   seq: number;
   ack?: number;
 } & RemoteMessageBase;
+
+/**
+ * Split a notify's resolutions into runs on one trace each, in order, since
+ * a peer takes a command's trace for every resolution the command carries.
+ *
+ * @param resolutions - The resolutions.
+ * @param traces - The trace each settled promise on one is on, by eref.
+ * @returns The runs, with the trace each is on; one empty run for no
+ * resolutions.
+ */
+function batchByTrace(
+  resolutions: VatOneResolution[],
+  traces: Record<ERef, TraceContext>,
+): { batch: VatOneResolution[]; trace: TraceContext | undefined }[] {
+  const batches: {
+    batch: VatOneResolution[];
+    trace: TraceContext | undefined;
+  }[] = [];
+  for (const resolution of resolutions) {
+    const trace = traces[resolution[0] as ERef];
+    const last = batches.at(-1);
+    if (last !== undefined && last.trace?.id === trace?.id) {
+      last.batch.push(resolution);
+    } else {
+      batches.push({ batch: [resolution], trace });
+    }
+  }
+  return batches.length === 0 ? [{ batch: [], trace: undefined }] : batches;
+}
 
 /**
  * Handles communication with a remote kernel endpoint over the network.
@@ -1142,18 +1172,29 @@ export class RemoteHandle implements RemoteEndpointHandle {
    *
    * @param resolutions - One or more promise resolutions to deliver.
    * @param envelope - What travels with them.
-   * @param envelope.trace - The trace they are on, if any.
+   * @param envelope.traces - The trace each settled promise on one is on.
    * @returns the crank result.
    */
   async deliverNotify(
     resolutions: VatOneResolution[],
-    { trace }: DeliveryEnvelope = {},
+    { traces = {} }: NotifyEnvelope = {},
   ): Promise<CrankResult> {
-    return this.#deliverToPeer({
-      method: 'deliver',
-      params: ['notify', resolutions],
-      ...(trace === undefined ? {} : { trace }),
-    });
+    const persisted = batchByTrace(resolutions, traces).map(
+      ({ batch, trace }) =>
+        this.#persistRemoteCommand({
+          method: 'deliver',
+          params: ['notify', batch],
+          ...(trace === undefined ? {} : { trace }),
+        }),
+    );
+    return {
+      ...this.#myCrankResult,
+      afterCommit: async () => {
+        for (const command of persisted) {
+          this.#transmitRemoteCommand(command);
+        }
+      },
+    };
   }
 
   /**
@@ -1309,16 +1350,37 @@ export class RemoteHandle implements RemoteEndpointHandle {
   }
 
   /**
+   * The trace a delivery from the peer carries on: the one it names, if well
+   * formed and either new to this kernel or one that reached the peer from
+   * here. A peer that learned a trace id some other way cannot graft onto
+   * the trace.
+   *
+   * @param trace - The trace the peer named, if any.
+   * @returns The trace to carry on, or null.
+   */
+  #continuedTrace(trace: unknown): TraceContext | null {
+    if (!is(trace, TraceContextStruct)) {
+      return null;
+    }
+    const recorded = (involving?: RemoteId): boolean =>
+      this.#kernelStore.getAccountabilityRecords({
+        trace: trace.id,
+        limit: 1,
+        ...(involving === undefined ? {} : { involving }),
+      }).length > 0;
+    return !recorded() || recorded(this.remoteId) ? trace : null;
+  }
+
+  /**
    * Handle a delivery from the remote end.
    *
    * @param params - the delivery params, which vary based on the kind of delivery.
-   * @param trace - The trace the delivery is on, if the peer said and it is
-   * well formed.
+   * @param trace - The trace the peer says the delivery is on, if any.
    */
   #handleRemoteDeliver(params: DeliveryParams, trace: unknown): void {
     const [method] = params;
     // The peer's hop count stands: the delivery is the same hop here.
-    const carried = is(trace, TraceContextStruct) ? trace : null;
+    const carried = this.#continuedTrace(trace);
     switch (method) {
       case 'message': {
         const [, target, message] = params;
