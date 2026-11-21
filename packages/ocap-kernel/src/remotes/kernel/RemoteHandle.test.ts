@@ -4,7 +4,7 @@ import { makeAbortSignalMock } from '@ocap/repo-tools/test-utils';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 import { RemoteHandle } from './RemoteHandle.ts';
-import { asRRef, asRemoteId, asVatId } from '../../../test/branded.ts';
+import { asKRef, asRRef, asRemoteId, asVatId } from '../../../test/branded.ts';
 import { createMockRemotesFactory } from '../../../test/remotes-mocks.ts';
 import { makeMapKernelDatabase } from '../../../test/storage.ts';
 import type { TraceContext } from '../../accountability/types.ts';
@@ -19,6 +19,7 @@ let mockRemoteComms: RemoteComms;
 let mockKernelQueue: KernelQueue;
 const mockRemoteId = asRemoteId('r0');
 const mockRemotePeerId = 'remotePeerId';
+const traceId = 'a'.repeat(32);
 let mockFactory: ReturnType<typeof createMockRemotesFactory>;
 
 /**
@@ -174,19 +175,49 @@ describe('RemoteHandle', () => {
     [
       'notify',
       async (remote: RemoteHandle, trace: TraceContext) =>
-        remote.deliverNotify([], { trace }),
+        remote.deliverNotify([['rp-1', false, { body: '1', slots: [] }]], {
+          traces: { [asRRef('rp-1')]: trace },
+        }),
     ],
   ])(
     'puts the trace a %s delivery is on in the envelope',
     async (_what, deliver) => {
       const remote = makeRemote();
-      const trace = { id: 't', hop: 2, hopLimit: 8 };
+      const trace = { id: traceId, hop: 2, hopLimit: 8 };
       await deliverAndCommit(deliver(remote, trace));
       const sentString = vi.mocked(mockRemoteComms.sendRemoteMessage).mock
         .calls[0]![1];
       expect(JSON.parse(sentString).trace).toStrictEqual(trace);
     },
   );
+
+  it('sends a notify as one command per run of resolutions on a trace', async () => {
+    const remote = makeRemote();
+    const trace = { id: traceId, hop: 2, hopLimit: 8 };
+    const value = { body: '1', slots: [] };
+    const resolutions: VatOneResolution[] = [
+      ['rp-1', false, value],
+      ['rp-2', false, value],
+      ['rp-3', false, value],
+    ];
+    await deliverAndCommit(
+      remote.deliverNotify(resolutions, {
+        traces: { [asRRef('rp-1')]: trace, [asRRef('rp-2')]: trace },
+      }),
+    );
+    const sent = vi
+      .mocked(mockRemoteComms.sendRemoteMessage)
+      .mock.calls.map(([, message]) => JSON.parse(message));
+    expect(sent).toStrictEqual([
+      {
+        seq: 1,
+        method: 'deliver',
+        params: ['notify', resolutions.slice(0, 2)],
+        trace,
+      },
+      { seq: 2, method: 'deliver', params: ['notify', resolutions.slice(2)] },
+    ]);
+  });
 
   it('writes the delivery down before the crank commits, and sends it after', async () => {
     const remote = makeRemote();
@@ -727,10 +758,20 @@ describe('RemoteHandle', () => {
   it.each([
     [
       'as it is',
-      { id: 't', hop: 2, hopLimit: 8 },
-      { id: 't', hop: 2, hopLimit: 8 },
+      { id: traceId, hop: 2, hopLimit: 8 },
+      { id: traceId, hop: 2, hopLimit: 8 },
     ],
-    ['not at all when it is malformed', { id: 't' }, null],
+    ['not at all when it is malformed', { id: traceId }, null],
+    [
+      'not at all when its hop has reached its limit',
+      { id: traceId, hop: 8, hopLimit: 8 },
+      null,
+    ],
+    [
+      'not at all when its limit is longer than allowed',
+      { id: traceId, hop: 0, hopLimit: 65 },
+      null,
+    ],
   ])('takes the trace a delivery carries %s', async (_what, trace, carried) => {
     const remote = makeRemote();
     const message: EndpointMessage = {
@@ -766,6 +807,50 @@ describe('RemoteHandle', () => {
       { immediate: false, trace: carried },
     );
   });
+
+  it.each([
+    ['new to this kernel', undefined, true],
+    ['that reached the peer from here', mockRemoteId, true],
+    ['that the peer learned some other way', asVatId('v1'), false],
+  ])(
+    'lets the peer carry on a trace %s',
+    async (_what, recordedTo, continued) => {
+      const remote = makeRemote();
+      const trace = { id: traceId, hop: 3, hopLimit: 8 };
+      if (recordedTo !== undefined) {
+        mockKernelStore.recordDelivery({
+          target: asKRef('ko1'),
+          targetEndpoint: recordedTo,
+          sender: asVatId('v2'),
+          cause: 1,
+          method: 'poke',
+          message: { methargs: { body: '', slots: [] } },
+          trace: { ...trace, hop: 2 },
+        });
+      }
+      await receiveAndRunCrank(
+        remote,
+        JSON.stringify({
+          seq: 1,
+          method: 'deliver',
+          params: [
+            'message',
+            asRRef('ro+1'),
+            {
+              methargs: { body: '["method",[]]', slots: [] },
+              result: asRRef('rp+2'),
+            },
+          ],
+          trace,
+        }),
+      );
+      expect(mockKernelQueue.enqueueSend).toHaveBeenCalledWith(
+        'ko1',
+        expect.any(Object),
+        { sender: remote.remoteId, trace: continued ? trace : null },
+      );
+    },
+  );
 
   it('takes delivery of deliver notify', async () => {
     const remote = makeRemote();

@@ -208,6 +208,11 @@ export function getAccountabilityRecordMethods(ctx: StoreContext) {
    * @param trace - The trace, if any.
    * @returns The fields, or none.
    */
+  function traced(trace: TraceContext): { traceId: string; hop: number };
+  function traced(
+    trace: TraceContext | undefined,
+  ): { traceId: string; hop: number } | Record<string, never>;
+  // eslint-disable-next-line ocap/require-jsdoc
   function traced(
     trace: TraceContext | undefined,
   ): { traceId: string; hop: number } | Record<string, never> {
@@ -303,8 +308,7 @@ export function getAccountabilityRecordMethods(ctx: StoreContext) {
   > & { trace: TraceContext }): void {
     appendAccountabilityRecord({
       kind: 'resolution',
-      traceId: trace.id,
-      hop: trace.hop,
+      ...traced(trace),
       ...resolution,
     });
   }

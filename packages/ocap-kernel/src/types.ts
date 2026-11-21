@@ -509,6 +509,14 @@ export type DeliveryEnvelope = {
 };
 
 /**
+ * What travels with a notify besides the resolutions: the trace each settled
+ * promise on one is on, by the promise's eref.
+ */
+export type NotifyEnvelope = {
+  traces?: Record<ERef, TraceContext>;
+};
+
+/**
  * Assert that a value is a valid kernel message.
  *
  * @param value - The value to check.
@@ -1066,7 +1074,7 @@ export type EndpointHandle = {
   ) => Promise<CrankResult>;
   deliverNotify: (
     resolutions: VatOneResolution[],
-    envelope?: DeliveryEnvelope,
+    envelope?: NotifyEnvelope,
   ) => Promise<CrankResult>;
   deliverDropExports: (erefs: ERef[]) => Promise<CrankResult>;
   deliverRetireExports: (erefs: ERef[]) => Promise<CrankResult>;
