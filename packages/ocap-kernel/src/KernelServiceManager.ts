@@ -5,6 +5,8 @@ import type { Logger } from '@metamask/logger';
 import type { KernelQueue } from './KernelQueue.ts';
 import { kser, kunser, makeKernelError } from './liveslots/kernel-marshal.ts';
 import type { KernelStore } from './store/index.ts';
+import { nextHop } from './accountability/trace.ts';
+import type { TraceContext } from './accountability/types.ts';
 import type { Cause, KRef, KernelMessage, Sender } from './types.ts';
 import { assert } from './utils/assert.ts';
 
@@ -269,12 +271,20 @@ export class KernelServiceManager {
    * @param provenance - Who sent it, and from which crank.
    * @param provenance.sender - The sender.
    * @param provenance.cause - The crank the send was issued in.
+   * @param provenance.trace - The trace the send was on, if any.
    */
   invokeKernelService(
     target: KRef,
     message: KernelMessage,
-    { sender, cause }: { sender: Sender; cause: Cause },
+    {
+      sender,
+      cause,
+      trace,
+    }: { sender: Sender; cause: Cause; trace?: TraceContext | undefined },
   ): void {
+    // Taken now: the result is settled in a later turn, when the crank that
+    // delivered the call, and its trace, are gone.
+    const carried = nextHop(trace) ?? null;
     const kernelService = this.#kernelServicesByObject.get(target);
     if (!kernelService) {
       // Reachable, and not necessarily a kernel bug: an anonymous kernel
@@ -294,6 +304,7 @@ export class KernelServiceManager {
         message.result,
         'ENDPOINT_UNREACHABLE',
         `No registered service for ${target}`,
+        carried,
       );
       return;
     }
@@ -301,7 +312,6 @@ export class KernelServiceManager {
     const [method, args] = kunser(methargs) as [string, unknown[]];
     assert.typeof(method, 'string');
     assert(Array.isArray(args));
-
     // Use E() so this works for both local objects and remote presences
     // (CapTP proxies whose methods aren't enumerable).
     // Call the method without awaiting. This allows the crank to complete
@@ -319,18 +329,20 @@ export class KernelServiceManager {
       Promise.resolve(resultPromise)
         .then((resultValue) => {
           if (result) {
-            this.#kernelQueue.resolvePromises('kernel', [
-              [result, false, kser(resultValue)],
-            ]);
+            this.#kernelQueue.resolvePromises(
+              'kernel',
+              [[result, false, kser(resultValue)]],
+              { trace: carried },
+            );
           }
           return undefined;
         })
         .catch((problem: unknown) => {
-          this.#failMessage(result, 'DELIVERY_FAILED', problem);
+          this.#failMessage(result, 'DELIVERY_FAILED', problem, carried);
         });
     } catch (syncError) {
       // Handle synchronous errors thrown before returning a Promise
-      this.#failMessage(result, 'DELIVERY_FAILED', syncError);
+      this.#failMessage(result, 'DELIVERY_FAILED', syncError, carried);
     }
   }
 
@@ -342,18 +354,22 @@ export class KernelServiceManager {
    * @param result - The kref of the message's result promise, if it has one.
    * @param code - The kernel error code to report to the caller.
    * @param problem - The error or description of what went wrong.
+   * @param trace - The trace the rejection carries on, or null.
    */
   #failMessage(
     result: KRef | null | undefined,
     code: ExpectedKernelErrorCode,
     problem: unknown,
+    trace: TraceContext | null = null,
   ): void {
     if (result) {
       const detail =
         problem instanceof Error ? problem.message : String(problem);
-      this.#kernelQueue.resolvePromises('kernel', [
-        [result, true, makeKernelError(code, detail)],
-      ]);
+      this.#kernelQueue.resolvePromises(
+        'kernel',
+        [[result, true, makeKernelError(code, detail)]],
+        { trace },
+      );
     } else {
       this.#logger?.error('Error in kernel service method:', problem);
     }

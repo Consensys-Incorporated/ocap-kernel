@@ -1443,7 +1443,7 @@ describe('RemoteManager', () => {
             }),
           ],
         ],
-        false,
+        { immediate: false },
       );
     });
 
@@ -1524,7 +1524,7 @@ describe('RemoteManager', () => {
             }),
           ],
         ],
-        false,
+        { immediate: false },
       );
       await expect(redemption).rejects.toThrow('Remote peer restarted');
     });

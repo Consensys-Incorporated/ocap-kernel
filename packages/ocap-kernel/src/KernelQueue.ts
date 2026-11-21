@@ -30,7 +30,12 @@ import type {
   VatId,
 } from './types.ts';
 import { insistKRef } from './types.ts';
-import type { Attribution } from './accountability/types.ts';
+import { nextHop, startTrace } from './accountability/trace.ts';
+import type {
+  Attribution,
+  TraceContext,
+  TraceOptions,
+} from './accountability/types.ts';
 import { Fail } from './utils/assert.ts';
 
 /**
@@ -52,6 +57,8 @@ type HeldMessage = {
   target: KRef;
   methargs: CapData<KRef>;
   attribution: Attribution | undefined;
+  /** Whether to trace what the message causes, and how far. */
+  trace: TraceOptions | undefined;
   subscription: Subscription;
 };
 
@@ -827,7 +834,10 @@ export class KernelQueue {
    * @param target - The object to which the message is directed.
    * @param method - The method to be invoked.
    * @param args - Message arguments.
-   * @param attribution - What the host says about the act, if anything.
+   * @param options - Options bag.
+   * @param options.attribution - What the host says about the act, if anything.
+   * @param options.trace - Whether to trace what the message causes, and how
+   * far.
    *
    * @returns a promise for the (CapData encoded) result of the message
    * invocation, with the `kpid` to pass to `releaseResult` if it carries
@@ -838,7 +848,13 @@ export class KernelQueue {
     target: KRef,
     method: string,
     args: unknown[],
-    attribution?: Attribution,
+    {
+      attribution,
+      trace,
+    }: {
+      attribution?: Attribution | undefined;
+      trace?: TraceOptions | undefined;
+    } = {},
   ): Promise<QueueMessageResult> {
     // Nothing is draining the run queue, so a returned promise could never settle.
     this.assertRunLoopAlive('queue a message');
@@ -852,6 +868,7 @@ export class KernelQueue {
       target,
       methargs: kser([method, args]),
       attribution,
+      trace,
       subscription: { resolve, reject },
     });
     return promise;
@@ -864,7 +881,7 @@ export class KernelQueue {
    * @param message - The call.
    */
   #writeMessage(message: HeldMessage): void {
-    const { target, methargs, attribution, subscription } = message;
+    const { target, methargs, attribution, trace, subscription } = message;
     // Checked first: outside a crank nothing rolls back, and `enqueueSend`
     // refusing a missing kref partway would keep what it charged before it.
     const missing = [target, ...methargs.slots].find(
@@ -886,7 +903,11 @@ export class KernelQueue {
     this.enqueueSend(
       target,
       { methargs, result },
-      { sender: 'kernel', attribution },
+      {
+        sender: 'kernel',
+        attribution,
+        trace: trace === undefined ? null : startTrace(trace),
+      },
     );
     // Last: a write that threw must leave no subscription behind.
     this.subscriptions.set(result, subscription);
@@ -994,6 +1015,9 @@ export class KernelQueue {
    * @param options.cause - The crank it was issued in. Defaults to the open
    * crank, or `'async'` if none is open; given only for a message that
    * waited on a promise, which keeps the cause it was issued with.
+   * @param options.trace - The trace it carries: given for a message that
+   * waited on a promise or came from a peer, null if that one carried none.
+   * Defaults to the open crank's trace, one hop on.
    * @param options.immediate - If true (the default), enqueue immediately; if
    * false, buffer for crank completion.
    * @param options.attribution - What the host said about the act, on a send
@@ -1007,11 +1031,13 @@ export class KernelQueue {
       cause = this.#kernelStore.isInCrank()
         ? this.#kernelStore.getCrankNumber()
         : 'async',
+      trace = this.#inheritedTrace(),
       immediate = true,
       attribution,
     }: {
       sender: Sender;
       cause?: Cause;
+      trace?: TraceContext | null;
       immediate?: boolean;
       attribution?: Attribution | undefined;
     },
@@ -1030,12 +1056,27 @@ export class KernelQueue {
       sender,
       cause,
       ...(attribution === undefined ? {} : { attribution }),
+      ...(trace === null ? {} : { trace }),
     };
     if (immediate) {
       this.#enqueueRun(item);
     } else {
       this.#kernelStore.bufferCrankOutput(item);
     }
+  }
+
+  /**
+   * The trace a send or resolution issued now carries: that of the delivery
+   * the open crank is handling, one hop on, or none.
+   *
+   * @returns The trace, or null.
+   */
+  #inheritedTrace(): TraceContext | null {
+    const delivery = this.#kernelStore.getCurrentDelivery();
+    return (
+      nextHop(delivery?.via === 'ocap-url' ? undefined : delivery?.trace) ??
+      null
+    );
   }
 
   /**
@@ -1331,12 +1372,20 @@ export class KernelQueue {
    *
    * @param endpointId - The endpoint doing the resolving, if there is one.
    * @param resolutions - One or more resolutions, to be processed as a group.
-   * @param immediate - If true (the default), enqueue immediately; if false, buffer for crank completion.
+   * @param options - Options bag.
+   * @param options.immediate - If true (the default), enqueue immediately; if
+   * false, buffer for crank completion.
+   * @param options.trace - The trace the resolutions carry on: given for ones
+   * from a peer, null if those carried none. Defaults to the open crank's
+   * trace, one hop on.
    */
   resolvePromises(
     endpointId: EndpointId | 'kernel' | undefined,
     resolutions: KernelOneResolution[],
-    immediate = true,
+    {
+      immediate = true,
+      trace = this.#inheritedTrace(),
+    }: { immediate?: boolean; trace?: TraceContext | null } = {},
   ): void {
     for (const resolution of resolutions) {
       const [kpid, rejected, data] = resolution;
@@ -1372,13 +1421,21 @@ export class KernelQueue {
         rejected,
         value: data,
         resolver: endpointId ?? 'kernel',
+        ...(trace === null ? {} : { trace }),
       });
 
       // Enqueue the queued messages (immediate or buffered based on flag).
-      for (const { message, sender, cause, attribution } of queuedMessages) {
+      for (const {
+        message,
+        sender,
+        cause,
+        attribution,
+        trace: own,
+      } of queuedMessages) {
         this.enqueueSend(kpid, message, {
           sender,
           cause,
+          trace: own ?? null,
           immediate,
           attribution,
         });

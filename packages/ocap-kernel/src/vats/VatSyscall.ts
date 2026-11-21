@@ -101,7 +101,7 @@ export class VatSyscall {
    */
   #handleSyscallResolve(resolutions: KernelOneResolution[]): void {
     const immediate = !this.#kernelStore.isInCrank();
-    this.#kernelQueue.resolvePromises(this.vatId, resolutions, immediate);
+    this.#kernelQueue.resolvePromises(this.vatId, resolutions, { immediate });
   }
 
   /**

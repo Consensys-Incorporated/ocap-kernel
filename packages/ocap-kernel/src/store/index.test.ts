@@ -183,6 +183,7 @@ describe('kernel store', () => {
         'recordDelivery',
         'recordIntroduction',
         'recordLastActiveTime',
+        'recordResolution',
         'releaseHeldResult',
         'releaseOcapURLRetentions',
         'removeAnonymousKernelObject',
