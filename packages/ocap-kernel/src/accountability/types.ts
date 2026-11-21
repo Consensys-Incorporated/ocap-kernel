@@ -2,10 +2,13 @@ import type { CapData } from '@endo/marshal';
 import {
   boolean,
   exactOptional,
+  integer,
   literal,
-  number,
+  min,
   object,
+  pattern,
   refine,
+  size,
   string,
   union,
 } from '@metamask/superstruct';
@@ -88,12 +91,17 @@ export type Attribution = Infer<typeof AttributionStruct>;
 /** The number of hops a trace records unless told otherwise. */
 export const DEFAULT_HOP_LIMIT = 8;
 
+/** The most hops a trace may be asked to record, here or by a peer. */
+export const MAX_HOP_LIMIT = 64;
+
+const HopLimitStruct = size(integer(), 1, MAX_HOP_LIMIT);
+
 /**
  * What a trace is asked to be when it starts: how many hops to follow the
  * root act for, `DEFAULT_HOP_LIMIT` if unsaid.
  */
 export const TraceOptionsStruct = object({
-  hopLimit: exactOptional(number()),
+  hopLimit: exactOptional(HopLimitStruct),
 });
 
 export type TraceOptions = Infer<typeof TraceOptionsStruct>;
@@ -102,13 +110,20 @@ export type TraceOptions = Infer<typeof TraceOptionsStruct>;
  * A trace in flight: carried by every send and resolution a traced crank
  * issues, one hop further than the delivery that crank handled, until the
  * hop count reaches the limit. The limit travels with the trace, so a trace
- * that crosses to another kernel keeps counting from where it was.
+ * that crosses to another kernel keeps counting from where it was. The
+ * bounds hold a peer to what a local tracker could ask for.
  */
-export const TraceContextStruct = object({
-  id: string(),
-  hop: number(),
-  hopLimit: number(),
-});
+export const TraceContextStruct = refine(
+  object({
+    id: pattern(string(), /^[0-9a-f]{32}$/u),
+    hop: min(integer(), 0),
+    hopLimit: HopLimitStruct,
+  }),
+  'TraceContext',
+  (trace) =>
+    trace.hop < trace.hopLimit ||
+    `Expected a hop below the limit, but received: ${trace.hop} of ${trace.hopLimit}`,
+);
 
 export type TraceContext = Infer<typeof TraceContextStruct>;
 

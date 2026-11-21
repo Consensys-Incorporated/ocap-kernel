@@ -170,13 +170,14 @@ describe('accountability service', () => {
     });
 
     it.each([
-      ['the owner', owner, [1, 2]],
-      ['a holder it reached', holder, [1, 2]],
-      ['an endpoint it did not reach', other, []],
+      ['the owner', owner, 'trace-1', [1, 2]],
+      ['a holder it reached', holder, 'trace-1', [1, 2]],
+      ['an endpoint it did not reach', other, 'trace-1', []],
+      ['anyone, of a trace there is no record of', owner, 'trace-2', []],
     ])(
       'shows %s the whole trace or none of it',
-      async (_who, caller, expected) => {
-        const records = await service.trace({ caller, cause: 1 }, 'trace-1');
+      async (_who, caller, traceId, expected) => {
+        const records = await service.trace({ caller, cause: 1 }, traceId);
         expect(records.map((record) => record.seq)).toStrictEqual(expected);
       },
     );

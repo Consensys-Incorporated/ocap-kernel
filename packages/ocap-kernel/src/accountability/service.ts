@@ -190,6 +190,7 @@ export function makeAccountabilityService({
           kernelStore.getAccountabilityRecords({
             trace: traceId,
             involving: caller,
+            limit: 1,
           }).length === 0
             ? []
             : kernelStore.getAccountabilityRecords({ trace: traceId }),

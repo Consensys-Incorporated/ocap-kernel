@@ -365,12 +365,26 @@ unrelated vat on the same kernel pays nothing.
 A trace crosses kernels. The trace context rides in the remote message
 envelope as an optional field; a peer that does not understand it ignores it,
 and the chain is recorded as far as it got. A peer that does understand it
-keeps counting from where the trace was.
+keeps counting from where the trace was. A notify to a peer carries one trace,
+so settled promises on different traces go to a peer in separate notifies.
+
+A trace context from a peer is held to what a local tracker could ask for: a
+hop limit of at most 64, a hop below it, and an id of the form the kernel
+mints. One outside those bounds is dropped as if the peer had sent none. A
+peer may carry on a trace this kernel has already recorded only if the trace
+reached the peer from here, which is to say a local record on the trace names
+the peer; otherwise the delivery is taken as untraced. A peer that learned a
+trace id some other way can thus neither pollute the trace nor put an
+endpoint of its choosing in a position to read it. A trace that went out
+through one peer and comes back through another is cut at the return, and
+recorded as far as it got.
 
 Any holder may ask to trace, since a holder tracing what its own calls cause
 is tracing its own acts. The records a trace leaves are visible to every
 endpoint that appears in them: `trace(traceId)` returns the whole trace to an
-endpoint one of its records names, and nothing to any other.
+endpoint one of its records names, and nothing to any other. A holder who
+traces an object therefore learns what its owner went on to do in response,
+through whichever endpoints that reached, up to the hop limit.
 
 ### Attestations
 
@@ -788,7 +802,16 @@ in a later turn, so the trace is taken at the call.
 **One trace per notify.** A notify that carries several settled promises
 records a resolution for each on its own trace, but the endpoint handles the
 batch in one crank, so what it sends in response inherits the first traced
-promise's trace.
+promise's trace. A peer takes a notify's trace for every promise the notify
+carries, so a batch is split by trace on the way to a peer rather than let
+the two kernels disagree about which promise is on which trace.
+
+**A peer carries on a trace only along the path it took.** The alternative,
+taking any well-formed trace context a peer sends, lets a peer that has seen
+a trace id graft unrelated work onto the trace and, through the visibility
+rule, hand the whole trace to a colluding endpoint. The check costs a filtered
+record query per traced inbound delivery, which is rare, and cuts only a
+trace that leaves through one peer and returns through another.
 
 **Interaction with revocation and GC.** Neither touches records. A revoked
 object's history is the evidence that matters most. Records do not hold

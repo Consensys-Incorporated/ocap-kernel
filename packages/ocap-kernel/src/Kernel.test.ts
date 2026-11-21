@@ -2141,6 +2141,21 @@ describe('Kernel', () => {
       ).toHaveBeenCalledWith(asKRef('ko1'), 'hello', [], passed);
     });
 
+    it('refuses a trace request of no hops before queueing anything', async () => {
+      const kernel = await Kernel.make(
+        mockPlatformServices,
+        mockKernelDatabase,
+      );
+      await expect(
+        kernel.queueMessage(asKRef('ko1'), 'hello', [], {
+          trace: { hopLimit: 0 },
+        }),
+      ).rejects.toThrow('hopLimit');
+      expect(
+        mocks.KernelQueue.lastInstance.enqueueMessage,
+      ).not.toHaveBeenCalled();
+    });
+
     it('makes the kernel an identity, in a crank of its own, the first time it signs', async () => {
       const kernel = await Kernel.make(
         mockPlatformServices,

@@ -463,7 +463,7 @@ describe('KernelServiceManager', () => {
       expect(mockKernelQueue.resolvePromises).not.toHaveBeenCalled();
     });
 
-    it('rejects the caller for a non-existent service', () => {
+    it("rejects the caller for a non-existent service, on the call's trace", () => {
       const message: KernelMessage = {
         methargs: kser(['testMethod', []]),
         result: asKRef('kp1'),
@@ -476,6 +476,7 @@ describe('KernelServiceManager', () => {
         serviceManager.invokeKernelService(asKRef('ko999'), message, {
           sender: 'kernel',
           cause: 1,
+          trace: { id: 't', hop: 1, hopLimit: 8 },
         }),
       ).not.toThrow();
       expect(mockKernelQueue.resolvePromises).toHaveBeenCalledWith(
@@ -490,7 +491,7 @@ describe('KernelServiceManager', () => {
             ),
           ],
         ],
-        { trace: null },
+        { trace: { id: 't', hop: 2, hopLimit: 8 } },
       );
     });
 
