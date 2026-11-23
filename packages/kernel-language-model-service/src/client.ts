@@ -95,7 +95,7 @@ export const makeSampleClient = (
 /**
  * Wrap a sample service reference as a {@link LanguageModel}. A stream cannot
  * cross the kernel marshal boundary, so the whole answer is the stream's only
- * chunk. Aborting ends the stream without the answer, but the service still
+ * chunk. Aborting rejects the stream without the answer, but the service still
  * finishes generating it; `maxTokens` bounds how long that runs. Per-call
  * `options` are ignored.
  *

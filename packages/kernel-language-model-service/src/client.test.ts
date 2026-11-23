@@ -162,7 +162,7 @@ describe('makeSampleLanguageModel', () => {
     ]);
   });
 
-  it('ends the stream without the answer when aborted', async () => {
+  it('rejects the stream without the answer when aborted', async () => {
     const lmsRef = { sample: vi.fn().mockResolvedValue(makeSampleResult()) };
     const languageModel = makeSampleLanguageModel({ lmsRef, model: 'llama3' });
 
