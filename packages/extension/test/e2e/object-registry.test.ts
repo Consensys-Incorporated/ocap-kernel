@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import type { Page, BrowserContext, Locator } from '@playwright/test';
 
-import { loadExtension } from '../helpers.ts';
+import { aliceRoot, loadExtension } from '../helpers.ts';
 
 test.describe.configure({ mode: 'serial' });
 
@@ -52,24 +52,6 @@ test.describe('Object Registry', () => {
     const button = page.locator(`[data-testid="revoke-button-${target}"]`);
     await button.click();
     return { button, output: page.locator('[data-testid="message-output"]') };
-  };
-
-  /**
-   * Find Alice's root object, the one target named as hers. Looked up rather
-   * than hardcoded: the subcluster's vats start in parallel, so their roots
-   * are numbered in whatever order they finish starting.
-   *
-   * @param page - The page to look on.
-   * @returns Its kref.
-   */
-  const aliceRoot = async (page: Page): Promise<string> => {
-    const kref = await page
-      .locator('select[data-testid="message-target"] option', {
-        hasText: '(Alice)',
-      })
-      .getAttribute('value');
-    expect(kref).toBeTruthy();
-    return kref as string;
   };
 
   test.beforeEach(async () => {

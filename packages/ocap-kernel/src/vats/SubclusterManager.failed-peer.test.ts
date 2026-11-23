@@ -1,4 +1,5 @@
 import { makePromiseKit } from '@endo/promise-kit';
+import type { PromiseKit } from '@endo/promise-kit';
 import { makeSQLKernelDatabase } from '@metamask/kernel-store/sqlite/nodejs';
 import { delay } from '@metamask/kernel-utils';
 import { Logger } from '@metamask/logger';
@@ -24,7 +25,8 @@ import type {
  * called.
  *
  * @returns The methods sent, a promise for a `stall` arriving, the releases,
- * and a way to break a started vat's channel.
+ * a wait for a vat's start to have ended either way, and a way to break a
+ * started vat's channel.
  */
 function fakeVats() {
   const received: string[] = [];
@@ -32,16 +34,25 @@ function fakeVats() {
   const released = makePromiseKit<void>();
   const slow = makePromiseKit<void>();
   const channelFailures = new Map<string, (error: Error) => void>();
+  const starts = new Map<string, PromiseKit<void>>();
+  const startOf = (source: string): PromiseKit<void> => {
+    const start = starts.get(source) ?? makePromiseKit<void>();
+    starts.set(source, start);
+    return start;
+  };
   vi.spyOn(VatHandle, 'make').mockImplementation(
     async ({ vatId, vatConfig, kernelQueue, kernelStore, onStreamFailure }) => {
-      const source = 'sourceSpec' in vatConfig ? vatConfig.sourceSpec : '';
+      const source =
+        ('sourceSpec' in vatConfig ? vatConfig.sourceSpec : undefined) ?? '';
       if (source === 'slow.js' || source === 'fails-late.js') {
         await slow.promise;
       }
-      if (source?.startsWith('fails')) {
+      if (source.startsWith('fails')) {
+        startOf(source).resolve();
         throw new Error('peer exploded');
       }
       channelFailures.set(vatId, onStreamFailure);
+      startOf(source).resolve();
       const vatSyscall = new VatSyscall({ vatId, kernelQueue, kernelStore });
       const deliverMessage = async (
         _target: string,
@@ -74,8 +85,19 @@ function fakeVats() {
     stalled: stalled.promise,
     release: released.resolve,
     releaseSlow: slow.resolve,
-    breakChannel: (vatId: string) =>
-      channelFailures.get(vatId)?.(new Error('worker crashed')),
+    // The extra turn lets the kernel act on the start's end: record the vat,
+    // or roll the launch back if nothing made it wait for the others.
+    started: async (source: string) => {
+      await startOf(source).promise;
+      await delay(0);
+    },
+    breakChannel: (vatId: string) => {
+      const fail = channelFailures.get(vatId);
+      if (!fail) {
+        throw new Error(`Vat ${vatId} has no channel to break`);
+      }
+      fail(new Error('worker crashed'));
+    },
   };
 }
 
@@ -171,7 +193,7 @@ describe('a subcluster with a peer vat that fails to launch', () => {
       io,
     });
     launching.catch(() => undefined);
-    await delay(10);
+    await vats.started('fails.js');
     vats.releaseSlow();
 
     await expect(launching).rejects.toThrow('(peer)');
@@ -202,7 +224,7 @@ describe('a subcluster with a peer vat that fails to launch', () => {
       },
     });
     launching.catch(() => undefined);
-    await delay(10);
+    await vats.started('lost.js');
     const next = kernel.launchSubcluster({
       bootstrap: 'next',
       vats: { next: { sourceSpec: 'next.js' } },

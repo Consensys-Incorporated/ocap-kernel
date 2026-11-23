@@ -1,5 +1,6 @@
 import { makeLoadExtension } from '@ocap/repo-tools/test-utils/extension';
 import { expect } from '@playwright/test';
+import type { Page } from '@playwright/test';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -30,4 +31,22 @@ export const loadExtension = async (contextId?: string) => {
   };
 
   return result;
+};
+
+/**
+ * Find Alice's root object, the one message target named as hers. Looked up
+ * rather than hardcoded: the subcluster's vats start in parallel, so their
+ * roots are numbered in whatever order they finish starting.
+ *
+ * @param page - The page to look on, showing the Object Registry.
+ * @returns Its kref.
+ */
+export const aliceRoot = async (page: Page): Promise<string> => {
+  const kref = await page
+    .locator('select[data-testid="message-target"] option', {
+      hasText: '(Alice)',
+    })
+    .getAttribute('value');
+  expect(kref).toBeTruthy();
+  return kref as string;
 };

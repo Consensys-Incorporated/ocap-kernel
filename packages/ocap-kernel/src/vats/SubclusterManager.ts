@@ -143,7 +143,7 @@ export class SubclusterManager {
     } catch (error) {
       await this.terminateSubcluster(subclusterId).catch(
         (teardownError: unknown) => {
-          // Not found when the bootstrap vat's death took the record already.
+          // Not found when its last member's death took the record already.
           if (!(teardownError instanceof SubclusterNotFoundError)) {
             this.#logger.error(
               `Error terminating subcluster ${subclusterId} after its bootstrap failed:`,
@@ -213,8 +213,11 @@ export class SubclusterManager {
     if ('failure' in outcome) {
       // The rollback forgets the records; the workers and channels are the
       // kernel's to stop.
-      await this.#stopMembers(subclusterId, outcome.failure);
-      await this.#destroyChannels(subclusterId, 'failed launch');
+      try {
+        await this.#stopMembers(subclusterId, outcome.failure);
+      } finally {
+        await this.#destroyChannels(subclusterId, 'failed launch');
+      }
     }
     return outcome;
   }
@@ -349,8 +352,7 @@ export class SubclusterManager {
           return { failure: new SubclusterNotFoundError(subclusterId) };
         }
         for (const vatId of Object.values(subcluster.vats).reverse()) {
-          // A member can be gone already: lost, and retired by a crank before
-          // this one.
+          // `stopVat` throws for a vat that is gone.
           if (!this.#isVatGone(vatId)) {
             await this.#vatManager.stopVat(vatId, true);
           }

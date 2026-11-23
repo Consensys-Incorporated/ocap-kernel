@@ -342,7 +342,8 @@ describe('SubclusterManager', () => {
       expect(outcomes).toStrictEqual([]);
     });
 
-    it('stops every started member before a fault in stopping one reaches the run loop, naming the launch failure', async () => {
+    it('stops every started member and destroys the IO channels before a fault in stopping one reaches the run loop, naming the launch failure', async () => {
+      const { manager, ioManager } = makeManagerWithIO();
       const launchFailure = new Error('carol exploded');
       const stopFailure = new Error('SQLITE_FULL');
       mockVatManager.launchVat.mockRejectedValueOnce(launchFailure);
@@ -353,17 +354,19 @@ describe('SubclusterManager', () => {
       vatsRunning = true;
       mockVatManager.stopVat.mockRejectedValueOnce(stopFailure);
 
-      const error = (await subclusterManager
+      const error = (await manager
         .launchSubcluster(createMockClusterConfig())
         .catch((reason: unknown) => reason)) as AggregateError;
 
       expect({
         stopped: mockVatManager.stopVat.mock.calls.map(([vatId]) => vatId),
+        channelsDestroyed: ioManager.destroyChannels.mock.calls,
         errors: error.errors,
         cause: error.cause,
         outcomes,
       }).toStrictEqual({
         stopped: ['v2', 'v1'],
+        channelsDestroyed: [['s1']],
         errors: [stopFailure],
         cause: launchFailure,
         outcomes: [],
@@ -712,7 +715,6 @@ describe('SubclusterManager', () => {
       const subcluster = createMockSubcluster(s1, createMockClusterConfig());
       subcluster.vats = { testVat: asVatId('v1') };
       mockKernelStore.getSubcluster.mockReturnValue(subcluster);
-      // Retired by a crank before this one.
       retiredVats.add('v1');
 
       await subclusterManager.terminateSubcluster(s1);
