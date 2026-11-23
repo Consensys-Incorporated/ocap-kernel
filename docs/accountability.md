@@ -564,7 +564,8 @@ On receipt, a segment is kept only for an object the peer owns, and the list
 only as far as it checks: the first segment must be the peer's own and name
 the ref the object came under, and each after it must be signed by the
 kernel the one before names in `from`. A list the peer sends again for the
-same object replaces the one before. At most 64 segments are sent or taken.
+same object replaces the one before. At most 64 segments are sent, and a
+longer list is not taken at all.
 
 Verification is local: peer IDs are hashes of public keys, so each segment
 checks against the peer ID it claims. What cannot be checked is omission or
