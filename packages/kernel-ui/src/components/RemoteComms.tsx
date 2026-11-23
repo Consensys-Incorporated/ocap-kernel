@@ -83,16 +83,16 @@ const RemoteCommsPeerId: React.FC<{ peerId?: string | undefined }> = ({
   );
 };
 
-// ExportedUrl component lists one object that has a URL issued. The kernel
-// mints a URL to show on request, so it is not the string first issued.
+// ExportedUrl component lists one object that has a URL issued. A click
+// issues another URL for it, so the one shown is not the string first issued.
 const ExportedUrl: React.FC<ExportedOcapURL> = ({ kref, owner }) => {
   const { callKernelMethod, logMessage } = usePanelContext();
   const [ocapUrl, setOcapUrl] = useState<string>();
 
   const showUrl = (): void => {
-    callKernelMethod({ method: 'getIssuedOcapURL', params: { kref } })
+    callKernelMethod({ method: 'issueOcapURL', params: { kref } })
       .then(setOcapUrl)
-      .catch((error) =>
+      .catch((error: Error) =>
         logMessage(
           `Failed to get an ocap URL for ${kref}: ${error.message}`,
           'error',

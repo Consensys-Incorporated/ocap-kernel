@@ -1,4 +1,3 @@
-import { Fail } from '@endo/errors';
 import { Far } from '@endo/marshal';
 
 import { parseOcapURL } from './remote-comms.ts';
@@ -143,22 +142,6 @@ export class OcapURLManager {
       this.#kernelStore.undoOcapURLRetention(kref);
       throw error;
     }
-  }
-
-  /**
-   * Mint another URL for an object that already has one issued, without
-   * retaining the object again: the URLs already issued keep it. For showing
-   * a URL to someone entitled to issue one. Writes nothing.
-   *
-   * @param kref - The kref of the object.
-   * @returns a promise for an OCAP URL naming the object.
-   * @throws if no URL is issued for `kref`, or if remote identity is not
-   * initialized.
-   */
-  async getIssuedOcapURL(kref: KRef): Promise<string> {
-    this.#kernelStore.getOcapURLIssuanceCount(kref) > 0 ||
-      Fail`no ocap URL is issued for ${kref}`;
-    return await this.#remoteManager.getRemoteIdentity().issueOcapURL(kref);
   }
 
   /**

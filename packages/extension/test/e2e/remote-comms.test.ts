@@ -92,7 +92,7 @@ test.describe('Remote Communications', () => {
     // Get an ocap URL from kernel2's Remote Comms tab
     await popupPage2.click('button:text("Remote Comms")');
 
-    // Wait for the exported URLs to be scanned and displayed
+    // Wait for the list of objects with a URL issued
     await expect(popupPage2.locator('text=Exported Object URLs')).toBeVisible({
       timeout: 10000,
     });

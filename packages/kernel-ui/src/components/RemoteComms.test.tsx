@@ -282,7 +282,7 @@ describe('RemoteComms', () => {
     expect(url1Input).toHaveAttribute('readonly');
     expect(screen.queryByTestId('ocap-url-ko2')).not.toBeInTheDocument();
     expect(callKernelMethod.mock.calls).toStrictEqual([
-      [{ method: 'getIssuedOcapURL', params: { kref: 'ko1' } }],
+      [{ method: 'issueOcapURL', params: { kref: 'ko1' } }],
     ]);
     expect(screen.getByText('Owner v1')).toBeInTheDocument();
     expect(screen.getByText('Owner none')).toBeInTheDocument();

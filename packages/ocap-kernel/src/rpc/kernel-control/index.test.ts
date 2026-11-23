@@ -16,10 +16,6 @@ import {
   initRemoteCommsSpec,
 } from './init-remote-comms.ts';
 import { isRevokedHandler, isRevokedSpec } from './is-revoked.ts';
-import {
-  getIssuedOcapURLHandler,
-  getIssuedOcapURLSpec,
-} from './get-issued-ocap-url.ts';
 import { issueOcapURLHandler, issueOcapURLSpec } from './issue-ocap-url.ts';
 import {
   launchSubclusterHandler,
@@ -52,7 +48,6 @@ describe('handlers/index', () => {
       executeDBQuery: executeDBQueryHandler,
       getStatus: getStatusHandler,
       initRemoteComms: initRemoteCommsHandler,
-      getIssuedOcapURL: getIssuedOcapURLHandler,
       issueOcapURL: issueOcapURLHandler,
       pingVat: pingVatHandler,
       redeemOcapURL: redeemOcapURLHandler,
@@ -85,7 +80,6 @@ describe('handlers/index', () => {
       executeDBQuery: executeDBQuerySpec,
       getStatus: getStatusSpec,
       initRemoteComms: initRemoteCommsSpec,
-      getIssuedOcapURL: getIssuedOcapURLSpec,
       issueOcapURL: issueOcapURLSpec,
       pingVat: pingVatSpec,
       redeemOcapURL: redeemOcapURLSpec,

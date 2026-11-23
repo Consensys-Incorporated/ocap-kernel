@@ -584,17 +584,6 @@ export class Kernel {
   }
 
   /**
-   * Mint another OCAP URL for an object that already has one issued, without
-   * retaining the object again.
-   *
-   * @param kref - The kref of the object.
-   * @returns A promise for an OCAP URL naming the object.
-   */
-  async getIssuedOcapURL(kref: KRef): Promise<string> {
-    return this.#ocapURLManager.getIssuedOcapURL(kref);
-  }
-
-  /**
    * Redeem an OCAP URL to get the kernel reference it represents. A remote
    * URL's redemption is refused once `stop` is called or the run loop has died.
    *
