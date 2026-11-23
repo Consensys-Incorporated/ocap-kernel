@@ -89,6 +89,7 @@ export class MockRemotesFactory {
         }
         return outcome.value;
       }),
+      assertInboxOpen: vi.fn(),
       panic: vi.fn<KernelQueue['panic']>(
         (problem, cause) => new Error(`Kernel panic: ${problem}`, { cause }),
       ),
@@ -180,6 +181,7 @@ export class MockRemotesFactory {
       remoteComms,
       remoteHandle,
       kernelStore: this.config.kernelStore as KernelStore,
+      kernelQueue: this.makeMockKernelQueue(),
     };
   }
 

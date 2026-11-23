@@ -1312,7 +1312,7 @@ describe.sequential('Remote Communications E2E', () => {
 
         // step 3: revoke the target on A through the public API
         const targetKRef = getVatRootRef(kernel1, kernelStore1, 'Target');
-        kernel1.revoke(targetKRef);
+        await kernel1.revoke(targetKRef);
 
         // step 4: B's next invocation fails
         await expect(
@@ -1382,7 +1382,7 @@ describe.sequential('Remote Communications E2E', () => {
 
         // Schedule reap on kernel1's remote endpoints - this will cause
         // the crank loop to deliver BOYD to the remote kernel
-        kernel1.reapRemotes();
+        await kernel1.reapRemotes();
 
         // Trigger cranks to process the reap action (which sends BOYD to kernel2)
         // and allow the remote to process it and respond
@@ -1421,7 +1421,7 @@ describe.sequential('Remote Communications E2E', () => {
         await sendRemoteMessage(kernel2, bobRef, aliceURL, 'hello', ['Bob']);
 
         // Schedule reap on kernel2's remote endpoints - this will send BOYD to kernel1
-        kernel2.reapRemotes();
+        await kernel2.reapRemotes();
 
         // Trigger cranks to process the reap and allow BOYD to flow
         for (let i = 0; i < 3; i++) {
@@ -1469,8 +1469,8 @@ describe.sequential('Remote Communications E2E', () => {
 
         // Schedule reap on BOTH sides simultaneously - this tests that the
         // ping-pong prevention flag works correctly, preventing infinite BOYD loops
-        kernel1.reapRemotes();
-        kernel2.reapRemotes();
+        await kernel1.reapRemotes();
+        await kernel2.reapRemotes();
 
         // Trigger cranks on both kernels to process the reaps and allow
         // BOYD messages to flow in both directions

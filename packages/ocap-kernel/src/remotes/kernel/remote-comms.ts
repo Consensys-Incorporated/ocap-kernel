@@ -366,33 +366,33 @@ export async function initRemoteIdentity(
   });
 }
 
+/** What `startRemoteComms` takes from `prepareRemoteComms`. */
+export type PreparedRemoteComms = Awaited<
+  ReturnType<typeof initRemoteIdentity>
+> & {
+  wakeDetected: boolean;
+  platformOptions: Omit<
+    RemoteCommsOptions,
+    'relays' | 'mnemonic' | 'maxUrlRelayHints' | 'maxKnownRelays'
+  >;
+};
+
 /**
- * Initialize remote communications for this kernel.
+ * Write what remote comms keep in the store, the kernel's identity and its
+ * relays, and read whether it woke from an earlier incarnation.
  *
- * @param kernelStore - The kernel store, for storing persistent key info.
- * @param platformServices - The platform services, for accessing network I/O
- *   operations that are not available within the web worker that the kernel runs in.
- * @param remoteMessageHandler - Handler to process received inbound communications.
- * @param options - Options for remote communications initialization.
- * @param logger - The logger to use.
- * @param keySeed - Optional seed for libp2p key generation.
- * @param onRemoteGiveUp - Optional callback to be called when we give up on a remote.
- * @param incarnationId - Unique identifier for this kernel instance.
- * @param onIncarnationChange - Optional callback when a remote peer's incarnation changes.
- *
- * @returns the initialized remote comms object.
+ * @param kernelStore - The kernel's persistent state store.
+ * @param options - Configuration options for remote communications.
+ * @param logger - Optional logger for diagnostic output.
+ * @param keySeed - Optional seed to use for key generation.
+ * @returns What `startRemoteComms` needs.
  */
-export async function initRemoteComms(
+export async function prepareRemoteComms(
   kernelStore: KernelStore,
-  platformServices: PlatformServices,
-  remoteMessageHandler: RemoteMessageHandler,
   options: RemoteCommsOptions = {},
   logger?: Logger,
   keySeed?: string,
-  onRemoteGiveUp?: OnRemoteGiveUp,
-  incarnationId?: string,
-  onIncarnationChange?: OnIncarnationChange,
-): Promise<RemoteComms> {
+): Promise<PreparedRemoteComms> {
   const {
     relays = [],
     mnemonic,
@@ -408,18 +408,53 @@ export async function initRemoteComms(
     keySeed,
   );
 
-  const { identity, knownRelays } = result;
-
-  logger?.log(`relays: ${JSON.stringify(knownRelays)}`);
+  logger?.log(`relays: ${JSON.stringify(result.knownRelays)}`);
 
   // detectWake() reads and updates lastActiveTime atomically, so it must be
   // called before initializeRemoteComms to capture the pre-restart timestamp.
   const wakeDetected = kernelStore.detectWake();
 
+  return harden({ ...result, wakeDetected, platformOptions });
+}
+
+/**
+ * Start the transport over what `prepareRemoteComms` wrote.
+ *
+ * @param prepared - What `prepareRemoteComms` returned.
+ * @param options - Named options.
+ * @param options.platformServices - Platform services for network operations.
+ * @param options.remoteMessageHandler - Handler for incoming remote messages.
+ * @param options.logger - Optional logger for diagnostic output.
+ * @param options.onRemoteGiveUp - Optional callback for when a remote peer gives up.
+ * @param options.incarnationId - Optional incarnation ID for this kernel instance.
+ * @param options.onIncarnationChange - Optional callback for incarnation changes.
+ * @returns The remote comms object.
+ */
+export async function startRemoteComms(
+  prepared: PreparedRemoteComms,
+  {
+    platformServices,
+    remoteMessageHandler,
+    logger,
+    onRemoteGiveUp,
+    incarnationId,
+    onIncarnationChange,
+  }: {
+    platformServices: PlatformServices;
+    remoteMessageHandler: RemoteMessageHandler;
+    logger?: Logger | undefined;
+    onRemoteGiveUp?: OnRemoteGiveUp | undefined;
+    incarnationId?: string | undefined;
+    onIncarnationChange?: OnIncarnationChange | undefined;
+  },
+): Promise<RemoteComms> {
+  const { identity, keySeed, knownRelays, wakeDetected, platformOptions } =
+    prepared;
+
   // Omit mnemonic (sensitive key material) from the options passed to
   // platform services, which only needs network-level configuration.
   await platformServices.initializeRemoteComms(
-    result.keySeed,
+    keySeed,
     { ...platformOptions, relays: knownRelays },
     remoteMessageHandler,
     onRemoteGiveUp,

@@ -28,7 +28,7 @@ describe('lms-chat vat', () => {
       baseUrl: 'http://localhost:11434',
     });
     const { name, service } = makeKernelLanguageModelService({ chat });
-    kernel.registerKernelServiceObject(name, service);
+    await kernel.registerKernelServiceObject(name, service);
 
     await runTestVats(kernel, {
       bootstrap: 'main',

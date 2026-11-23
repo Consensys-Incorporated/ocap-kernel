@@ -62,7 +62,7 @@ describe('Vat Lifecycle', { timeout: 30_000 }, () => {
     expect(activeCrasherVat).toBeUndefined();
 
     // Trigger garbage collection to clean up terminated vat objects
-    kernel.collectGarbage();
+    await kernel.collectGarbage();
     await waitUntilQuiescent();
 
     // Verify kernel store cleanup - root object should be cleaned up after GC
@@ -211,7 +211,7 @@ describe('Vat Lifecycle', { timeout: 30_000 }, () => {
 
     await kernel.terminateVat(vatId);
     await waitUntilQuiescent();
-    kernel.collectGarbage();
+    await kernel.collectGarbage();
     await waitUntilQuiescent();
 
     expect(kernelStore.isVatActive(vatId)).toBe(false);
@@ -249,7 +249,7 @@ describe('Vat Lifecycle', { timeout: 30_000 }, () => {
     // A live worker sending a frame the kernel cannot read.
     platformServices.workers.get(vatId)?.worker.emit('message', NaN);
     await waitUntilQuiescent();
-    kernel.collectGarbage();
+    await kernel.collectGarbage();
     await waitUntilQuiescent();
 
     expect(kernel.getVats()).toStrictEqual([]);

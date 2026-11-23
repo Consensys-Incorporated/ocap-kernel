@@ -6,6 +6,7 @@ import { stringify } from '@metamask/kernel-utils';
 import { processGCActionSet } from './garbage-collection/garbage-collection.ts';
 import { kser, makeKernelError } from './liveslots/kernel-marshal.ts';
 import type { KernelStore } from './store/index.ts';
+import { isStoreFault } from './store/utils/store-fault.ts';
 import type {
   CrankResult,
   EndpointId,
@@ -58,6 +59,31 @@ const DEAD_RUN_LOOP_WORK =
 
 const DEAD_RUN_LOOP_RESULT =
   'Kernel run loop died; this message result will never be delivered';
+
+/**
+ * Carry out a host call's work for `enqueueInbox`, turning a throw into a
+ * failure that rejects the caller and rolls the crank back. A store fault is
+ * rethrown and kills the run loop.
+ *
+ * @param work - The call's work.
+ * @returns The outcome for the run loop.
+ */
+export async function attempt<Value>(
+  work: () => Promise<Value> | Value,
+): Promise<InboxOutcome<Value>> {
+  try {
+    return { value: await work() };
+  } catch (error) {
+    if (isStoreFault(error)) {
+      throw error;
+    }
+    const failure =
+      error instanceof Error
+        ? error
+        : new Error(String(error), { cause: error });
+    return { abort: true, failure };
+  }
+}
 
 type RunLoopState =
   | Exclude<RunLoopStatus, { state: 'failed' }>
