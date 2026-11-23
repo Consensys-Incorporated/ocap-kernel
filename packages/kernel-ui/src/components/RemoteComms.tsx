@@ -1,4 +1,7 @@
 import {
+  Button,
+  ButtonBaseSize,
+  ButtonVariant,
   Box,
   Text as TextComponent,
   TextColor,
@@ -7,7 +10,7 @@ import {
   BadgeStatus,
   BadgeStatusStatus,
 } from '@metamask/design-system-react';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 
 import { usePanelContext } from '../context/PanelContext.tsx';
 import { useRegistry } from '../hooks/useRegistry.ts';
@@ -80,6 +83,60 @@ const RemoteCommsPeerId: React.FC<{ peerId?: string | undefined }> = ({
   );
 };
 
+// ExportedUrl component lists one object that has a URL issued. A click
+// issues another URL for it, so the one shown is not the string first issued.
+const ExportedUrl: React.FC<ExportedOcapURL> = ({ kref, owner }) => {
+  const { callKernelMethod, logMessage } = usePanelContext();
+  const [ocapUrl, setOcapUrl] = useState<string>();
+
+  const showUrl = (): void => {
+    callKernelMethod({ method: 'issueOcapURL', params: { kref } })
+      .then(setOcapUrl)
+      .catch((error: Error) =>
+        logMessage(
+          `Failed to get an ocap URL for ${kref}: ${error.message}`,
+          'error',
+        ),
+      );
+  };
+
+  return (
+    <Box className="border border-muted rounded p-3">
+      <Box className="flex items-center gap-2">
+        <TextComponent
+          variant={TextVariant.BodyXs}
+          fontWeight={FontWeight.Medium}
+        >
+          Owner {owner ?? 'none'}
+        </TextComponent>
+        <TextComponent variant={TextVariant.BodyXs} color={TextColor.TextMuted}>
+          ({kref})
+        </TextComponent>
+        {ocapUrl === undefined ? (
+          <Button
+            variant={ButtonVariant.Secondary}
+            size={ButtonBaseSize.Sm}
+            data-testid={`show-ocap-url-${kref}`}
+            onClick={showUrl}
+            className="rounded-md"
+          >
+            Show URL
+          </Button>
+        ) : null}
+      </Box>
+
+      {ocapUrl === undefined ? null : (
+        <Input
+          data-testid={`ocap-url-${kref}`}
+          value={ocapUrl}
+          style={{ width: '100%', fontSize: '12px', marginTop: '8px' }}
+          readOnly
+        />
+      )}
+    </Box>
+  );
+};
+
 // RemoteCommsExportedUrls component displays exported ocap URLs.
 const RemoteCommsExportedUrls: React.FC<{
   exportedUrls: ExportedOcapURL[];
@@ -100,30 +157,8 @@ const RemoteCommsExportedUrls: React.FC<{
       </TextComponent>
 
       <Box className="space-y-3">
-        {exportedUrls.map(({ vatId, promiseId, ocapUrl }) => (
-          <Box key={promiseId} className="border border-muted rounded p-3">
-            <Box className="flex items-center gap-2 mb-2">
-              <TextComponent
-                variant={TextVariant.BodyXs}
-                fontWeight={FontWeight.Medium}
-              >
-                Vat {vatId}
-              </TextComponent>
-              <TextComponent
-                variant={TextVariant.BodyXs}
-                color={TextColor.TextMuted}
-              >
-                ({promiseId})
-              </TextComponent>
-            </Box>
-
-            <Input
-              data-testid={`ocap-url-${promiseId}`}
-              value={ocapUrl}
-              style={{ width: '100%', fontSize: '12px' }}
-              readOnly
-            />
-          </Box>
+        {exportedUrls.map(({ kref, owner }) => (
+          <ExportedUrl key={kref} kref={kref} owner={owner} />
         ))}
       </Box>
     </>
