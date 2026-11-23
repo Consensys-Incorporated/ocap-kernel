@@ -10,6 +10,7 @@ import type { VatManager } from './VatManager.ts';
 import { kslot, kunser } from '../liveslots/kernel-marshal.ts';
 import type { SlotValue } from '../liveslots/kernel-marshal.ts';
 import type { KernelStore } from '../store/index.ts';
+import { isStoreFault } from '../store/utils/store-fault.ts';
 import type {
   VatId,
   KRef,
@@ -99,18 +100,16 @@ export class SubclusterManager {
   }
 
   /**
-   * Launches a sub-cluster of vats, in a crank of its own: its record, IO
-   * channels and vats are written together with the bootstrap message, and a
-   * vat that will not start rolls them all back. The bootstrap message is
-   * answered in a later crank, and a subcluster whose bootstrap fails is
-   * terminated.
+   * Launches a sub-cluster of vats, in a crank of its own: its record and vats
+   * are written together with the bootstrap message, and a failure rolls them
+   * back and destroys its IO channels. The bootstrap message is answered in a
+   * later crank, and a subcluster whose bootstrap fails is terminated.
    *
    * @param config - Configuration object for sub-cluster.
    * @param options - Launch options.
    * @param options.isSystem - Whether this is a system subcluster. System
    * subclusters may access restricted kernel services. Defaults to `false`.
-   * @param options.systemName - The name to record a system subcluster under,
-   * written with its record.
+   * @param options.systemName - The name to record a system subcluster under.
    * @returns A promise for the subcluster ID, bootstrap root kref, and
    * bootstrap result.
    */
@@ -143,11 +142,15 @@ export class SubclusterManager {
       }
     } catch (error) {
       await this.terminateSubcluster(subclusterId).catch(
-        (teardownError: unknown) =>
-          this.#logger.error(
-            `Error terminating subcluster ${subclusterId} after its bootstrap failed:`,
-            teardownError,
-          ),
+        (teardownError: unknown) => {
+          // Not found when the bootstrap vat's death took the record already.
+          if (!(teardownError instanceof SubclusterNotFoundError)) {
+            this.#logger.error(
+              `Error terminating subcluster ${subclusterId} after its bootstrap failed:`,
+              teardownError,
+            );
+          }
+        },
       );
       throw isCapData(error) ? kunser(error as CapData<KRef>) : error;
     }
@@ -161,8 +164,7 @@ export class SubclusterManager {
    * @param options - Launch options.
    * @param options.isSystem - Whether this is a system subcluster.
    * @param options.systemName - The name to record a system subcluster under.
-   * @returns The crank's outcome: what was launched, or a failure that rolls
-   * the crank back, after every worker it started has been stopped.
+   * @returns The crank's outcome.
    */
   async #launch(
     config: ClusterConfig,
@@ -212,16 +214,30 @@ export class SubclusterManager {
       // The rollback forgets the records; the workers and channels are the
       // kernel's to stop.
       await this.#stopMembers(subclusterId, outcome.failure);
-      try {
-        await this.#ioManager?.destroyChannels(subclusterId);
-      } catch (cleanupError) {
-        this.#logger.error(
-          'Error during IO cleanup on failed launch:',
-          cleanupError,
-        );
-      }
+      await this.#destroyChannels(subclusterId, 'failed launch');
     }
     return outcome;
+  }
+
+  /**
+   * Destroy a subcluster's IO channels, logging a failure that is not a store
+   * fault.
+   *
+   * @param subclusterId - The subcluster.
+   * @param when - What the cleanup is part of, for the log.
+   */
+  async #destroyChannels(
+    subclusterId: SubclusterId,
+    when: string,
+  ): Promise<void> {
+    try {
+      await this.#ioManager?.destroyChannels(subclusterId);
+    } catch (error) {
+      if (isStoreFault(error)) {
+        throw error;
+      }
+      this.#logger.error(`Error during IO cleanup on ${when}:`, error);
+    }
   }
 
   /**
@@ -230,8 +246,9 @@ export class SubclusterManager {
    * @param subclusterId - The subcluster.
    * @param config - Its configuration.
    * @returns The bootstrap vat's root and every vat's, by name.
-   * @throws What the first vat that failed to launch threw, once every launch
-   * has settled, so that each worker that did start is there to be stopped.
+   * @throws What the first vat that failed to launch threw, or a store fault
+   * if any threw one, once every launch has settled, so that each worker that
+   * did start is there to be stopped.
    */
   async #launchVats(
     subclusterId: SubclusterId,
@@ -247,9 +264,11 @@ export class SubclusterManager {
         ],
       ),
     );
-    const failed = launches.find((launch) => launch.status === 'rejected');
-    if (failed) {
-      throw failed.reason;
+    const failures = launches.flatMap((launch) =>
+      launch.status === 'rejected' ? [launch.reason] : [],
+    );
+    if (failures.length > 0) {
+      throw failures.find(isStoreFault) ?? failures[0];
     }
     const vatRootKrefs = Object.fromEntries(
       launches.flatMap((launch) =>
@@ -324,6 +343,9 @@ export class SubclusterManager {
       async (): Promise<InboxOutcome<undefined>> => {
         const subcluster = this.#kernelStore.getSubcluster(subclusterId);
         if (!subcluster) {
+          // The death of its last member took the record, but not these.
+          await this.#destroyChannels(subclusterId, 'termination');
+          this.#dropSystemSubclusterMapping(subclusterId);
           return { failure: new SubclusterNotFoundError(subclusterId) };
         }
         for (const vatId of Object.values(subcluster.vats).reverse()) {
@@ -334,11 +356,7 @@ export class SubclusterManager {
           }
           this.#vatManager.collectGarbage();
         }
-        try {
-          await this.#ioManager?.destroyChannels(subclusterId);
-        } catch (error) {
-          this.#logger.error('Error during IO cleanup on termination:', error);
-        }
+        await this.#destroyChannels(subclusterId, 'termination');
         this.#dropSystemSubclusterMapping(subclusterId);
         this.#kernelStore.deleteSubcluster(subclusterId);
         return { value: undefined };

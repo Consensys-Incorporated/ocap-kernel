@@ -638,8 +638,9 @@ export class Kernel {
   }
 
   /**
-   * Terminates a named sub-cluster of vats, in a crank of its own. A failure
-   * partway rolls back its store writes and kills the run loop.
+   * Terminates a named sub-cluster of vats, in a crank of its own. Refused
+   * once `stop` is called or the run loop has died. A failure partway rolls
+   * back its store writes and kills the run loop.
    *
    * @param subclusterId - The id of the subcluster to terminate.
    * @returns A promise that resolves once the crank has committed.

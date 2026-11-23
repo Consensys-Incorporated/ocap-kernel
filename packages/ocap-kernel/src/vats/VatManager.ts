@@ -232,8 +232,8 @@ export class VatManager {
 
   /**
    * Launch a new vat, inside the crank of its subcluster's launch. One whose
-   * worker does not start in time leaves none running; a worker that did
-   * start, and what it wrote, are left to the launch's rollback.
+   * worker does not start in time is told to stop; a worker that did start is
+   * left to the launch's crank to stop, and its writes to the rollback.
    *
    * @param vatConfig - Configuration for the new vat.
    * @param vatName - The name of the vat within the subcluster.

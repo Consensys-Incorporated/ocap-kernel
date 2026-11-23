@@ -83,8 +83,8 @@ function fakeVats() {
  * Make a kernel on a real store over fake vats, whose platform records the
  * workers it is asked to stop.
  *
- * @returns The kernel, the vats, and a function that reads what the tests
- * check.
+ * @returns The kernel, its database, the vats, the IO listener every channel
+ * gets, and a function that reads what the tests check.
  */
 async function makeKernel() {
   vi.spyOn(console, 'debug').mockImplementation(() => undefined);
@@ -96,8 +96,13 @@ async function makeKernel() {
   const kernelDatabase = await makeSQLKernelDatabase({
     dbFilename: ':memory:',
   });
+  const listener = {
+    accept: vi.fn(async () => null),
+    close: vi.fn(async () => undefined),
+  };
   const kernel = await Kernel.make(platformServices, kernelDatabase, {
     logger: new Logger({ transports: [] }),
+    ioListenerFactory: async () => listener,
   });
   const state = () => ({
     received: vats.received,
@@ -105,11 +110,12 @@ async function makeKernel() {
       .mocked(platformServices.terminate)
       .mock.calls.map(([vatId]) => vatId),
     vats: kernel.getVatIds(),
+    storedVats: makeKernelStore(kernelDatabase).getVatIDs(),
     subclusters: makeKernelStore(kernelDatabase)
       .getSubclusters()
       .map(({ id, vats: members }) => [id, Object.keys(members)]),
   });
-  return { kernel, vats, state };
+  return { kernel, kernelDatabase, vats, listener, state };
 }
 
 describe('a subcluster with a peer vat that fails to launch', () => {
@@ -145,6 +151,7 @@ describe('a subcluster with a peer vat that fails to launch', () => {
       received: ['bootstrap', 'stall', 'bootstrap'],
       workersStopped: ['v3', 'v2'],
       vats: ['v1', 'v4'],
+      storedVats: ['v1', 'v4'],
       subclusters: [
         ['s1', ['staller']],
         ['s3', ['again']],
@@ -152,26 +159,37 @@ describe('a subcluster with a peer vat that fails to launch', () => {
     });
   });
 
-  it('stops a vat still starting when its peer fails', async () => {
-    const { kernel, vats, state } = await makeKernel();
+  it('stops a vat still starting when its peer fails, and closes its IO channels', async () => {
+    const { kernel, vats, listener, state } = await makeKernel();
+    const io = { repl: { type: 'console' as const } };
     const launching = kernel.launchSubcluster({
       bootstrap: 'slow',
       vats: {
         slow: { sourceSpec: 'slow.js' },
         peer: { sourceSpec: 'fails.js' },
       },
+      io,
     });
     launching.catch(() => undefined);
     await delay(10);
     vats.releaseSlow();
 
     await expect(launching).rejects.toThrow('(peer)');
+    expect(listener.close).toHaveBeenCalledOnce();
     expect(state()).toStrictEqual({
       received: [],
       workersStopped: ['v2', 'v1'],
       vats: [],
+      storedVats: [],
       subclusters: [],
     });
+    // The channel's name is free again.
+    await kernel.launchSubcluster({
+      bootstrap: 'again',
+      vats: { again: { sourceSpec: 'again.js' } },
+      io,
+    });
+    expect(state().subclusters).toStrictEqual([['s2', ['again']]]);
   });
 
   it('gives none of its vat ids to a launch asked for during it, and stops a member that lost its channel', async () => {
@@ -200,7 +218,40 @@ describe('a subcluster with a peer vat that fails to launch', () => {
       received: ['bootstrap'],
       workersStopped: ['v2', 'v1'],
       vats: ['v3'],
+      storedVats: ['v3'],
       subclusters: [['s2', ['next']]],
     });
+  });
+
+  it("rolls a termination back, and kills the run loop, when the store refuses a member's death", async () => {
+    const { kernel, kernelDatabase, state } = await makeKernel();
+    const { subclusterId, rootKref } = await kernel.launchSubcluster({
+      bootstrap: 'first',
+      vats: {
+        first: { sourceSpec: 'first.js' },
+        second: { sourceSpec: 'second.js' },
+      },
+    });
+    const { kernelKVStore } = kernelDatabase;
+    const deleteKey = kernelKVStore.delete.bind(kernelKVStore);
+    // Members are stopped last launched first, so this is the second death.
+    vi.spyOn(kernelKVStore, 'delete').mockImplementation((key) => {
+      if (key === 'vatConfig.v1') {
+        throw new Error('SQLITE_FULL');
+      }
+      deleteKey(key);
+    });
+
+    await expect(kernel.terminateSubcluster(subclusterId)).rejects.toThrow(
+      'SQLITE_FULL',
+    );
+
+    expect(state()).toMatchObject({
+      storedVats: ['v1', 'v2'],
+      subclusters: [['s1', ['first', 'second']]],
+    });
+    await expect(kernel.queueMessage(rootKref, 'ping', [])).rejects.toThrow(
+      'Kernel run loop died',
+    );
   });
 });
