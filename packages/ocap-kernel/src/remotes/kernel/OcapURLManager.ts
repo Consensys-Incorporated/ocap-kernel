@@ -42,7 +42,7 @@ export class OcapURLManager {
   /** The kernel's store, for retaining the objects issued URLs name */
   readonly #kernelStore: KernelStore;
 
-  /** The kernel's run queue, whose inbox takes each issue's write */
+  /** The kernel's run queue */
   readonly #kernelQueue: KernelQueue;
 
   /** OCAP URL issuer service object */
@@ -164,12 +164,14 @@ export class OcapURLManager {
       return identity.redeemLocalOcapURL(url);
     }
 
-    // This is a remote OCAP URL — requires full remote comms. The relay hints
-    // are added inside `use`, so they are written in the remote's crank along
-    // with the request, and future URLs embed them.
+    // This is a remote OCAP URL — requires full remote comms. `addKnownRelays`
+    // writes the store, so it runs in the remote's crank, with the request.
     return this.#remoteManager.withRemote(host, {
       hints,
-      use: async (remote) => {
+      // Not `async`: a store fault in the relay write must throw into the
+      // crank, not reject.
+      // oxlint-disable-next-line typescript/promise-function-async
+      use: (remote) => {
         identity.addKnownRelays(hints);
         return remote.redeemOcapURL(url);
       },

@@ -10,6 +10,7 @@ import { attempt } from '../../KernelQueue.ts';
 import type { KernelQueue } from '../../KernelQueue.ts';
 import { makeKernelError } from '../../liveslots/kernel-marshal.ts';
 import type { KernelStore } from '../../store/index.ts';
+import { isStoreFault } from '../../store/utils/store-fault.ts';
 import type {
   CrankResult,
   PlatformServices,
@@ -421,7 +422,8 @@ export class RemoteManager {
 
     // The transport keeps no store state, so it starts after the crank that
     // wrote the identity has committed: one that fails to start leaves the
-    // identity written.
+    // identity written, as does a `stop` begun while that crank waited, which
+    // refuses the start.
     const prepared = await this.#kernelQueue.enqueueInbox(
       'initialize remote comms',
       async () =>
@@ -434,6 +436,7 @@ export class RemoteManager {
           ),
         ),
     );
+    this.#kernelQueue.assertInboxOpen('start remote comms');
     const remoteComms = await startRemoteComms(prepared, {
       platformServices: this.#platformServices,
       remoteMessageHandler,
@@ -568,8 +571,10 @@ export class RemoteManager {
    * if it has none. Set up inside whatever crank was open, an abort would take
    * back its records while its handle lives on. `use` runs in that crank, as
    * soon as the handle exists, so what it writes before its first `await`
-   * commits with the setup; what it throws is the caller's to hear, and leaves
-   * the setup committed.
+   * commits with the setup. What it throws is the caller's to hear, and leaves
+   * the setup committed, unless it is a store fault, which rolls the setup
+   * back and kills the run loop; a fault it rejects with instead, as an
+   * `async` `use` must, only the caller hears.
    *
    * @param peerId - The libp2p peer for which a handle is sought.
    * @param options - Options bag.
@@ -599,10 +604,17 @@ export class RemoteManager {
         // `#provideRemote`, not `establishRemote`: a setup queued for an
         // earlier caller may have run first.
         const remote = this.#provideRemote(peerId, hints);
-        // A throw from `use` rejects its answer, not the crank.
-        const answer = new Promise<Result>((resolve) => {
-          resolve(use(remote));
-        });
+        let answer: Promise<Result>;
+        try {
+          answer = Promise.resolve(use(remote));
+        } catch (error) {
+          // A store fault is the crank's to report; any other throw from
+          // `use` rejects its answer, not the crank.
+          if (isStoreFault(error)) {
+            throw error;
+          }
+          answer = Promise.reject(error);
+        }
         // Awaited once the crank commits; a crank that dies first abandons
         // the answer with nobody holding it.
         answer.catch(() => undefined);
@@ -653,12 +665,12 @@ export class RemoteManager {
 
   /**
    * Handle a message from a remote kernel. A known peer's is handed to its
-   * handle at once, with no `await` before it: one microtask would let an idle
-   * run loop record a restart of the peer ahead of a message read late off
-   * the old incarnation's channel. A new peer's waits for the crank that sets
-   * the peer up, and so does each later one while it waits: handed over
-   * first, a later message would have the handle drop the earlier one as a
-   * duplicate.
+   * handle at once, with no `await` before it: a message read late off the
+   * old incarnation's channel must reach the queue before the run loop
+   * records the restart, or it is taken against the new one. A new peer's
+   * waits for the crank that sets the peer up, and so does each later one
+   * while it waits: handed over first, a later message would have the handle
+   * drop the earlier one as a duplicate.
    *
    * @param from - The peer ID of the sender.
    * @param message - The message content.

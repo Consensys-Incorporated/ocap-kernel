@@ -86,9 +86,7 @@ describe('VatManager', () => {
    * hand.
    */
   const leaveRequestQueued = (): void => {
-    mockKernelQueue.enqueueRestartVat.mockImplementationOnce(
-      async () => undefined,
-    );
+    mockKernelQueue.enqueueRestartVat.mockResolvedValueOnce(undefined);
   };
 
   /**
@@ -644,9 +642,7 @@ describe('VatManager', () => {
 
       it('comes off the books at once and is retired by the run loop', async () => {
         await vatManager.runVat(v1, createMockVatConfig());
-        mockKernelQueue.enqueueTerminateVat.mockImplementationOnce(
-          async () => undefined,
-        );
+        mockKernelQueue.enqueueTerminateVat.mockResolvedValueOnce(undefined);
 
         reportStreamFailure(new Error('channel failed'));
 
@@ -1041,9 +1037,7 @@ describe('VatManager', () => {
 
     it('supersedes a restart still queued for the same vat', async () => {
       await vatManager.runVat(v1, createMockVatConfig());
-      mockKernelQueue.enqueueRestartVat.mockImplementationOnce(
-        async () => undefined,
-      );
+      mockKernelQueue.enqueueRestartVat.mockResolvedValueOnce(undefined);
       const restarting = vatManager.restartVat(v1);
 
       await vatManager.terminateVat(v1);
@@ -1058,14 +1052,10 @@ describe('VatManager', () => {
         return () => undefined;
       });
       await vatManager.runVat(v1, createMockVatConfig());
-      mockKernelQueue.enqueueRestartVat.mockImplementationOnce(
-        async () => undefined,
-      );
+      mockKernelQueue.enqueueRestartVat.mockResolvedValueOnce(undefined);
       const restarting = vatManager.restartVat(v1);
       // Written, but the run loop dies before carrying it out.
-      mockKernelQueue.enqueueTerminateVat.mockImplementationOnce(
-        async () => undefined,
-      );
+      mockKernelQueue.enqueueTerminateVat.mockResolvedValueOnce(undefined);
       const terminating = vatManager.terminateVat(v1);
       await delay();
 
@@ -1097,9 +1087,7 @@ describe('VatManager', () => {
       'leaves a queued restart in place when the termination is refused: $refusal',
       async ({ refusal, reason, refuse }) => {
         await vatManager.runVat(v1, createMockVatConfig());
-        mockKernelQueue.enqueueRestartVat.mockImplementationOnce(
-          async () => undefined,
-        );
+        mockKernelQueue.enqueueRestartVat.mockResolvedValueOnce(undefined);
         const restarting = vatManager.restartVat(v1);
         refuse();
 
@@ -1113,14 +1101,14 @@ describe('VatManager', () => {
       },
     );
 
-    it('counts no termination as pending once the request is refused', async () => {
+    it('counts no termination as pending once the request is never written', async () => {
       await vatManager.runVat(v1, createMockVatConfig());
       mockKernelQueue.enqueueTerminateVat.mockRejectedValueOnce(
-        new Error('Kernel run loop is stopping; cannot terminate a vat'),
+        new Error('Kernel was reset; queued work was abandoned'),
       );
 
       await expect(vatManager.terminateVat(v1)).rejects.toThrow(
-        'Kernel run loop is stopping',
+        'Kernel was reset',
       );
 
       expect(await vatManager.restartVat(v1)).toBe(vatHandles[1]);
@@ -1131,9 +1119,7 @@ describe('VatManager', () => {
       await vatManager.runVat(v1, createMockVatConfig());
       leaveRequestQueued();
       const overtaken = vatManager.restartVat(v1);
-      mockKernelQueue.enqueueTerminateVat.mockImplementationOnce(
-        async () => undefined,
-      );
+      mockKernelQueue.enqueueTerminateVat.mockResolvedValueOnce(undefined);
       const terminating = vatManager.terminateVat(v1);
       const later = vatManager.restartVat(v1);
 
@@ -1149,9 +1135,7 @@ describe('VatManager', () => {
 
     it('queues restarts again once its termination is abandoned', async () => {
       await vatManager.runVat(v1, createMockVatConfig());
-      mockKernelQueue.enqueueTerminateVat.mockImplementationOnce(
-        async () => undefined,
-      );
+      mockKernelQueue.enqueueTerminateVat.mockResolvedValueOnce(undefined);
       const terminating = vatManager.terminateVat(v1);
       vatManager.abandonQueuedWork(new Error('Kernel was reset'));
       await expect(terminating).rejects.toThrow('Kernel was reset');
@@ -1181,9 +1165,7 @@ describe('VatManager', () => {
         await vatManager.runVat(v1, createMockVatConfig());
         leaveRequestQueued();
         const restarting = vatManager.restartVat(v1);
-        mockKernelQueue.enqueueTerminateVat.mockImplementationOnce(
-          async () => undefined,
-        );
+        mockKernelQueue.enqueueTerminateVat.mockResolvedValueOnce(undefined);
         const terminating = vatManager.terminateVat(v1);
         await vatManager.stopVat(v1, true);
         mockKernelStore.isVatActive.mockReturnValue(false);
@@ -1196,9 +1178,7 @@ describe('VatManager', () => {
 
       it('leaves its caller to the run loop that dies in its crank', async () => {
         await vatManager.runVat(v1, createMockVatConfig());
-        mockKernelQueue.enqueueTerminateVat.mockImplementationOnce(
-          async () => undefined,
-        );
+        mockKernelQueue.enqueueTerminateVat.mockResolvedValueOnce(undefined);
         const killRunLoop = captureRunLoopDeath();
         const terminating = vatManager.terminateVat(v1);
 
@@ -1214,9 +1194,7 @@ describe('VatManager', () => {
         const killRunLoop = captureRunLoopDeath();
         leaveRequestQueued();
         const queuedBefore = vatManager.restartVat(v1);
-        mockKernelQueue.enqueueTerminateVat.mockImplementationOnce(
-          async () => undefined,
-        );
+        mockKernelQueue.enqueueTerminateVat.mockResolvedValueOnce(undefined);
         const terminating = vatManager.terminateVat(v1);
         let askedDuring: Promise<VatHandle> | undefined;
         mockPlatformServices.terminate.mockImplementationOnce(async () => {
@@ -1371,6 +1349,35 @@ describe('VatManager', () => {
 
       expect(first).not.toBe(second);
       expect(mockPlatformServices.launch).toHaveBeenCalledTimes(3);
+    });
+
+    it('is refused before a waiter is registered when the kernel is stopping', async () => {
+      await vatManager.runVat(v1, createMockVatConfig());
+      mockKernelQueue.assertInboxOpen.mockImplementationOnce(() => {
+        throw new Error('Kernel run loop is stopping; cannot restart a vat');
+      });
+
+      await expect(vatManager.restartVat(v1)).rejects.toThrow(
+        'Kernel run loop is stopping',
+      );
+
+      expect(mockKernelQueue.enqueueRestartVat).toHaveBeenCalledTimes(0);
+    });
+
+    it('keeps an earlier caller waiting when a later request is refused', async () => {
+      await vatManager.runVat(v1, createMockVatConfig());
+      leaveRequestQueued();
+      const first = vatManager.restartVat(v1);
+      mockKernelQueue.enqueueRestartVat.mockRejectedValueOnce(
+        new Error('Kernel run loop is stopping; cannot restart a vat'),
+      );
+
+      await expect(vatManager.restartVat(v1)).rejects.toThrow(
+        'cannot restart a vat',
+      );
+      await runRestartCrank(v1);
+
+      expect(await first).toBe(vatHandles[1]);
     });
 
     it('rejects its caller rather than the waiter when the queue refuses', async () => {
@@ -1713,9 +1720,7 @@ describe('VatManager', () => {
       leaveRequestQueued();
       leaveRequestQueued();
       leaveRequestQueued();
-      mockKernelQueue.enqueueTerminateVat.mockImplementationOnce(
-        async () => undefined,
-      );
+      mockKernelQueue.enqueueTerminateVat.mockResolvedValueOnce(undefined);
       const waiting = [
         vatManager.restartVat(v1),
         vatManager.restartVat(asVatId('v2')),

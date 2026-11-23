@@ -22,6 +22,7 @@ import type {
   RunQueueItemPeerIncarnation,
   RunQueueItemRemoteInbound,
   RunQueueItemNotify,
+  QueueMessageResult,
   RunQueueItemSend,
   VatId,
 } from './types.ts';
@@ -38,7 +39,7 @@ import { Fail } from './utils/assert.ts';
 const MAX_ARRIVALS_PER_REMOTE = 200;
 
 type Subscription = {
-  resolve: (value: CapData<KRef>) => void;
+  resolve: (value: QueueMessageResult) => void;
   reject: (reason: unknown) => void;
 };
 
@@ -62,7 +63,7 @@ const DEAD_RUN_LOOP_RESULT =
 /**
  * Carry out a host call's work for `enqueueInbox`, turning a throw into a
  * failure that rejects the caller and rolls the crank back. A store fault is
- * rethrown, for the run loop to panic over.
+ * rethrown and kills the run loop.
  *
  * @param work - The call's work.
  * @returns The outcome for the run loop.
@@ -110,19 +111,16 @@ export class KernelQueue {
   /**
    * Resolutions made during this crank of promises that have kernel
    * subscriptions. Each carries its value because `collectGarbage` runs before
-   * the flush and a subscription takes no reference count, so the promise may
-   * be gone from the store by the time its subscriber is answered.
+   * the flush and the hold on a result is released when it resolves without
+   * slots, so the promise may be gone from the store by the time its
+   * subscriber is answered.
    */
   #resolvedWithKernelSubscription: KernelOneResolution[] = [];
 
   /** Callers awaiting work the run loop has been asked for but not yet done. */
   readonly #pendingWorkWaiters: Set<(error: Error) => void> = new Set();
 
-  /**
-   * Work from outside the run loop. Written into whatever crank was open, a
-   * host call would be rolled back with that crank if it aborted, after its
-   * caller was told it was done.
-   */
+  /** Work from outside the run loop, each item taken in a crank of its own. */
   readonly #inbox: InboxItem[] = [];
 
   /** The inbox item whose crank is open, answered once it commits. */
@@ -322,7 +320,9 @@ export class KernelQueue {
    * @param what - What the work is, completing "cannot ..." when refused.
    * @param work - The work. Its writes must be made by the time its promise
    * settles, and a caller's own error returned as a failure: a throw is a
-   * kernel or store fault, which kills the run loop.
+   * kernel or store fault, which kills the run loop. Its value must not be a
+   * promise, which would answer the caller when it settles rather than when
+   * the crank commits.
    * @returns A promise for the outcome's `value`, given once the crank commits.
    * It rejects with the outcome's `failure`; with what killed the run loop if
    * its crank did; with the dead-loop error if the loop dies before taking it;
@@ -382,9 +382,8 @@ export class KernelQueue {
 
   /**
    * Reject every inbox item waiting behind the open crank, for a kernel wiping
-   * its store in that crank. Carried out after the wipe, a request made during
-   * it would act on the fresh kernel: a termination asked for during a reset
-   * would kill the next vat launched under that id.
+   * its store in that crank: carried out after the wipe, they would act on the
+   * fresh kernel.
    *
    * @param error - What to tell their callers.
    */
@@ -767,7 +766,11 @@ export class KernelQueue {
       if (rejected) {
         subscription.reject(data);
       } else {
-        subscription.resolve(data);
+        subscription.resolve(
+          this.#kernelStore.isResultHeld(kpid)
+            ? harden({ ...data, kpid })
+            : data,
+        );
       }
     }
   }
@@ -781,7 +784,8 @@ export class KernelQueue {
    * @param args - Message arguments.
    *
    * @returns a promise for the (CapData encoded) result of the message
-   * invocation. It rejects with `OBJECT_DELETED` if the kernel does not have
+   * invocation, with the `kpid` to pass to `releaseResult` if it carries
+   * slots. It rejects with `OBJECT_DELETED` if the kernel does not have
    * the target or a kref in the arguments by the time the message is written,
    * and as `enqueueInbox` rejects if the message is never written.
    */
@@ -789,17 +793,21 @@ export class KernelQueue {
     target: KRef,
     method: string,
     args: unknown[],
-  ): Promise<CapData<KRef>> {
+  ): Promise<QueueMessageResult> {
     insistKRef(target);
     // TODO(#562): Use logger instead.
     // oxlint-disable-next-line no-console
     console.debug('enqueueMessage', target, method, args);
     const methargs = kser([method, args]);
-    const { promise, resolve, reject } = makePromiseKit<CapData<KRef>>();
+    const { promise, resolve, reject } = makePromiseKit<QueueMessageResult>();
     // One promise for the write and the answer, so that a run loop death
     // between the two cannot leave the answer's rejection unhandled.
     this.enqueueInbox('queue a message', () => {
-      this.#writeMessage(target, methargs, { resolve, reject });
+      this.#writeMessage({
+        target,
+        methargs,
+        subscription: { resolve, reject },
+      });
       return { value: undefined };
     }).catch(reject);
     return promise;
@@ -809,37 +817,50 @@ export class KernelQueue {
    * Write a message from the kernel to an object in an endpoint now, and
    * subscribe to its result. For the kernel's own code inside a crank, whose
    * transaction the writes join; from outside the run loop, use
-   * `enqueueMessage`. A store fault is thrown, out of the caller's crank.
+   * `enqueueMessage`. A store fault is thrown; let it out of the crank, to
+   * kill the run loop.
    *
    * @param target - The object to which the message is directed.
    * @param method - The method to be invoked.
    * @param args - Message arguments.
    * @returns The `answer`: a promise for the (CapData encoded) result of the
-   * message invocation. It rejects with `OBJECT_DELETED` if the kernel does
-   * not have the target or a kref in the arguments.
+   * message invocation, with the `kpid` to pass to `releaseResult` if it
+   * carries slots. It rejects with `OBJECT_DELETED` if the kernel does not
+   * have the target or a kref in the arguments. Boxed, so that the
+   * answer, which only a later crank can settle, is not awaited inside the
+   * crank that wrote it.
    */
   writeMessage(
     target: KRef,
     method: string,
     args: unknown[],
-  ): { answer: Promise<CapData<KRef>> } {
-    const { promise, resolve, reject } = makePromiseKit<CapData<KRef>>();
-    this.#writeMessage(target, kser([method, args]), { resolve, reject });
+  ): { answer: Promise<QueueMessageResult> } {
+    const { promise, resolve, reject } = makePromiseKit<QueueMessageResult>();
+    this.#writeMessage({
+      target,
+      methargs: kser([method, args]),
+      subscription: { resolve, reject },
+    });
     return { answer: promise };
   }
 
   /**
    * Write a message and subscribe to its result. A store fault is thrown.
    *
-   * @param target - The object to which the message is directed.
-   * @param methargs - The method and arguments, serialized.
-   * @param subscription - How to answer the caller.
+   * @param message - The message.
+   * @param message.target - The object to which the message is directed.
+   * @param message.methargs - The method and arguments, serialized.
+   * @param message.subscription - How to answer the caller.
    */
-  #writeMessage(
-    target: KRef,
-    methargs: CapData<KRef>,
-    subscription: Subscription,
-  ): void {
+  #writeMessage({
+    target,
+    methargs,
+    subscription,
+  }: {
+    target: KRef;
+    methargs: CapData<KRef>;
+    subscription: Subscription;
+  }): void {
     // Checked first, so that a missing kref rejects the answer with
     // `OBJECT_DELETED` rather than throwing out of the crank.
     const missing = [target, ...methargs.slots].find(
@@ -855,9 +876,74 @@ export class KernelQueue {
       return;
     }
     const [result] = this.#kernelStore.initKernelPromise();
+    // The caller has no c-list, so until it releases the result this is what
+    // keeps the krefs in it alive.
+    this.#kernelStore.holdResult(result);
     this.enqueueSend(target, { methargs, result });
     // Last: a write that threw must leave no subscription behind.
     this.subscriptions.set(result, subscription);
+  }
+
+  /**
+   * Release the hold on a result promise that `enqueueMessage` answered with,
+   * in a crank of its own.
+   *
+   * @param kpid - The promise, from the answer's `kpid`.
+   * @throws If the kernel is not holding `kpid`.
+   */
+  async releaseResult(kpid: KRef): Promise<void> {
+    insistKRef(kpid);
+    await this.enqueueInbox('release a result', () => {
+      if (!this.#kernelStore.isResultHeld(kpid)) {
+        return {
+          failure: Error(
+            `${kpid} is not a held result; it may have been released already`,
+          ),
+        };
+      }
+      this.#kernelStore.releaseHeldResult(kpid);
+      return { value: undefined };
+    });
+  }
+
+  /**
+   * Release the hold on a result promise, if there is one, in a crank of its
+   * own. For a caller outside the kernel, which cannot know that a restart or
+   * an earlier release already ended its hold.
+   *
+   * @param kpid - The promise, from the answer's `kpid`.
+   * @returns False if the kernel was not holding `kpid`.
+   */
+  async releaseResultIfHeld(kpid: KRef): Promise<boolean> {
+    insistKRef(kpid);
+    return await this.enqueueInbox('release a result', () => {
+      const held = this.#kernelStore.isResultHeld(kpid);
+      if (held) {
+        this.#kernelStore.releaseHeldResult(kpid);
+      }
+      return { value: held };
+    });
+  }
+
+  /**
+   * Release every held result, all or none. For boot, before the run loop
+   * starts: a caller's pending promise does not survive a restart, so nobody
+   * is left to release these.
+   *
+   * @returns The number released.
+   */
+  releaseAbandonedResults(): number {
+    const abandoned = this.#kernelStore.getHeldResults();
+    if (abandoned.length > 0) {
+      this.#kernelStore.writeAtomically(() => {
+        for (const kpid of abandoned) {
+          this.#kernelStore.releaseHeldResult(kpid);
+        }
+        // Here, or `maybeFreeKrefs` is lost if the kernel stops before a crank.
+        this.#kernelStore.collectGarbage();
+      });
+    }
+    return abandoned.length;
   }
 
   /**
@@ -1165,6 +1251,16 @@ export class KernelQueue {
       // Enqueue the queued messages (immediate or buffered based on flag).
       for (const [target, message] of queuedMessages) {
         this.enqueueSend(target, message, immediate);
+      }
+
+      // A held result stays held only while a caller is about to be handed
+      // krefs along with the kpid to release them by. A rejection reaches the
+      // caller as a thrown error, which has nowhere to carry the kpid.
+      if (
+        this.#kernelStore.isResultHeld(kpid) &&
+        (rejected || !data.slots?.length || !this.subscriptions.has(kpid))
+      ) {
+        this.#kernelStore.releaseHeldResult(kpid);
       }
 
       // Handle kernel subscriptions based on immediate flag.

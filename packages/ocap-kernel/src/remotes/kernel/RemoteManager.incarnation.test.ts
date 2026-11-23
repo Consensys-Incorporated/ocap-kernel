@@ -483,13 +483,16 @@ describe('a peer incarnation change on the run loop', () => {
 
 describe('a peer message during a host call', () => {
   it('is taken after it, so a later one cannot cover it', async () => {
-    const { kernelQueue, remoteManager, hooks, taken, startRunLoop } =
-      await setUp();
+    const { kernelQueue, remoteManager, taken, startRunLoop } = await setUp();
     startRunLoop().catch(() => undefined);
-    const release = holdNextCrank(hooks);
-    const hostCall = kernelQueue.enqueueInbox('terminateAllVats', () => ({
-      value: undefined,
-    }));
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const hostCall = kernelQueue.enqueueInbox('terminateAllVats', async () => {
+      await held;
+      return { value: undefined };
+    });
     await settle();
 
     await remoteManager.handleRemoteMessage(PEER_ID, emptyNotify(1));

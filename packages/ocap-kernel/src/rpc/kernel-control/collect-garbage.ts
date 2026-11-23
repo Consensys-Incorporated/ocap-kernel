@@ -24,7 +24,7 @@ export const collectGarbageHandler: Handler<
 > = {
   ...collectGarbageSpec,
   hooks: { kernel: true },
-  implementation: async ({ kernel }: CollectGarbageHooks): Promise<null> => {
+  implementation: async ({ kernel }): Promise<null> => {
     await kernel.collectGarbage();
     return null;
   },

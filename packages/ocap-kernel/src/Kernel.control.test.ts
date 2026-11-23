@@ -85,6 +85,11 @@ describe('a host call that wipes or ends vats, on a real kernel', () => {
       make: async (kernel: Kernel): Promise<unknown> =>
         kernel.terminateVat(asVatId('v1')),
     },
+    {
+      request: 'host call',
+      make: async (kernel: Kernel): Promise<unknown> =>
+        kernel.terminateAllVats(),
+    },
   ])(
     'abandons a $request asked for while the reset awaits a worker',
     async ({ make }) => {
@@ -208,6 +213,25 @@ describe('a host call on a real kernel', () => {
       before: false,
       after: true,
     },
+    {
+      call: 'unpinVatRoot',
+      make: async ({ kernel, doomedId }: RealKernel): Promise<unknown> =>
+        kernel.unpinVatRoot(doomedId),
+      read: ({ kernelDatabase, doomedRoot }: RealKernel): unknown =>
+        makeKernelStore(kernelDatabase).getPinCount(doomedRoot),
+      before: 1,
+      after: 0,
+    },
+    {
+      call: 'initIdentity',
+      make: async ({ kernel }: RealKernel): Promise<unknown> =>
+        kernel.initIdentity(),
+      read: ({ kernelDatabase }: RealKernel): unknown =>
+        makeKernelStore(kernelDatabase).getRemoteIdentityValue('peerId') !==
+        undefined,
+      before: false,
+      after: true,
+    },
   ])(
     '$call, made while a crank is open, lands in a crank of its own that the abort of the open one does not undo',
     async ({ make, read, before, after }) => {
@@ -247,6 +271,50 @@ describe('initRemoteComms on a real kernel', () => {
       runLoop: (await kernel.getStatus()).runLoop.state,
     }).toStrictEqual({ identity: true, runLoop: 'running' });
   });
+
+  it('refuses to start the transport once stop has begun', async () => {
+    const harness = await setUpRealKernel();
+    const initializeRemoteComms = vi.fn().mockResolvedValue(undefined);
+    Object.assign(harness.platformServices, { initializeRemoteComms });
+    await harness.stall();
+    const init = watch(harness.kernel.initRemoteComms());
+    const stopping = harness.kernel.stop();
+    await delay(0);
+
+    harness.release({ didDelivery: harness.waiterId });
+    await stopping;
+
+    expect({
+      init: init(),
+      started: initializeRemoteComms.mock.calls.length,
+    }).toStrictEqual({
+      init: expect.stringContaining('cannot start remote comms'),
+      started: 0,
+    });
+  });
+
+  it.each([
+    {
+      call: 'initIdentity',
+      make: async (kernel: Kernel): Promise<void> =>
+        kernel.initIdentity({ mnemonic: 'another' }),
+    },
+    {
+      call: 'initRemoteComms',
+      make: async (kernel: Kernel): Promise<void> =>
+        kernel.initRemoteComms({ mnemonic: 'another' }),
+    },
+  ])(
+    '$call rejects a mnemonic once an identity exists, leaving the run loop running',
+    async ({ make }) => {
+      const { kernel } = await setUpRealKernel();
+      await kernel.initIdentity();
+
+      await expect(make(kernel)).rejects.toThrow('identity already exists');
+
+      expect((await kernel.getStatus()).runLoop.state).toBe('running');
+    },
+  );
 });
 
 describe('stop on a real kernel', () => {

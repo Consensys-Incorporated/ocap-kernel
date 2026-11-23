@@ -89,6 +89,7 @@ export class MockRemotesFactory {
         }
         return outcome.value;
       }),
+      assertInboxOpen: vi.fn(),
       panic: vi.fn<KernelQueue['panic']>(
         (problem, cause) => new Error(`Kernel panic: ${problem}`, { cause }),
       ),

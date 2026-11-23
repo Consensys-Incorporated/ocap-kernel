@@ -665,8 +665,8 @@ export class VatManager {
     this.#kernelQueue.assertInboxOpen('terminate a vat');
     !reason?.slots.length || Fail`a termination reason cannot carry slots`;
     await this.#awaitQueuedWork(this.#terminationWaiters, vatId, async () => {
-      // Before the request is written, and so before any crank, since a
-      // restart asked for meanwhile must wait for the termination.
+      // Before the request is written: a restart asked for while it waits in
+      // the inbox must wait for the termination.
       this.#pendingTerminations.set(
         vatId,
         (this.#pendingTerminations.get(vatId) ?? 0) + 1,
@@ -679,8 +679,11 @@ export class VatManager {
       try {
         await this.#kernelQueue.enqueueTerminateVat(vatId, reason);
       } catch (error) {
-        // Never written: the run loop died, or a reset or `clearStorage`
-        // discarded it, and the restarts it overtook are told so with the rest.
+        // Never written: the run loop died, a reset or `clearStorage` discarded
+        // it, or the store refused it before the loop had started. The restarts
+        // it overtook hear of that as every waiter does, from `onRunLoopDeath`
+        // or `abandonQueuedWork`; before the loop has started none has been
+        // asked for, since no host holds the kernel yet.
         this.#forgetPendingTermination(vatId);
         throw error;
       }
@@ -771,6 +774,9 @@ export class VatManager {
     if (!this.#isVatKnown(vatId)) {
       throw new VatNotFoundError(vatId);
     }
+    // The superseded path below queues nothing of its own, so nothing else
+    // would refuse it while the kernel is stopping.
+    this.#kernelQueue.assertInboxOpen('restart a vat');
     if (this.#pendingTerminations.has(vatId)) {
       // Answered by the termination's crank, with no item of its own: a
       // restart item still queued ahead of the termination would take this
@@ -778,7 +784,7 @@ export class VatManager {
       return await this.#awaitQueuedWork(
         this.#supersededRestarts,
         vatId,
-        async () => this.#kernelQueue.assertRunLoopAlive('restart a vat'),
+        async () => undefined,
       );
     }
     // The handle this restart made, rather than whatever `#vats` holds once
@@ -818,7 +824,7 @@ export class VatManager {
       } else {
         waiters.delete(vatId);
       }
-      reject(error as Error);
+      reject(error);
     });
     try {
       return await promise;

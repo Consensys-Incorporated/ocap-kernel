@@ -366,7 +366,7 @@ export async function initRemoteIdentity(
   });
 }
 
-/** What `prepareRemoteComms` wrote and read, for `startRemoteComms`. */
+/** What `startRemoteComms` takes from `prepareRemoteComms`. */
 export type PreparedRemoteComms = Awaited<
   ReturnType<typeof initRemoteIdentity>
 > & {
@@ -378,8 +378,8 @@ export type PreparedRemoteComms = Awaited<
 };
 
 /**
- * Write what remote comms keep in the store: the kernel's identity, its
- * relays, and whether it woke from an earlier incarnation.
+ * Write what remote comms keep in the store, the kernel's identity and its
+ * relays, and read whether it woke from an earlier incarnation.
  *
  * @param kernelStore - The kernel's persistent state store.
  * @param options - Configuration options for remote communications.
@@ -483,47 +483,4 @@ export async function startRemoteComms(
     registerLocationHints:
       platformServices.registerLocationHints.bind(platformServices),
   };
-}
-
-/**
- * Initialize remote communications for this kernel.
- *
- * @param kernelStore - The kernel store, for storing persistent key info.
- * @param platformServices - The platform services, for accessing network I/O
- *   operations that are not available within the web worker that the kernel runs in.
- * @param remoteMessageHandler - Handler to process received inbound communications.
- * @param options - Options for remote communications initialization.
- * @param logger - The logger to use.
- * @param keySeed - Optional seed for libp2p key generation.
- * @param onRemoteGiveUp - Optional callback to be called when we give up on a remote.
- * @param incarnationId - Unique identifier for this kernel instance.
- * @param onIncarnationChange - Optional callback when a remote peer's incarnation changes.
- *
- * @returns the initialized remote comms object.
- */
-export async function initRemoteComms(
-  kernelStore: KernelStore,
-  platformServices: PlatformServices,
-  remoteMessageHandler: RemoteMessageHandler,
-  options: RemoteCommsOptions = {},
-  logger?: Logger,
-  keySeed?: string,
-  onRemoteGiveUp?: OnRemoteGiveUp,
-  incarnationId?: string,
-  onIncarnationChange?: OnIncarnationChange,
-): Promise<RemoteComms> {
-  const prepared = await prepareRemoteComms(
-    kernelStore,
-    options,
-    logger,
-    keySeed,
-  );
-  return startRemoteComms(prepared, {
-    platformServices,
-    remoteMessageHandler,
-    logger,
-    onRemoteGiveUp,
-    incarnationId,
-    onIncarnationChange,
-  });
 }

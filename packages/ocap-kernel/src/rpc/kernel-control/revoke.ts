@@ -26,10 +26,7 @@ export const revokeHandler: Handler<
 > = {
   ...revokeSpec,
   hooks: { kernel: true },
-  implementation: async (
-    { kernel }: RevokeHooks,
-    { kref }: { kref: KRef },
-  ): Promise<null> => {
+  implementation: async ({ kernel }, { kref }): Promise<null> => {
     await kernel.revoke(kref);
     return null;
   },

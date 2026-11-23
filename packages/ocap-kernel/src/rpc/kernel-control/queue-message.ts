@@ -1,4 +1,3 @@
-import type { CapData } from '@endo/marshal';
 import type { MethodSpec, Handler } from '@metamask/kernel-rpc-methods';
 import { tuple, string, array } from '@metamask/superstruct';
 import { UnsafeJsonStruct } from '@metamask/utils';
@@ -6,8 +5,12 @@ import type { Json } from '@metamask/utils';
 
 import type { Kernel } from '../../Kernel.ts';
 import { kslot } from '../../liveslots/kernel-marshal.ts';
-import type { KRef } from '../../types.ts';
-import { insistKRef, KernelCapDataStruct, KRefStruct } from '../../types.ts';
+import type { KRef, QueueMessageResult } from '../../types.ts';
+import {
+  insistKRef,
+  KRefStruct,
+  QueueMessageResultStruct,
+} from '../../types.ts';
 
 /**
  * Enqueue a message to a vat via the kernel's crank queue.
@@ -15,11 +18,11 @@ import { insistKRef, KernelCapDataStruct, KRefStruct } from '../../types.ts';
 export const queueMessageSpec: MethodSpec<
   'queueMessage',
   [KRef, string, Json[]],
-  CapData<KRef>
+  QueueMessageResult
 > = {
   method: 'queueMessage',
   params: tuple([KRefStruct, string(), array(UnsafeJsonStruct)]),
-  result: KernelCapDataStruct,
+  result: QueueMessageResultStruct,
 };
 
 export type QueueMessageHooks = {
@@ -96,7 +99,7 @@ function expandRefMarkers(value: unknown): unknown {
 export const queueMessageHandler: Handler<
   'queueMessage',
   [KRef, string, Json[]],
-  Promise<CapData<KRef>>,
+  Promise<QueueMessageResult>,
   QueueMessageHooks
 > = {
   ...queueMessageSpec,
@@ -104,7 +107,7 @@ export const queueMessageHandler: Handler<
   implementation: async (
     { kernel }: QueueMessageHooks,
     [target, method, args],
-  ): Promise<CapData<KRef>> => {
+  ): Promise<QueueMessageResult> => {
     const expandedArgs = expandRefMarkers(args) as unknown[];
     return kernel.queueMessage(target, method, expandedArgs);
   },

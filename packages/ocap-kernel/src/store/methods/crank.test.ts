@@ -4,7 +4,7 @@ import { expect, describe, it, vi, beforeEach } from 'vitest';
 import { getCrankMethods } from './crank.ts';
 import { asKRef } from '../../../test/branded.ts';
 import type { KRef } from '../../types.ts';
-import type { Savepoint, StoreContext, StoredValue } from '../types.ts';
+import type { Savepoint, StoreContext } from '../types.ts';
 
 /**
  * @param name - The savepoint's name.
@@ -23,24 +23,15 @@ describe('crank methods', () => {
 
   beforeEach(() => {
     mockCrankBuffer = [];
-    const counter = (initial: string): StoredValue => {
-      let value = initial;
-      return {
-        get: () => value,
-        set: (newValue: string) => {
-          value = newValue;
-        },
-        delete: vi.fn(),
-      };
-    };
+    let crankNumber = '0';
     context = {
       inCrank: false,
-      crankNumber: counter('0'),
-      nextVatId: counter('1'),
-      nextSubclusterId: counter('1'),
-      nextObjectId: counter('1'),
-      nextPromiseId: counter('1'),
-      nextRemoteId: counter('1'),
+      crankNumber: {
+        get: () => crankNumber,
+        set: (value: string) => {
+          crankNumber = value;
+        },
+      },
       savepoints: [],
       crankBuffer: mockCrankBuffer,
       maybeFreeKrefs: new Set(),
@@ -368,6 +359,48 @@ describe('crank methods', () => {
         }),
       );
       expect(context.savepoints).toStrictEqual([]);
+    });
+  });
+
+  describe('writeAtomically', () => {
+    it('commits what it wrote and returns the result', () => {
+      const result = crankMethods.writeAtomically(() => context.inCrank);
+
+      expect({
+        result,
+        inCrank: context.inCrank,
+        created: vi.mocked(kdb.createSavepoint).mock.calls,
+        released: vi.mocked(kdb.releaseSavepoint).mock.calls,
+        rolledBack: vi.mocked(kdb.rollbackSavepoint).mock.calls,
+      }).toStrictEqual({
+        result: true,
+        inCrank: false,
+        created: [['t0']],
+        released: [['t0']],
+        rolledBack: [],
+      });
+    });
+
+    it('rolls back and rethrows when the write throws', () => {
+      expect(() =>
+        crankMethods.writeAtomically(() => {
+          throw new Error('boom');
+        }),
+      ).toThrow('boom');
+
+      expect({
+        inCrank: context.inCrank,
+        rolledBack: vi.mocked(kdb.rollbackSavepoint).mock.calls,
+        released: vi.mocked(kdb.releaseSavepoint).mock.calls,
+      }).toStrictEqual({ inCrank: false, rolledBack: [['t0']], released: [] });
+    });
+
+    it('does not start inside a crank', () => {
+      crankMethods.startCrank();
+
+      expect(() => crankMethods.writeAtomically(() => undefined)).toThrow(
+        'startCrank while already in a crank',
+      );
     });
   });
 

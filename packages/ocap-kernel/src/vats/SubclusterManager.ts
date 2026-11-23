@@ -13,6 +13,7 @@ import type { KernelStore } from '../store/index.ts';
 import type {
   VatId,
   KRef,
+  QueueMessageResult,
   SubclusterId,
   ClusterConfig,
   InboxOutcome,
@@ -39,7 +40,7 @@ type LaunchedSubcluster = {
   subclusterId: SubclusterId;
   rootKref: KRef;
   vatRootKrefs: Record<string, KRef>;
-  answer: Promise<CapData<KRef>>;
+  answer: Promise<QueueMessageResult>;
 };
 
 /**
@@ -133,7 +134,7 @@ export class SubclusterManager {
       await this.#kernelQueue.enqueueInbox('launch a subcluster', async () =>
         this.#launch(config, { isSystem, systemName }),
       );
-    let bootstrapResult: CapData<KRef>;
+    let bootstrapResult: QueueMessageResult;
     try {
       bootstrapResult = await answer;
       const unserialized = kunser(bootstrapResult);
@@ -614,6 +615,9 @@ export class SubclusterManager {
         systemName: name,
       });
       this.#systemSubclusterRoots.set(name, result.rootKref);
+      if (result.bootstrapResult?.kpid !== undefined) {
+        await this.#kernelQueue.releaseResult(result.bootstrapResult.kpid);
+      }
       this.#logger.info(`Launched new system subcluster "${name}"`);
     }
   }

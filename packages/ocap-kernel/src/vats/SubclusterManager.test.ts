@@ -109,6 +109,7 @@ describe('SubclusterManager', () => {
         }
         return outcome.value;
       }),
+      releaseResult: vi.fn().mockResolvedValue(undefined),
     } as unknown as Mocked<KernelQueue>;
 
     mockVatManager = {
@@ -367,8 +368,10 @@ describe('SubclusterManager', () => {
 
       await subclusterManager.launchSubcluster(config);
 
-      const [, services] = (mockWriteMessage as ReturnType<typeof vi.fn>).mock
-        .calls[0]![2] as [unknown, object];
+      const [, services] = mockWriteMessage.mock.calls[0]![2] as [
+        unknown,
+        object,
+      ];
       expect(Object.getPrototypeOf(services)).toBe(Object.prototype);
       expect(Object.keys(services)).toStrictEqual(['__proto__']);
     });
@@ -1190,8 +1193,15 @@ describe('SubclusterManager', () => {
       expect(mockVatManager.launchVat).not.toHaveBeenCalled();
     });
 
-    it('persists mappings for newly launched subclusters', async () => {
+    it('persists mappings for newly launched subclusters, releasing the bootstrap result', async () => {
       mockKernelStore.addSubcluster.mockReturnValue(s1);
+      mockWriteMessage.mockReturnValueOnce({
+        answer: Promise.resolve({
+          body: '{"result":"ok"}',
+          slots: ['ko9' as KRef],
+          kpid: 'kp7' as KRef,
+        }),
+      });
 
       await subclusterManager.launchNewSystemSubclusters([
         makeSystemConfig('newSys'),
@@ -1202,6 +1212,9 @@ describe('SubclusterManager', () => {
         's1',
       );
       expect(subclusterManager.getSystemSubclusterRoot('newSys')).toBe('ko1');
+      expect(mockKernelQueue.releaseResult).toHaveBeenCalledExactlyOnceWith(
+        'kp7',
+      );
     });
   });
 

@@ -67,8 +67,7 @@ describe('RemoteManager', () => {
     });
 
     vi.mocked(remoteComms.initRemoteIdentity).mockClear();
-    vi.mocked(remoteComms.prepareRemoteComms).mockClear();
-    vi.mocked(remoteComms.startRemoteComms).mockClear();
+    vi.mocked(remoteComms.startRemoteComms).mockResolvedValue(mockRemoteComms);
   });
 
   describe('identity initialization', () => {
@@ -135,9 +134,6 @@ describe('RemoteManager', () => {
 
     it('getRemoteIdentity works after initRemoteComms (returns comms)', async () => {
       const messageHandler = vi.fn();
-      vi.mocked(remoteComms.startRemoteComms).mockResolvedValue(
-        mockRemoteComms,
-      );
 
       remoteManager.setMessageHandler(messageHandler);
       await remoteManager.initRemoteComms();
@@ -236,9 +232,6 @@ describe('RemoteManager', () => {
 
     it('initializes remote comms after setting message handler', async () => {
       const messageHandler = vi.fn();
-      vi.mocked(remoteComms.startRemoteComms).mockResolvedValue(
-        mockRemoteComms,
-      );
 
       remoteManager.setMessageHandler(messageHandler);
       await remoteManager.initRemoteComms({ relays: ['relay1', 'relay2'] });
@@ -261,9 +254,6 @@ describe('RemoteManager', () => {
 
     it('initializes remote comms with all options', async () => {
       const messageHandler = vi.fn();
-      vi.mocked(remoteComms.startRemoteComms).mockResolvedValue(
-        mockRemoteComms,
-      );
 
       remoteManager.setMessageHandler(messageHandler);
       await remoteManager.initRemoteComms({
@@ -296,9 +286,6 @@ describe('RemoteManager', () => {
       });
 
       const messageHandler = vi.fn();
-      vi.mocked(remoteComms.startRemoteComms).mockResolvedValue(
-        mockRemoteComms,
-      );
 
       managerWithKeySeed.setMessageHandler(messageHandler);
       await managerWithKeySeed.initRemoteComms();
@@ -315,9 +302,6 @@ describe('RemoteManager', () => {
       expect(remoteManager.isRemoteCommsInitialized()).toBe(false);
 
       const messageHandler = vi.fn();
-      vi.mocked(remoteComms.startRemoteComms).mockResolvedValue(
-        mockRemoteComms,
-      );
 
       remoteManager.setMessageHandler(messageHandler);
       await remoteManager.initRemoteComms();
@@ -328,9 +312,6 @@ describe('RemoteManager', () => {
     it('restores previously established remotes from kernel store', async () => {
       // First establish some remotes and store them
       const messageHandler = vi.fn();
-      vi.mocked(remoteComms.startRemoteComms).mockResolvedValue(
-        mockRemoteComms,
-      );
       remoteManager.setMessageHandler(messageHandler);
       await remoteManager.initRemoteComms();
 
@@ -380,9 +361,6 @@ describe('RemoteManager', () => {
         manager: RemoteManager;
         remoteId: ReturnType<typeof asRemoteId>;
       }> {
-        vi.mocked(remoteComms.startRemoteComms).mockResolvedValue(
-          mockRemoteComms,
-        );
         remoteManager.setMessageHandler(vi.fn());
         await remoteManager.initRemoteComms();
         const { remoteId } = remoteManager.establishRemote('peer-1');
@@ -474,9 +452,6 @@ describe('RemoteManager', () => {
 
     it('handles empty kernel store during initialization', async () => {
       const messageHandler = vi.fn();
-      vi.mocked(remoteComms.startRemoteComms).mockResolvedValue(
-        mockRemoteComms,
-      );
 
       remoteManager.setMessageHandler(messageHandler);
       await remoteManager.initRemoteComms();
@@ -489,9 +464,6 @@ describe('RemoteManager', () => {
   describe('remote comms operations', () => {
     beforeEach(async () => {
       const messageHandler = vi.fn();
-      vi.mocked(remoteComms.startRemoteComms).mockResolvedValue(
-        mockRemoteComms,
-      );
       remoteManager.setMessageHandler(messageHandler);
       await remoteManager.initRemoteComms();
     });
@@ -549,9 +521,6 @@ describe('RemoteManager', () => {
   describe('remote handle management', () => {
     beforeEach(async () => {
       const messageHandler = vi.fn();
-      vi.mocked(remoteComms.startRemoteComms).mockResolvedValue(
-        mockRemoteComms,
-      );
       remoteManager.setMessageHandler(messageHandler);
       await remoteManager.initRemoteComms();
     });
@@ -622,6 +591,29 @@ describe('RemoteManager', () => {
           write();
         }
       };
+    };
+
+    const acceptedSeqs = (): number[] =>
+      vi
+        .mocked(mockKernelQueue.acceptRemoteInbound)
+        .mock.calls.map(([{ seq }]) => seq);
+
+    // A manager over a real store and a running loop, with remote comms up.
+    const setUpRealManager = async () => {
+      const kdb = await makeSQLKernelDatabase({ dbFilename: ':memory:' });
+      const realStore = makeKernelStore(kdb);
+      const kernelQueue = new KernelQueue(realStore, async () => undefined);
+      const running = kernelQueue.run(async () => undefined);
+      const manager = new RemoteManager({
+        platformServices: mockPlatformServices,
+        kernelStore: realStore,
+        kernelQueue,
+        logger,
+      });
+      manager.setMessageHandler(vi.fn());
+      await manager.initRemoteComms();
+      onTestFinished(() => manager.cleanup());
+      return { kdb, realStore, kernelQueue, running, manager };
     };
 
     it('sets up a new remote only when the kernel queue makes the write', async () => {
@@ -719,11 +711,7 @@ describe('RemoteManager', () => {
         );
         await Promise.all([first, second]);
 
-        expect(
-          vi
-            .mocked(mockKernelQueue.acceptRemoteInbound)
-            .mock.calls.map(([{ seq }]) => seq),
-        ).toStrictEqual([1, 2]);
+        expect(acceptedSeqs()).toStrictEqual([1, 2]);
       },
     );
 
@@ -741,11 +729,7 @@ describe('RemoteManager', () => {
       writeHeld();
       await Promise.all([first, second]);
 
-      expect(
-        vi
-          .mocked(mockKernelQueue.acceptRemoteInbound)
-          .mock.calls.map(([{ seq }]) => seq),
-      ).toStrictEqual([1, 2]);
+      expect(acceptedSeqs()).toStrictEqual([1, 2]);
     });
 
     it("keeps a peer's message behind every one of its own still in the inbox", async () => {
@@ -767,11 +751,7 @@ describe('RemoteManager', () => {
       writeHeld();
       await Promise.all([second, third]);
 
-      expect(
-        vi
-          .mocked(mockKernelQueue.acceptRemoteInbound)
-          .mock.calls.map(([{ seq }]) => seq),
-      ).toStrictEqual([1, 2, 3]);
+      expect(acceptedSeqs()).toStrictEqual([1, 2, 3]);
     });
 
     it("keeps a peer's message behind one of its own still in the inbox, once another crank has set the peer up", async () => {
@@ -788,11 +768,7 @@ describe('RemoteManager', () => {
       writeHeld();
       await Promise.all([first, second]);
 
-      expect(
-        vi
-          .mocked(mockKernelQueue.acceptRemoteInbound)
-          .mock.calls.map(([{ seq }]) => seq),
-      ).toStrictEqual([1, 2]);
+      expect(acceptedSeqs()).toStrictEqual([1, 2]);
     });
 
     it.each([
@@ -812,24 +788,10 @@ describe('RemoteManager', () => {
     );
 
     it('kills the run loop when a setup cannot be written, rolling the setup back', async () => {
-      const kdb = await makeSQLKernelDatabase({ dbFilename: ':memory:' });
-      const realStore = makeKernelStore(kdb);
-      const kernelQueue = new KernelQueue(realStore, async () => undefined);
-      const running = kernelQueue.run(async () => undefined);
-      const manager = new RemoteManager({
-        platformServices: mockPlatformServices,
-        kernelStore: realStore,
-        kernelQueue,
-        logger,
-      });
-      vi.mocked(remoteComms.startRemoteComms).mockResolvedValue(
-        mockRemoteComms,
-      );
-      manager.setMessageHandler(vi.fn());
-      await manager.initRemoteComms();
+      const { kdb, realStore, kernelQueue, running, manager } =
+        await setUpRealManager();
       const fault = new Error('SQLITE_FULL');
       const { kernelKVStore } = kdb;
-      const counterBefore = kernelKVStore.get('nextRemoteId');
       const set = kernelKVStore.set.bind(kernelKVStore);
       vi.spyOn(kernelKVStore, 'set').mockImplementation((key, value) => {
         if (key.startsWith('e.nextObjectId.')) {
@@ -843,33 +805,46 @@ describe('RemoteManager', () => {
 
       expect({
         remotes: realStore.getRemoteIDs(),
-        counter: kernelKVStore.get('nextRemoteId'),
         state: kernelQueue.getRunLoopStatus().state,
-      }).toStrictEqual({
-        remotes: [],
-        // The setup's ID is not given out again.
-        counter: String(Number(counterBefore) + 1),
-        state: 'failed',
+      }).toStrictEqual({ remotes: [], state: 'failed' });
+    });
+
+    it('kills the run loop when acting on a new remote hits a store fault, rolling the setup back', async () => {
+      const { kdb, realStore, kernelQueue, running, manager } =
+        await setUpRealManager();
+      const fault = new Error('SQLITE_FULL');
+      const { kernelKVStore } = kdb;
+      const set = kernelKVStore.set.bind(kernelKVStore);
+      let armed = false;
+      // One write fails: the rollback's own writes must still go through.
+      vi.spyOn(kernelKVStore, 'set').mockImplementation((key, value) => {
+        if (armed) {
+          armed = false;
+          throw fault;
+        }
+        set(key, value);
       });
-      manager.cleanup();
+
+      await expect(
+        manager.withRemote('new-peer', {
+          // A store write of `use`'s own, as taking a peer's acknowledgement makes.
+          use: (remote) => {
+            armed = true;
+            realStore.setRemoteStartSeq(remote.remoteId, 1);
+          },
+        }),
+      ).rejects.toBe(fault);
+      await expect(running).rejects.toBe(fault);
+
+      expect({
+        remotes: realStore.getRemoteIDs(),
+        state: kernelQueue.getRunLoopStatus().state,
+      }).toStrictEqual({ remotes: [], state: 'failed' });
     });
 
     it("rejects a new peer's refused first message, keeping the run loop and the setup", async () => {
-      const kdb = await makeSQLKernelDatabase({ dbFilename: ':memory:' });
-      const realStore = makeKernelStore(kdb);
-      const kernelQueue = new KernelQueue(realStore, async () => undefined);
-      const running = kernelQueue.run(async () => undefined);
-      const manager = new RemoteManager({
-        platformServices: mockPlatformServices,
-        kernelStore: realStore,
-        kernelQueue,
-        logger,
-      });
-      vi.mocked(remoteComms.startRemoteComms).mockResolvedValue(
-        mockRemoteComms,
-      );
-      manager.setMessageHandler(vi.fn());
-      await manager.initRemoteComms();
+      const { realStore, kernelQueue, running, manager } =
+        await setUpRealManager();
 
       await expect(
         manager.handleRemoteMessage('new-peer', peerMessage(0)),
@@ -883,8 +858,54 @@ describe('RemoteManager', () => {
       }).toStrictEqual({ state: 'running', peers: ['new-peer'] });
       await kernelQueue.endRunLoop();
       await running;
-      manager.cleanup();
     });
+
+    it.each([
+      {
+        state: 'stopping',
+        once: async (kernelQueue: KernelQueue, manager: RemoteManager) => {
+          const ending = kernelQueue.endRunLoop();
+          // In the same tick, before the loop has ended.
+          const outcome = manager
+            .handleRemoteMessage('new-peer', peerMessage(1))
+            .then(
+              () => 'taken',
+              (error: Error) => error.message,
+            );
+          await ending;
+          return outcome;
+        },
+        refusal: 'Kernel run loop is stopping; cannot act on a remote',
+      },
+      {
+        state: 'dead',
+        once: async (kernelQueue: KernelQueue, manager: RemoteManager) => {
+          kernelQueue.panic('the test', new Error('boom'));
+          await expect(
+            kernelQueue.enqueueInbox('wake', () => ({ value: undefined })),
+          ).rejects.toThrow('Kernel run loop died');
+          return manager.handleRemoteMessage('new-peer', peerMessage(1)).then(
+            () => 'taken',
+            (error: Error) => error.message,
+          );
+        },
+        refusal: 'Kernel run loop died; cannot act on a remote',
+      },
+    ])(
+      "refuses a new peer's first message once the run loop is $state, setting no peer up",
+      async ({ once, refusal }) => {
+        const { realStore, kernelQueue, running, manager } =
+          await setUpRealManager();
+
+        const outcome = await once(kernelQueue, manager);
+
+        expect({ outcome, remotes: realStore.getRemoteIDs() }).toStrictEqual({
+          outcome: refusal,
+          remotes: [],
+        });
+        await running.catch(() => undefined);
+      },
+    );
 
     it('leaves no record of a remote whose handle failed to be made', async () => {
       const fault = new Error('SQLITE_IOERR');
@@ -1008,9 +1029,6 @@ describe('RemoteManager', () => {
       remoteManager.cleanup();
 
       const messageHandler = vi.fn();
-      vi.mocked(remoteComms.startRemoteComms).mockResolvedValue(
-        mockRemoteComms,
-      );
       remoteManager.restoreRemotes();
       remoteManager.setMessageHandler(messageHandler);
       await remoteManager.initRemoteComms();
@@ -1044,9 +1062,6 @@ describe('RemoteManager', () => {
   describe('cleanup', () => {
     beforeEach(async () => {
       const messageHandler = vi.fn();
-      vi.mocked(remoteComms.startRemoteComms).mockResolvedValue(
-        mockRemoteComms,
-      );
       remoteManager.setMessageHandler(messageHandler);
       await remoteManager.initRemoteComms();
     });
@@ -1123,9 +1138,6 @@ describe('RemoteManager', () => {
 
       // Should be able to initialize again
       const messageHandler = vi.fn();
-      vi.mocked(remoteComms.startRemoteComms).mockResolvedValue(
-        mockRemoteComms,
-      );
       remoteManager.setMessageHandler(messageHandler);
       await remoteManager.initRemoteComms({ relays: ['relay1'] });
 
@@ -1151,9 +1163,6 @@ describe('RemoteManager', () => {
   describe('reapRemotes', () => {
     beforeEach(async () => {
       const messageHandler = vi.fn();
-      vi.mocked(remoteComms.startRemoteComms).mockResolvedValue(
-        mockRemoteComms,
-      );
       remoteManager.setMessageHandler(messageHandler);
       await remoteManager.initRemoteComms();
     });
@@ -1200,9 +1209,6 @@ describe('RemoteManager', () => {
   describe('handleRemoteGiveUp', () => {
     beforeEach(async () => {
       const messageHandler = vi.fn();
-      vi.mocked(remoteComms.startRemoteComms).mockResolvedValue(
-        mockRemoteComms,
-      );
       remoteManager.setMessageHandler(messageHandler);
       await remoteManager.initRemoteComms();
     });
@@ -1269,9 +1275,6 @@ describe('RemoteManager', () => {
   describe('handleIncarnationChange', () => {
     beforeEach(async () => {
       const messageHandler = vi.fn();
-      vi.mocked(remoteComms.startRemoteComms).mockResolvedValue(
-        mockRemoteComms,
-      );
       remoteManager.setMessageHandler(messageHandler);
       await remoteManager.initRemoteComms();
     });

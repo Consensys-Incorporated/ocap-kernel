@@ -272,6 +272,19 @@ export const KernelCapDataStruct = object({
   slots: array(KRefStruct),
 });
 
+/**
+ * What `queueMessage` answers with. `kpid` is present when the kernel is
+ * holding the result promise for the caller, which it does while the answer
+ * carries slots; `releaseResult` ends the hold.
+ */
+export const QueueMessageResultStruct = object({
+  body: string(),
+  slots: array(KRefStruct),
+  kpid: exactOptional(KRefStruct),
+});
+
+export type QueueMessageResult = Infer<typeof QueueMessageResultStruct>;
+
 export const KernelMessageStruct = object({
   methargs: KernelCapDataStruct,
   result: exactOptional(union([KRefStruct, literal(null)])),
@@ -384,8 +397,6 @@ const RunQueueItemRestartVatStruct = object({
   vatId: VatIdStruct,
 });
 
-export type RunQueueItemRestartVat = Infer<typeof RunQueueItemRestartVatStruct>;
-
 /**
  * A request to terminate a vat, queued so the run loop performs it.
  */
@@ -394,10 +405,6 @@ const RunQueueItemTerminateVatStruct = object({
   vatId: VatIdStruct,
   reason: exactOptional(KernelCapDataStruct),
 });
-
-export type RunQueueItemTerminateVat = Infer<
-  typeof RunQueueItemTerminateVatStruct
->;
 
 export type RunQueueItemRemoteInbound = {
   type: 'remoteInbound';
@@ -781,8 +788,11 @@ export type SubclusterLaunchResult = {
   subclusterId: SubclusterId;
   /** The kref of the bootstrap vat's root object. */
   rootKref: KRef;
-  /** The CapData result of calling bootstrap() on the root object, if any. */
-  bootstrapResult: CapData<KRef> | undefined;
+  /**
+   * The result of calling bootstrap() on the root object, if any. Pass it to
+   * `releaseResult` once the krefs in it are no longer needed.
+   */
+  bootstrapResult: QueueMessageResult | undefined;
   /** Map from vat name to root kref, for every vat in the subcluster. */
   vatRootKrefs: Record<string, KRef>;
 };
@@ -975,8 +985,8 @@ export type CrankResult = {
 /**
  * How work from the run loop's inbox ends: what its caller is told once the
  * crank has committed. A `failure` is for the caller's own error, such as
- * naming a vat that does not exist; the crank still commits unless `abort`
- * is set too.
+ * naming a vat that does not exist; the work's writes stand unless `abort`
+ * is set too, which rolls them back as a failed delivery's are.
  */
 export type InboxOutcome<Value> =
   | { value: Value; failure?: never; abort?: never }
