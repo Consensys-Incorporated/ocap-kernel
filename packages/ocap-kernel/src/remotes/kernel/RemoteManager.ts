@@ -35,6 +35,13 @@ type RemoteManagerConstructorProps = {
 };
 
 /**
+ * @param peerId - The peer given up on.
+ * @returns Why its promises and redemptions are rejected.
+ */
+const connectionLost = (peerId: string): string =>
+  `Remote connection lost: ${peerId} (max retries reached or non-retryable error)`;
+
+/**
  * Manages remote kernel connections and communications.
  */
 export class RemoteManager {
@@ -187,18 +194,15 @@ export class RemoteManager {
   }
 
   /**
-   * Handle when we give up on a remote (after max retries or non-retryable error).
-   * Rejects all promises for which this remote is the decider, unless a
-   * restart of the peer waits: its crank rejects them, as `PEER_RESTARTED`,
-   * and lets go of the redemptions once it commits.
+   * Reject the promises a remote decides, inside the crank that gives up on
+   * it, unless a restart of the peer waits: its crank rejects them, as
+   * `PEER_RESTARTED`.
    *
-   * @param peerId - The peer ID of the remote we're giving up on.
+   * @param peerId - The peer ID of the remote given up on.
    */
   #handleRemoteGiveUp(peerId: string): void {
-    // Find the RemoteId for this peerId
     const remote = this.#remotesByPeer.get(peerId);
     if (!remote) {
-      // Remote not found - might have been cleaned up already
       return;
     }
     if (this.#restartWaits(peerId)) {
@@ -209,18 +213,13 @@ export class RemoteManager {
     }
 
     const { remoteId } = remote;
-    const reason = `Remote connection lost: ${peerId} (max retries reached or non-retryable error)`;
-    const failure = makeKernelError('CONNECTION_LOST', reason);
-
-    // Stop retransmitting and reject pending messages + URL redemptions.
-    // Called from both ACK-timeout and transport give-up paths. The ACK
-    // path calls giveUp() before invoking this callback, but giveUp() is
-    // idempotent so the repeat is harmless and keeps the transport path correct.
-    remote.giveUp(reason);
-
-    // Reject all promises for which this remote is the decider
-    for (const kpid of this.#kernelStore.getPromisesByDecider(remoteId)) {
-      this.#kernelQueue.resolvePromises(remoteId, [[kpid, true, failure]]);
+    const failure = makeKernelError('CONNECTION_LOST', connectionLost(peerId));
+    for (const kpid of [...this.#kernelStore.getPromisesByDecider(remoteId)]) {
+      this.#kernelQueue.resolvePromises(
+        remoteId,
+        [[kpid, true, failure]],
+        false,
+      );
     }
   }
 
@@ -441,7 +440,12 @@ export class RemoteManager {
       platformServices: this.#platformServices,
       remoteMessageHandler,
       logger: this.#logger,
-      onRemoteGiveUp: this.#handleRemoteGiveUp.bind(this),
+      onRemoteGiveUp: (peerId) => {
+        // A waiting restart's crank tears the remote down instead.
+        if (!this.#restartWaits(peerId)) {
+          this.#remotesByPeer.get(peerId)?.giveUp(connectionLost(peerId));
+        }
+      },
       incarnationId: this.#incarnationId,
       onIncarnationChange: this.#handleIncarnationChange.bind(this),
     });

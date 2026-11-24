@@ -1533,6 +1533,26 @@ describe('RemoteHandle', () => {
       expect(seqState?.startSeq).toBe(2);
     });
 
+    it('keeps its queue, and sends again, when the kernel refuses a give-up', async () => {
+      const remote = makeRemote();
+      const resolutions: VatOneResolution[] = [
+        ['rp+3', false, { body: '"resolved value"', slots: [] }],
+      ];
+      await deliverAndCommit(remote.deliverNotify(resolutions));
+      vi.mocked(mockKernelQueue.enqueueInbox).mockRejectedValueOnce(
+        new Error('Kernel run loop is stopping'),
+      );
+
+      remote.giveUp('network stopped');
+      await Promise.resolve();
+      await deliverAndCommit(remote.deliverNotify(resolutions));
+      await vi.waitFor(() =>
+        expect(mockRemoteComms.sendRemoteMessage).toHaveBeenCalledTimes(2),
+      );
+
+      expect(mockKernelStore.getPendingMessage(mockRemoteId, 1)).toBeDefined();
+    });
+
     it('restores pending messages on startup', async () => {
       // Pre-populate storage with persisted state (messages stored as plain strings)
       mockKernelStore.setRemoteNextSendSeq(mockRemoteId, 3);
