@@ -292,8 +292,8 @@ export class VatSupervisor {
     // IMPORTANT: Syscall architecture design explanation:
     // - Vats operate on an "optimistic execution" model - they send syscalls and continue execution
     //    without waiting for responses, assuming success.
-    // - The Kernel processes syscalls synchronously on receipt and failures are caught in VatHandle.
-    // - The vat is terminated and the crank is rolled back if a syscall fails.
+    // - The kernel applies a syscall on receipt during a delivery, and in a crank of its own otherwise.
+    // - The vat is terminated and that crank is rolled back if a syscall fails.
     this.#rpcClient
       .notify('syscall', coerceVatSyscallObject(vso))
       // Just to please the linter (notifications never reject)

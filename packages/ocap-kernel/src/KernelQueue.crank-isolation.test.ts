@@ -23,6 +23,7 @@ import type {
   PlatformServices,
   RunLoopItem,
   VatConfig,
+  VatId,
 } from './types.ts';
 import { VatHandle } from './vats/VatHandle.ts';
 import { VatManager } from './vats/VatManager.ts';
@@ -73,9 +74,11 @@ async function setUp() {
   const [kpid] = kernelStore.initKernelPromise();
   kernelStore.addPromiseSubscriber(asVatId('v3'), kpid);
 
-  const kernelQueue = new KernelQueue(kernelStore, async (vatId) =>
-    kernelStore.markVatAsTerminated(vatId),
-  );
+  const terminated: VatId[] = [];
+  const kernelQueue = new KernelQueue(kernelStore, async (vatId) => {
+    terminated.push(vatId);
+    kernelStore.markVatAsTerminated(vatId);
+  });
 
   const logger = new Logger('test');
   for (const level of ['log', 'warn', 'error', 'debug'] as const) {
@@ -166,6 +169,7 @@ async function setUp() {
     target,
     sentinel,
     kpid,
+    terminated,
   };
 }
 
@@ -250,7 +254,9 @@ async function abortACrankWhile(
     }
     // Recorded only for the types the rows observe; anything new must be wired
     // to its real handler before a row can say what it did.
-    if (!['send', 'notify', 'dropExports'].includes(item.type)) {
+    if (
+      !['send', 'notify', 'dropExports', 'retireExports'].includes(item.type)
+    ) {
       throw new Error(`test deliver does not handle ${item.type}`);
     }
     delivered.push(item);
@@ -549,17 +555,43 @@ describe('a writer acting while a crank aborts', () => {
     });
   });
 
-  it('vat late send: the message lands in a crank of its own', async () => {
+  it('vat late sends: the messages land in cranks of their own, in order', async () => {
     const harness = await setUp();
     const { vatSyscall, target } = harness;
     const delivered = await abortACrankWhile(harness, async () => {
+      for (const [method, result] of [
+        ['first', 'p+6'],
+        ['second', 'p+7'],
+      ]) {
+        vatSyscall.handleLateSyscall([
+          'send',
+          'o-1',
+          { methargs: kser([method, []]), result },
+        ]);
+      }
+    });
+    expect(methodsSentTo(delivered, target)).toStrictEqual(['first', 'second']);
+  });
+
+  it('vat late illegal resolve: its crank rolls back and the vat is terminated', async () => {
+    const harness = await setUp();
+    const { kernelStore, vatSyscall, kpid, terminated } = harness;
+    kernelStore.setPromiseDecider(kpid, asVatId('v2'));
+    kernelStore.addCListEntry(asVatId('v2'), kpid, asVRef('p+5'));
+    const delivered = await abortACrankWhile(harness, async () => {
       vatSyscall.handleLateSyscall([
-        'send',
-        'o-1',
-        { methargs: kser(['fromVat', []]), result: 'p+6' },
+        'resolve',
+        [
+          ['p+5', false, kser('done')],
+          ['p+5', false, kser('again')],
+        ],
       ]);
     });
-    expect(methodsSentTo(delivered, target)).toStrictEqual(['fromVat']);
+    expect({
+      state: kernelStore.getKernelPromise(kpid).state,
+      notified: notified(delivered, kpid),
+      terminated: terminated.includes(asVatId('v2')),
+    }).toStrictEqual({ state: 'unresolved', notified: [], terminated: true });
   });
 
   it('vat late dropImports: the drop lands in a crank of its own', async () => {

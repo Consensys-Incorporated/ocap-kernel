@@ -841,20 +841,6 @@ describe('KernelQueue', () => {
       expect(kernelStore.incrementCrankNumber).toHaveBeenCalledTimes(6);
     });
 
-    it('terminates the vat an inbox outcome names', async () => {
-      const info = kser('bye');
-      await runACrankWhile(() => {
-        kernelQueue
-          .enqueueInbox('exit', () => ({
-            value: undefined,
-            terminate: { vatId: v1, reject: false, info },
-          }))
-          .catch(() => undefined);
-      });
-
-      expect(terminateVat).toHaveBeenCalledWith(v1, info);
-    });
-
     it.each(requests)(
       'rejects a waiting $request when the crank before it kills the run loop, writing nothing',
       async ({ make }) => {

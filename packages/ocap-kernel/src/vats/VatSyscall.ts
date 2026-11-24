@@ -253,8 +253,9 @@ export class VatSyscall {
       }
       return harden(['ok', null]);
     } catch (error) {
-      // Returned, not thrown: this runs in the drain of the vat's channel,
-      // where a throw reads as the channel lost.
+      // Returned, not thrown: in a delivery this runs in the drain of the vat's
+      // channel, where a throw reads as the channel lost, and as inbox work a
+      // throw kills the run loop.
       if (isStoreFault(error)) {
         const panic = this.#kernelQueue.panic(
           `syscall ${vso[0]} from vat ${this.vatId} failed`,
@@ -289,6 +290,9 @@ export class VatSyscall {
       .enqueueInbox(`apply a syscall from vat ${vatId}`, () => {
         // Terminated or restarted while the syscall waited its turn.
         if (this.retired || !this.#kernelStore.isVatActive(vatId)) {
+          this.#logger?.debug(
+            `Dropped syscall ${vso[0]} from vat ${vatId}, which is gone`,
+          );
           return { value: undefined };
         }
         this.handleSyscall(vso);

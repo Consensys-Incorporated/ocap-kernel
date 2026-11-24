@@ -276,7 +276,6 @@ describe('VatSyscall', () => {
     const send = ['send', 'ko1', { methargs: { body: '', slots: [] } }];
     const exit = ['exit', false, { body: '#"bye"', slots: [] }];
 
-    // Hands over a late syscall and carries out the inbox work it queued.
     const applyLate = async (vso: unknown[]): Promise<unknown> => {
       vatSys.handleLateSyscall(vso as VatSyscallObject);
       const work = vi.mocked(kernelQueue.enqueueInbox).mock.lastCall?.[1];
@@ -322,20 +321,9 @@ describe('VatSyscall', () => {
       });
     });
 
-    it.each([
-      [
-        'vat was terminated',
-        () => vi.mocked(kernelStore.isVatActive).mockReturnValueOnce(false),
-      ],
-      [
-        'worker was let go',
-        () => {
-          vatSys.retired = true;
-        },
-      ],
-    ])('is dropped if its %s while it waited', async (_what, letGo) => {
+    it('is dropped if its vat was terminated while it waited', async () => {
       vatSys.handleLateSyscall(send as VatSyscallObject);
-      letGo();
+      vi.mocked(kernelStore.isVatActive).mockReturnValueOnce(false);
 
       const work = vi.mocked(kernelQueue.enqueueInbox).mock.lastCall?.[1];
       expect(await work?.()).toStrictEqual({ value: undefined });
