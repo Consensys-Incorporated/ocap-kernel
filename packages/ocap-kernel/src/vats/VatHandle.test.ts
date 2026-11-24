@@ -22,6 +22,7 @@ import type {
 } from '../types.ts';
 import { MAX_VAT_MESSAGE_LENGTH } from './vat-limits.ts';
 import { VatHandle } from './VatHandle.ts';
+import { VatSyscall } from './VatSyscall.ts';
 import { makeMapKernelDatabase } from '../../test/storage.ts';
 
 vi.mock('@endo/eventual-send', () => ({
@@ -478,6 +479,45 @@ describe('VatHandle', () => {
           },
         },
       });
+    });
+
+    it('takes a syscall as late unless a delivery is waiting for its answer', async () => {
+      const inDelivery = vi
+        .spyOn(VatSyscall.prototype, 'handleSyscall')
+        .mockReturnValue(['ok', null]);
+      const late = vi
+        .spyOn(VatSyscall.prototype, 'handleLateSyscall')
+        .mockReturnValue(undefined);
+      const { vat, stream } = await makeVat();
+      const syscall = async (kpid: string): Promise<void> =>
+        await stream.receiveInput({
+          jsonrpc: '2.0',
+          method: 'syscall',
+          params: ['subscribe', kpid],
+        });
+
+      const pinging = vat.ping();
+      await delay(10);
+      await syscall('p-1');
+      await stream.receiveInput({ id: 'v0:1', result: 'pong', jsonrpc: '2.0' });
+      await pinging;
+
+      const delivering = vat.deliverBringOutYourDead();
+      await delay(10);
+      await syscall('p-2');
+      await stream.receiveInput({
+        id: 'v0:2',
+        result: [[[], []], null],
+        jsonrpc: '2.0',
+      });
+      await delivering;
+      await syscall('p-3');
+      await delay(10);
+
+      expect({
+        inDelivery: inDelivery.mock.calls.map(([vso]) => vso[1]),
+        late: late.mock.calls.map(([vso]) => vso[1]),
+      }).toStrictEqual({ inDelivery: ['p-2'], late: ['p-1', 'p-3'] });
     });
 
     it('still rejects a ping the worker answers with an error', async () => {

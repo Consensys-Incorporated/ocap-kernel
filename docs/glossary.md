@@ -215,7 +215,8 @@ The [run loop](#run-loop)'s in-memory queue of work from outside it: the host ca
 `queueMessage`, `restartVat`, `terminateVat`, `revoke`, `pinVatRoot`, `unpinVatRoot`,
 `reapVats`, `reapRemotes`, `collectGarbage`, `registerKernelServiceObject`, `initIdentity`,
 `initRemoteComms` and `issueOcapURL`, and acting on a remote, for an ocap URL redemption or for a
-peer's message when the peer has no handle yet or an earlier message of its own still waits.
+peer's message when the peer has no handle yet or an earlier message of its own still waits;
+and a syscall a vat makes outside its own delivery.
 The run loop takes each in a [crank](#crank) of its own, and its caller hears nothing of it
 before that crank commits. See `enqueueInbox` in
 [KernelQueue](../packages/ocap-kernel/src/KernelQueue.ts).

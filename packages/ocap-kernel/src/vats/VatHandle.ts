@@ -85,6 +85,9 @@ export class VatHandle implements EndpointHandle {
   /** Whether the kernel is closing the channel itself */
   #closing: boolean = false;
 
+  /** Whether the vat has an `initVat` or a `deliver` to answer. */
+  #delivering: boolean = false;
+
   readonly #rpcClient: RpcClient<typeof vatMethodSpecs>;
 
   readonly #rpcService: RpcService<typeof vatSyscallHandlers>;
@@ -137,7 +140,12 @@ export class VatHandle implements EndpointHandle {
     );
     this.#rpcService = new RpcService(vatSyscallHandlers, {
       handleSyscall: (params) => {
-        this.#vatSyscall.handleSyscall(params as VatSyscallObject);
+        const vso = params as VatSyscallObject;
+        if (this.#delivering) {
+          this.#vatSyscall.handleSyscall(vso);
+        } else {
+          this.#vatSyscall.handleLateSyscall(vso);
+        }
       },
     });
   }
@@ -390,8 +398,12 @@ export class VatHandle implements EndpointHandle {
     method: Method;
     params: ExtractParams<Method, typeof vatMethodSpecs>;
   }): Promise<ExtractResult<Method, typeof vatMethodSpecs>> {
+    const isDelivery = method === 'initVat' || method === 'deliver';
     let result: unknown;
     try {
+      if (isDelivery) {
+        this.#delivering = true;
+      }
       result = await this.#rpcClient.call(method, params);
     } catch (error) {
       if (method !== 'deliver' || this.#closing) {
@@ -406,8 +418,12 @@ export class VatHandle implements EndpointHandle {
         [[], []],
         `Vat worker failed the delivery: ${detail}`,
       ] satisfies VatDeliveryResult);
+    } finally {
+      if (isDelivery) {
+        this.#delivering = false;
+      }
     }
-    if (method === 'initVat' || method === 'deliver') {
+    if (isDelivery) {
       const [[sets, deletes], vatError] = result as VatDeliveryResult;
       let deliveryError = vatError;
       if (!deliveryError && !fitsVatStateLimit([sets, deletes])) {

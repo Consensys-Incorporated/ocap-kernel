@@ -24,6 +24,7 @@ describe('VatSyscall', () => {
       enqueueSend: vi.fn(),
       resolvePromises: vi.fn(),
       enqueueNotify: vi.fn(),
+      enqueueInbox: vi.fn().mockResolvedValue(undefined),
       panic: vi.fn(
         (problem: string, cause: unknown) =>
           new Error(`Kernel panic: ${problem}`, { cause }),
@@ -268,6 +269,82 @@ describe('VatSyscall', () => {
         reject: true,
         info: { message: 'error' },
       });
+    });
+  });
+
+  describe('a syscall made outside a delivery', () => {
+    const send = ['send', 'ko1', { methargs: { body: '', slots: [] } }];
+    const exit = ['exit', false, { body: '#"bye"', slots: [] }];
+
+    /**
+     * Hand over a late syscall and carry out the inbox work it queued.
+     *
+     * @param vso - The syscall.
+     * @returns The work's outcome.
+     */
+    const applyLate = async (vso: unknown[]): Promise<unknown> => {
+      vatSys.handleLateSyscall(vso as VatSyscallObject);
+      const work = vi.mocked(kernelQueue.enqueueInbox).mock.lastCall?.[1];
+      return await work?.();
+    };
+
+    it('is applied by the inbox work, not on arrival', async () => {
+      vatSys.handleLateSyscall(send as VatSyscallObject);
+      expect(kernelQueue.enqueueSend).not.toHaveBeenCalled();
+
+      expect(await applyLate(send)).toStrictEqual({ value: undefined });
+      expect(kernelQueue.enqueueSend).toHaveBeenCalledWith(
+        'ko1',
+        send[2],
+        false,
+      );
+    });
+
+    it('rolls back and terminates the vat if it is illegal', async () => {
+      vi.mocked(kernelStore.translateSyscallVtoK).mockImplementationOnce(() => {
+        throw new Error('no such vref');
+      });
+
+      expect(await applyLate(send)).toStrictEqual({
+        failure: new Error('Illegal syscall send from vat v1'),
+        abort: true,
+        terminate: {
+          vatId: 'v1',
+          reject: true,
+          info: makeFatalKernelError(
+            'ILLEGAL_SYSCALL',
+            'Syscall translation error: prepare to die',
+          ),
+        },
+      });
+    });
+
+    it('terminates the vat if it is an exit', async () => {
+      expect(await applyLate(exit)).toStrictEqual({
+        value: undefined,
+        terminate: { vatId: 'v1', reject: false, info: exit[2] },
+      });
+    });
+
+    it('is dropped if the vat was terminated while it waited', async () => {
+      vi.mocked(kernelStore.isVatActive).mockReturnValueOnce(false);
+
+      expect(await applyLate(send)).toStrictEqual({ value: undefined });
+      expect(kernelStore.translateSyscallVtoK).not.toHaveBeenCalled();
+    });
+
+    it('is logged if the inbox refuses it', async () => {
+      const refusal = new Error('Kernel run loop is stopping');
+      vi.mocked(kernelQueue.enqueueInbox).mockRejectedValueOnce(refusal);
+
+      vatSys.handleLateSyscall(send as VatSyscallObject);
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(logger.error).toHaveBeenCalledWith(
+        'Syscall send from vat v1, made outside a delivery, was not applied',
+        refusal,
+      );
     });
   });
 

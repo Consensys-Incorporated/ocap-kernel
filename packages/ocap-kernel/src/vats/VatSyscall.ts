@@ -76,9 +76,8 @@ export class VatSyscall {
 
   /**
    * Handle a 'send' syscall from the vat. During a crank, the send is
-   * buffered and flushed on crank completion. Outside a crank (async vat
-   * operations like fetch), the send is enqueued immediately to wake the
-   * run queue.
+   * buffered and flushed on crank completion. Before the run loop starts there
+   * is no crank, and the send is enqueued at once.
    *
    * @param target - The target of the message send.
    * @param message - The message that was sent.
@@ -90,9 +89,8 @@ export class VatSyscall {
 
   /**
    * Handle a 'resolve' syscall from the vat. During a crank, notifications
-   * are buffered and flushed on crank completion. Outside a crank (async vat
-   * operations like fetch), notifications are enqueued immediately to wake
-   * the run queue.
+   * are buffered and flushed on crank completion. Before the run loop starts
+   * there is no crank, and they are enqueued at once.
    *
    * @param resolutions - One or more promise resolutions.
    */
@@ -272,6 +270,47 @@ export class VatSyscall {
         error instanceof Error ? error.message : String(error),
       ]);
     }
+  }
+
+  /**
+   * Take a syscall the vat made outside its own delivery, from a timer or a
+   * fetch callback. The run loop applies it in a crank of its own, ahead of
+   * the vat's next delivery, and terminates the vat there if the syscall is
+   * illegal or an exit.
+   *
+   * @param vso - The syscall that was received.
+   */
+  handleLateSyscall(vso: VatSyscallObject): void {
+    const { vatId } = this;
+    this.#kernelQueue
+      .enqueueInbox(`apply a syscall from vat ${vatId}`, () => {
+        // Terminated while the syscall waited its turn.
+        if (!this.#kernelStore.isVatActive(vatId)) {
+          return { value: undefined };
+        }
+        this.handleSyscall(vso);
+        if (this.illegalSyscall) {
+          const { info } = this.illegalSyscall;
+          return {
+            failure: Error(`Illegal syscall ${vso[0]} from vat ${vatId}`),
+            abort: true,
+            terminate: { vatId, reject: true, info },
+          };
+        }
+        if (this.vatRequestedTermination) {
+          return {
+            value: undefined,
+            terminate: { vatId, ...this.vatRequestedTermination },
+          };
+        }
+        return { value: undefined };
+      })
+      .catch((error) => {
+        this.#logger?.error(
+          `Syscall ${vso[0]} from vat ${vatId}, made outside a delivery, was not applied`,
+          error,
+        );
+      });
   }
 
   /**
