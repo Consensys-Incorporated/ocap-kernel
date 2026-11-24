@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import type { Page, BrowserContext, Locator } from '@playwright/test';
 
-import { loadExtension } from '../helpers.ts';
+import { aliceRoot, loadExtension } from '../helpers.ts';
 
 test.describe.configure({ mode: 'serial' });
 
@@ -77,10 +77,7 @@ test.describe('Object Registry', () => {
     ).toBeVisible();
     const targetSelect = popupPage.locator('[data-testid="message-target"]');
     await expect(targetSelect).toBeVisible();
-    const options = targetSelect.locator('option:not([value=""])');
-    await expect(options).toHaveCount(await options.count());
-    expect(await options.count()).toBeGreaterThan(0);
-    await targetSelect.selectOption({ index: 1 });
+    await targetSelect.selectOption(await aliceRoot(popupPage));
     await expect(targetSelect).not.toHaveValue('');
     const methodInput = popupPage.locator('[data-testid="message-method"]');
     await expect(methodInput).toHaveValue('__getMethodNames__');
@@ -108,8 +105,11 @@ test.describe('Object Registry', () => {
 
   test('should revoke an object', async () => {
     const owner = 'v1';
-    const v1Root = 'ko4';
-    const [target, method, params] = [v1Root, 'hello', '["Bob"]'];
+    const [target, method, params] = [
+      await aliceRoot(popupPage),
+      'hello',
+      '["Bob"]',
+    ];
 
     // Before revoking, we should be able to send a message to the object
     let response = await sendMessage(popupPage, target, method, params);

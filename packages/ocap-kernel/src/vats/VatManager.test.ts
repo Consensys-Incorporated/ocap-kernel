@@ -496,6 +496,33 @@ describe('VatManager', () => {
       expect(mockPlatformServices.terminate).toHaveBeenCalledWith('v1');
     });
 
+    it('fails a vat whose worker does not start in time, stopping it', async () => {
+      vatManager = new VatManager({
+        platformServices: mockPlatformServices,
+        kernelStore: mockKernelStore,
+        kernelQueue: mockKernelQueue,
+        logger: mockLogger,
+        vatRelaunchTimeoutMs: 1,
+      });
+      makeVatHandleMock.mockReturnValueOnce(new Promise(() => undefined));
+
+      const launching = vatManager.launchVat(createMockVatConfig(), 'bob', s1);
+
+      await expect(launching).rejects.toThrow('Failed to launch vat v1 (bob)');
+      const { cause } = (await launching.catch((error: unknown) => error)) as {
+        cause: Error;
+      };
+      expect({
+        cause: cause.message,
+        stopped: mockPlatformServices.terminate.mock.calls,
+        vats: vatManager.getVatIds(),
+      }).toStrictEqual({
+        cause: 'Vat v1 did not start within 1 ms',
+        stopped: [['v1']],
+        vats: [],
+      });
+    });
+
     it('stops no worker when there was never one to stop', async () => {
       mockPlatformServices.launch.mockRejectedValueOnce(
         new Error('worker file not found'),
@@ -538,62 +565,17 @@ describe('VatManager', () => {
       expect((error as Error).cause).toBe(cause);
     });
 
-    it('tears the worker down when kernel-side registration fails', async () => {
+    it('leaves a failed record to the crank, with the worker running', async () => {
       const config = createMockVatConfig();
       const cause = new Error('initEndpoint threw');
       mockKernelStore.initEndpoint.mockImplementationOnce(() => {
         throw cause;
       });
 
-      const error = await vatManager
-        .launchVat(config, 'bob', s1)
-        .catch((reason: unknown) => reason);
-
-      expect((error as Error).message).toBe('Failed to launch vat v1 (bob)');
-      expect((error as Error).cause).toBe(cause);
-      expect(mockPlatformServices.terminate).toHaveBeenCalledWith(
-        'v1',
-        expect.any(Error),
-      );
-      expect(vatHandles[0]?.terminate).toHaveBeenCalled();
-      expect(mockKernelStore.markVatAsTerminated).toHaveBeenCalledWith('v1');
-      expect(vatManager.hasVat(v1)).toBe(false);
-    });
-
-    it('reports the launch failure when the cleanup itself fails', async () => {
-      const config = createMockVatConfig();
-      const cause = new Error('setVatConfig threw');
-      mockKernelStore.setVatConfig.mockImplementationOnce(() => {
-        throw cause;
-      });
-      mockKernelStore.deleteVat.mockImplementationOnce(() => {
-        throw new Error('deleteVat failed');
-      });
-
-      const error = await vatManager
-        .launchVat(config, 'bob', s1)
-        .catch((reason: unknown) => reason);
-
-      expect((error as Error).message).toBe(
-        'Failed to launch vat v1 (bob) (cleanup also failed)',
-      );
-      expect((error as Error).cause).toBe(cause);
-    });
-
-    it('leaves the vat unmarked when the cleanup stops short of the mark', async () => {
-      const config = createMockVatConfig();
-      mockKernelStore.setVatConfig.mockImplementationOnce(() => {
-        throw new Error('setVatConfig threw');
-      });
-      mockKernelStore.unpinObject.mockImplementationOnce(() => {
-        throw new Error('unpin failed');
-      });
-
-      await expect(vatManager.launchVat(config, 'bob', s1)).rejects.toThrow(
-        'Failed to launch vat v1 (bob) (cleanup also failed)',
-      );
+      await expect(vatManager.launchVat(config, 'bob', s1)).rejects.toBe(cause);
 
       expect(mockKernelStore.markVatAsTerminated).not.toHaveBeenCalled();
+      expect(vatManager.hasVat(v1)).toBe(true);
     });
   });
 
@@ -1840,6 +1822,16 @@ describe('VatManager', () => {
         config: config2,
         subclusterId: 's1',
       });
+    });
+
+    it('leaves out a running vat whose records a dying crank rolled back', async () => {
+      await vatManager.runVat(v1, createMockVatConfig());
+      mockKernelStore.isVatActive.mockReturnValue(false);
+      mockKernelStore.getVatSubcluster.mockImplementation(() => {
+        throw new Error('Vat v1 has no subcluster');
+      });
+
+      expect(vatManager.getVats()).toStrictEqual([]);
     });
   });
 

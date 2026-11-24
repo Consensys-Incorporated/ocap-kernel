@@ -3,7 +3,7 @@ import { test, expect } from '@playwright/test';
 import type { Page, BrowserContext } from '@playwright/test';
 import { rm } from 'node:fs/promises';
 
-import { loadExtension, sessionPath } from '../helpers.ts';
+import { aliceRoot, loadExtension, sessionPath } from '../helpers.ts';
 
 test.describe.configure({ mode: 'serial', timeout: 90_000 });
 
@@ -114,13 +114,9 @@ test.describe('Remote Communications', () => {
     // Go to Object Registry tab on kernel1 to send the remote message
     await popupPage1.click('button:text("Object Registry")');
 
-    // Select the first target (alice vat)
     const targetSelect = popupPage1.locator('[data-testid="message-target"]');
     await expect(targetSelect).toBeVisible();
-    const options = await targetSelect.locator('option').all();
-    expect(options.length).toBeGreaterThan(1);
-    await targetSelect.selectOption({ value: 'ko4' });
-    expect(await targetSelect.inputValue()).toBe('ko4');
+    await targetSelect.selectOption(await aliceRoot(popupPage1));
 
     // Set method to doRunRun (the remote communication method)
     const methodInput = popupPage1.locator('[data-testid="message-method"]');

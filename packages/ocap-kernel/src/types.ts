@@ -793,7 +793,7 @@ export type SubclusterLaunchResult = {
    * `releaseResult` once the krefs in it are no longer needed.
    */
   bootstrapResult: QueueMessageResult | undefined;
-  /** Map from vat name to root kref for all successfully launched vats. */
+  /** Map from vat name to root kref, for every vat in the subcluster. */
   vatRootKrefs: Record<string, KRef>;
 };
 
