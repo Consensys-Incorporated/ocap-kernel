@@ -70,6 +70,7 @@ describe('SQL_QUERIES', () => {
       'GET',
       'GET_ALL_VS',
       'GET_NEXT',
+      'GET_VS',
       'RELEASE_SAVEPOINT',
       'ROLLBACK_SAVEPOINT',
       'SET',
@@ -126,6 +127,7 @@ describe('buildAccountabilityRecordsQuery', () => {
     expect(
       buildAccountabilityRecordsQuery({
         kind: 'delivery',
+        witness: 'kernel',
         kref: 'ko1',
         endpoint: 'v1',
         sender: 'v2',
@@ -137,8 +139,21 @@ describe('buildAccountabilityRecordsQuery', () => {
         limit: 10,
       }),
     ).toStrictEqual({
-      sql: 'SELECT seq, kind, witness, crank, kref, endpoint, sender, trace, data FROM accountability_records WHERE kind = ? AND kref = ? AND endpoint = ? AND sender = ? AND trace = ? AND (endpoint = ? OR sender = ?) AND crank = ? AND crank <= ? AND seq > ? ORDER BY seq LIMIT ?',
-      params: ['delivery', 'ko1', 'v1', 'v2', 't1', 'v3', 'v3', 4, 7, 3, 10],
+      sql: 'SELECT seq, kind, witness, crank, kref, endpoint, sender, trace, data FROM accountability_records WHERE kind = ? AND witness = ? AND kref = ? AND endpoint = ? AND sender = ? AND trace = ? AND (endpoint = ? OR sender = ?) AND crank = ? AND crank <= ? AND seq > ? ORDER BY seq LIMIT ?',
+      params: [
+        'delivery',
+        'kernel',
+        'ko1',
+        'v1',
+        'v2',
+        't1',
+        'v3',
+        'v3',
+        4,
+        7,
+        3,
+        10,
+      ],
     });
   });
 });

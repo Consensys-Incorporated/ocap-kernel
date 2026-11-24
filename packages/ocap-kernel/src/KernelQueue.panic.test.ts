@@ -100,6 +100,7 @@ describe("a store fault writing a vat's state", () => {
     const { kernel, kernelDatabase, waiterRoot } = await setUpRealKernel();
     vi.spyOn(kernelDatabase, 'makeVatStore').mockReturnValue({
       getKVData: () => [],
+      getKVValue: () => undefined,
       updateKVData: () => {
         throw new Error('database or disk is full');
       },

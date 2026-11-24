@@ -21,6 +21,8 @@ export type VatKVStore = KVStore & {
 
 export type VatStore = {
   getKVData(): KVPair[];
+  /** One entry, if present. */
+  getKVValue(key: string): string | undefined;
   updateKVData(sets: KVPair[], deletes: string[]): void;
 };
 
@@ -46,6 +48,7 @@ export type AccountabilityRecordRow = {
 /** Which records to read or delete. Every condition given must hold. */
 export type AccountabilityRecordFilter = {
   kind?: string;
+  witness?: string;
   kref?: string;
   endpoint?: string;
   sender?: string;

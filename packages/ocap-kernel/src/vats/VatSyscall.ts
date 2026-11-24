@@ -6,6 +6,8 @@ import type { CapData } from '@endo/marshal';
 import type { FatalKernelErrorCode } from '@metamask/kernel-errors';
 import { Logger } from '@metamask/logger';
 
+import { nextHop, traceOfDelivery } from '../accountability/trace.ts';
+import type { TraceContext } from '../accountability/types.ts';
 import {
   performDropImports,
   performRetireImports,
@@ -16,6 +18,7 @@ import { makeFatalKernelError } from '../liveslots/kernel-marshal.ts';
 import type { KernelStore } from '../store/index.ts';
 import { isStoreFault } from '../store/utils/store-fault.ts';
 import type {
+  Cause,
   KernelSyscallObject,
   KernelMessage,
   KernelOneResolution,
@@ -92,14 +95,19 @@ export class VatSyscall {
    *
    * @param target - The target of the message send.
    * @param message - The message that was sent.
+   * @param scheduledIn - The crank whose delivery scheduled the callback the
+   * send was issued from, if the supervisor said.
    */
-  #handleSyscallSend(target: KRef, message: KernelMessage): void {
+  #handleSyscallSend(
+    target: KRef,
+    message: KernelMessage,
+    scheduledIn: number | undefined,
+  ): void {
     const immediate = !this.#kernelStore.isInCrank();
     this.#kernelQueue.enqueueSend(target, message, {
       sender: this.vatId,
-      cause: this.delivering ? this.#kernelStore.getCrankNumber() : 'async',
       immediate,
-      ...(this.delivering ? {} : { trace: null }),
+      ...this.#context(scheduledIn),
     });
   }
 
@@ -109,13 +117,59 @@ export class VatSyscall {
    * there is no crank, and they are enqueued at once.
    *
    * @param resolutions - One or more promise resolutions.
+   * @param scheduledIn - The crank whose delivery scheduled the callback the
+   * resolution was issued from, if the supervisor said.
    */
-  #handleSyscallResolve(resolutions: KernelOneResolution[]): void {
+  #handleSyscallResolve(
+    resolutions: KernelOneResolution[],
+    scheduledIn: number | undefined,
+  ): void {
     const immediate = !this.#kernelStore.isInCrank();
+    const { trace } = this.#context(scheduledIn);
     this.#kernelQueue.resolvePromises(this.vatId, resolutions, {
       immediate,
-      ...(this.delivering ? {} : { trace: null }),
+      ...(trace === undefined ? {} : { trace }),
     });
+  }
+
+  /**
+   * What a send or resolution carries as its cause and trace. During a
+   * delivery to the vat: that delivery's crank, and its trace by default.
+   * Between deliveries, when the supervisor says which crank's delivery
+   * scheduled the callback it came from: that crank, on the supervisor's
+   * word, and the delivery's trace, one hop on, where the kernel recorded
+   * one; a crank the kernel has not run yet is not taken. Otherwise no cause
+   * and no trace, whatever crank happens to be open.
+   *
+   * @param scheduledIn - The crank the supervisor named, if any.
+   * @returns The cause, and the trace where it is not the default.
+   */
+  #context(scheduledIn: number | undefined): {
+    cause: Cause;
+    trace?: TraceContext | null;
+  } {
+    if (this.delivering) {
+      return { cause: this.#kernelStore.getCrankNumber() };
+    }
+    if (
+      scheduledIn === undefined ||
+      !Number.isInteger(scheduledIn) ||
+      scheduledIn < 1 ||
+      scheduledIn > this.#kernelStore.getCrankNumber()
+    ) {
+      return { cause: 'async', trace: null };
+    }
+    return {
+      cause: { crankNumber: scheduledIn, witness: 'liveslots' },
+      trace:
+        nextHop(
+          traceOfDelivery({
+            kernelStore: this.#kernelStore,
+            endpoint: this.vatId,
+            crank: scheduledIn,
+          }),
+        ) ?? null,
+    };
   }
 
   /**
@@ -176,9 +230,15 @@ export class VatSyscall {
    * own mistake can get that far.
    *
    * @param vso - The syscall that was received.
+   * @param scheduledIn - For a syscall issued from a callback the vat
+   * scheduled during a delivery, the crank of that delivery, as the
+   * supervisor says.
    * @returns The result of the syscall.
    */
-  handleSyscall(vso: VatSyscallObject): VatSyscallResult {
+  handleSyscall(
+    vso: VatSyscallObject,
+    scheduledIn?: number | undefined,
+  ): VatSyscallResult {
     try {
       this.illegalSyscall = undefined;
       this.vatRequestedTermination = undefined;
@@ -204,7 +264,7 @@ export class VatSyscall {
           this.#logger?.log(
             `@@@@ ${vatId} syscall send ${target}<-${JSON.stringify(message)}`,
           );
-          this.#handleSyscallSend(target, message);
+          this.#handleSyscallSend(target, message, scheduledIn);
           break;
         }
         case 'subscribe': {
@@ -218,7 +278,7 @@ export class VatSyscall {
           this.#logger?.log(
             `@@@@ ${vatId} syscall resolve ${JSON.stringify(resolutions)}`,
           );
-          this.#handleSyscallResolve(resolutions);
+          this.#handleSyscallResolve(resolutions, scheduledIn);
           break;
         }
         case 'exit': {
@@ -299,8 +359,13 @@ export class VatSyscall {
    * illegal or an exit.
    *
    * @param vso - The syscall that was received.
+   * @param scheduledIn - The crank of the delivery that scheduled the
+   * callback, as the supervisor says, if it did.
    */
-  handleLateSyscall(vso: VatSyscallObject): void {
+  handleLateSyscall(
+    vso: VatSyscallObject,
+    scheduledIn?: number | undefined,
+  ): void {
     const { vatId } = this;
     this.#kernelQueue
       .enqueueInbox(`apply a syscall from vat ${vatId}`, () => {
@@ -311,7 +376,7 @@ export class VatSyscall {
           );
           return { value: undefined };
         }
-        this.handleSyscall(vso);
+        this.handleSyscall(vso, scheduledIn);
         if (this.illegalSyscall) {
           const { info } = this.illegalSyscall;
           return {

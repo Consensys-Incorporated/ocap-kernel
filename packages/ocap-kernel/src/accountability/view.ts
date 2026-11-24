@@ -7,28 +7,36 @@ import type { KernelStore } from '../store/index.ts';
 import type { Cause, Sender } from '../types.ts';
 
 /**
- * A cause as a vat reads it: the record of the delivery to the sender in the
- * crank the cause names, where the kernel wrote one.
+ * A cause as a vat reads it: the record of the delivery to the endpoint in
+ * the crank the cause names, where the kernel wrote one.
  *
  * @param kernelStore - The kernel's store.
- * @param sender - Who issued the send the cause is of.
+ * @param endpoint - Whose delivery the cause names: the sender of a send, or
+ * the vat reporting an exercise.
  * @param cause - The cause.
  * @returns The cause as a vat reads it.
  */
 const viewCause = (
   kernelStore: KernelStore,
-  sender: Sender,
+  endpoint: Sender,
   cause: Cause,
 ): CauseView => {
-  if (typeof cause !== 'number') {
+  if (cause === 'async') {
     return cause;
   }
   const [delivery] = kernelStore.getAccountabilityRecords({
     kind: 'delivery',
-    endpoint: sender,
-    crank: cause,
+    witness: 'kernel',
+    endpoint,
+    crank: typeof cause === 'number' ? cause : cause.crankNumber,
     limit: 1,
   });
+  if (typeof cause !== 'number') {
+    return {
+      witness: cause.witness,
+      ...(delivery === undefined ? {} : { delivery: delivery.seq }),
+    };
+  }
   return delivery === undefined ? 'unrecorded' : { delivery: delivery.seq };
 };
 
@@ -44,10 +52,14 @@ export function viewRecords(
   records: AccountabilityRecord[],
 ): AccountabilityRecordView[] {
   return records.map(({ crankNumber: _crankNumber, ...record }) =>
-    'cause' in record
+    'cause' in record && record.cause !== undefined
       ? {
           ...record,
-          cause: viewCause(kernelStore, record.sender, record.cause),
+          cause: viewCause(
+            kernelStore,
+            'sender' in record ? record.sender : record.endpoint,
+            record.cause,
+          ),
         }
       : record,
   ) as AccountabilityRecordView[];

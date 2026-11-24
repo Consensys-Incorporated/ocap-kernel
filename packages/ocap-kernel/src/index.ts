@@ -61,6 +61,8 @@ export type {
   Intent,
   ConveyanceRecord,
   DeliveryRecord,
+  ExerciseRecord,
+  IncorporationRecord,
   IntroductionRecord,
   PartyRef,
   QueueMessageOptions,

@@ -11,12 +11,15 @@ import type {
   Attribution,
   ConveyanceRecord,
   DeliveryRecord,
+  ExerciseRecord,
+  IncorporationRecord,
   IntroductionRecord,
   ResolutionRecord,
   StoredAttestation,
   TraceContext,
   TrackOptions,
   Trackers,
+  Witness,
 } from '../../accountability/types.ts';
 import type { Segment } from '../../accountability/segments.ts';
 import type { EndpointId, KRef, KernelMessage, Sender } from '../../types.ts';
@@ -24,6 +27,8 @@ import type { StoreContext } from '../types.ts';
 
 const ATTESTATION_BASE = 'attestation.';
 const SEGMENT_BASE = 'segment.';
+
+type TraceFields = { traceId: string; hop: number; hopLimit: number };
 
 /**
  * Create an accountability records store object that provides functionality
@@ -137,13 +142,15 @@ export function getAccountabilityRecordMethods(ctx: StoreContext) {
   }
 
   /**
-   * Write a record, stamped with the current crank and the kernel as witness.
+   * Write a record, stamped with the current crank and its witness.
    *
    * @param input - The record.
+   * @param witness - Who vouches for it; the kernel unless said.
    * @returns Its sequence number.
    */
   function appendAccountabilityRecord(
     input: AccountabilityRecordInput,
+    witness: Witness = 'kernel',
   ): number {
     let kref: KRef;
     let endpoint: string;
@@ -159,13 +166,13 @@ export function getAccountabilityRecordMethods(ctx: StoreContext) {
     const crankNumber = Number(ctx.crankNumber.get());
     return ctx.accountabilityRecords.append({
       kind: input.kind,
-      witness: 'kernel',
+      witness,
       crank: crankNumber,
       kref,
       endpoint,
-      sender: input.sender,
-      trace: input.kind === 'introduction' ? null : (input.traceId ?? null),
-      data: JSON.stringify({ ...input, witness: 'kernel', crankNumber }),
+      sender: 'sender' in input ? input.sender : null,
+      trace: 'traceId' in input ? (input.traceId ?? null) : null,
+      data: JSON.stringify({ ...input, witness, crankNumber }),
     });
   }
 
@@ -210,15 +217,17 @@ export function getAccountabilityRecordMethods(ctx: StoreContext) {
    * @param trace - The trace, if any.
    * @returns The fields, or none.
    */
-  function traced(trace: TraceContext): { traceId: string; hop: number };
+  function traced(trace: TraceContext): TraceFields;
   function traced(
     trace: TraceContext | undefined,
-  ): { traceId: string; hop: number } | Record<string, never>;
+  ): TraceFields | Record<string, never>;
   // eslint-disable-next-line ocap/require-jsdoc
   function traced(
     trace: TraceContext | undefined,
-  ): { traceId: string; hop: number } | Record<string, never> {
-    return trace === undefined ? {} : { traceId: trace.id, hop: trace.hop };
+  ): TraceFields | Record<string, never> {
+    return trace === undefined
+      ? {}
+      : { traceId: trace.id, hop: trace.hop, hopLimit: trace.hopLimit };
   }
 
   /**
@@ -306,13 +315,67 @@ export function getAccountabilityRecordMethods(ctx: StoreContext) {
     ...resolution
   }: Omit<
     AccountabilityRecordInput<ResolutionRecord>,
-    'kind' | 'traceId' | 'hop'
+    'kind' | 'traceId' | 'hop' | 'hopLimit'
   > & { trace: TraceContext }): void {
     appendAccountabilityRecord({
       kind: 'resolution',
       ...traced(trace),
       ...resolution,
     });
+  }
+
+  /**
+   * Record a tracked object newly written into the state of a vat's durable
+   * object, as liveslots serialized it.
+   *
+   * @param incorporation - The incorporation.
+   */
+  function recordIncorporation(
+    incorporation: Omit<AccountabilityRecordInput<IncorporationRecord>, 'kind'>,
+  ): void {
+    appendAccountabilityRecord(
+      { kind: 'incorporation', ...incorporation },
+      'liveslots',
+    );
+  }
+
+  /**
+   * Record a method invoked on an object of a vat's, on the vat's word.
+   *
+   * @param exercise - The exercise.
+   * @param exercise.trace - The trace of the delivery it was reported from, if any.
+   */
+  function recordExercise({
+    trace,
+    ...exercise
+  }: Omit<
+    AccountabilityRecordInput<ExerciseRecord>,
+    'kind' | 'traceId' | 'hop' | 'hopLimit'
+  > & { trace?: TraceContext | undefined }): void {
+    appendAccountabilityRecord(
+      { kind: 'exercise', ...traced(trace), ...exercise },
+      'vat',
+    );
+  }
+
+  /**
+   * Record a hand-off of an object to another, on the word of the vat that
+   * declares it.
+   *
+   * @param conveyance - The conveyance.
+   * @param conveyance.trace - The trace of the delivery it was declared in, if any.
+   */
+  function recordDeclaredConveyance({
+    trace,
+    ...conveyance
+  }: Omit<
+    AccountabilityRecordInput<ConveyanceRecord>,
+    'kind' | 'via' | 'traceId' | 'hop' | 'hopLimit'
+  > & { trace?: TraceContext | undefined }): void {
+    appendAccountabilityRecord(
+      { kind: 'conveyance', via: 'declared', ...traced(trace), ...conveyance },
+      'vat',
+    );
   }
 
   /**
@@ -437,6 +500,9 @@ export function getAccountabilityRecordMethods(ctx: StoreContext) {
     recordDelivery,
     recordConveyance,
     recordResolution,
+    recordIncorporation,
+    recordExercise,
+    recordDeclaredConveyance,
     getAccountabilityRecords,
     pruneAccountabilityRecords,
     setIntroductionRecording,

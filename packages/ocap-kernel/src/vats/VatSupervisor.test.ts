@@ -329,7 +329,9 @@ describe('VatSupervisor', () => {
       expect(factory).toHaveBeenCalledTimes(1);
     });
 
-    const endowmentsFetch = (() => undefined) as unknown as typeof fetch;
+    const endowmentsFetch = vi.fn(async () =>
+      Promise.resolve(new Response('body')),
+    ) as unknown as typeof fetch;
     const suppliedFetch = (() => undefined) as unknown as typeof fetch;
     const fsOptions = { makeReadFile: () => undefined };
 
@@ -338,7 +340,7 @@ describe('VatSupervisor', () => {
         name: "builds http on the endowments' fetch",
         fetch: endowmentsFetch,
         platformOptions: {},
-        expected: { http: { fetch: endowmentsFetch } },
+        expected: { http: { fetch: expect.any(Function) } },
       },
       {
         name: 'builds http on a fetch platformOptions supply',
@@ -350,7 +352,7 @@ describe('VatSupervisor', () => {
         name: 'keeps the other platformOptions',
         fetch: endowmentsFetch,
         platformOptions: { fs: fsOptions },
-        expected: { fs: fsOptions, http: { fetch: endowmentsFetch } },
+        expected: { fs: fsOptions, http: { fetch: expect.any(Function) } },
       },
       {
         name: 'passes platformOptions through when the endowments have no fetch',
@@ -389,6 +391,38 @@ describe('VatSupervisor', () => {
       await delay(50);
 
       expect(makePlatform).toHaveBeenCalledWith(platformConfig, expected);
+    });
+
+    it("makes http's requests through the endowments' fetch", async () => {
+      const makePlatform = vi.fn().mockResolvedValue({});
+      const platformConfig = { http: { allow: [{ host: 'example.test' }] } };
+      const { stream } = await makeVatSupervisor({
+        makePlatform,
+        makeAllowedGlobals: () => ({
+          ...makeVatEndowments({}),
+          fetch: endowmentsFetch,
+        }),
+        fetchBlob: vi.fn().mockResolvedValue({
+          ok: true,
+          text: vi.fn().mockResolvedValue(''),
+        }),
+      });
+      await stream.receiveInput({
+        id: 'test-init',
+        method: 'initVat',
+        params: {
+          vatConfig: { bundleSpec: 'test.bundle', platformConfig },
+          state: [],
+        },
+        jsonrpc: '2.0',
+      });
+      await delay(50);
+      const [[, options]] = makePlatform.mock.calls as [
+        [unknown, { http: { fetch: typeof fetch } }],
+      ];
+      const response = await options.http.fetch('https://example.test/');
+      expect(endowmentsFetch).toHaveBeenCalledWith('https://example.test/');
+      expect(await response.text()).toBe('body');
     });
 
     it('rejects an unknown global at the initVat RPC boundary', async () => {

@@ -354,11 +354,17 @@ export const SenderStruct = union([EndpointIdStruct, literal('kernel')]);
 export type Sender = Infer<typeof SenderStruct>;
 
 /**
- * The crank a send was issued in, or `'async'` for one issued outside any
- * crank, as when a vat's `fetch` callback reaches the kernel between
- * deliveries. The kernel cannot see what caused such a send, and says so.
+ * The crank a send was issued in. For one issued outside any crank, as when
+ * a vat's timer callback reaches the kernel between deliveries: the crank
+ * whose delivery scheduled the callback, on the word of the supervisor that
+ * ran it; or `'async'` where there is no such word. The kernel cannot see
+ * what caused such a send, and says so.
  */
-export const CauseStruct = union([number(), literal('async')]);
+export const CauseStruct = union([
+  number(),
+  literal('async'),
+  object({ crankNumber: number(), witness: literal('liveslots') }),
+]);
 
 export type Cause = Infer<typeof CauseStruct>;
 

@@ -208,6 +208,7 @@ describe('makeSQLKernelDatabase', () => {
     const vatStore = db.makeVatStore('vvat');
     expect(Object.keys(vatStore).sort()).toStrictEqual([
       'getKVData',
+      'getKVValue',
       'updateKVData',
     ]);
   });
@@ -226,6 +227,16 @@ describe('makeSQLKernelDatabase', () => {
       .mockReturnValueOnce(mockKVData[1].value);
     const data = vatStore.getKVData();
     expect(data).toStrictEqual([...mockKVDataForMap]);
+  });
+
+  it('vatStore.getKVValue returns one entry, or nothing', async () => {
+    const db = await makeSQLKernelDatabase({});
+    const vatStore = db.makeVatStore('vvat');
+    mockStatement.step.mockReturnValueOnce(true).mockReturnValueOnce(false);
+    mockStatement.getString.mockReturnValueOnce(mockKVData[0].value);
+    expect(vatStore.getKVValue(mockKVData[0].key)).toBe(mockKVData[0].value);
+    expect(mockStatement.bind).toHaveBeenCalledWith(['vvat', 'key1']);
+    expect(vatStore.getKVValue('absent')).toBeUndefined();
   });
 
   it('vatStore.updateKVData updates the database', async () => {

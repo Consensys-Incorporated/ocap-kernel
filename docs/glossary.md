@@ -113,13 +113,32 @@ Deliveries can be of type 'message', 'notify', 'dropExports', 'retireExports',
 ### accountability record
 
 A row the [kernel](#kernel) writes, inside the [crank's](#crank) transaction, about
-something it saw done with an object: an [introduction](#introduction), a delivery to a
-[tracked object](#tracked-object), or a conveyance of one. Each names its witness, the
-layer vouching for it, which for now is always the kernel. Records outlive the objects
-they describe and are deleted only by `Kernel.pruneAccountabilityRecords`, or with
-the rest of the store by `clearStorage`. See
+something done with an object: an [introduction](#introduction), a delivery to a
+[tracked object](#tracked-object), a conveyance of one, an [incorporation](#incorporation)
+of one, or an exercise or hand-off a vat reports. Each names its [witness](#witness), the
+layer vouching for it. Records outlive the objects they describe and are deleted only by
+`Kernel.pruneAccountabilityRecords`, or with the rest of the store by `clearStorage`. See
 [Accountability and provenance](./accountability.md) and
 [accountability-records.ts](../packages/ocap-kernel/src/store/methods/accountability-records.ts).
+
+### witness
+
+The layer vouching for an [accountability record](#accountability-record): `kernel`, for
+something the kernel saw on its own paths; `liveslots`, for something seen in the vat
+process by code that is the kernel's but runs where the vat could have interfered with
+it, such as an [incorporation](#incorporation) or the crank a timer callback was scheduled
+in; or `vat`, for the vat's own word, as reported through the `accountability`
+[kernel service](#kernel-service)'s `exercise` and `convey` by the `makeAccounting`
+helpers in [accountable.ts](../packages/kernel-utils/src/accountable.ts). A chain of
+custody, a receipt, and a [segment](#segment) are built from kernel-witnessed records
+only; `history` and `trace` return every witness's, marked.
+
+### incorporation
+
+A [tracked object](#tracked-object) newly written into the state of a vat's durable
+object, which the kernel reads from the state writes a delivery returns, before applying
+them, and records with liveslots as [witness](#witness). See
+[incorporations.ts](../packages/ocap-kernel/src/accountability/incorporations.ts).
 
 ### introduction
 

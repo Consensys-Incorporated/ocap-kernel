@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 
-import { vatSyscallHandler } from './vat-syscall.ts';
+import { scheduledSyscallHandler, vatSyscallHandler } from './vat-syscall.ts';
 
 describe('vatSyscallHandler', () => {
   it('should initialize a vat', () => {
@@ -39,5 +39,16 @@ describe('vatSyscallHandler', () => {
         },
       ]),
     ).toThrow('fake');
+  });
+});
+
+describe('scheduledSyscallHandler', () => {
+  it('hands the syscall over with the crank that scheduled it', () => {
+    const handleSyscall = vi.fn();
+    scheduledSyscallHandler.implementation(
+      { handleSyscall },
+      { syscall: ['subscribe', 'p-1'], cause: 7 },
+    );
+    expect(handleSyscall).toHaveBeenCalledWith(['subscribe', 'p-1'], 7);
   });
 });

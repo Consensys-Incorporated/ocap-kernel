@@ -16,6 +16,7 @@ import type { DuplexStream } from '@metamask/streams';
 import { isJsonRpcNotification, isJsonRpcResponse } from '@metamask/utils';
 import type { JsonRpcNotification, JsonRpcResponse } from '@metamask/utils';
 
+import { recordIncorporations } from '../accountability/incorporations.ts';
 import type { KernelQueue } from '../KernelQueue.ts';
 import { makeFatalKernelError } from '../liveslots/kernel-marshal.ts';
 import { vatMethodSpecs, vatSyscallHandlers } from '../rpc/index.ts';
@@ -140,12 +141,12 @@ export class VatHandle implements EndpointHandle {
       `${this.vatId}:`,
     );
     this.#rpcService = new RpcService(vatSyscallHandlers, {
-      handleSyscall: (params) => {
+      handleSyscall: (params, scheduledIn) => {
         const vso = params as VatSyscallObject;
         if (this.#vatSyscall.delivering) {
-          this.#vatSyscall.handleSyscall(vso);
+          this.#vatSyscall.handleSyscall(vso, scheduledIn);
         } else {
-          this.#vatSyscall.handleLateSyscall(vso);
+          this.#vatSyscall.handleLateSyscall(vso, scheduledIn);
         }
       },
     });
@@ -289,7 +290,10 @@ export class VatHandle implements EndpointHandle {
   ): Promise<CrankResult> {
     await this.sendVatCommand({
       method: 'deliver',
-      params: ['message', target, message],
+      params: {
+        delivery: ['message', target, message],
+        crankNumber: this.#kernelStore.getCrankNumber(),
+      },
     });
     return this.#getDeliveryCrankResult();
   }
@@ -303,7 +307,10 @@ export class VatHandle implements EndpointHandle {
   async deliverNotify(resolutions: VatOneResolution[]): Promise<CrankResult> {
     await this.sendVatCommand({
       method: 'deliver',
-      params: ['notify', resolutions],
+      params: {
+        delivery: ['notify', resolutions],
+        crankNumber: this.#kernelStore.getCrankNumber(),
+      },
     });
     return this.#getDeliveryCrankResult();
   }
@@ -317,7 +324,10 @@ export class VatHandle implements EndpointHandle {
   async deliverDropExports(vrefs: ERef[]): Promise<CrankResult> {
     await this.sendVatCommand({
       method: 'deliver',
-      params: ['dropExports', vrefs],
+      params: {
+        delivery: ['dropExports', vrefs],
+        crankNumber: this.#kernelStore.getCrankNumber(),
+      },
     });
     return this.#getDeliveryCrankResult();
   }
@@ -331,7 +341,10 @@ export class VatHandle implements EndpointHandle {
   async deliverRetireExports(vrefs: ERef[]): Promise<CrankResult> {
     await this.sendVatCommand({
       method: 'deliver',
-      params: ['retireExports', vrefs],
+      params: {
+        delivery: ['retireExports', vrefs],
+        crankNumber: this.#kernelStore.getCrankNumber(),
+      },
     });
     return this.#getDeliveryCrankResult();
   }
@@ -345,7 +358,10 @@ export class VatHandle implements EndpointHandle {
   async deliverRetireImports(vrefs: ERef[]): Promise<CrankResult> {
     await this.sendVatCommand({
       method: 'deliver',
-      params: ['retireImports', vrefs],
+      params: {
+        delivery: ['retireImports', vrefs],
+        crankNumber: this.#kernelStore.getCrankNumber(),
+      },
     });
     return this.#getDeliveryCrankResult();
   }
@@ -358,7 +374,10 @@ export class VatHandle implements EndpointHandle {
   async deliverBringOutYourDead(): Promise<CrankResult> {
     await this.sendVatCommand({
       method: 'deliver',
-      params: ['bringOutYourDead'],
+      params: {
+        delivery: ['bringOutYourDead'],
+        crankNumber: this.#kernelStore.getCrankNumber(),
+      },
     });
     return this.#getDeliveryCrankResult();
   }
@@ -443,6 +462,14 @@ export class VatHandle implements EndpointHandle {
       // On an error the state goes unwritten: the vat is terminated and the
       // crank rolled back.
       if (noErrors) {
+        if (method === 'deliver') {
+          recordIncorporations({
+            kernelStore: this.#kernelStore,
+            vatStore: this.#vatStore,
+            vatId: this.vatId,
+            sets,
+          });
+        }
         this.#vatStore.updateKVData(sets, deletes);
       }
     }

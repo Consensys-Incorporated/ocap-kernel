@@ -1,4 +1,6 @@
 export { prettifySmallcaps } from './prettify-smallcaps.ts';
+export { makeAccounting } from './accountable.ts';
+export type { AccountabilityReporter } from './accountable.ts';
 export { makeDefaultInterface, makeDefaultExo } from './exo.ts';
 export {
   asyncifyMethodGuards,

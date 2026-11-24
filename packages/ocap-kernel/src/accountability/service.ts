@@ -4,10 +4,12 @@ import { assert } from '@metamask/superstruct';
 import { buildChain } from './chain.ts';
 import type { Chain } from './chain.ts';
 import type { KernelSigner, Signed } from './signing.ts';
+import { traceOfDelivery } from './trace.ts';
 import { TrackOptionsStruct } from './types.ts';
 import type {
   AccountabilityRecordView,
   DeliveryRecord,
+  TraceContext,
   TrackOptions,
 } from './types.ts';
 import { viewRecords } from './view.ts';
@@ -17,7 +19,7 @@ import { krefOf } from '../liveslots/kernel-marshal.ts';
 import type { SlotValue } from '../liveslots/kernel-marshal.ts';
 import type { KernelStore } from '../store/index.ts';
 import { isPromiseRef } from '../store/utils/promise-ref.ts';
-import { isVatId } from '../types.ts';
+import { isEndpointId, isVatId } from '../types.ts';
 import type { Cause, EndpointId, KRef, Sender } from '../types.ts';
 
 /**
@@ -89,6 +91,20 @@ export type AccountabilityService = {
    * attributed it.
    */
   receipt(context: CallContext): Promise<Receipt>;
+  /**
+   * Record, on the caller's word, that a method of an object of its was
+   * invoked, as the `accountable` wrapper reports. The record names the
+   * delivery the caller reported it from, and is on its trace.
+   *
+   * @throws If the object is not the caller's.
+   */
+  exercise(context: CallContext, obj: SlotValue, method: string): Promise<void>;
+  /**
+   * Record, on the caller's word, that it handed an object to another, as
+   * the `convey` helper reports. The record names the delivery the caller
+   * reported it from, and is on its trace.
+   */
+  convey(context: CallContext, obj: SlotValue, to: SlotValue): Promise<void>;
 };
 
 /**
@@ -232,7 +248,7 @@ export function makeAccountabilityService({
     },
 
     async receipt({ caller, cause }: CallContext): Promise<Receipt> {
-      if (cause === 'async') {
+      if (typeof cause !== 'number') {
         throw Error('the call was made outside a delivery');
       }
       const [delivery] = (await kernelQueue.enqueueInbox(
@@ -241,6 +257,7 @@ export function makeAccountabilityService({
           attempt(() =>
             kernelStore.getAccountabilityRecords({
               kind: 'delivery',
+              witness: 'kernel',
               endpoint: caller,
               crank: cause,
             }),
@@ -253,5 +270,68 @@ export function makeAccountabilityService({
       }
       return signer.sign({ kind: 'receipt', delivery });
     },
+
+    async exercise(
+      { caller, cause }: CallContext,
+      obj: SlotValue,
+      method: string,
+    ): Promise<void> {
+      const kref = objectKrefOf(obj);
+      if (typeof method !== 'string') {
+        throw Error('Argument must be a method name');
+      }
+      if (!isVatId(caller) || kernelStore.getOwner(kref) !== caller) {
+        throw Error(`${kref} is not the caller's to report exercised`);
+      }
+      await kernelQueue.enqueueInbox('record an exercise', async () =>
+        attempt(() =>
+          kernelStore.recordExercise({
+            kref,
+            endpoint: caller,
+            method,
+            cause,
+            trace: traceOfReport(caller, cause),
+          }),
+        ),
+      );
+    },
+
+    async convey(
+      { caller, cause }: CallContext,
+      obj: SlotValue,
+      to: SlotValue,
+    ): Promise<void> {
+      const kref = objectKrefOf(obj);
+      const carrier = objectKrefOf(to);
+      await kernelQueue.enqueueInbox('record a conveyance', async () =>
+        attempt(() =>
+          kernelStore.recordDeclaredConveyance({
+            kref,
+            sender: caller,
+            to: kernelStore.getOwner(carrier) ?? 'kernel',
+            carrier,
+            cause,
+            trace: traceOfReport(caller, cause),
+          }),
+        ),
+      );
+    },
   });
+
+  /**
+   * The trace of the delivery a vat reports from, if it reports from one
+   * and the delivery was traced.
+   *
+   * @param caller - The vat.
+   * @param cause - The call's cause.
+   * @returns The trace, if any.
+   */
+  function traceOfReport(
+    caller: Sender,
+    cause: Cause,
+  ): TraceContext | undefined {
+    return typeof cause === 'number' && isEndpointId(caller)
+      ? traceOfDelivery({ kernelStore, endpoint: caller, crank: cause })
+      : undefined;
+  }
 }

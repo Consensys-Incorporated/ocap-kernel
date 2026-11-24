@@ -16,7 +16,7 @@ import {
 import type { Infer } from '@metamask/superstruct';
 import { JsonStruct } from '@metamask/utils';
 
-import type { Cause, EndpointId, KRef, Sender } from '../types.ts';
+import type { Cause, EndpointId, ERef, KRef, Sender, VatId } from '../types.ts';
 
 /**
  * A filter as a host may pass one: a field it gives is a condition, and a
@@ -25,6 +25,7 @@ import type { Cause, EndpointId, KRef, Sender } from '../types.ts';
  */
 export const AccountabilityRecordFilterStruct = object({
   kind: exactOptional(string()),
+  witness: exactOptional(string()),
   kref: exactOptional(string()),
   endpoint: exactOptional(string()),
   sender: exactOptional(string()),
@@ -184,10 +185,11 @@ type AccountabilityRecordBase = {
   crankNumber: number;
 };
 
-/** The trace a record is part of, if any. */
+/** The trace a record is part of, if any, and how far it was to go. */
 type Traced = {
   traceId?: string;
   hop?: number;
+  hopLimit?: number;
 };
 
 /** An endpoint's first acquisition of an object. */
@@ -226,16 +228,21 @@ export type DeliveryRecord = AccountabilityRecordBase &
     intent?: Intent;
   };
 
-/** A tracked object carried to an endpoint in a message or a resolution. */
+/**
+ * A tracked object carried to an endpoint in a message or a resolution; or,
+ * on the word of the vat that says so, handed to an object by `convey`.
+ */
 export type ConveyanceRecord = AccountabilityRecordBase &
   Traced & {
     kind: 'conveyance';
     kref: KRef;
     sender: Sender;
     to: EndpointId | 'kernel';
-    via: 'message' | 'notify';
-    /** The message's target or the resolved promise. */
+    via: 'message' | 'notify' | 'declared';
+    /** The message's target, the resolved promise, or the object declared handed to. */
     carrier: KRef;
+    /** On a declared conveyance, the delivery the vat declared it in. */
+    cause?: Cause;
   };
 
 /** An endpoint told of a settled promise, on a trace. */
@@ -251,11 +258,44 @@ export type ResolutionRecord = AccountabilityRecordBase &
     slots: KRef[];
   };
 
+/**
+ * A tracked object newly written into the state of a durable object, as
+ * liveslots serialized it. Liveslots sees the write; the kernel reads it from
+ * the state the delivery returned.
+ */
+export type IncorporationRecord = AccountabilityRecordBase & {
+  kind: 'incorporation';
+  witness: 'liveslots';
+  kref: KRef;
+  endpoint: VatId;
+  /** The durable object, as the vat names it. */
+  object: ERef;
+  /** The durable object, as the kernel names it, if it has been exported. */
+  objectKref?: KRef;
+};
+
+/**
+ * A method invoked on an object of the vat's, on the vat's own word, as the
+ * `accountable` wrapper reports it.
+ */
+export type ExerciseRecord = AccountabilityRecordBase &
+  Traced & {
+    kind: 'exercise';
+    witness: 'vat';
+    kref: KRef;
+    endpoint: VatId;
+    method: string;
+    /** The delivery the vat reported it from. */
+    cause: Cause;
+  };
+
 export type AccountabilityRecord =
   | IntroductionRecord
   | DeliveryRecord
   | ConveyanceRecord
-  | ResolutionRecord;
+  | ResolutionRecord
+  | IncorporationRecord
+  | ExerciseRecord;
 
 /** A record as written, before the store numbers and stamps it. */
 export type AccountabilityRecordInput<
@@ -268,9 +308,14 @@ export type AccountabilityRecordInput<
  * A cause as a vat reads it. The crank number a cause names means nothing
  * outside the kernel, so a vat is shown the record of the delivery that
  * crank made to the sender instead, by its sequence number, where the kernel
- * wrote one.
+ * wrote one. A cause on the supervisor's word keeps its witness, with the
+ * delivery where the kernel recorded one.
  */
-export type CauseView = { delivery: number } | 'async' | 'unrecorded';
+export type CauseView =
+  | { delivery: number }
+  | { witness: 'liveslots'; delivery?: number }
+  | 'async'
+  | 'unrecorded';
 
 type ViewOf<Record> = Record extends unknown
   ? Omit<Record, 'crankNumber' | 'cause'> &

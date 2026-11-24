@@ -33,6 +33,7 @@ describe('index', () => {
       'isVatBundle',
       'join',
       'jsonSchemaToStruct',
+      'makeAccounting',
       'makeCounter',
       'makeDefaultExo',
       'makeDefaultInterface',

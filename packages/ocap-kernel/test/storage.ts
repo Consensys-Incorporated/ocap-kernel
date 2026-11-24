@@ -96,6 +96,7 @@ function makeMapVatStore(_vatID: string): ClearableVatStore {
   const kvData: Map<string, string> = new Map();
   return {
     getKVData: () => Array.from(kvData.entries()),
+    getKVValue: (key: string) => kvData.get(key),
     updateKVData: (sets: [string, string][], deletes: string[]) => {
       for (const [key, value] of sets) {
         kvData.set(key, value);
@@ -122,6 +123,7 @@ export function makeArrayAccountabilityRecordStore(): AccountabilityRecordStore 
     (filter: AccountabilityRecordFilter) =>
     (row: AccountabilityRecordRow): boolean =>
       (filter.kind === undefined || row.kind === filter.kind) &&
+      (filter.witness === undefined || row.witness === filter.witness) &&
       (filter.kref === undefined || row.kref === filter.kref) &&
       (filter.endpoint === undefined || row.endpoint === filter.endpoint) &&
       (filter.sender === undefined || row.sender === filter.sender) &&

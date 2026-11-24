@@ -27,6 +27,10 @@
       "types": "./dist/exo.d.ts",
       "default": "./dist/exo.js"
     },
+    "./accountable": {
+      "types": "./dist/accountable.d.ts",
+      "default": "./dist/accountable.js"
+    },
     "./json-schema-to-struct": {
       "types": "./dist/json-schema-to-struct.d.ts",
       "default": "./dist/json-schema-to-struct.js"

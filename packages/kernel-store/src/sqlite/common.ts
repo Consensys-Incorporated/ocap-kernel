@@ -67,6 +67,11 @@ export const SQL_QUERIES = {
     FROM kv_vatstore
     WHERE vatID = ?
   `,
+  GET_VS: `
+    SELECT value
+    FROM kv_vatstore
+    WHERE vatID = ? AND key = ?
+  `,
   SET: `
     INSERT INTO kv (key, value)
     VALUES (?, ?)
@@ -161,6 +166,7 @@ function buildAccountabilityRecordsWhere(
     }
   };
   equal('kind', filter.kind);
+  equal('witness', filter.witness);
   equal('kref', filter.kref);
   equal('endpoint', filter.endpoint);
   equal('sender', filter.sender);
