@@ -317,7 +317,7 @@ describe('KernelServiceManager', () => {
       expect(mockKernelQueue.resolvePromises).not.toHaveBeenCalled();
     });
 
-    it('successfully invokes a service method with result', async () => {
+    it('settles the result in a crank of its own', async () => {
       const { method: testMethod, calls } = makeTrackableMethod(async () =>
         Promise.resolve('test result'),
       );
@@ -334,9 +334,14 @@ describe('KernelServiceManager', () => {
       };
 
       serviceManager.invokeKernelService(registered.kref, message);
+      expect(mockKernelQueue.enqueueInbox).not.toHaveBeenCalled();
       await delay();
 
       expect(calls).toStrictEqual([['arg1']]);
+      expect(mockKernelQueue.enqueueInbox).toHaveBeenCalledExactlyOnceWith(
+        'settle a kernel service result',
+        expect.any(Function),
+      );
       expect(mockKernelQueue.resolvePromises).toHaveBeenCalledWith(
         'kernel',
         [['kp123', false, kser('test result')]],
@@ -596,33 +601,11 @@ describe('KernelServiceManager', () => {
         false,
       );
     });
-    it('settles the result in a crank of its own', async () => {
-      const { kref } = serviceManager.registerKernelServiceObject(
-        'testService',
-        {
-          testMethod: () => 'test result',
-        },
-      );
-
-      serviceManager.invokeKernelService(kref, {
-        methargs: kser(['testMethod', []]),
-        result: asKRef('kp123'),
-      });
-      expect(mockKernelQueue.enqueueInbox).not.toHaveBeenCalled();
-      await delay();
-
-      expect(mockKernelQueue.enqueueInbox).toHaveBeenCalledExactlyOnceWith(
-        'settle a kernel service result',
-        expect.any(Function),
-      );
-    });
 
     it('rejects the result when its resolution cannot be written', async () => {
       const { kref } = serviceManager.registerKernelServiceObject(
         'testService',
-        {
-          testMethod: () => 'test result',
-        },
+        { testMethod: () => 'test result' },
       );
       vi.mocked(mockKernelQueue.resolvePromises).mockImplementationOnce(() => {
         throw new Error('kp123 was already resolved');
@@ -653,9 +636,7 @@ describe('KernelServiceManager', () => {
       vi.mocked(mockKernelQueue.enqueueInbox).mockRejectedValue(refusal);
       const { kref } = serviceManager.registerKernelServiceObject(
         'testService',
-        {
-          testMethod: () => 'test result',
-        },
+        { testMethod: () => 'test result' },
       );
 
       serviceManager.invokeKernelService(kref, {

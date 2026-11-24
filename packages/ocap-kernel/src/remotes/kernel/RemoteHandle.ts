@@ -243,9 +243,6 @@ export class RemoteHandle implements RemoteEndpointHandle {
    * sequence number cannot say as much by itself: a restart numbers from 1
    * again, so the number a stale send carries may by then belong to a real
    * message of the incarnation that replaced it.
-   *
-   * Kept in memory alone. A crank that rolls back a give-up's writes does not
-   * revive the sends it let go of — their callers have been told they failed.
    */
   #outboundQueueId: number = 0;
 
@@ -518,7 +515,7 @@ export class RemoteHandle implements RemoteEndpointHandle {
 
   /**
    * Process an incoming ACK (cumulative - acknowledges all messages up to ackSeq).
-   * Only memory moves: an ACK arrives outside any crank.
+   * Moves memory only: the crank open when an ACK arrives is not its own.
    *
    * Measures the queue from memory, unlike {@link #rejectAllPending}, and must
    * keep doing so: memory stops at what has actually been sent, so a peer
@@ -526,9 +523,8 @@ export class RemoteHandle implements RemoteEndpointHandle {
    * {@link #flushTransmitQueue} would then step over rather than send.
    *
    * @param ackSeq - The highest sequence number being acknowledged.
-   * @returns Whether it acknowledged anything new.
    */
-  #handleAck(ackSeq: number): boolean {
+  #handleAck(ackSeq: number): void {
     const originalStartSeq = this.#startSeq;
 
     while (this.#startSeq <= ackSeq && this.#hasPendingMessages()) {
@@ -541,11 +537,11 @@ export class RemoteHandle implements RemoteEndpointHandle {
     if (this.#startSeq !== originalStartSeq) {
       // Reset retry count when messages are acknowledged
       this.#retryCount = 0;
+      this.#queueAckWrite();
     }
 
     // Restart or clear ACK timeout based on remaining pending messages
     this.#startAckTimeout();
-    return this.#startSeq !== originalStartSeq;
   }
 
   /**
@@ -565,17 +561,19 @@ export class RemoteHandle implements RemoteEndpointHandle {
         this.#persistAcknowledged();
         return { value: undefined };
       })
-      .catch(() => {
+      .catch((error: unknown) => {
         this.#ackWriteQueued = false;
+        this.#logger.log(
+          `${this.#peerId.slice(0, 8)}:: did not record an acknowledgement:`,
+          error,
+        );
       });
   }
 
   /**
    * Bring the store's queue up to what memory knows the peer has
-   * acknowledged: in the crank a standalone ACK queues, and in each crank
-   * that takes a message from the peer, numbers one for it or gives up on it.
-   * It catches up from the store's start rather than memory's, since a crank
-   * that rolls back restores the store's.
+   * acknowledged, from inside a crank. It catches up from the store's start
+   * rather than memory's, since a crank that rolls back restores the store's.
    */
   #persistAcknowledged(): void {
     const stored = this.#storedSeqWindow;
@@ -586,7 +584,7 @@ export class RemoteHandle implements RemoteEndpointHandle {
     // On crash recovery, orphan entries (seq < startSeq) will be cleaned lazily
     this.#kernelStore.setRemoteStartSeq(this.remoteId, this.#startSeq);
     // Memory's start passes the store's end where a rollback took back a
-    // give-up and the message it abandoned. Moved with it, as
+    // message the peer went on to acknowledge. Moved with it, as
     // `#rejectAllPending` moves both, or after a restart the next message is
     // numbered below the start and is never sent.
     if (stored.nextSendSeq < this.#startSeq - 1) {
@@ -746,9 +744,8 @@ export class RemoteHandle implements RemoteEndpointHandle {
    * queue is already empty, rather than writing a `startSeq` over kv state a
    * prior cleanup has reset.
    *
-   * Measures the queue from {@link #sendWindow} rather than from memory: a
-   * message the crank open when the give-up was asked for wrote down is held
-   * back unsent, in a part of the queue only the store can see.
+   * Measures the queue from {@link #sendWindow}, as
+   * {@link #persistRemoteCommand} numbers from it.
    *
    * @param reason - The reason for failure.
    */
@@ -836,11 +833,9 @@ export class RemoteHandle implements RemoteEndpointHandle {
    * message the kernel has rolled back and will never account for again.
    *
    * The in-memory counters read one message behind the store between those two
-   * steps, and the run loop awaits in between, so anything measuring the
-   * pending queue there sees a queue short of this message —
-   * {@link #rejectAllPending} measures it from the store for that reason. What
-   * may also run in between is another message taking a later number, which
-   * {@link #flushTransmitQueue} holds back until this one has gone.
+   * steps, and the run loop awaits in between. What may run in between is
+   * another message taking a later number, which {@link #flushTransmitQueue}
+   * holds back until this one has gone.
    *
    * @param messageBase - The delivery to make.
    * @param options - Options bag.
@@ -956,9 +951,8 @@ export class RemoteHandle implements RemoteEndpointHandle {
   /**
    * Offer a message {@link #persistRemoteCommand} has already written down to
    * the transport. Writes no kernel state itself, so it is safe after the crank
-   * has committed. The transport's own failure handling, which does write, runs
-   * detached from this call and lands wherever it lands — see
-   * {@link #rejectAllPending}.
+   * has committed. A terminal failure asks for a give-up, which writes in a
+   * crank of its own.
    *
    * The message goes on the wire only once every lower sequence number has,
    * which {@link #flushTransmitQueue} decides.
@@ -1088,7 +1082,7 @@ export class RemoteHandle implements RemoteEndpointHandle {
     this.#clearDelayedAck();
 
     // Keyed on the timer rather than on this being the queue's first message,
-    // so a queue left untimed — by a rejection that landed between this
+    // so a queue left untimed — by a give-up asked for between this
     // message's persist and its send — gets one rather than waiting on a timer
     // no later send will arm.
     if (this.#ackTimeoutHandle === undefined) {
@@ -1099,8 +1093,8 @@ export class RemoteHandle implements RemoteEndpointHandle {
     //
     // Terminal verdicts from the transport (intentional close, network
     // stopped) mean the message we just persisted will never be delivered
-    // as-is: reject all pending now and signal give-up rather than letting
-    // the message linger until ACK timeout × MAX_RETRIES.
+    // as-is: give up on the peer rather than letting the message linger
+    // until ACK timeout × MAX_RETRIES.
     this.#sendInOrder(seq, messageString).catch((error) => {
       if (isPeerRestart(error)) {
         return;
@@ -1458,9 +1452,9 @@ export class RemoteHandle implements RemoteEndpointHandle {
   /**
    * Take a message off the wire from this peer.
    *
-   * Acknowledgements and seq validation happen here, on arrival, since they
-   * must not wait for a crank. The message itself is processed in
-   * {@link deliverInbound}, in a crank of its own.
+   * An acknowledgement moves memory and seq validation happens here, on
+   * arrival, since they must not wait for a crank. The message itself is
+   * processed in {@link deliverInbound}, in a crank of its own.
    *
    * @param message - The message, as it arrived.
    */
@@ -1469,16 +1463,15 @@ export class RemoteHandle implements RemoteEndpointHandle {
 
     // Handle standalone ACK message (no seq, no method - just ack)
     if (parsed.ack !== undefined && parsed.seq === undefined) {
-      if (this.#handleAck(parsed.ack)) {
-        this.#queueAckWrite();
-      }
+      this.#handleAck(parsed.ack);
       return;
     }
 
     const { seq, ack } = parsed as RemoteCommand;
 
-    // Handle piggyback ACK if present (ACK processing is idempotent). The
-    // crank that takes the message writes it down.
+    // Handle piggyback ACK if present (ACK processing is idempotent). It
+    // gets a crank of its own too: the one that takes the message may abort,
+    // and a duplicate gets none.
     if (ack !== undefined) {
       this.#handleAck(ack);
     }
@@ -1678,13 +1671,16 @@ export class RemoteHandle implements RemoteEndpointHandle {
   giveUp(reason: string): void {
     this.#clearAckTimeout();
     this.rejectPendingRedemptions(reason);
+    if (this.#givingUp) {
+      return;
+    }
     this.#givingUp = true;
     this.#kernelQueue
       .enqueueInbox('give up on a remote', () => {
         this.#givingUp = false;
         this.#persistAcknowledged();
         this.#rejectAllPending(reason);
-        // Again, for one whose request the crank above has just abandoned.
+        // Again, for a redemption asked for while the give-up waited.
         this.rejectPendingRedemptions(reason);
         this.#onGiveUp?.(this.#peerId);
         return { value: undefined };

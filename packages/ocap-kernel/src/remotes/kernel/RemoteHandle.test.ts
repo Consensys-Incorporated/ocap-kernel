@@ -1550,7 +1550,19 @@ describe('RemoteHandle', () => {
         expect(mockRemoteComms.sendRemoteMessage).toHaveBeenCalledTimes(2),
       );
 
-      expect(mockKernelStore.getPendingMessage(mockRemoteId, 1)).toBeDefined();
+      expect(mockKernelStore.getRemoteSeqState(mockRemoteId)?.startSeq).toBe(1);
+    });
+
+    it('queues one crank for give-ups asked for before it runs', () => {
+      const remote = makeRemote();
+      vi.mocked(mockKernelQueue.enqueueInbox).mockReturnValueOnce(
+        new Promise(() => undefined),
+      );
+
+      remote.giveUp('network stopped');
+      remote.giveUp('not acknowledged after 3 retries');
+
+      expect(mockKernelQueue.enqueueInbox).toHaveBeenCalledTimes(1);
     });
 
     it('restores pending messages on startup', async () => {
@@ -2045,6 +2057,10 @@ describe('RemoteHandle', () => {
         fireLastAckTimer();
         await drainSends();
       }
+      expect(mockKernelQueue.enqueueInbox).toHaveBeenCalledWith(
+        'give up on a remote',
+        expect.any(Function),
+      );
       expect(onGiveUp).toHaveBeenCalledWith(mockRemotePeerId);
     });
 
@@ -2173,6 +2189,10 @@ describe('RemoteHandle', () => {
         // The redemption rejects with the giveUp/rejectAllPending reason,
         // which is the terminal error's message string.
         await expect(redeem).rejects.toThrow(terminalError.message);
+        expect(mockKernelQueue.enqueueInbox).toHaveBeenCalledWith(
+          'give up on a remote',
+          expect.any(Function),
+        );
         expect(onGiveUp).toHaveBeenCalledWith(mockRemotePeerId);
       },
     );

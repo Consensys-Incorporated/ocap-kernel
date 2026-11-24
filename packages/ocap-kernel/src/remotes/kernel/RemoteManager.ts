@@ -36,7 +36,7 @@ type RemoteManagerConstructorProps = {
 
 /**
  * @param peerId - The peer given up on.
- * @returns Why its promises and redemptions are rejected.
+ * @returns The reason to give.
  */
 const connectionLost = (peerId: string): string =>
   `Remote connection lost: ${peerId} (max retries reached or non-retryable error)`;
@@ -441,7 +441,7 @@ export class RemoteManager {
       remoteMessageHandler,
       logger: this.#logger,
       onRemoteGiveUp: (peerId) => {
-        // A waiting restart's crank tears the remote down instead.
+        // A waiting restart's crank ends the session instead.
         if (!this.#restartWaits(peerId)) {
           this.#remotesByPeer.get(peerId)?.giveUp(connectionLost(peerId));
         }

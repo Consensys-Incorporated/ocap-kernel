@@ -243,9 +243,11 @@ async function abortACrankWhile(
       return await vatManager.performVatTermination(item.vatId, item.reason);
     }
     if (item.type === 'remoteInbound') {
+      // As the router discards a peer message that cannot be taken.
       return await remoteManager
         .getRemote(item.remoteId)
-        .deliverInbound(item.message);
+        .deliverInbound(item.message)
+        .catch(() => ({ abort: true }));
     }
     if (item.type === 'peerIncarnation') {
       return remoteManager.applyIncarnationChange(item);
@@ -264,7 +266,7 @@ async function abortACrankWhile(
   await Promise.race([abortDelivered, running]);
   await kernelQueue.waitForCrank();
   // The inbox is taken in order, so whatever the writer put there has
-  // committed once this has. Skipped if the writer killed the loop.
+  // committed once this has. Refused if the writer killed the loop.
   await kernelQueue
     .enqueueInbox('follow the writer', () => ({ value: undefined }))
     .catch(() => undefined);
@@ -500,6 +502,27 @@ describe('a writer acting while a crank aborts', () => {
         JSON.stringify({ ack: 1 }),
       );
       expect(kernelStore.getPendingMessage(remote.remoteId, 1)).toBe(pending);
+    });
+    expect({
+      pending: kernelStore.getPendingMessage(remote.remoteId, 1),
+      startSeq: kernelStore.getRemoteSeqState(remote.remoteId)?.startSeq,
+    }).toStrictEqual({ pending: undefined, startSeq: 2 });
+  });
+
+  it('peer ACK on a message its crank discards: the acknowledgement is still written', async () => {
+    const harness = await setUp();
+    const { kernelStore, remote, remoteManager } = harness;
+    await sendOneMessageToPeer(harness);
+    await abortACrankWhile(harness, async () => {
+      await remoteManager.handleRemoteMessage(
+        PEER_ID,
+        JSON.stringify({
+          seq: 1,
+          ack: 1,
+          method: 'redeemURLReply',
+          params: [true, 'no-such-key', 'ro+5'],
+        }),
+      );
     });
     expect({
       pending: kernelStore.getPendingMessage(remote.remoteId, 1),

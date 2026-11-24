@@ -22,7 +22,7 @@ const ACK_TIMEOUT_MS = 100;
  *
  * @param kernelStore - The store to restore from.
  * @param kernelQueue - The run loop, if not a mock.
- * @returns The handle and the comms its sends land in.
+ * @returns The handle, the comms its sends land in, and its run loop.
  */
 function startOver(
   kernelStore: ReturnType<typeof makeKernelStore>,
@@ -30,21 +30,23 @@ function startOver(
 ): {
   remote: RemoteHandle;
   remoteComms: RemoteComms;
+  kernelQueue: KernelQueue;
 } {
   const factory = createMockRemotesFactory({
     remoteId: REMOTE_ID,
     remotePeerId: PEER_ID,
   });
   const remoteComms = factory.makeMockRemoteComms();
+  const queue = kernelQueue ?? factory.makeMockKernelQueue();
   const remote = RemoteHandle.make({
     remoteId: REMOTE_ID,
     peerId: PEER_ID,
     kernelStore,
-    kernelQueue: kernelQueue ?? factory.makeMockKernelQueue(),
+    kernelQueue: queue,
     remoteComms,
     ackTimeoutMs: ACK_TIMEOUT_MS,
   });
-  return { remote, remoteComms };
+  return { remote, remoteComms, kernelQueue: queue };
 }
 
 /**
@@ -349,10 +351,7 @@ describe('RemoteHandle across a crank boundary', () => {
 
     it('is written down once, by a crank of its own, however many arrive', async () => {
       const { kernelStore } = await makeRemoteOverRealStore();
-      const kernelQueue = createMockRemotesFactory({
-        remoteId: REMOTE_ID,
-        remotePeerId: PEER_ID,
-      }).makeMockKernelQueue();
+      const { remote, kernelQueue } = startOver(kernelStore);
       const queued: (() => unknown)[] = [];
       vi.mocked(kernelQueue.enqueueInbox).mockImplementation(
         async (_what, work) => {
@@ -360,7 +359,6 @@ describe('RemoteHandle across a crank boundary', () => {
           return undefined as never;
         },
       );
-      const { remote } = startOver(kernelStore, kernelQueue);
       await deliverAndCommit(remote, kernelStore);
       await deliverAndCommit(remote, kernelStore);
 
@@ -374,6 +372,10 @@ describe('RemoteHandle across a crank boundary', () => {
         startSeq: 3,
         nextSendSeq: 2,
       });
+
+      await deliverAndCommit(remote, kernelStore);
+      remote.receiveFromPeer(JSON.stringify({ ack: 3 }));
+      expect(queued).toHaveLength(2);
     });
 
     it('is written down by the crank that numbers the next message', async () => {
@@ -770,10 +772,8 @@ describe('RemoteHandle across a crank boundary', () => {
     async function deliverAndGiveUp(
       kernelStore: ReturnType<typeof makeKernelStore>,
     ): Promise<ReturnType<typeof startOver>> {
-      const kernelQueue = createMockRemotesFactory({
-        remoteId: REMOTE_ID,
-        remotePeerId: PEER_ID,
-      }).makeMockKernelQueue();
+      const started = startOver(kernelStore);
+      const { remote, kernelQueue } = started;
       let giveUpWork: (() => unknown) | undefined;
       vi.mocked(kernelQueue.enqueueInbox).mockImplementationOnce(
         async (_what, work) => {
@@ -781,8 +781,6 @@ describe('RemoteHandle across a crank boundary', () => {
           return undefined as never;
         },
       );
-      const started = startOver(kernelStore, kernelQueue);
-      const { remote } = started;
 
       kernelStore.startCrank();
       kernelStore.createCrankSavepoint('crank');
