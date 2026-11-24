@@ -58,6 +58,9 @@ export class VatSyscall {
   /** The termination request that was received from the vat with syscall.exit() */
   vatRequestedTermination: { reject: boolean; info: CapData<KRef> } | undefined;
 
+  /** Set once the kernel has let go of the worker these syscalls come from. */
+  retired: boolean = false;
+
   /**
    * Construct a new VatSyscall instance.
    *
@@ -284,8 +287,8 @@ export class VatSyscall {
     const { vatId } = this;
     this.#kernelQueue
       .enqueueInbox(`apply a syscall from vat ${vatId}`, () => {
-        // Terminated while the syscall waited its turn.
-        if (!this.#kernelStore.isVatActive(vatId)) {
+        // Terminated or restarted while the syscall waited its turn.
+        if (this.retired || !this.#kernelStore.isVatActive(vatId)) {
           return { value: undefined };
         }
         this.handleSyscall(vso);

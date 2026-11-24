@@ -39,8 +39,10 @@ const makeVat = async ({
   logger,
   dispatch,
   onStreamFailure = () => undefined,
+  kernelQueue = null as unknown as KernelQueue,
 }: {
   logger?: Logger;
+  kernelQueue?: KernelQueue;
   dispatch?: (input: unknown) => void | Promise<void>;
   onStreamFailure?: (error: Error) => void;
 } = {}): Promise<{
@@ -55,7 +57,7 @@ const makeVat = async ({
   );
   return {
     vat: await VatHandle.make({
-      kernelQueue: null as unknown as KernelQueue,
+      kernelQueue,
       kernelStore: mockKernelStore,
       vatId: asVatId('v0'),
       vatConfig: { sourceSpec: 'not-really-there.js' },
@@ -482,42 +484,59 @@ describe('VatHandle', () => {
     });
 
     it('takes a syscall as late unless a delivery is waiting for its answer', async () => {
+      sendVatCommandMock.mockRestore();
       const inDelivery = vi
         .spyOn(VatSyscall.prototype, 'handleSyscall')
         .mockReturnValue(['ok', null]);
       const late = vi
         .spyOn(VatSyscall.prototype, 'handleLateSyscall')
         .mockReturnValue(undefined);
-      const { vat, stream } = await makeVat();
-      const syscall = async (kpid: string): Promise<void> =>
+      const stream = await TestDuplexStream.make<
+        JsonRpcMessage,
+        JsonRpcMessage
+      >(() => undefined, { validateInput: isJsonRpcMessage });
+      const syscall = async (kpid: string): Promise<void> => {
         await stream.receiveInput({
           jsonrpc: '2.0',
           method: 'syscall',
           params: ['subscribe', kpid],
         });
+        await delay(10);
+      };
+      const answer = async (id: string, result: Json): Promise<void> =>
+        await stream.receiveInput({ id, result, jsonrpc: '2.0' });
 
-      const pinging = vat.ping();
+      const making = VatHandle.make({
+        kernelQueue: null as unknown as KernelQueue,
+        kernelStore: mockKernelStore,
+        vatId: asVatId('v0'),
+        vatConfig: { sourceSpec: 'not-really-there.js' },
+        vatStream: stream,
+        onStreamFailure: () => undefined,
+      });
       await delay(10);
-      await syscall('p-1');
-      await stream.receiveInput({ id: 'v0:1', result: 'pong', jsonrpc: '2.0' });
-      await pinging;
+      await syscall('during initVat');
+      await answer('v0:1', [[[], []], null]);
+      const vat = await making;
+      await syscall('after initVat');
 
       const delivering = vat.deliverBringOutYourDead();
+      const pinging = vat.ping();
       await delay(10);
-      await syscall('p-2');
-      await stream.receiveInput({
-        id: 'v0:2',
-        result: [[[], []], null],
-        jsonrpc: '2.0',
-      });
+      await answer('v0:3', 'pong');
+      await pinging;
+      await syscall('during deliver, after a ping');
+      await answer('v0:2', [[[], []], null]);
       await delivering;
-      await syscall('p-3');
-      await delay(10);
+      await syscall('after deliver');
 
       expect({
         inDelivery: inDelivery.mock.calls.map(([vso]) => vso[1]),
         late: late.mock.calls.map(([vso]) => vso[1]),
-      }).toStrictEqual({ inDelivery: ['p-2'], late: ['p-1', 'p-3'] });
+      }).toStrictEqual({
+        inDelivery: ['during initVat', 'during deliver, after a ping'],
+        late: ['after initVat', 'after deliver'],
+      });
     });
 
     it('still rejects a ping the worker answers with an error', async () => {
@@ -564,6 +583,31 @@ describe('VatHandle', () => {
         done: true,
         value: undefined,
       });
+    });
+
+    it('drops a late syscall still waiting when its worker is let go for a restart', async () => {
+      const applied = vi.spyOn(VatSyscall.prototype, 'handleSyscall');
+      const enqueueInbox = vi
+        .fn<KernelQueue['enqueueInbox']>()
+        .mockResolvedValue(undefined);
+      mockKernelStore.setVatConfig(asVatId('v0'), { sourceSpec: 'test.js' });
+      mockKernelStore.initEndpoint(asVatId('v0'));
+      const { vat, stream } = await makeVat({
+        kernelQueue: { enqueueInbox } as unknown as KernelQueue,
+      });
+      await stream.receiveInput({
+        jsonrpc: '2.0',
+        method: 'syscall',
+        params: ['subscribe', 'p-1'],
+      });
+      await delay(10);
+
+      await vat.terminate(false);
+
+      expect(await enqueueInbox.mock.lastCall?.[1]()).toStrictEqual({
+        value: undefined,
+      });
+      expect(applied).not.toHaveBeenCalled();
     });
 
     it('rejects pending commands before closing the channel', async () => {

@@ -276,12 +276,7 @@ describe('VatSyscall', () => {
     const send = ['send', 'ko1', { methargs: { body: '', slots: [] } }];
     const exit = ['exit', false, { body: '#"bye"', slots: [] }];
 
-    /**
-     * Hand over a late syscall and carry out the inbox work it queued.
-     *
-     * @param vso - The syscall.
-     * @returns The work's outcome.
-     */
+    // Hands over a late syscall and carries out the inbox work it queued.
     const applyLate = async (vso: unknown[]): Promise<unknown> => {
       vatSys.handleLateSyscall(vso as VatSyscallObject);
       const work = vi.mocked(kernelQueue.enqueueInbox).mock.lastCall?.[1];
@@ -292,7 +287,8 @@ describe('VatSyscall', () => {
       vatSys.handleLateSyscall(send as VatSyscallObject);
       expect(kernelQueue.enqueueSend).not.toHaveBeenCalled();
 
-      expect(await applyLate(send)).toStrictEqual({ value: undefined });
+      const work = vi.mocked(kernelQueue.enqueueInbox).mock.lastCall?.[1];
+      expect(await work?.()).toStrictEqual({ value: undefined });
       expect(kernelQueue.enqueueSend).toHaveBeenCalledWith(
         'ko1',
         send[2],
@@ -326,10 +322,23 @@ describe('VatSyscall', () => {
       });
     });
 
-    it('is dropped if the vat was terminated while it waited', async () => {
-      vi.mocked(kernelStore.isVatActive).mockReturnValueOnce(false);
+    it.each([
+      [
+        'vat was terminated',
+        () => vi.mocked(kernelStore.isVatActive).mockReturnValueOnce(false),
+      ],
+      [
+        'worker was let go',
+        () => {
+          vatSys.retired = true;
+        },
+      ],
+    ])('is dropped if its %s while it waited', async (_what, letGo) => {
+      vatSys.handleLateSyscall(send as VatSyscallObject);
+      letGo();
 
-      expect(await applyLate(send)).toStrictEqual({ value: undefined });
+      const work = vi.mocked(kernelQueue.enqueueInbox).mock.lastCall?.[1];
+      expect(await work?.()).toStrictEqual({ value: undefined });
       expect(kernelStore.translateSyscallVtoK).not.toHaveBeenCalled();
     });
 

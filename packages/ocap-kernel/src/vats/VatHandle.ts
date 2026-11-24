@@ -376,6 +376,7 @@ export class VatHandle implements EndpointHandle {
    */
   async terminate(terminating: boolean, error?: Error): Promise<void> {
     this.#closing = true;
+    this.#vatSyscall.retired = true;
     if (terminating) {
       // Before `end`, which may never settle.
       this.#rpcClient.rejectAll(error ?? new VatDeletedError(this.vatId));
