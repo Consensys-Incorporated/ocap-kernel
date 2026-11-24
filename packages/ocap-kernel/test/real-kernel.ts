@@ -58,7 +58,8 @@ export function watch(promise: Promise<unknown>): () => string {
 /**
  * A kernel over a real store, running two vats whose handles are faked:
  * `waiter` (v1), the bootstrap vat, and `doomed` (v2). A vat answers
- * `bootstrap` and `answer`, writes its state for `remember`, returns
+ * `bootstrap` and `answer`, sends `answer` to its argument for `relay`, is
+ * terminated for an illegal syscall, writes its state for `remember`, returns
  * {@link explosion} for `explode`, and holds its crank open on `stall` until
  * the test calls `release`.
  *
@@ -109,6 +110,19 @@ export async function setUpRealKernel({
               'resolve',
               [[message.result, false, kser(method)]],
             ]);
+          }
+          if (method === 'relay') {
+            vatSyscall.handleSyscall([
+              'send',
+              message.methargs.slots[0] as string,
+              { methargs: kser(['answer', []]), result: 'p+1' },
+            ]);
+          }
+          if (vatSyscall.illegalSyscall) {
+            return {
+              abort: true,
+              terminate: { ...vatSyscall.illegalSyscall, reject: true },
+            };
           }
           if (method === 'remember') {
             kernelStore

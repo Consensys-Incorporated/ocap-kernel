@@ -13,6 +13,7 @@ import type {
 } from '../../types.ts';
 import type { StoreContext } from '../types.ts';
 import * as clistModule from './clist.ts';
+import * as promiseModule from './promise.ts';
 import * as reachableModule from './reachable.ts';
 import * as refCountModule from './refcount.ts';
 import { getTranslators } from './translators.ts';
@@ -26,6 +27,8 @@ describe('getTranslators', () => {
   const mockExportFromEndpoint = vi.fn();
   const mockSetReachableFlag = vi.fn();
   const mockKernelRefExists = vi.fn();
+  const mockGetKernelPromise = vi.fn();
+  const mockClearPromiseDecider = vi.fn();
   const mockCtx = {} as StoreContext;
 
   beforeEach(() => {
@@ -49,6 +52,11 @@ describe('getTranslators', () => {
     vi.spyOn(vatModule, 'getVatMethods').mockReturnValue({
       exportFromEndpoint: mockExportFromEndpoint,
     } as unknown as ReturnType<typeof vatModule.getVatMethods>);
+
+    vi.spyOn(promiseModule, 'getPromiseMethods').mockReturnValue({
+      getKernelPromise: mockGetKernelPromise,
+      clearPromiseDecider: mockClearPromiseDecider,
+    } as unknown as ReturnType<typeof promiseModule.getPromiseMethods>);
   });
 
   describe('translateRefKtoE', () => {
@@ -218,7 +226,7 @@ describe('getTranslators', () => {
       });
     });
 
-    it('translates "send" syscall', () => {
+    it('translates "send" syscall, leaving the result with no decider', () => {
       const vref = asVRef('o+1');
       const kref = asKRef('ko1');
       const vso: VatSyscallObject = [
@@ -243,9 +251,45 @@ describe('getTranslators', () => {
           result: 'kp1',
         },
       ] as VatSyscallObject;
+      mockGetKernelPromise.mockReturnValue({
+        state: 'unresolved',
+        decider: vatId,
+      });
       const { translateSyscallVtoK } = getTranslators(mockCtx);
       const result = translateSyscallVtoK(vatId, vso);
       expect(result).toStrictEqual(expectedKso);
+      expect(mockClearPromiseDecider).toHaveBeenCalledWith('kp1');
+    });
+
+    it.each([
+      {
+        result: 'another vat decides',
+        promise: { state: 'unresolved', decider: 'v2' },
+        why: 'decided by v2',
+      },
+      {
+        result: 'nobody decides',
+        promise: { state: 'unresolved' },
+        why: 'decided by nobody',
+      },
+      {
+        result: 'is settled',
+        promise: { state: 'fulfilled', decider: 'v1' },
+        why: 'fulfilled',
+      },
+    ])('refuses a "send" whose result $result', ({ promise, why }) => {
+      mockGetKernelPromise.mockReturnValue(promise);
+      const vso = [
+        'send',
+        'o+1',
+        { methargs: { body: 'test method', slots: [] }, result: 'p-1' },
+      ] as VatSyscallObject;
+
+      const { translateSyscallVtoK } = getTranslators(mockCtx);
+      expect(() => translateSyscallVtoK(vatId, vso)).toThrow(
+        `v1 cannot use p-1 as a result: it is ${why}`,
+      );
+      expect(mockClearPromiseDecider).not.toHaveBeenCalled();
     });
 
     it('throws TypeError when message.result in "send" syscall is not a string', () => {

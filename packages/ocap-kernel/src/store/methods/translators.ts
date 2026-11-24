@@ -21,6 +21,7 @@ import type {
 } from '../../types.ts';
 import type { StoreContext } from '../types.ts';
 import { getCListMethods } from './clist.ts';
+import { getPromiseMethods } from './promise.ts';
 import { getReachableMethods } from './reachable.ts';
 import { getRefCountMethods } from './refcount.ts';
 import { getVatMethods } from './vat.ts';
@@ -40,6 +41,7 @@ export function getTranslators(ctx: StoreContext) {
   const { setReachableFlag } = getReachableMethods(ctx);
   const { kernelRefExists } = getRefCountMethods(ctx);
   const { exportFromEndpoint } = getVatMethods(ctx);
+  const { getKernelPromise, clearPromiseDecider } = getPromiseMethods(ctx);
 
   /**
    * Reverse the direction indicator in an RRef.
@@ -201,6 +203,8 @@ export function getTranslators(ctx: StoreContext) {
    * @param message - The message to be translated.
    *
    * @returns a translated copy of `message` intelligible to the kernel.
+   * @throws If the result is not an unresolved promise that `endpointId`
+   * decides.
    */
   function translateMessageEtoK(
     endpointId: EndpointId,
@@ -212,6 +216,17 @@ export function getTranslators(ctx: StoreContext) {
     }
     insistERef(message.result);
     const result = translateRefEtoK(endpointId, message.result);
+    const { state, decider } = getKernelPromise(result);
+    if (state !== 'unresolved' || decider !== endpointId) {
+      throw Error(
+        `${endpointId} cannot use ${message.result} as a result: it is ${
+          state === 'unresolved' ? `decided by ${decider ?? 'nobody'}` : state
+        }`,
+      );
+    }
+    // No decider until delivery names the receiver; otherwise the sender's
+    // death rejects the result of a send still queued.
+    clearPromiseDecider(result);
     return { methargs, result };
   }
 

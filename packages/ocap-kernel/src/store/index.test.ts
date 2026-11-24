@@ -63,6 +63,7 @@ describe('kernel store', () => {
         'cleanupTerminatedVat',
         'clear',
         'clearEmptySubclusters',
+        'clearPromiseDecider',
         'clearReachableFlag',
         'clearRemoteSeqState',
         'collectGarbage',
