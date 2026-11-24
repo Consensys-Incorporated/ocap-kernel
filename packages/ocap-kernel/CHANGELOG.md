@@ -90,6 +90,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A syscall a vat makes outside its own delivery, from a timer or a fetch callback, runs in a crank of its own, ahead of the vat's next delivery. It used to join whatever crank was open, whose abort undid it after the vat was told it succeeded. An illegal one, or an `exit`, terminates the vat in that crank, and one that arrives once `stop` has begun is refused and logged ([#1323](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1323))
 - A `launchSubcluster` whose vat will not start leaves nothing behind: the vats that did start are stopped and the launch is rolled back before `bootstrap` is sent ([#1304](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1304))
 - `terminateSubcluster` stops every member and deletes the record in one crank; a fault writing a member's death rolls the crank back and kills the run loop ([#1304](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1304))
 - A crank that rolls back keeps the kernel IDs it gave out, so a launch that fails hands none of its vat or subcluster IDs to a later one ([#1304](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1304))
