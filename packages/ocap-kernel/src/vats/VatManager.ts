@@ -58,15 +58,15 @@ type TakenWaiters<Value> = {
 };
 
 /**
- * A relaunch's view of the worker it is starting: set abandoned when it gives
- * up, and given the worker's channel once there is one, to close.
+ * A timed start's view of the worker it is starting: set abandoned when it
+ * gives up, and given the worker's channel once there is one, to close.
  */
 type Launch = {
   abandoned: boolean;
   stream?: DuplexStream<JsonRpcMessage, JsonRpcMessage>;
 };
 
-/** How long a vat's start, at boot or on restart, waits for its worker. */
+/** How long a vat's start, at boot, on restart or in a launch, waits for its worker. */
 export const DEFAULT_VAT_RELAUNCH_TIMEOUT_MS = 30_000;
 
 /** The longest delay `setTimeout` honours; it treats anything above as 1 ms. */
@@ -138,8 +138,8 @@ export class VatManager {
    * @param options.kernelQueue - The kernel's message queue for scheduling deliveries.
    * @param options.logger - Logger instance for debugging and diagnostics.
    * @param options.allowedGlobalNames - Optional list of allowed global names for vat endowments.
-   * @param options.vatRelaunchTimeoutMs - How long a vat's start, at boot or on
-   *   restart, waits for its worker.
+   * @param options.vatRelaunchTimeoutMs - How long a vat's start, at boot, on
+   *   restart or in a launch, waits for its worker.
    */
   constructor({
     platformServices,
@@ -212,7 +212,7 @@ export class VatManager {
    */
   async #startPersistedVat(vatId: VatId, vatConfig: VatConfig): Promise<void> {
     try {
-      await this.#relaunchVat(vatId, vatConfig);
+      await this.#startVatInTime(vatId, vatConfig);
     } catch (error) {
       const subclusterId = this.#kernelStore
         .getSubclusters()
@@ -231,7 +231,9 @@ export class VatManager {
   }
 
   /**
-   * Launch a new vat.
+   * Launch a new vat, inside the crank of its subcluster's launch. One whose
+   * worker does not start in time is told to stop; a worker that did start is
+   * left to the launch's crank to stop, and its writes to the rollback.
    *
    * @param vatConfig - Configuration for the new vat.
    * @param vatName - The name of the vat within the subcluster.
@@ -244,18 +246,11 @@ export class VatManager {
     subclusterId?: SubclusterId,
   ): Promise<KRef> {
     const vatId = this.#kernelStore.getNextVatId();
-    // Register the vat with its subcluster BEFORE awaiting its start, which
-    // yields to the kernel event loop (loading the bundle,
-    // negotiating with the vat worker); any crank that runs during that
-    // window ends with `collectGarbage()` → `clearEmptySubclusters()`,
-    // which would otherwise delete the just-created, still-empty
-    // subcluster out from under us. Associating the vat first makes the
-    // subcluster non-empty for GC.
     if (subclusterId) {
       this.#kernelStore.addSubclusterVat(subclusterId, vatName, vatId);
     }
     try {
-      const running = await this.#startVat({ vatId, vatConfig });
+      const running = await this.#startVatInTime(vatId, vatConfig);
       if (running.lost) {
         // Lost once registered but before the vat is recorded below, so the
         // termination the loss queued finds no vat, and stops no worker.
@@ -275,37 +270,18 @@ export class VatManager {
         cause: error,
       });
     }
-    try {
-      this.#kernelStore.initEndpoint(vatId);
-      const rootRef = this.#kernelStore.exportFromEndpoint(
-        vatId,
-        ROOT_OBJECT_VREF,
-      );
-      // A root is addressable for as long as its vat lives, whether or not
-      // anyone currently imports it: the kernel's own API hands out root krefs
-      // and `getRootObject` resolves them through this c-list entry. Without a
-      // pin, GC would retire the entry the moment the last importer let go.
-      this.#kernelStore.pinObject(rootRef);
-      this.#kernelStore.setVatConfig(vatId, vatConfig);
-      return rootRef;
-    } catch (error) {
-      // No mark here: `stopVat` marks before `deleteVat`, so marking after it
-      // failed could schedule a cleanup for a vat `deleteVat` never reached.
-      let stopFailure: unknown;
-      try {
-        await this.stopVat(vatId, true);
-      } catch (caught) {
-        stopFailure = caught;
-        this.#logger.error(
-          `Failed to stop vat ${vatId} after incomplete launch; its worker may still be running:`,
-          caught,
-        );
-      }
-      throw new Error(
-        `Failed to launch vat ${vatId} (${vatName})${stopFailure ? ' (cleanup also failed)' : ''}`,
-        { cause: error },
-      );
-    }
+    this.#kernelStore.initEndpoint(vatId);
+    const rootRef = this.#kernelStore.exportFromEndpoint(
+      vatId,
+      ROOT_OBJECT_VREF,
+    );
+    // A root is addressable for as long as its vat lives, whether or not
+    // anyone currently imports it: the kernel's own API hands out root krefs
+    // and `getRootObject` resolves them through this c-list entry. Without a
+    // pin, GC would retire the entry the moment the last importer let go.
+    this.#kernelStore.pinObject(rootRef);
+    this.#kernelStore.setVatConfig(vatId, vatConfig);
+    return rootRef;
   }
 
   /**
@@ -327,7 +303,7 @@ export class VatManager {
    * @param options - Named options.
    * @param options.vatId - The ID of the vat to start.
    * @param options.vatConfig - Its configuration.
-   * @param options.launch - Abandoned by a relaunch that gave up waiting.
+   * @param options.launch - Abandoned by a timed start that gave up waiting.
    * @returns The start's record, on which a later loss of its channel is
    *   noted.
    */
@@ -354,7 +330,7 @@ export class VatManager {
         .terminate(vatId)
         .catch((error: unknown) =>
           this.#logger.error(
-            `Failed to stop the worker for vat ${vatId} after its relaunch timed out:`,
+            `Failed to stop the worker for vat ${vatId} after its start timed out:`,
             error,
           ),
         );
@@ -405,13 +381,13 @@ export class VatManager {
       throw error;
     }
     if (launch?.abandoned) {
-      // The boot or crank that gave up on this worker retires the vat, so a
-      // handle registered now would bring it back.
+      // The boot or crank that gave up on this worker retires the vat or rolls
+      // it back, so a handle registered now would bring it back.
       vat
         .terminate(true)
         .catch((error: unknown) =>
           this.#logger.error(
-            `Failed to close the channel of vat ${vatId} after its relaunch timed out:`,
+            `Failed to close the channel of vat ${vatId} after its start timed out:`,
             error,
           ),
         );
@@ -426,15 +402,17 @@ export class VatManager {
   }
 
   /**
-   * Start a vat at boot or on restart, giving up if its worker is not ready in
-   * time. `Kernel.make` waits on this, as do a restart's crank and the whole
-   * run loop.
+   * Start a vat, giving up if its worker is not ready in time. `Kernel.make`
+   * waits on this, as do a launch's or restart's crank and the whole run loop.
    *
    * @param vatId - The ID of the vat to start.
    * @param vatConfig - Its configuration.
    * @returns What `#startVat` returns.
    */
-  async #relaunchVat(vatId: VatId, vatConfig: VatConfig): Promise<RunningVat> {
+  async #startVatInTime(
+    vatId: VatId,
+    vatConfig: VatConfig,
+  ): Promise<RunningVat> {
     const launch: Launch = { abandoned: false };
     const starting = this.#startVat({ vatId, vatConfig, launch });
     const timeoutError = new Error(
@@ -459,7 +437,7 @@ export class VatManager {
           ?.end(timeoutError)
           .catch((closeError: unknown) =>
             this.#logger.error(
-              `Failed to close the channel of vat ${vatId} after its relaunch timed out:`,
+              `Failed to close the channel of vat ${vatId} after its start timed out:`,
               closeError,
             ),
           );
@@ -469,7 +447,7 @@ export class VatManager {
           .terminate(vatId)
           .catch((stopError: unknown) =>
             this.#logger.error(
-              `Failed to stop the worker for vat ${vatId} after its relaunch timed out:`,
+              `Failed to stop the worker for vat ${vatId} after its start timed out:`,
               stopError,
             ),
           );
@@ -940,7 +918,7 @@ export class VatManager {
       if (oldHandle) {
         await this.stopVat(vatId, false);
       }
-      running = await this.#relaunchVat(vatId, config);
+      running = await this.#startVatInTime(vatId, config);
     } catch (error) {
       // Unless retired meanwhile, as below, where an abort would undo that.
       if (this.#kernelStore.isVatActive(vatId)) {
@@ -1086,14 +1064,19 @@ export class VatManager {
     config: VatConfig;
     subclusterId: SubclusterId;
   }[] {
-    return Array.from(this.#vats.values()).map((vat) => {
-      const subclusterId = this.#kernelStore.getVatSubcluster(vat.vatId);
-      return {
-        id: vat.vatId,
-        config: vat.config,
-        subclusterId,
-      };
-    });
+    return Array.from(this.#vats.values()).flatMap((vat) =>
+      // Not a vat whose records a dying crank rolled back from under its
+      // worker, so a dead kernel can still report its status.
+      this.#kernelStore.isVatActive(vat.vatId)
+        ? [
+            {
+              id: vat.vatId,
+              config: vat.config,
+              subclusterId: this.#kernelStore.getVatSubcluster(vat.vatId),
+            },
+          ]
+        : [],
+    );
   }
 
   /**
@@ -1178,8 +1161,7 @@ export class VatManager {
       ...this.#kernelStore.getVatIDs(),
     ]);
     for (const id of [...ids].reverse()) {
-      // Skipped if retired while an earlier one stopped, e.g. by a launch
-      // failing alongside, which retires its own vat. Checked with no await
+      // Skipped if retired while an earlier one stopped. Checked with no await
       // before `stopVat`'s own check, so nothing can retire it in between.
       if (!this.#isVatKnown(id)) {
         continue;

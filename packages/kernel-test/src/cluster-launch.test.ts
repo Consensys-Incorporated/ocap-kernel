@@ -128,7 +128,7 @@ describe('cluster initialization', () => {
   });
 });
 
-describe('peer rejection propagation', () => {
+describe('a launch whose peer vat fails', () => {
   let logger: Logger;
   let entries: LogEntry[];
   let kernel: Kernel;
@@ -145,7 +145,7 @@ describe('peer rejection propagation', () => {
     );
   });
 
-  it('bootstrap observes peer rejection when a peer vat fails to launch', async () => {
+  it('rolls the launch back whole, before bootstrap, when a peer vat fails to launch', async () => {
     await expect(
       kernel.launchSubcluster({
         bootstrap: 'main',
@@ -163,14 +163,13 @@ describe('peer rejection propagation', () => {
     ).rejects.toMatchObject({
       message: expect.stringMatching(/^Failed to launch vat \S+ \(peer\)$/u),
     });
-
-    // Let the kernel run loop deliver the parked bootstrap message to the
-    // main vat, which will observe the peer's rejected root promise.
     await waitUntilQuiescent(200);
 
     const vatLogs = extractTestLogs(entries, 'console');
-    expect(vatLogs).toContainEqual(
-      expect.stringMatching(/^peer rejected:.*VAT_TERMINATED/u),
-    );
+    expect({
+      bootstrapped: vatLogs.filter((log) => log.startsWith('peer rejected:')),
+      vats: kernel.getVatIds(),
+      subclusters: kernel.getSubclusters(),
+    }).toStrictEqual({ bootstrapped: [], vats: [], subclusters: [] });
   });
 });
