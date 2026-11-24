@@ -17,6 +17,7 @@ import {
   makeKernelError,
 } from '../liveslots/kernel-marshal.ts';
 import type { KernelStore } from '../store/index.ts';
+import { isStoreFault } from '../store/utils/store-fault.ts';
 import type {
   CrankResult,
   VatId,
@@ -176,7 +177,7 @@ export class VatManager {
    * written directly, as no crank is open.
    *
    * @returns A promise that resolves once every vat has started or been
-   *   terminated, and rejects if a termination fails.
+   *   terminated, and rejects if a termination fails or the kernel panicked.
    */
   async initializeAllVats(): Promise<void> {
     const starts: Promise<void>[] = [];
@@ -191,6 +192,8 @@ export class VatManager {
     const failures = (await Promise.allSettled(starts)).flatMap((outcome) =>
       outcome.status === 'rejected' ? [outcome.reason] : [],
     );
+    // Also for a syscall's store fault in a start that went on to succeed.
+    this.#kernelQueue.throwIfPanicked();
     if (failures.length > 1) {
       throw new AggregateError(
         failures,
@@ -214,6 +217,11 @@ export class VatManager {
     try {
       await this.#startVatInTime(vatId, vatConfig);
     } catch (error) {
+      if (isStoreFault(error)) {
+        throw this.#kernelQueue.panic(`start of vat ${vatId} failed`, error);
+      }
+      // A syscall's store fault fails the start with the vat's own error.
+      this.#kernelQueue.throwIfPanicked();
       const subclusterId = this.#kernelStore
         .getSubclusters()
         .find(({ vats }) => Object.values(vats).includes(vatId))?.id;
@@ -889,6 +897,7 @@ export class VatManager {
    * @returns The crank outcome: an abort and a termination if the relaunch
    *   failed or the new worker's channel was lost before this returns,
    *   otherwise the callers' answer, for once the crank commits.
+   * @throws A store fault in the relaunch, which kills the run loop.
    */
   async performVatRestart(vatId: VatId): Promise<CrankResult | undefined> {
     const taken = this.#takeWaiters(this.#restartWaiters, vatId);
@@ -920,6 +929,9 @@ export class VatManager {
       }
       running = await this.#startVatInTime(vatId, config);
     } catch (error) {
+      if (isStoreFault(error)) {
+        throw error;
+      }
       // Unless retired meanwhile, as below, where an abort would undo that.
       if (this.#kernelStore.isVatActive(vatId)) {
         return this.#failRestart({ vatId, taken, error });

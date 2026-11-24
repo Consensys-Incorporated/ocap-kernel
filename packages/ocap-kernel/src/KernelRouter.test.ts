@@ -1379,6 +1379,24 @@ describe('KernelRouter', () => {
         ).rejects.toThrow('kernel fault');
       });
 
+      it('still throws a store fault in a delivery whose vat dies under it', async () => {
+        const storeFault = makeStoreFault();
+        (
+          endpointHandle.deliverBringOutYourDead as unknown as MockInstance
+        ).mockImplementationOnce(async () => {
+          (getEndpoint as unknown as MockInstance).mockImplementation(
+            (requested: EndpointId) => {
+              throw new VatNotFoundError(requested as VatId);
+            },
+          );
+          throw storeFault;
+        });
+
+        await expect(
+          kernelRouter.deliver({ type: 'bringOutYourDead', endpointId }),
+        ).rejects.toBe(storeFault);
+      });
+
       it('still throws when looking the vat up fails for another reason', async () => {
         (
           endpointHandle.deliverBringOutYourDead as unknown as MockInstance

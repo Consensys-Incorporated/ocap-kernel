@@ -18,6 +18,7 @@ import type {
 import { VatHandle } from './VatHandle.ts';
 import { VatManager } from './VatManager.ts';
 import { asVatId, asVRef } from '../../test/branded.ts';
+import { makeStoreFault } from '../../test/storage.ts';
 
 const STOP_RUN_LOOP = 'test: stop run loop';
 
@@ -142,6 +143,35 @@ describe('a restart whose relaunch fails', () => {
     expect(restored).toBeUndefined();
     expect(platformServices.launch).toHaveBeenCalledTimes(2);
     expect(kernelStore.getTerminatedVats()).toStrictEqual(['v1']);
+  });
+});
+
+describe('a restart whose relaunch hits a store fault', () => {
+  it('stops the kernel and keeps the vat, with its restart still queued', async () => {
+    const storeFault = makeStoreFault();
+    const { kernelStore, kernelQueue, vatManager } = await setUp(
+      async ({ kernelQueue: queue, target }) => {
+        queue.enqueueSend(
+          target,
+          { methargs: kser(['hello', []]), result: null },
+          false,
+        );
+        throw storeFault;
+      },
+    );
+
+    const restarting = vatManager.restartVat(asVatId('v1'));
+    const running = kernelQueue.run(async () =>
+      vatManager.performVatRestart(asVatId('v1')),
+    );
+
+    await expect(running).rejects.toBe(storeFault);
+    await expect(restarting).rejects.toThrow('Kernel run loop died');
+    expect({
+      active: kernelStore.isVatActive(asVatId('v1')),
+      terminated: kernelStore.getTerminatedVats(),
+      queued: kernelStore.runQueueLength(),
+    }).toStrictEqual({ active: true, terminated: [], queued: 1 });
   });
 });
 

@@ -23,6 +23,7 @@ import type { KRef, VatId, VatConfig, PlatformServices } from '../types.ts';
 import { VatHandle } from './VatHandle.ts';
 import { VatManager } from './VatManager.ts';
 import { asKRef, asSubclusterId, asVatId } from '../../test/branded.ts';
+import { makeStoreFault } from '../../test/storage.ts';
 
 const v1 = asVatId('v1');
 const s1 = asSubclusterId('s1');
@@ -187,6 +188,11 @@ describe('VatManager', () => {
       onRunLoopDeath: vi.fn(() => () => undefined),
       assertRunLoopAlive: vi.fn(),
       assertInboxOpen: vi.fn(),
+      panic: vi.fn(
+        (problem: string, cause: unknown) =>
+          new Error(`Kernel panic: ${problem}`, { cause }),
+      ),
+      throwIfPanicked: vi.fn(),
     } as unknown as Mocked<KernelQueue>;
 
     mockLogger = new Logger('test');
@@ -410,6 +416,52 @@ describe('VatManager', () => {
         running: vatManager.getVatIds(),
       }).toStrictEqual({ settledBeforeTheLastStart: false, running: ['v2'] });
     });
+
+    it('panics on a store fault in a start, without terminating the vat', async () => {
+      const storeFault = makeStoreFault();
+      makeVatHandleMock.mockRejectedValueOnce(storeFault);
+
+      await expect(vatManager.initializeAllVats()).rejects.toThrow(
+        'Kernel panic: start of vat v1 failed',
+      );
+      expect({
+        panics: mockKernelQueue.panic.mock.calls,
+        running: vatManager.getVatIds(),
+        terminated: mockKernelStore.markVatAsTerminated.mock.calls,
+        deleted: mockKernelStore.deleteVat.mock.calls,
+      }).toStrictEqual({
+        panics: [['start of vat v1 failed', storeFault]],
+        running: ['v2'],
+        terminated: [],
+        deleted: [],
+      });
+    });
+
+    it.each([
+      { what: 'failed', failStart: true, running: ['v2'] },
+      { what: 'succeeded', failStart: false, running: ['v1', 'v2'] },
+    ])(
+      'rejects with a panic recorded during a start that $what, without terminating the vat',
+      async ({ failStart, running }) => {
+        const panic = new Error(
+          'Kernel panic: syscall send from vat v1 failed',
+        );
+        mockKernelQueue.throwIfPanicked.mockImplementation(() => {
+          throw panic;
+        });
+        if (failStart) {
+          makeVatHandleMock.mockRejectedValueOnce(
+            new Error('Failed to initialize vat v1'),
+          );
+        }
+
+        await expect(vatManager.initializeAllVats()).rejects.toBe(panic);
+        expect({
+          running: vatManager.getVatIds(),
+          deleted: mockKernelStore.deleteVat.mock.calls,
+        }).toStrictEqual({ running, deleted: [] });
+      },
+    );
 
     it('rejects with every failed termination', async () => {
       vi.spyOn(mockLogger, 'error').mockReturnValue();

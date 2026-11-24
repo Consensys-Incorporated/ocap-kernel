@@ -201,7 +201,7 @@ export class KernelQueue {
    */
   async #runLoop(deliver: Deliver): Promise<void> {
     for (;;) {
-      this.#throwIfPanicked();
+      this.throwIfPanicked();
       // `endRunLoop` was called, and everything put in the inbox before it has
       // run; `enqueueInbox` refuses any after.
       if (this.#ending && this.#inbox.length === 0) {
@@ -251,9 +251,9 @@ export class KernelQueue {
             } else {
               crankResult = await deliver(queueItem as RunLoopItem);
             }
-            this.#throwIfPanicked();
+            this.throwIfPanicked();
             await this.#processCrankResult(crankResult, queueItem);
-            this.#throwIfPanicked();
+            this.throwIfPanicked();
             afterCommit = crankResult?.afterCommit;
           } else {
             if (this.#wakeUpTheRunQueue !== null) {
@@ -531,7 +531,7 @@ export class KernelQueue {
   /**
    * Throw the fault {@link panic} recorded, if any.
    */
-  #throwIfPanicked(): void {
+  throwIfPanicked(): void {
     if (this.#panic) {
       throw this.#panic;
     }
@@ -673,7 +673,7 @@ export class KernelQueue {
       const { vatId, info } = crankResult.terminate;
       await this.#terminateVat(vatId, info);
       // Before the flush answers anyone.
-      this.#throwIfPanicked();
+      this.throwIfPanicked();
     }
     this.#kernelStore.collectGarbage();
     // The audit goes first, so the flush does not settle the promise
