@@ -217,10 +217,7 @@ export class VatManager {
     try {
       await this.#startVatInTime(vatId, vatConfig);
     } catch (error) {
-      if (isStoreFault(error)) {
-        throw this.#kernelQueue.panic(`start of vat ${vatId} failed`, error);
-      }
-      // A syscall's store fault fails the start with the vat's own error.
+      // A store fault, in the start or a syscall during it, is not the vat's.
       this.#kernelQueue.throwIfPanicked();
       const subclusterId = this.#kernelStore
         .getSubclusters()
@@ -378,6 +375,11 @@ export class VatManager {
         throw running.lost;
       }
     } catch (error) {
+      if (isStoreFault(error)) {
+        // Before the stop, during which the start can time out and its
+        // failure be dropped.
+        this.#kernelQueue.panic(`start of vat ${vatId} failed`, error);
+      }
       await this.#platformServices
         .terminate(vatId)
         .catch((stopError: unknown) =>

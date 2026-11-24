@@ -188,10 +188,7 @@ describe('VatManager', () => {
       onRunLoopDeath: vi.fn(() => () => undefined),
       assertRunLoopAlive: vi.fn(),
       assertInboxOpen: vi.fn(),
-      panic: vi.fn(
-        (problem: string, cause: unknown) =>
-          new Error(`Kernel panic: ${problem}`, { cause }),
-      ),
+      panic: vi.fn(),
       throwIfPanicked: vi.fn(),
     } as unknown as Mocked<KernelQueue>;
 
@@ -417,13 +414,28 @@ describe('VatManager', () => {
       }).toStrictEqual({ settledBeforeTheLastStart: false, running: ['v2'] });
     });
 
-    it('panics on a store fault in a start, without terminating the vat', async () => {
+    it('panics on a store fault in a start, even one that times out while its worker stops', async () => {
+      vatManager = new VatManager({
+        platformServices: mockPlatformServices,
+        kernelStore: mockKernelStore,
+        kernelQueue: mockKernelQueue,
+        logger: mockLogger,
+        vatRelaunchTimeoutMs: 1,
+      });
       const storeFault = makeStoreFault();
+      const panic = new Error('Kernel panic: start of vat v1 failed');
+      mockKernelQueue.panic.mockImplementation(() => {
+        mockKernelQueue.throwIfPanicked.mockImplementation(() => {
+          throw panic;
+        });
+        return panic;
+      });
       makeVatHandleMock.mockRejectedValueOnce(storeFault);
-
-      await expect(vatManager.initializeAllVats()).rejects.toThrow(
-        'Kernel panic: start of vat v1 failed',
+      mockPlatformServices.terminate.mockReturnValueOnce(
+        new Promise(() => undefined),
       );
+
+      await expect(vatManager.initializeAllVats()).rejects.toBe(panic);
       expect({
         panics: mockKernelQueue.panic.mock.calls,
         running: vatManager.getVatIds(),
@@ -1586,6 +1598,16 @@ describe('VatManager', () => {
       await expect(restarting).rejects.toThrow(
         expect.objectContaining({ message, cause: launchError }),
       );
+    });
+
+    it('throws a store fault in the relaunch', async () => {
+      await vatManager.runVat(v1, createMockVatConfig());
+      leaveRequestQueued();
+      vatManager.restartVat(v1).catch(() => undefined);
+      const storeFault = makeStoreFault();
+      mockPlatformServices.launch.mockRejectedValueOnce(storeFault);
+
+      await expect(vatManager.performVatRestart(v1)).rejects.toBe(storeFault);
     });
 
     it('relaunches even when the old channel never finishes closing', async () => {
