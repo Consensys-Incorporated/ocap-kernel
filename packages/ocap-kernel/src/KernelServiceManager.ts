@@ -312,10 +312,7 @@ export class KernelServiceManager {
           ]);
         })
         .catch((error: unknown) => {
-          this.#logger?.error(
-            `Kernel service result ${result} could not be delivered:`,
-            error,
-          );
+          this.#logUndelivered(result, error);
         });
     } catch (syncError) {
       // Handle synchronous errors thrown before returning a Promise
@@ -329,15 +326,39 @@ export class KernelServiceManager {
    * whatever crank is open and be lost if that one aborts.
    *
    * @param resolution - The result promise and what to settle it with.
-   * @returns A promise that rejects if the resolution was not written.
+   * @returns A promise that rejects if the crank aborted. A resolution the
+   * inbox refused or discarded is logged instead: the kernel is stopping or
+   * its store was wiped, and a second try would land after that.
    */
   async #settle(resolution: KernelOneResolution): Promise<void> {
-    await this.#kernelQueue.enqueueInbox(
-      'settle a kernel service result',
-      async () =>
-        attempt(() =>
-          this.#kernelQueue.resolvePromises('kernel', [resolution], false),
-        ),
+    let aborted = false;
+    try {
+      await this.#kernelQueue.enqueueInbox(
+        'settle a kernel service result',
+        async () => {
+          const outcome = await attempt(() =>
+            this.#kernelQueue.resolvePromises('kernel', [resolution], false),
+          );
+          aborted = 'failure' in outcome;
+          return outcome;
+        },
+      );
+    } catch (error) {
+      if (aborted) {
+        throw error;
+      }
+      this.#logUndelivered(resolution[0], error);
+    }
+  }
+
+  /**
+   * @param result - The result promise that was not settled.
+   * @param error - Why.
+   */
+  #logUndelivered(result: KernelMessage['result'], error: unknown): void {
+    this.#logger?.error(
+      `Kernel service result ${result} could not be delivered:`,
+      error,
     );
   }
 

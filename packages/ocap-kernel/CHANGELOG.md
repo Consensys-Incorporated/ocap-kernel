@@ -91,7 +91,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - A kernel service's result is written in a crank of its own, so one that settles while another crank is open is no longer lost, leaving the calling vat waiting, when that crank aborts. A result that cannot be written, such as one that settles after `stop` or after a wipe, is logged instead of raising an unhandled rejection ([#1319](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1319))
-- Giving up on a peer runs in a crank of its own, so the rejections of its promises are no longer lost when the crank open at the time aborts, and a store fault while giving up stops the kernel ([#1319](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1319))
+- Giving up on a peer runs in a crank of its own, so the rejections of its promises are no longer lost when the crank open at the time aborts, and a failure while giving up stops the kernel ([#1319](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1319))
 - A peer's acknowledgement is written to the store in a crank of its own instead of on arrival, where an abort of the open crank took it back ([#1319](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1319))
 - A `launchSubcluster` whose vat will not start leaves nothing behind: the vats that did start are stopped and the launch is rolled back before `bootstrap` is sent ([#1304](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1304))
 - `terminateSubcluster` stops every member and deletes the record in one crank; a fault writing a member's death rolls the crank back and kills the run loop ([#1304](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1304))

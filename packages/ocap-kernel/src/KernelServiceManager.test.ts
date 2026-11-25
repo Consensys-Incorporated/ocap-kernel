@@ -633,7 +633,7 @@ describe('KernelServiceManager', () => {
     it('logs a result the inbox refuses', async () => {
       const loggerErrorSpy = vi.spyOn(logger, 'error');
       const refusal = new Error('Kernel run loop is stopping');
-      vi.mocked(mockKernelQueue.enqueueInbox).mockRejectedValue(refusal);
+      vi.mocked(mockKernelQueue.enqueueInbox).mockRejectedValueOnce(refusal);
       const { kref } = serviceManager.registerKernelServiceObject(
         'testService',
         { testMethod: () => 'test result' },
@@ -645,7 +645,7 @@ describe('KernelServiceManager', () => {
       });
       await delay();
 
-      expect(mockKernelQueue.resolvePromises).not.toHaveBeenCalled();
+      expect(mockKernelQueue.enqueueInbox).toHaveBeenCalledTimes(1);
       expect(loggerErrorSpy).toHaveBeenCalledExactlyOnceWith(
         'Kernel service result kp123 could not be delivered:',
         refusal,

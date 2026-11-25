@@ -1565,6 +1565,23 @@ describe('RemoteHandle', () => {
       expect(mockKernelQueue.enqueueInbox).toHaveBeenCalledTimes(1);
     });
 
+    it('rejects a redemption asked for while the give-up waited', async () => {
+      const remote = makeRemote();
+      let giveUpWork: (() => unknown) | undefined;
+      vi.mocked(mockKernelQueue.enqueueInbox).mockImplementationOnce(
+        async (_what, work) => {
+          giveUpWork = work;
+          return undefined as never;
+        },
+      );
+
+      remote.giveUp('network stopped');
+      const redeem = remote.redeemOcapURL('ocap:something@peer,relay');
+      giveUpWork!();
+
+      await expect(redeem).rejects.toThrow('network stopped');
+    });
+
     it('restores pending messages on startup', async () => {
       // Pre-populate storage with persisted state (messages stored as plain strings)
       mockKernelStore.setRemoteNextSendSeq(mockRemoteId, 3);

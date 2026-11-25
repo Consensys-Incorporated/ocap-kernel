@@ -566,9 +566,15 @@ describe('a writer acting while a crank aborts', () => {
       methargs: kser(['work', []]),
       result: kpid,
     });
+    const enqueueInbox = vi.spyOn(kernelQueue, 'enqueueInbox');
     const delivered = await abortACrankWhile(harness, async () => {
       resolve('done');
-      await delay(0);
+      await vi.waitFor(() =>
+        expect(enqueueInbox).toHaveBeenCalledWith(
+          'settle a kernel service result',
+          expect.any(Function),
+        ),
+      );
       expect(kernelStore.getKernelPromise(kpid).state).toBe('unresolved');
     });
     const { state, value } = kernelStore.getKernelPromise(kpid);

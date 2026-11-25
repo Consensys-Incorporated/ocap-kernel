@@ -367,7 +367,7 @@ describe('RemoteHandle across a crank boundary', () => {
 
       expect(kernelStore.getPendingMessage(REMOTE_ID, 1)).toBeDefined();
       expect(queued).toHaveLength(1);
-      queued[0]?.();
+      queued[0]!();
       expect(kernelStore.getRemoteSeqState(REMOTE_ID)).toMatchObject({
         startSeq: 3,
         nextSendSeq: 2,
@@ -794,10 +794,33 @@ describe('RemoteHandle across a crank boundary', () => {
       kernelStore.startCrank();
       kernelStore.createCrankSavepoint('crank');
       kernelStore.createCrankSavepoint('delivery');
-      giveUpWork?.();
+      giveUpWork!();
       kernelStore.endCrank();
       return started;
     }
+
+    it('retires what the peer acknowledged while the give-up waited', async () => {
+      const { kernelStore } = await makeRemoteOverRealStore();
+      const { remote, kernelQueue } = startOver(kernelStore);
+      const queued: (() => unknown)[] = [];
+      vi.mocked(kernelQueue.enqueueInbox).mockImplementation(
+        async (_what, work) => {
+          queued.push(work);
+          return undefined as never;
+        },
+      );
+      await deliverAndCommit(remote, kernelStore);
+
+      remote.giveUp('network stopped');
+      remote.receiveFromPeer(JSON.stringify({ ack: 1 }));
+      kernelStore.startCrank();
+      kernelStore.createCrankSavepoint('crank');
+      kernelStore.createCrankSavepoint('delivery');
+      queued[0]!();
+      kernelStore.endCrank();
+
+      expect(kernelStore.getPendingMessage(REMOTE_ID, 1)).toBeUndefined();
+    });
 
     it('does not go to a peer whose promises the give-up rejected', async () => {
       const { kernelStore } = await makeRemoteOverRealStore();
