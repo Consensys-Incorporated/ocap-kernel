@@ -45,6 +45,7 @@
     "test:dev:quiet": "yarn test:dev --reporter @ocap/repo-tools/vitest-reporters/silent"
   },
   "dependencies": {
+    "@endo/evasive-transform": "^2.3.0",
     "@endo/promise-kit": "^1.2.1",
     "@metamask/kernel-language-model-service": "workspace:^",
     "@metamask/kernel-node-runtime": "workspace:^",

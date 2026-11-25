@@ -2380,6 +2380,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@metamask/kernel-cli@workspace:packages/kernel-cli"
   dependencies:
+    "@endo/evasive-transform": "npm:^2.3.0"
     "@endo/promise-kit": "npm:^1.2.1"
     "@metamask/auto-changelog": "npm:^7.0.1"
     "@metamask/kernel-language-model-service": "workspace:^"
@@ -2618,6 +2619,7 @@ __metadata:
     "@chainsafe/libp2p-noise": "npm:^17.0.0"
     "@chainsafe/libp2p-yamux": "npm:8.0.1"
     "@endo/errors": "npm:^1.3.1"
+    "@endo/evasive-transform": "npm:^2.3.0"
     "@endo/eventual-send": "npm:^1.5.0"
     "@endo/exo": "npm:^1.7.0"
     "@endo/pass-style": "npm:^1.8.2"
@@ -2648,10 +2650,13 @@ __metadata:
     typescript: "npm:~7.0.2"
     vitest: "npm:^4.1.3"
   peerDependencies:
+    "@endo/evasive-transform": ^2.3.0
     acorn: ^8.15.0
     rolldown: ^1.0.0-rc.0
     vite: ^8.0.6
   peerDependenciesMeta:
+    "@endo/evasive-transform":
+      optional: true
     acorn:
       optional: true
     rolldown:
