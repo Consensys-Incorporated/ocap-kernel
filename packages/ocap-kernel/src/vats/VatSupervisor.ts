@@ -372,6 +372,7 @@ export class VatSupervisor {
    * @param vatConfig - Configuration object describing the vat to be intialized.
    * @param state - A Map representing the current persistent state of the vat.
    * @param allowedGlobalNames - Optional list of allowed global names to restrict the available endowments.
+   * @param crankNumber - The crank the kernel starts the vat in, if it said.
    * @returns a promise for a checkpoint of the new vat, with the content
    * hash of the bundle it loaded.
    */
@@ -379,6 +380,7 @@ export class VatSupervisor {
     vatConfig: VatConfig,
     state: Map<string, string>,
     allowedGlobalNames: AllowedGlobalName[] | undefined,
+    crankNumber: number | undefined,
   ): Promise<InitVatResult> {
     if (this.#loaded) {
       throw Error(
@@ -511,7 +513,10 @@ export class VatSupervisor {
     this.#dispatch = liveslots.dispatch;
     const serParam = marshal.toCapData(harden(parameters)) as CapData<string>;
 
-    const started = await this.#deliver(harden(['startVat', serParam]));
+    const started = await this.#deliver(
+      harden(['startVat', serParam]),
+      crankNumber,
+    );
     return harden([...started, bundleHash]);
   }
 }

@@ -3,6 +3,7 @@ import {
   array,
   exactOptional,
   literal,
+  number,
   object,
   string,
   tuple,
@@ -20,6 +21,7 @@ const paramsStruct = object({
   vatConfig: VatConfigStruct,
   state: array(tuple([string(), string()])),
   allowedGlobalNames: exactOptional(array(AllowedGlobalNameStruct)),
+  crankNumber: exactOptional(number()),
 });
 
 type Params = Infer<typeof paramsStruct>;
@@ -48,6 +50,7 @@ export type InitVat = (
   vatConfig: VatConfig,
   state: Map<string, string>,
   allowedGlobalNames: AllowedGlobalName[] | undefined,
+  crankNumber: number | undefined,
 ) => Promise<InitVatResult>;
 
 type InitVatHooks = {
@@ -69,6 +72,7 @@ export const initVatHandler: InitVatHandler = {
       params.vatConfig,
       new Map(params.state),
       params.allowedGlobalNames,
+      params.crankNumber,
     );
   },
 };

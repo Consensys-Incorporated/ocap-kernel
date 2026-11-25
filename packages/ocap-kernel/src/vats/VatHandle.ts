@@ -21,6 +21,7 @@ import type { KernelQueue } from '../KernelQueue.ts';
 import { makeFatalKernelError } from '../liveslots/kernel-marshal.ts';
 import { vatMethodSpecs, vatSyscallHandlers } from '../rpc/index.ts';
 import type { PingVatResult, VatMethod } from '../rpc/index.ts';
+import type { VatDeliveryParams } from '../rpc/vat/deliver.ts';
 import type { KernelStore } from '../store/index.ts';
 import type {
   EndpointMessage,
@@ -202,6 +203,10 @@ export class VatHandle implements EndpointHandle {
         ...(this.#allowedGlobalNames
           ? { allowedGlobalNames: this.#allowedGlobalNames }
           : {}),
+        // At boot, a persisted vat starts in no crank.
+        ...(this.#kernelStore.isInCrank()
+          ? { crankNumber: this.#kernelStore.getCrankNumber() }
+          : {}),
       },
     });
     const [checkpoint, error, bundleHash] = result;
@@ -278,6 +283,20 @@ export class VatHandle implements EndpointHandle {
   }
 
   /**
+   * Make a delivery to the vat, in the crank in progress.
+   *
+   * @param delivery - The delivery.
+   * @returns The crank result.
+   */
+  async #deliver(delivery: VatDeliveryParams): Promise<CrankResult> {
+    await this.sendVatCommand({
+      method: 'deliver',
+      params: { delivery, crankNumber: this.#kernelStore.getCrankNumber() },
+    });
+    return this.#getDeliveryCrankResult();
+  }
+
+  /**
    * Make a 'message' delivery to the vat.
    *
    * @param target - The VRef of the object to which the message is addressed.
@@ -288,14 +307,7 @@ export class VatHandle implements EndpointHandle {
     target: ERef,
     message: EndpointMessage,
   ): Promise<CrankResult> {
-    await this.sendVatCommand({
-      method: 'deliver',
-      params: {
-        delivery: ['message', target, message],
-        crankNumber: this.#kernelStore.getCrankNumber(),
-      },
-    });
-    return this.#getDeliveryCrankResult();
+    return this.#deliver(['message', target, message]);
   }
 
   /**
@@ -305,14 +317,7 @@ export class VatHandle implements EndpointHandle {
    * @returns The crank result.
    */
   async deliverNotify(resolutions: VatOneResolution[]): Promise<CrankResult> {
-    await this.sendVatCommand({
-      method: 'deliver',
-      params: {
-        delivery: ['notify', resolutions],
-        crankNumber: this.#kernelStore.getCrankNumber(),
-      },
-    });
-    return this.#getDeliveryCrankResult();
+    return this.#deliver(['notify', resolutions]);
   }
 
   /**
@@ -322,14 +327,7 @@ export class VatHandle implements EndpointHandle {
    * @returns The crank result.
    */
   async deliverDropExports(vrefs: ERef[]): Promise<CrankResult> {
-    await this.sendVatCommand({
-      method: 'deliver',
-      params: {
-        delivery: ['dropExports', vrefs],
-        crankNumber: this.#kernelStore.getCrankNumber(),
-      },
-    });
-    return this.#getDeliveryCrankResult();
+    return this.#deliver(['dropExports', vrefs]);
   }
 
   /**
@@ -339,14 +337,7 @@ export class VatHandle implements EndpointHandle {
    * @returns The crank result.
    */
   async deliverRetireExports(vrefs: ERef[]): Promise<CrankResult> {
-    await this.sendVatCommand({
-      method: 'deliver',
-      params: {
-        delivery: ['retireExports', vrefs],
-        crankNumber: this.#kernelStore.getCrankNumber(),
-      },
-    });
-    return this.#getDeliveryCrankResult();
+    return this.#deliver(['retireExports', vrefs]);
   }
 
   /**
@@ -356,14 +347,7 @@ export class VatHandle implements EndpointHandle {
    * @returns The crank result.
    */
   async deliverRetireImports(vrefs: ERef[]): Promise<CrankResult> {
-    await this.sendVatCommand({
-      method: 'deliver',
-      params: {
-        delivery: ['retireImports', vrefs],
-        crankNumber: this.#kernelStore.getCrankNumber(),
-      },
-    });
-    return this.#getDeliveryCrankResult();
+    return this.#deliver(['retireImports', vrefs]);
   }
 
   /**
@@ -372,14 +356,7 @@ export class VatHandle implements EndpointHandle {
    * @returns The crank result.
    */
   async deliverBringOutYourDead(): Promise<CrankResult> {
-    await this.sendVatCommand({
-      method: 'deliver',
-      params: {
-        delivery: ['bringOutYourDead'],
-        crankNumber: this.#kernelStore.getCrankNumber(),
-      },
-    });
-    return this.#getDeliveryCrankResult();
+    return this.#deliver(['bringOutYourDead']);
   }
 
   /**
