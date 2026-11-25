@@ -1250,15 +1250,39 @@ describe('RemoteManager', () => {
         .calls[0]?.[1].onRemoteGiveUp as (peerId: string) => void;
       onRemoteGiveUp(peerId);
 
-      expect(resolvePromisesSpy).toHaveBeenCalledWith(remoteId, [
+      expect(mockKernelQueue.enqueueInbox).toHaveBeenCalledWith(
+        'give up on a remote',
+        expect.any(Function),
+      );
+      expect(resolvePromisesSpy).toHaveBeenCalledWith(
+        remoteId,
         [
-          kpid,
-          true,
-          expect.objectContaining({
-            body: expect.stringContaining('[KERNEL:CONNECTION_LOST]'),
-          }),
+          [
+            kpid,
+            true,
+            expect.objectContaining({
+              body: expect.stringContaining('[KERNEL:CONNECTION_LOST]'),
+            }),
+          ],
         ],
+        false,
+      );
+    });
+
+    it('leaves a remote whose restart waits to that restart', () => {
+      const peerId = 'peer-restarting';
+      const remote = remoteManager.establishRemote(peerId);
+      const giveUpSpy = vi.spyOn(remote, 'giveUp');
+      kernelStore.setPeerIncarnation(peerId, 'incarnation-A');
+      vi.mocked(mockKernelQueue.waitingIncarnations).mockReturnValue([
+        'incarnation-B',
       ]);
+      const onRemoteGiveUp = vi.mocked(remoteComms.startRemoteComms).mock
+        .calls[0]?.[1].onRemoteGiveUp as (peerId: string) => void;
+
+      onRemoteGiveUp(peerId);
+
+      expect(giveUpSpy).not.toHaveBeenCalled();
     });
 
     it('handles remote give up with no promises', () => {
