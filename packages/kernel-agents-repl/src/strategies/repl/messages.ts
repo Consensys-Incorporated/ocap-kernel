@@ -1,10 +1,10 @@
 import { stringify } from '@metamask/kernel-utils';
 import { Message } from '@ocap/kernel-agents/types/messages';
 import type { Transcript } from '@ocap/kernel-agents/types/messages';
-import type { SyntaxNode } from 'tree-sitter';
 
 import { makeCompartment } from './compartment.ts';
-import { parse } from './parse/javascript.ts';
+import { firstStatement } from './parse/syntax-tree.ts';
+import type { Parser, SyntaxTree } from './parse/syntax-tree.ts';
 import { ERROR, RETURN } from './symbols.ts';
 
 export type StatementType = 'import' | 'evaluation' | 'comment';
@@ -40,7 +40,7 @@ export const observeJson = (value: JsonObservation): string =>
  */
 export abstract class ReplMessage<
   Type extends ReplMessageType,
-  Body extends Record<JsonKey, JsonObservation | SyntaxNode>,
+  Body extends Record<JsonKey, JsonObservation | SyntaxTree>,
 >
   extends Message<Type, Body>
   implements ReplObservable, JsonObservable
@@ -66,10 +66,13 @@ export abstract class ReplMessage<
 // Statements comprise the action space of the REPL agent.
 /**
  * A message representing a statement in the REPL action space.
+ *
+ * A statement the agent will evaluate carries its parsed `node`; one that only
+ * appears in a transcript, such as an example, need not.
  */
 export class StatementMessage<
   Type extends StatementType = StatementType,
-> extends ReplMessage<Type, { code: string; node: SyntaxNode }> {
+> extends ReplMessage<Type, { code: string; node?: SyntaxTree }> {
   /**
    * Serializes the statement to a REPL-formatted string with prompt prefix.
    *
@@ -83,25 +86,16 @@ export class StatementMessage<
    * Creates a statement message from code by parsing it and determining its type.
    *
    * @param code - The code string to parse into a statement message.
+   * @param parser - The parser to parse it with.
    * @returns A statement message of the appropriate type.
    */
-  static fromCode(code: string): StatementMessage {
-    return statementMessageFromCode(code);
+  static async fromCode(
+    code: string,
+    parser: Parser,
+  ): Promise<StatementMessage> {
+    return statementMessageFromCode(code, parser);
   }
 }
-
-const parseStatement = (
-  code: string,
-  name?: string,
-  bound?: StatementType[],
-): SyntaxNode => {
-  const { rootNode } = parse(code);
-  const [statement] = rootNode.children as [SyntaxNode];
-  if (bound && !bound.includes(statement.type as StatementType)) {
-    throw new Error(`"${code}" is not a valid ${name}.`);
-  }
-  return statement;
-};
 
 /**
  * A message representing a comment statement.
@@ -111,11 +105,10 @@ export class CommentMessage extends StatementMessage<'comment'> {
    * Constructs a new {@link CommentMessage}.
    *
    * @param code - The comment code string.
-   * @param statement - Optional pre-parsed syntax node; if not provided, the code will be parsed.
+   * @param node - The parsed statement, when it will be evaluated.
    */
-  constructor(code: string, statement?: SyntaxNode) {
-    const node = statement ?? parseStatement(code, 'comment');
-    super('comment', { code, node });
+  constructor(code: string, node?: SyntaxTree) {
+    super('comment', { code, ...(node && { node }) });
   }
 }
 
@@ -127,11 +120,10 @@ export class ImportMessage extends StatementMessage<'import'> {
    * Constructs a new {@link ImportMessage}.
    *
    * @param code - The import statement code string.
-   * @param statement - Optional pre-parsed syntax node; if not provided, the code will be parsed.
+   * @param node - The parsed statement, when it will be evaluated.
    */
-  constructor(code: string, statement?: SyntaxNode) {
-    const node = statement ?? parseStatement(code, 'import_statement');
-    super('import', { code, node });
+  constructor(code: string, node?: SyntaxTree) {
+    super('import', { code, ...(node && { node }) });
   }
 
   /**
@@ -154,11 +146,10 @@ export class EvaluationMessage extends StatementMessage<'evaluation'> {
    * Constructs a new {@link EvaluationMessage}.
    *
    * @param code - The code to evaluate.
-   * @param statement - Optional pre-parsed syntax node; if not provided, the code will be parsed.
+   * @param node - The parsed statement, when it will be evaluated.
    */
-  constructor(code: string, statement?: SyntaxNode) {
-    const node = statement ?? parseStatement(code, 'expression_statement');
-    super('evaluation', { code, node });
+  constructor(code: string, node?: SyntaxTree) {
+    super('evaluation', { code, ...(node && { node }) });
   }
 }
 
@@ -166,11 +157,14 @@ export class EvaluationMessage extends StatementMessage<'evaluation'> {
  * Make a statement message from code.
  *
  * @param code - The code to parse.
+ * @param parser - The parser to parse it with.
  * @returns A statement message.
  */
-function statementMessageFromCode(code: string): StatementMessage {
-  const { rootNode } = parse(code);
-  const [statement] = rootNode.children as [SyntaxNode];
+async function statementMessageFromCode(
+  code: string,
+  parser: Parser,
+): Promise<StatementMessage> {
+  const statement = firstStatement(await parser.parse(code));
   switch (statement.type) {
     case 'comment':
       return new CommentMessage(code, statement);
