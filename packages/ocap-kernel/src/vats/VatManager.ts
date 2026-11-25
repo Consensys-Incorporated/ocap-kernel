@@ -899,7 +899,8 @@ export class VatManager {
    * @returns The crank outcome: an abort and a termination if the relaunch
    *   failed or the new worker's channel was lost before this returns,
    *   otherwise the callers' answer, for once the crank commits.
-   * @throws A store fault in the relaunch, which kills the run loop.
+   * @throws A store fault in the relaunch, or the panic one recorded, which
+   *   kills the run loop.
    */
   async performVatRestart(vatId: VatId): Promise<CrankResult | undefined> {
     const taken = this.#takeWaiters(this.#restartWaiters, vatId);
@@ -934,6 +935,9 @@ export class VatManager {
       if (isStoreFault(error)) {
         throw error;
       }
+      // A syscall's store fault, or one the start's timeout overtook, shows
+      // only as the panic.
+      this.#kernelQueue.throwIfPanicked();
       // Unless retired meanwhile, as below, where an abort would undo that.
       if (this.#kernelStore.isVatActive(vatId)) {
         return this.#failRestart({ vatId, taken, error });

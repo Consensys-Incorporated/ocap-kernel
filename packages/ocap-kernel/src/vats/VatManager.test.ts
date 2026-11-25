@@ -1600,14 +1600,31 @@ describe('VatManager', () => {
       );
     });
 
-    it('throws a store fault in the relaunch', async () => {
+    it.each([
+      {
+        what: 'a store fault in the relaunch',
+        failure: makeStoreFault(),
+        panic: undefined,
+      },
+      {
+        what: 'the panic recorded in a relaunch that failed',
+        failure: new Error('Vat v1 did not start within 1 ms'),
+        panic: new Error('Kernel panic: start of vat v1 failed'),
+      },
+    ])('throws $what', async ({ failure, panic }) => {
       await vatManager.runVat(v1, createMockVatConfig());
       leaveRequestQueued();
       vatManager.restartVat(v1).catch(() => undefined);
-      const storeFault = makeStoreFault();
-      mockPlatformServices.launch.mockRejectedValueOnce(storeFault);
+      if (panic) {
+        mockKernelQueue.throwIfPanicked.mockImplementation(() => {
+          throw panic;
+        });
+      }
+      mockPlatformServices.launch.mockRejectedValueOnce(failure);
 
-      await expect(vatManager.performVatRestart(v1)).rejects.toBe(storeFault);
+      await expect(vatManager.performVatRestart(v1)).rejects.toBe(
+        panic ?? failure,
+      );
     });
 
     it('relaunches even when the old channel never finishes closing', async () => {

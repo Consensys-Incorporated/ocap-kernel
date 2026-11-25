@@ -13,7 +13,6 @@ import { asERef, asSubclusterId, asVatId } from '../../test/branded.ts';
 import type { KernelQueue } from '../KernelQueue.ts';
 import { makeFatalKernelError } from '../liveslots/kernel-marshal.ts';
 import { makeKernelStore } from '../store/index.ts';
-import { isStoreFault } from '../store/utils/store-fault.ts';
 import type { KernelStore } from '../store/index.ts';
 import type {
   VRef,
@@ -451,33 +450,6 @@ describe('VatHandle', () => {
       expect(kdb.makeVatStore('v0').getKVData()).toStrictEqual([
         ['kept', 'old'],
       ]);
-    });
-
-    it("rejects with the store fault when the vat's state cannot be read", async () => {
-      const kdb = makeMapKernelDatabase();
-      vi.spyOn(kdb, 'makeVatStore').mockReturnValue({
-        getKVData: () => {
-          throw new Error('disk I/O error');
-        },
-        updateKVData: () => undefined,
-      });
-
-      const failure = await VatHandle.make({
-        kernelQueue: null as unknown as KernelQueue,
-        kernelStore: makeKernelStore(kdb),
-        vatId: asVatId('v0'),
-        vatConfig: { sourceSpec: 'not-really-there.js' },
-        vatStream: await TestDuplexStream.make<JsonRpcMessage, JsonRpcMessage>(
-          () => undefined,
-          { validateInput: isJsonRpcMessage },
-        ),
-        onStreamFailure: () => undefined,
-      }).catch((error: unknown) => error);
-
-      expect({
-        failure,
-        storeFault: isStoreFault(failure),
-      }).toStrictEqual({ failure: Error('disk I/O error'), storeFault: true });
     });
 
     it('terminates a vat whose worker answers a delivery with an error', async () => {

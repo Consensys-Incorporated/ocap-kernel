@@ -18,7 +18,6 @@ import type {
 import { VatHandle } from './VatHandle.ts';
 import { VatManager } from './VatManager.ts';
 import { asVatId, asVRef } from '../../test/branded.ts';
-import { makeStoreFault } from '../../test/storage.ts';
 
 const STOP_RUN_LOOP = 'test: stop run loop';
 
@@ -84,7 +83,14 @@ async function setUp(
       makeNewWorker({ kernelStore, kernelQueue, target, kpid }),
     );
   await vatManager.runVat(asVatId('v1'), config);
-  return { kernelStore, kernelQueue, vatManager, platformServices, target };
+  return {
+    kdb,
+    kernelStore,
+    kernelQueue,
+    vatManager,
+    platformServices,
+    target,
+  };
 }
 
 /**
@@ -148,9 +154,18 @@ describe('a restart whose relaunch fails', () => {
 
 describe('a restart whose relaunch hits a store fault', () => {
   it('stops the kernel and keeps the vat, with its restart still queued', async () => {
-    const storeFault = makeStoreFault();
-    const { kernelStore, kernelQueue, vatManager } = await setUp(async () => {
-      throw storeFault;
+    const { kdb, kernelStore, kernelQueue, vatManager } = await setUp(
+      async ({ kernelStore: store }) => {
+        // As VatHandle's #init reads the vat's state.
+        store.makeVatStore('v1').getKVData();
+        throw new Error('unreachable');
+      },
+    );
+    vi.spyOn(kdb, 'makeVatStore').mockReturnValue({
+      getKVData: () => {
+        throw new Error('disk I/O error');
+      },
+      updateKVData: () => undefined,
     });
 
     const restarting = vatManager.restartVat(asVatId('v1'));
