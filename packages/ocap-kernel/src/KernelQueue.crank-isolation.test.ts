@@ -1,4 +1,5 @@
 import type { CapData } from '@endo/marshal';
+import { makePromiseKit } from '@endo/promise-kit';
 import { makeSQLKernelDatabase } from '@metamask/kernel-store/sqlite/nodejs';
 import { delay } from '@metamask/kernel-utils';
 import type { JsonRpcMessage } from '@metamask/kernel-utils';
@@ -7,6 +8,7 @@ import type { DuplexStream } from '@metamask/streams';
 import { describe, it, expect, vi } from 'vitest';
 
 import { KernelQueue } from './KernelQueue.ts';
+import { KernelServiceManager } from './KernelServiceManager.ts';
 import {
   kser,
   kunser,
@@ -245,9 +247,11 @@ async function abortACrankWhile(
       return await vatManager.performVatTermination(item.vatId, item.reason);
     }
     if (item.type === 'remoteInbound') {
+      // As the router discards a peer message that cannot be taken.
       return await remoteManager
         .getRemote(item.remoteId)
-        .deliverInbound(item.message);
+        .deliverInbound(item.message)
+        .catch(() => ({ abort: true }));
     }
     if (item.type === 'peerIncarnation') {
       return remoteManager.applyIncarnationChange(item);
@@ -480,7 +484,7 @@ describe('a writer acting while a crank aborts', () => {
     expect(methodsSentTo(delivered, target)).toStrictEqual(['fromPeer']);
   });
 
-  it('peer ACK: the acknowledged message is restored with the aborted crank (gap, #1152)', async () => {
+  it('peer ACK: the acknowledgement lands in a crank of its own', async () => {
     const harness = await setUp();
     const { kernelStore, remote, remoteManager } = harness;
     const pending = await sendOneMessageToPeer(harness);
@@ -489,26 +493,92 @@ describe('a writer acting while a crank aborts', () => {
         PEER_ID,
         JSON.stringify({ ack: 1 }),
       );
-      expect(kernelStore.getPendingMessage(remote.remoteId, 1)).toBeUndefined();
+      expect(kernelStore.getPendingMessage(remote.remoteId, 1)).toBe(pending);
     });
     expect({
       pending: kernelStore.getPendingMessage(remote.remoteId, 1),
       startSeq: kernelStore.getRemoteSeqState(remote.remoteId)?.startSeq,
-    }).toStrictEqual({ pending, startSeq: 1 });
+    }).toStrictEqual({ pending: undefined, startSeq: 2 });
   });
 
-  it('peer give-up: its rejections are lost with the aborted crank (gap, #1152)', async () => {
+  it('peer ACK on a message its crank discards: the acknowledgement is still written', async () => {
+    const harness = await setUp();
+    const { kernelStore, remote, remoteManager } = harness;
+    await sendOneMessageToPeer(harness);
+    await abortACrankWhile(harness, async () => {
+      await remoteManager.handleRemoteMessage(
+        PEER_ID,
+        JSON.stringify({
+          seq: 1,
+          ack: 1,
+          method: 'redeemURLReply',
+          params: [true, 'no-such-key', 'ro+5'],
+        }),
+      );
+    });
+    expect({
+      pending: kernelStore.getPendingMessage(remote.remoteId, 1),
+      startSeq: kernelStore.getRemoteSeqState(remote.remoteId)?.startSeq,
+    }).toStrictEqual({ pending: undefined, startSeq: 2 });
+  });
+
+  it('peer give-up: its rejections land in a crank of their own', async () => {
     const harness = await setUp();
     const { kernelStore, kpid, onGiveUp } = harness;
     letPeerDecide(harness);
     const delivered = await abortACrankWhile(harness, async () => {
       onGiveUp(PEER_ID);
-      expect(kernelStore.getKernelPromise(kpid).state).toBe('rejected');
+      expect(kernelStore.getKernelPromise(kpid).state).toBe('unresolved');
     });
+    const { state, value } = kernelStore.getKernelPromise(kpid);
     expect({
-      state: kernelStore.getKernelPromise(kpid).state,
+      state,
+      reason: value?.body,
       notified: notified(delivered, kpid),
-    }).toStrictEqual({ state: 'unresolved', notified: [] });
+    }).toStrictEqual({
+      state: 'rejected',
+      reason: expect.stringContaining('[KERNEL:CONNECTION_LOST]'),
+      notified: ['v3'],
+    });
+  });
+
+  it('kernel service result: the resolution lands in a crank of its own', async () => {
+    const harness = await setUp();
+    const { kernelStore, kernelQueue, kpid } = harness;
+    const serviceManager = new KernelServiceManager({
+      kernelStore,
+      kernelQueue,
+    });
+    const { promise, resolve } = makePromiseKit<string>();
+    const { kref } = serviceManager.registerKernelServiceObject('slow', {
+      work: async () => promise,
+    });
+    kernelStore.setPromiseDecider(kpid, 'kernel');
+    serviceManager.invokeKernelService(kref, {
+      methargs: kser(['work', []]),
+      result: kpid,
+    });
+    const enqueueInbox = vi.spyOn(kernelQueue, 'enqueueInbox');
+    const delivered = await abortACrankWhile(harness, async () => {
+      resolve('done');
+      await vi.waitFor(() =>
+        expect(enqueueInbox).toHaveBeenCalledWith(
+          'settle a kernel service result',
+          expect.any(Function),
+        ),
+      );
+      expect(kernelStore.getKernelPromise(kpid).state).toBe('unresolved');
+    });
+    const { state, value } = kernelStore.getKernelPromise(kpid);
+    expect({
+      state,
+      value,
+      notified: notified(delivered, kpid),
+    }).toStrictEqual({
+      state: 'fulfilled',
+      value: kser('done'),
+      notified: ['v3'],
+    });
   });
 
   it('peer incarnation change: the new incarnation and its rejections land in a crank of their own', async () => {

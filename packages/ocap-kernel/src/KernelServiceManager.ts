@@ -2,10 +2,11 @@ import { E } from '@endo/eventual-send';
 import type { ExpectedKernelErrorCode } from '@metamask/kernel-errors';
 import type { Logger } from '@metamask/logger';
 
+import { attempt } from './KernelQueue.ts';
 import type { KernelQueue } from './KernelQueue.ts';
 import { kser, kunser, makeKernelError } from './liveslots/kernel-marshal.ts';
 import type { KernelStore } from './store/index.ts';
-import type { KRef, KernelMessage } from './types.ts';
+import type { KernelOneResolution, KRef, KernelMessage } from './types.ts';
 import { assert } from './utils/assert.ts';
 
 export type KernelService = {
@@ -28,6 +29,13 @@ type KernelServiceManagerConstructorProps = {
   kernelQueue: KernelQueue;
   logger?: Logger;
 };
+
+/**
+ * @param problem - What a kernel service threw or rejected with.
+ * @returns Its message.
+ */
+const describe = (problem: unknown): string =>
+  problem instanceof Error ? problem.message : String(problem);
 
 /**
  * Manages kernel services registration and invocation.
@@ -243,13 +251,10 @@ export class KernelServiceManager {
   }
 
   /**
-   * Invoke a kernel service.
-   *
-   * This method does NOT await the service method result. Instead, it uses
-   * promise chaining to resolve the kernel promise when the method eventually
-   * completes. This allows service methods to use `waitForCrank()` without
-   * causing deadlock - the crank can complete, and the resolution happens
-   * in a future turn of the event loop.
+   * Invoke a kernel service, without awaiting its result: a service method may
+   * itself wait for a crank, which could not end while this one waited on it.
+   * The result promise is resolved in a crank of its own once the method
+   * settles.
    *
    * @param target - The target kref of the service.
    * @param message - The message to invoke the service with.
@@ -284,8 +289,6 @@ export class KernelServiceManager {
 
     // Use E() so this works for both local objects and remote presences
     // (CapTP proxies whose methods aren't enumerable).
-    // Call the method without awaiting. This allows the crank to complete
-    // even if the method internally waits for the crank to end.
     try {
       const service = kernelService.service as Record<
         string,
@@ -294,21 +297,69 @@ export class KernelServiceManager {
       // oxlint-disable-next-line typescript/no-non-null-assertion
       const resultPromise = E(service)[method]!(...args);
       Promise.resolve(resultPromise)
-        .then((resultValue) => {
-          if (result) {
-            this.#kernelQueue.resolvePromises('kernel', [
-              [result, false, kser(resultValue)],
-            ]);
+        .then(async (resultValue) =>
+          result ? this.#settle([result, false, kser(resultValue)]) : undefined,
+        )
+        .catch(async (problem: unknown) => {
+          if (!result) {
+            this.#logger?.error('Error in kernel service method:', problem);
+            return undefined;
           }
-          return undefined;
+          return this.#settle([
+            result,
+            true,
+            makeKernelError('DELIVERY_FAILED', describe(problem)),
+          ]);
         })
-        .catch((problem: unknown) => {
-          this.#failMessage(result, 'DELIVERY_FAILED', problem);
+        .catch((error: unknown) => {
+          this.#logUndelivered(result, error);
         });
     } catch (syncError) {
       // Handle synchronous errors thrown before returning a Promise
       this.#failMessage(result, 'DELIVERY_FAILED', syncError);
     }
+  }
+
+  /**
+   * Settle a kernel service's result promise in a crank of its own: the
+   * service settles whenever it likes, and a write made then would join
+   * whatever crank is open and be lost if that one aborts.
+   *
+   * @param resolution - The result promise and what to settle it with.
+   * @returns A promise that rejects if the crank aborted. A resolution the
+   * inbox refused or discarded is logged instead: the kernel is stopping or
+   * its store was wiped, and a second try would land after that.
+   */
+  async #settle(resolution: KernelOneResolution): Promise<void> {
+    let aborted = false;
+    try {
+      await this.#kernelQueue.enqueueInbox(
+        'settle a kernel service result',
+        async () => {
+          const outcome = await attempt(() =>
+            this.#kernelQueue.resolvePromises('kernel', [resolution], false),
+          );
+          aborted = 'failure' in outcome;
+          return outcome;
+        },
+      );
+    } catch (error) {
+      if (aborted) {
+        throw error;
+      }
+      this.#logUndelivered(resolution[0], error);
+    }
+  }
+
+  /**
+   * @param result - The result promise that was not settled.
+   * @param error - Why.
+   */
+  #logUndelivered(result: KernelMessage['result'], error: unknown): void {
+    this.#logger?.error(
+      `Kernel service result ${result} could not be delivered:`,
+      error,
+    );
   }
 
   /**
@@ -326,10 +377,8 @@ export class KernelServiceManager {
     problem: unknown,
   ): void {
     if (result) {
-      const detail =
-        problem instanceof Error ? problem.message : String(problem);
       this.#kernelQueue.resolvePromises('kernel', [
-        [result, true, makeKernelError(code, detail)],
+        [result, true, makeKernelError(code, describe(problem))],
       ]);
     } else {
       this.#logger?.error('Error in kernel service method:', problem);
