@@ -8,11 +8,12 @@ import { kslot } from '../liveslots/kernel-marshal.ts';
 import { makeKernelStore } from '../store/index.ts';
 import type { KernelStore } from '../store/index.ts';
 import type { KRef } from '../types.ts';
-import { asVatId } from '../../test/branded.ts';
+import { asRemoteId, asVatId } from '../../test/branded.ts';
 import { makeMapKernelDatabase } from '../../test/storage.ts';
 
 const owner = asVatId('v1');
 const other = asVatId('v2');
+const remote = asRemoteId('r0');
 
 describe("the accountability service's reports on a vat's word", () => {
   let kernelStore: KernelStore;
@@ -72,6 +73,32 @@ describe("the accountability service's reports on a vat's word", () => {
       ]);
     });
 
+    it("records one reported from a callback on the trace of the delivery that scheduled it, on the supervisor's word", async () => {
+      kernelStore.recordDelivery({
+        target: ko1,
+        targetEndpoint: owner,
+        sender: other,
+        cause: 1,
+        method: 'poke',
+        message: { methargs: { body: '', slots: [] } },
+        trace: { id: 'trace-1', hop: 1, hopLimit: 8 },
+      });
+      await service.exercise(
+        { caller: owner, cause: { crankNumber: 0, witness: 'liveslots' } },
+        kslot(ko1),
+        'poke',
+      );
+      expect(
+        kernelStore.getAccountabilityRecords({ kind: 'exercise' }),
+      ).toStrictEqual([
+        expect.objectContaining({
+          traceId: 'trace-1',
+          hop: 1,
+          cause: { crankNumber: 0, witness: 'liveslots' },
+        }),
+      ]);
+    });
+
     it('records one reported outside a delivery, on no trace', async () => {
       await service.exercise(
         { caller: owner, cause: 'async' },
@@ -120,6 +147,13 @@ describe("the accountability service's reports on a vat's word", () => {
           cause: 3,
         },
       ]);
+    });
+
+    it('refuses one declared by a remote', async () => {
+      await expect(
+        service.convey({ caller: remote, cause: 3 }, kslot(ko1), kslot(ko2)),
+      ).rejects.toThrow('only a vat declares a conveyance');
+      expect(kernelStore.getAccountabilityRecords()).toStrictEqual([]);
     });
 
     it('leaves a declared hand-off out of a chain of custody', async () => {

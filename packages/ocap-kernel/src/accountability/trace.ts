@@ -38,8 +38,7 @@ export function nextHop(
 
 /**
  * The trace of the delivery a crank made to an endpoint, read back from the
- * record the kernel kept of it. There is one only for a delivery the kernel
- * recorded, which it does for a traced one.
+ * record the kernel kept of it.
  *
  * @param options - Options bag.
  * @param options.kernelStore - The kernel's store.

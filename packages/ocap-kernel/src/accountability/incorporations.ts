@@ -4,7 +4,8 @@ import type { KernelStore } from '../store/index.ts';
 import type { ERef, VatId } from '../types.ts';
 
 /** The vatstore key under which liveslots keeps a durable object's state. */
-const DURABLE_STATE_PREFIX = 'vom.o+d';
+const STATE_PREFIX = 'vom.';
+const DURABLE_STATE_PREFIX = `${STATE_PREFIX}o+d`;
 
 /**
  * The references in a durable object's state, as liveslots keeps it: a
@@ -71,7 +72,7 @@ export function recordIncorporations({
     if (written.size === 0) {
       continue;
     }
-    const object = key.slice('vom.'.length) as ERef;
+    const object = key.slice(STATE_PREFIX.length) as ERef;
     let before: Set<string> | undefined;
     for (const vref of written) {
       const kref = kernelStore.erefToKref(vatId, vref as ERef);

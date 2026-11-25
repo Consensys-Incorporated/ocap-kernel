@@ -733,10 +733,10 @@ with no crank number, and with each cause named by the record of the
 delivery it answers, where the kernel wrote one, and `'unrecorded'`
 otherwise; a cause on the supervisor's word keeps its `witness`, with the
 delivery where the kernel recorded one. The sequence number stays, since it
-names a record, which is what a reader of records needs. A chain names each acquisition by its record the
-same way. A receipt carries its crank number under the kernel's signature,
-where a crank number is exactly what it claims to be: that kernel's name for
-one of its own cranks.
+names a record, which is what a reader of records needs. A chain names each
+acquisition by its record the same way. A receipt carries its crank number
+under the kernel's signature, where a crank number is exactly what it claims
+to be: that kernel's name for one of its own cranks.
 
 ### Host and operator
 
@@ -906,11 +906,12 @@ in that delivery took effect.
 
 **Asynchronous vat activity.** A send a vat issues between deliveries, from a
 callback the supervisor cannot charge to a delivery, has `cause: 'async'`
-whatever crank happens to be open, and breaks the causal chain at that vat. This is honest: the kernel did not see what
-caused it. Where the supervisor can charge it, the cause is the scheduling
-delivery, which the kernel confirms where it recorded that delivery; what
-stays unverifiable is that the callback was the one scheduled then, which is
-the liveslots trust level and is marked as such on the cause.
+whatever crank happens to be open, and breaks the causal chain at that vat.
+This is honest: the kernel did not see what caused it. Where the supervisor
+can charge it, the cause is the scheduling delivery, which the kernel confirms
+where it recorded that delivery; what stays unverifiable is that the callback
+was the one scheduled then, which is the liveslots trust level and is marked
+as such on the cause.
 
 **A callback's crank by bracketing, not by context propagation.** The
 supervisor charges a callback to a crank from when it starts until the next

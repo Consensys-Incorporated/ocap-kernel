@@ -25,7 +25,9 @@ import type { Cause, EndpointId, ERef, KRef, Sender, VatId } from '../types.ts';
  */
 export const AccountabilityRecordFilterStruct = object({
   kind: exactOptional(string()),
-  witness: exactOptional(string()),
+  witness: exactOptional(
+    union([literal('kernel'), literal('liveslots'), literal('vat')]),
+  ),
   kref: exactOptional(string()),
   endpoint: exactOptional(string()),
   sender: exactOptional(string()),

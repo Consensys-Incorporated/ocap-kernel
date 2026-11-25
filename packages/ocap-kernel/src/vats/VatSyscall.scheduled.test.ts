@@ -61,6 +61,17 @@ describe('a syscall from a callback the vat scheduled during a delivery', () => 
     });
   });
 
+  it("carries no trace on from a delivery at its trace's hop limit", () => {
+    records = [{ ...tracedDelivery, hop: 7 } as AccountabilityRecord];
+    vatSys.handleSyscall(send, 5);
+    expect(kernelQueue.enqueueSend).toHaveBeenCalledWith('ko1', message, {
+      sender: 'v1',
+      immediate: true,
+      cause: { crankNumber: 5, witness: 'liveslots' },
+      trace: null,
+    });
+  });
+
   it('carries no trace where the kernel has no record of the delivery', () => {
     vatSys.handleSyscall(send, 5);
     expect(kernelQueue.enqueueSend).toHaveBeenCalledWith('ko1', message, {

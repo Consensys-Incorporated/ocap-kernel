@@ -106,6 +106,25 @@ describe('DeliveryContext', () => {
       charging(() => seen.push(context.crank));
       handlers[0]?.();
       expect(seen).toStrictEqual([undefined]);
+    });
+
+    it('ends the charge of a callback before one scheduled outside any crank', async () => {
+      const context = new DeliveryContext();
+      const handlers: (() => void)[] = [];
+      const charging = context.timer((handler: unknown) => {
+        handlers.push(handler as () => void);
+        return 0;
+      });
+      charging(() => undefined);
+      await context.deliver(7, async () => {
+        charging(() => undefined);
+      });
+      handlers[1]?.();
+      expect(context.crank).toBe(7);
+      handlers[0]?.();
+      expect(context.crank).toBeUndefined();
+      nextMacrotask();
+      expect(context.crank).toBeUndefined();
       expect(lifts).toStrictEqual([]);
     });
 

@@ -1,8 +1,7 @@
 import { E } from '@endo/eventual-send';
-import { makeExo } from '@endo/exo';
 import { getInterfaceOf } from '@endo/pass-style';
 
-import { makeDefaultInterface } from './exo.ts';
+import { makeDefaultExo } from './exo.ts';
 
 /**
  * What the wrapper and helper report through: the `exercise` and `convey`
@@ -62,11 +61,7 @@ export const makeAccounting = (
           },
         ]),
       );
-      self.wrapper = makeExo(
-        name,
-        makeDefaultInterface(name),
-        methods,
-      ) as unknown as Exo;
+      self.wrapper = makeDefaultExo(name, methods) as unknown as Exo;
       return self.wrapper;
     },
 

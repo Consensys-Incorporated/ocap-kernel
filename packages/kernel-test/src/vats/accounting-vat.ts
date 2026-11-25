@@ -45,7 +45,8 @@ type VatData = {
 export function buildRootObject({ VatData }: { VatData: VatData }) {
   let accountability: Accountability;
   let holder: Peer;
-  let held: unknown;
+  let convey: (obj: unknown, to: unknown) => Promise<void>;
+  let held: { poke(): string };
   let thing: { poke(): string };
   let pinged: Promise<string> | undefined;
 
@@ -67,7 +68,9 @@ export function buildRootObject({ VatData }: { VatData: VatData }) {
     ): void {
       holder = vats.holder;
       accountability = services.accountability;
-      const { accountable } = makeAccounting(accountability);
+      const accounting = makeAccounting(accountability);
+      ({ convey } = accounting);
+      const { accountable } = accounting;
       thing = accountable(
         makeDefaultExo('thing', {
           /**
@@ -102,7 +105,7 @@ export function buildRootObject({ VatData }: { VatData: VatData }) {
      * Declare the thing handed to the holder, without handing it over.
      */
     async declare(): Promise<void> {
-      await makeAccounting(accountability).convey(thing, holder);
+      await convey(thing, holder);
     },
 
     async history(): Promise<AccountabilityRecordView[]> {
@@ -136,7 +139,7 @@ export function buildRootObject({ VatData }: { VatData: VatData }) {
     },
 
     async pokeHeld(): Promise<string> {
-      return E(held as { poke(): string }).poke();
+      return E(held).poke();
     },
 
     /**
@@ -148,7 +151,7 @@ export function buildRootObject({ VatData }: { VatData: VatData }) {
     async pokeHeldLater(): Promise<string> {
       return new Promise((resolve) => {
         setTimeout(() => {
-          resolve(E(held as { poke(): string }).poke());
+          resolve(E(held).poke());
         }, 0);
       });
     },

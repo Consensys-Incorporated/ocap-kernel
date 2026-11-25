@@ -303,6 +303,9 @@ export function makeAccountabilityService({
     ): Promise<void> {
       const kref = objectKrefOf(obj);
       const carrier = objectKrefOf(to);
+      if (!isVatId(caller)) {
+        throw Error('only a vat declares a conveyance');
+      }
       await kernelQueue.enqueueInbox('record a conveyance', async () =>
         attempt(() =>
           kernelStore.recordDeclaredConveyance({
@@ -319,8 +322,8 @@ export function makeAccountabilityService({
   });
 
   /**
-   * The trace of the delivery a vat reports from, if it reports from one
-   * and the delivery was traced.
+   * The trace of the delivery a vat reports from, or from a callback
+   * scheduled in, if the delivery was traced.
    *
    * @param caller - The vat.
    * @param cause - The call's cause.
@@ -330,8 +333,9 @@ export function makeAccountabilityService({
     caller: Sender,
     cause: Cause,
   ): TraceContext | undefined {
-    return typeof cause === 'number' && isEndpointId(caller)
-      ? traceOfDelivery({ kernelStore, endpoint: caller, crank: cause })
+    const crank = typeof cause === 'object' ? cause.crankNumber : cause;
+    return typeof crank === 'number' && isEndpointId(caller)
+      ? traceOfDelivery({ kernelStore, endpoint: caller, crank })
       : undefined;
   }
 }

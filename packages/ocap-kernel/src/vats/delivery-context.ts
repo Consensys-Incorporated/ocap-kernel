@@ -19,6 +19,13 @@ export class DeliveryContext {
   #runs = 0;
 
   /**
+   * Construct a context with nothing charged.
+   */
+  constructor() {
+    harden(this);
+  }
+
+  /**
    * Whether a delivery is in progress.
    *
    * @returns True if one is.
@@ -57,17 +64,19 @@ export class DeliveryContext {
 
   /**
    * Charge what runs from now until the next macrotask to a crank, as a
-   * callback scheduled in it starts.
+   * callback scheduled in it starts. One scheduled in no crank charges
+   * nothing, and ends the charge of a callback before it, whose lift has
+   * not yet run.
    *
    * @param crankNumber - The crank, if the callback was scheduled in one.
    */
   resume(crankNumber: number | undefined): void {
-    if (crankNumber === undefined) {
-      return;
-    }
     this.#runs += 1;
     const run = this.#runs;
     this.#scheduled = crankNumber;
+    if (crankNumber === undefined) {
+      return;
+    }
     setTimeout(() => {
       if (this.#runs === run) {
         this.#scheduled = undefined;
