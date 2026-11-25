@@ -40,6 +40,8 @@ test.describe('Database Inspector', () => {
   });
 
   test('should execute SQL query and show results', async () => {
+    // The table's own load, if still pending, would replace the results.
+    await expect(popupPage.locator('table')).toContainText('nextVatId');
     await popupPage.fill(
       '[data-testid="sql-query-input"]',
       "SELECT value FROM kv WHERE key = 'nextVatId'",

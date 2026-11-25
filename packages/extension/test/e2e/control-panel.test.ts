@@ -236,9 +236,17 @@ test.describe('Control Panel', () => {
       popupPage.locator('button:text("Database Inspector")'),
     ).toBeVisible();
     await popupPage.click('button:text("Database Inspector")');
-    await expect(
-      popupPage.locator('[data-testid="message-output"]'),
-    ).toContainText('{"key":"vats.terminated","value":"[]"}');
+    // Dumped once on opening, which can be before the bootstrap has finished;
+    // its result is kp1.
+    await expect(async () => {
+      await popupPage.click('[data-testid="clear-logs-button"]');
+      await popupPage.click('[data-testid="refresh-button"]');
+      await expect(
+        popupPage.locator('[data-testid="message-output"]'),
+      ).toContainText('{"key":"kp1.state","value":"fulfilled"}', {
+        timeout: 1000,
+      });
+    }).toPass();
     const dump = await readKvDump();
     const v2Root = rootKrefOf(dump, 'v2');
     const v3Root = rootKrefOf(dump, 'v3');

@@ -72,9 +72,13 @@ test.describe('Object Registry', () => {
     );
     await clearLogsButton.click();
     await popupPage.click('button:text("Object Registry")');
-    await expect(
-      popupPage.locator('text=Alice (v1) - 5 objects, 4 promises'),
-    ).toBeVisible();
+    // Read once on opening, which can be before the bootstrap has finished.
+    await expect(async () => {
+      await popupPage.click('[data-testid="refresh-registry-button"]');
+      await expect(
+        popupPage.locator('text=Alice (v1) - 5 objects, 4 promises'),
+      ).toBeVisible({ timeout: 1000 });
+    }).toPass();
     const targetSelect = popupPage.locator('[data-testid="message-target"]');
     await expect(targetSelect).toBeVisible();
     await targetSelect.selectOption(await aliceRoot(popupPage));
