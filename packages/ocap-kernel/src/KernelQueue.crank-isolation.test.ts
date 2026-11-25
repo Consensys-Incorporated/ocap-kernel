@@ -562,10 +562,11 @@ describe('a writer acting while a crank aborts', () => {
       work: async () => promise,
     });
     kernelStore.setPromiseDecider(kpid, 'kernel');
-    serviceManager.invokeKernelService(kref, {
-      methargs: kser(['work', []]),
-      result: kpid,
-    });
+    serviceManager.invokeKernelService(
+      kref,
+      { methargs: kser(['work', []]), result: kpid },
+      'kernel',
+    );
     const enqueueInbox = vi.spyOn(kernelQueue, 'enqueueInbox');
     const delivered = await abortACrankWhile(harness, async () => {
       resolve('done');

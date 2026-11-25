@@ -428,6 +428,7 @@ export function getVatMethods(ctx: StoreContext) {
         const { vatSlot } = getReachableAndVatSlot(endpointId, kref);
         ctx.kv.delete(getSlotKey(endpointId, kref));
         ctx.kv.delete(getSlotKey(endpointId, vatSlot));
+        untrackAll(kref);
         ctx.maybeFreeKrefs.add(kref);
       }
     }

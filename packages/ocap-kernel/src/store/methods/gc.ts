@@ -1,5 +1,6 @@
 import { Fail } from '@endo/errors';
 
+import { getAccountabilityRecordMethods } from './accountability-records.ts';
 import { getBaseMethods } from './base.ts';
 import { getCListMethods } from './clist.ts';
 import { getObjectMethods } from './object.ts';
@@ -27,6 +28,7 @@ import { parseKernelSlot } from '../utils/kernel-slots.ts';
 // oxlint-disable-next-line typescript/explicit-function-return-type
 export function getGCMethods(ctx: StoreContext) {
   const { getSlotKey, getOwnerKey } = getBaseMethods(ctx.kv);
+  const { untrackAll } = getAccountabilityRecordMethods(ctx);
   const { getRefCount, decrementRefCount } = getRefCountMethods(ctx);
   const { getObjectRefCount, deleteKernelObject, getOwner } =
     getObjectMethods(ctx);
@@ -54,6 +56,7 @@ export function getGCMethods(ctx: StoreContext) {
       owner === expectedOwner ||
       Fail`cannot orphan ${kref} for ${expectedOwner}: owned by ${owner}`;
     ctx.kv.delete(getOwnerKey(kref));
+    untrackAll(kref);
     // An export c-list entry holds no count, so its teardown queues nothing:
     // this is the only thing that hands the object to the collector.
     ctx.maybeFreeKrefs.add(kref);

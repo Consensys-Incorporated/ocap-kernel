@@ -11,6 +11,7 @@ import type {
 } from '../../types.ts';
 import type { StoreContext } from '../types.ts';
 import { parseRef } from '../utils/parse-ref.ts';
+import { asPromiseQueueEntry } from '../utils/promise-queue.ts';
 import { isPromiseRef } from '../utils/promise-ref.ts';
 import { parseReachableAndVatSlot } from '../utils/reachable.ts';
 
@@ -231,7 +232,9 @@ export function getRefCountAuditMethods(ctx: StoreContext) {
           }
         } else {
           const kpid = queueName as KRef;
-          const { message } = JSON.parse(entry) as PromiseQueueEntry;
+          const { message } = asPromiseQueueEntry(
+            JSON.parse(entry) as PromiseQueueEntry | KernelMessage,
+          );
           credit(kpid, `${kpid} queue #${seq} target`);
           creditMessage(message, `${kpid} queue #${seq}`);
         }

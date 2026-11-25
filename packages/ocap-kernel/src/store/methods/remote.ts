@@ -72,6 +72,16 @@ export function getRemoteMethods(ctx: StoreContext) {
   }
 
   /**
+   * Check whether a remote is one the kernel has info about.
+   *
+   * @param remoteId - The remote.
+   * @returns True if it is.
+   */
+  function isRemoteKnown(remoteId: RemoteId): boolean {
+    return kv.get(`${REMOTE_INFO_BASE}${remoteId}`) !== undefined;
+  }
+
+  /**
    * Store the info for a remote.
    *
    * @param remoteID - The remote whose info is to be set.
@@ -312,6 +322,7 @@ export function getRemoteMethods(ctx: StoreContext) {
     getAllRemoteRecords,
     getRemoteIDs,
     getRemoteInfo,
+    isRemoteKnown,
     setRemoteInfo,
     deleteRemoteInfo,
     // Sequence/ACK persistence

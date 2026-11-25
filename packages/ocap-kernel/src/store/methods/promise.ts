@@ -16,6 +16,7 @@ import type { StoreContext } from '../types.ts';
 import { getRefCountMethods } from './refcount.ts';
 import { makeKernelSlot } from '../utils/kernel-slots.ts';
 import { parseRef } from '../utils/parse-ref.ts';
+import { asPromiseQueueEntry } from '../utils/promise-queue.ts';
 import { isPromiseRef } from '../utils/promise-ref.ts';
 
 /** Matches the promise erefs in a c-list: `p+NN`/`p-NN`, or `rp+NN`/`rp-NN` for a remote. */
@@ -257,9 +258,12 @@ export function getPromiseMethods(ctx: StoreContext) {
     const result: PromiseQueueEntry[] = [];
     const queue = provideStoredQueue(kpid, false);
     for (;;) {
-      const entry = queue.dequeue() as PromiseQueueEntry;
+      const entry = queue.dequeue() as
+        | PromiseQueueEntry
+        | KernelMessage
+        | undefined;
       if (entry) {
-        result.push(entry);
+        result.push(asPromiseQueueEntry(entry));
       } else {
         return result;
       }

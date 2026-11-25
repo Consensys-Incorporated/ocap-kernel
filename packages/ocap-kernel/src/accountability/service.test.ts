@@ -6,7 +6,7 @@ import type { KernelQueue } from '../KernelQueue.ts';
 import { kslot } from '../liveslots/kernel-marshal.ts';
 import { makeKernelStore } from '../store/index.ts';
 import type { KernelStore } from '../store/index.ts';
-import type { KRef } from '../types.ts';
+import type { KRef, VatConfig } from '../types.ts';
 import { asKRef, asVatId } from '../../test/branded.ts';
 import { makeMapKernelDatabase } from '../../test/storage.ts';
 
@@ -22,9 +22,17 @@ describe('accountability service', () => {
 
   beforeEach(() => {
     kernelStore = makeKernelStore(makeMapKernelDatabase());
+    for (const vatId of [owner, holder, other]) {
+      kernelStore.setVatConfig(vatId, { sourceSpec: 'x' } as VatConfig);
+    }
     kernelQueue = {
       enqueueInbox: vi.fn(async (_what: string, work: () => unknown) => {
-        const outcome = (await work()) as { value: unknown };
+        const outcome = (await work()) as
+          | { value: unknown }
+          | { failure: Error };
+        if ('failure' in outcome) {
+          throw outcome.failure;
+        }
         return outcome.value;
       }),
     } as unknown as KernelQueue;
@@ -62,6 +70,14 @@ describe('accountability service', () => {
     expect(kernelStore.getTrackers(ko1)).toStrictEqual({
       v1: { recordArgs: true },
     });
+  });
+
+  it('refuses to track for a caller the kernel no longer has', async () => {
+    const gone = asVatId('v9');
+    await expect(service.track({ caller: gone }, kslot(ko1))).rejects.toThrow(
+      'v9 no longer exists',
+    );
+    expect(kernelStore.isTracked(ko1)).toBe(false);
   });
 
   it('rejects track options it does not know', async () => {

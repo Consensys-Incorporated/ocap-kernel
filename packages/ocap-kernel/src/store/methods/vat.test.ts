@@ -619,6 +619,7 @@ describe('vat store methods', () => {
       expect(mockKV.has(`owner.ko42`)).toBe(false);
       expect(mockKV.has(`slot.${endpointId}.ko42`)).toBe(false);
       expect(mockKV.has(`slot.${endpointId}.ro+7`)).toBe(false);
+      expect(mockUntrackAll).toHaveBeenCalledWith('ko42');
       expect(mockMaybeFreeKrefs.add).toHaveBeenCalledWith('ko42');
       // An export entry carries no reference, so tearing it down changes no
       // count; the object is simply orphaned for GC to retire.

@@ -2091,6 +2091,33 @@ describe('Kernel', () => {
       expect(await kernel.pruneAccountabilityRecords()).toBe(1);
       expect(await kernel.exportAccountabilityRecords()).toStrictEqual([]);
     });
+
+    it.each([
+      ['a field left undefined', { kref: undefined }],
+      ['a field it does not know', { krefs: 'ko1' }],
+    ])('refuses a filter with %s, deleting nothing', async (_what, filter) => {
+      const kernel = await Kernel.make(
+        mockPlatformServices,
+        mockKernelDatabase,
+      );
+      mockKernelDatabase.accountabilityRecords.append({
+        kind: 'introduction',
+        witness: 'kernel',
+        crank: 1,
+        kref: 'ko1',
+        endpoint: 'v1',
+        sender: null,
+        trace: null,
+        data: '{}',
+      });
+      await expect(
+        kernel.pruneAccountabilityRecords(filter as never),
+      ).rejects.toThrow(/kref/u);
+      await expect(
+        kernel.exportAccountabilityRecords(filter as never),
+      ).rejects.toThrow(/kref/u);
+      expect(await kernel.exportAccountabilityRecords()).toHaveLength(1);
+    });
   });
 
   describe('pinVatRoot and unpinVatRoot', () => {

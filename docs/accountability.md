@@ -183,7 +183,7 @@ application's or the organization's job. The kernel's output is evidence.
 Two additions to in-flight state, and one persistent counter.
 
 - **Crank number.** A persistent monotonic counter in the kernel store,
-  incremented by `startCrank`. SwingSet, from which this kernel is largely
+  incremented as the run loop takes a crank's work. SwingSet, from which this kernel is largely
   derived, has this as `crankNumber`, and the same name is used here so that
   anyone reading the two bodies of code side by side finds the same thing
   under it. It has uses beyond accountability and is worth adding on its own.
@@ -192,10 +192,12 @@ Two additions to in-flight state, and one persistent counter.
   `RemoteId`, and `enqueueMessage` supplies `'kernel'`. The run queue is
   persisted as JSON, so the field is a compatible extension.
 - **Cause on sends.** `RunQueueItemSend` gains `cause: CrankNumber | 'async'`.
-  A send issued during a crank names that crank; a send issued outside any
-  crank, which is how a vat's asynchronous activity such as a `fetch` callback
-  reaches the kernel, is `'async'`. The kernel cannot see what a vat does
-  between deliveries, and the record should say so rather than guess.
+  A send a vat issues while a delivery to it is in flight names that
+  delivery's crank; one it issues between deliveries, which is how a vat's
+  asynchronous activity such as a `fetch` callback reaches the kernel, is
+  `'async'`, whatever crank happens to be open. The kernel cannot see what a
+  vat does between deliveries, and the record should say so rather than
+  guess.
 - **Trace context on sends and notifies.** An optional `trace: { id, hop }`,
   described under [Traces](#traces). Absent on untraced work, which is nearly
   all work.
@@ -601,7 +603,9 @@ of everyone else who holds it. The owner exported it and sees all of it.
 The service learns who is calling from the kernel, not from the caller: a
 kernel service registered with `withCaller` has each method called with
 `{ caller }`, the sending endpoint as the router saw it, ahead of the caller's
-own arguments.
+own arguments. A remote is one endpoint however many vats stand behind it, so
+every vat of a peer kernel is the same caller here, and sees what any of them
+may: the peer kernel is the party that answers for what it lets through.
 
 ### Delivery context
 
@@ -634,7 +638,8 @@ call, which it is not.
 - `kernel.exportAccountabilityRecords(filter)` and `kernel.pruneAccountabilityRecords(filter)` are the
   retention operations. Export produces a signed bundle that stands on its
   own (unsigned until Phase 2 gives the kernel a signing key); prune is the
-  only thing that deletes records, and it is never implicit.
+  only operation that deletes records, short of clearing the kernel's storage
+  whole, and it is never implicit.
 
 ### Bundle identity
 

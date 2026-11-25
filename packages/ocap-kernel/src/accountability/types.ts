@@ -1,8 +1,43 @@
 import type { CapData } from '@endo/marshal';
-import { boolean, exactOptional, object } from '@metamask/superstruct';
+import type { AccountabilityRecordFilter } from '@metamask/kernel-store';
+import {
+  boolean,
+  exactOptional,
+  integer,
+  object,
+  string,
+} from '@metamask/superstruct';
 import type { Infer } from '@metamask/superstruct';
 
 import type { Cause, EndpointId, KRef, Sender } from '../types.ts';
+
+/**
+ * A filter as a host may pass one: a field it gives is a condition, and a
+ * field it leaves out is none, so a misspelled or undefined field cannot
+ * select everything.
+ */
+export const AccountabilityRecordFilterStruct = object({
+  kind: exactOptional(string()),
+  kref: exactOptional(string()),
+  endpoint: exactOptional(string()),
+  sender: exactOptional(string()),
+  involving: exactOptional(string()),
+  trace: exactOptional(string()),
+  throughCrank: exactOptional(integer()),
+  afterSeq: exactOptional(integer()),
+  limit: exactOptional(integer()),
+});
+
+type Satisfies<Check extends true> = Check;
+
+/** Fails to compile if the struct leaves a field of the filter unchecked. */
+export type AccountabilityRecordFilterStructIsComplete = Satisfies<
+  [keyof AccountabilityRecordFilter] extends [
+    keyof Infer<typeof AccountabilityRecordFilterStruct>,
+  ]
+    ? true
+    : false
+>;
 
 /**
  * The layer vouching for a record. The kernel saw what a kernel-witnessed

@@ -673,6 +673,9 @@ describe('KernelRouter', () => {
           (kernelStore.getOwner as unknown as MockInstance).mockReturnValueOnce(
             endpointId,
           );
+          (kernelStore.isTracked as unknown as MockInstance).mockReturnValue(
+            true,
+          );
           (
             endpointHandle.deliverMessage as unknown as MockInstance
           ).mockRejectedValueOnce(new Error(thrown));
@@ -693,6 +696,8 @@ describe('KernelRouter', () => {
           expect(kernelQueue.resolvePromises).toHaveBeenCalledWith(endpointId, [
             ['kp1', true, makeKernelError('DELIVERY_FAILED', detail)],
           ]);
+          expect(kernelStore.recordDelivery).not.toHaveBeenCalled();
+          expect(kernelStore.recordConveyance).not.toHaveBeenCalled();
         },
       );
 

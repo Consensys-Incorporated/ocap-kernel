@@ -64,21 +64,23 @@ describe('accountability', () => {
       'history',
     )) as AccountabilityRecord[];
 
-    const thing = history[0]?.kind === 'conveyance' ? history[0].kref : '';
+    const thing = history[0]?.kind === 'introduction' ? history[0].kref : '';
     expect(history).toStrictEqual([
       // `handOver` carried the thing to the holder, its first sight of it.
-      expect.objectContaining({
-        kind: 'conveyance',
-        kref: thing,
-        sender: trackerVat,
-        to: holderVat,
-        via: 'message',
-      }),
+      // The introduction is written as the message is translated for the
+      // holder, the conveyance once it is delivered.
       expect.objectContaining({
         kind: 'introduction',
         kref: thing,
         endpoint: holderVat,
         sender: trackerVat,
+        via: 'message',
+      }),
+      expect.objectContaining({
+        kind: 'conveyance',
+        kref: thing,
+        sender: trackerVat,
+        to: holderVat,
         via: 'message',
       }),
       // The holder's poke.

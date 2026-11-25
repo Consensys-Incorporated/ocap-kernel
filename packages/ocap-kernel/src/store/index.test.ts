@@ -157,6 +157,7 @@ describe('kernel store', () => {
         'isInCrank',
         'isInitialized',
         'isObjectPinned',
+        'isRemoteKnown',
         'isResultHeld',
         'isRevoked',
         'isRootObject',

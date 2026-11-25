@@ -9,7 +9,8 @@ import { krefOf } from '../liveslots/kernel-marshal.ts';
 import type { SlotValue } from '../liveslots/kernel-marshal.ts';
 import type { KernelStore } from '../store/index.ts';
 import { isPromiseRef } from '../store/utils/promise-ref.ts';
-import type { KRef, Sender } from '../types.ts';
+import { isVatId } from '../types.ts';
+import type { EndpointId, KRef, Sender } from '../types.ts';
 
 /** Who is calling, as the kernel saw it, not as the caller says. */
 export type Caller = { caller: Sender };
@@ -77,6 +78,11 @@ export function makeAccountabilityService({
   kernelStore: KernelStore;
   kernelQueue: KernelQueue;
 }): AccountabilityService {
+  const endpointExists = (endpointId: EndpointId | 'kernel'): boolean =>
+    isVatId(endpointId)
+      ? kernelStore.isVatActive(endpointId)
+      : endpointId !== 'kernel' && kernelStore.isRemoteKnown(endpointId);
+
   return makeDefaultExo('accountabilityService', {
     async track(
       { caller }: Caller,
@@ -89,7 +95,14 @@ export function makeAccountabilityService({
         throw Error(`only the owner of ${kref} may record its arguments`);
       }
       await kernelQueue.enqueueInbox('track an object', async () =>
-        attempt(() => kernelStore.trackObject(kref, caller, options)),
+        attempt(() => {
+          // A deleted endpoint's tracking went with it; a send it left queued
+          // must not write more, which nothing would withdraw.
+          if (!endpointExists(caller)) {
+            throw Error(`${caller} no longer exists`);
+          }
+          kernelStore.trackObject(kref, caller, options);
+        }),
       );
     },
 

@@ -123,6 +123,25 @@ describe('reference count audit', () => {
       expect(kernelStore.auditRefCounts()).toStrictEqual([]);
     });
 
+    it('credits a promise-queue entry written before provenance was kept', () => {
+      const koid = kernelStore.exportFromEndpoint(v1, asVRef('o+1'));
+      const kpid = kernelStore.exportFromEndpoint(v1, asVRef('p+1'));
+      const message = {
+        methargs: { body: '#[]', slots: [koid] },
+        result: null,
+      };
+      kernelStore.enqueuePromiseMessage(kpid, {
+        message,
+        sender: v1,
+        cause: 1,
+      });
+      const key = kv().getNextKey(`queue.${kpid}.`) as string;
+      expect(key).toMatch(/^queue\.kp\d+\.\d+$/u);
+      kv().set(key, JSON.stringify(message));
+
+      expect(kernelStore.auditRefCounts()).toStrictEqual([]);
+    });
+
     it('holds for an unsettled promise with importers', () => {
       const kpid = kernelStore.exportFromEndpoint(v1, asVRef('p+1'));
       kernelStore.translateRefKtoE(asVatId('v2'), kpid, true);

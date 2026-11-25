@@ -401,7 +401,6 @@ export class KernelRouter {
             'deliver|send|result',
           );
         }
-        this.#recordSend(item, target, endpointId);
       }
       if (endpoint) {
         // endpoint is only set when !isKernelServiceMessage, so endpointId
@@ -420,6 +419,7 @@ export class KernelRouter {
           crankResult = await this.#deliverUnlessLost(eid, async () =>
             endpoint.deliverMessage(endpointTarget, endpointMessage),
           );
+          this.#recordSend(item, target, eid);
         } catch (error) {
           // A peer must not be able to stop the kernel. A vat's worker
           // failures are crank results by the time they get here, so what a
@@ -439,6 +439,7 @@ export class KernelRouter {
           }
         }
       } else if (isKernelServiceMessage) {
+        this.#recordSend(item, target, endpointId);
         crankResult = this.#deliverKernelServiceMessage(
           target,
           message,
@@ -477,8 +478,9 @@ export class KernelRouter {
   /**
    * Record what a send does with tracked objects: a delivery, if its target is
    * tracked, and a conveyance of each tracked reference it carries. Written
-   * before the delivery, inside the crank's savepoint, so a delivery that is
-   * rolled back takes its records with it.
+   * once the delivery is made, inside the crank's savepoint: a delivery that
+   * is rolled back takes its records with it, and one a remote fails, which
+   * the crank survives, leaves none.
    *
    * @param item - The send.
    * @param target - The object it is delivered to, which may not be the one

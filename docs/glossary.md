@@ -116,7 +116,8 @@ A row the [kernel](#kernel) writes, inside the [crank's](#crank) transaction, ab
 something it saw done with an object: an [introduction](#introduction), a delivery to a
 [tracked object](#tracked-object), or a conveyance of one. Each names its witness, the
 layer vouching for it, which for now is always the kernel. Records outlive the objects
-they describe and are deleted only by `Kernel.pruneAccountabilityRecords`. See
+they describe and are deleted only by `Kernel.pruneAccountabilityRecords`, or with
+the rest of the store by `clearStorage`. See
 [Accountability and provenance](./accountability.md) and
 [accountability-records.ts](../packages/ocap-kernel/src/store/methods/accountability-records.ts).
 

@@ -5,6 +5,7 @@ import type {
 } from '@metamask/kernel-store';
 import { isCapData } from '@metamask/kernel-utils';
 import { Logger } from '@metamask/logger';
+import { assert } from '@metamask/superstruct';
 
 import { IOManager } from './io/IOManager.ts';
 import type { IOListenerFactory } from './io/types.ts';
@@ -13,6 +14,7 @@ import type { KernelFacet } from './kernel-facet.ts';
 import { attempt, KernelQueue } from './KernelQueue.ts';
 import { KernelRouter } from './KernelRouter.ts';
 import { makeAccountabilityService } from './accountability/service.ts';
+import { AccountabilityRecordFilterStruct } from './accountability/types.ts';
 import type { AccountabilityRecord } from './accountability/types.ts';
 import { KernelServiceManager } from './KernelServiceManager.ts';
 import type { KernelService } from './KernelServiceManager.ts';
@@ -610,6 +612,7 @@ export class Kernel {
   async exportAccountabilityRecords(
     filter?: AccountabilityRecordFilter,
   ): Promise<AccountabilityRecord[]> {
+    assert(filter ?? {}, AccountabilityRecordFilterStruct);
     return this.#kernelQueue.enqueueInbox(
       'export accountability records',
       async () =>
@@ -628,6 +631,7 @@ export class Kernel {
   async pruneAccountabilityRecords(
     filter?: AccountabilityRecordFilter,
   ): Promise<number> {
+    assert(filter ?? {}, AccountabilityRecordFilterStruct);
     return this.#kernelQueue.enqueueInbox(
       'prune accountability records',
       async () =>
