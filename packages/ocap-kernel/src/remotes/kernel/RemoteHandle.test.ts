@@ -1533,6 +1533,55 @@ describe('RemoteHandle', () => {
       expect(seqState?.startSeq).toBe(2);
     });
 
+    it('keeps its queue, and sends again, when the kernel refuses a give-up', async () => {
+      const remote = makeRemote();
+      const resolutions: VatOneResolution[] = [
+        ['rp+3', false, { body: '"resolved value"', slots: [] }],
+      ];
+      await deliverAndCommit(remote.deliverNotify(resolutions));
+      vi.mocked(mockKernelQueue.enqueueInbox).mockRejectedValueOnce(
+        new Error('Kernel run loop is stopping'),
+      );
+
+      remote.giveUp('network stopped');
+      await Promise.resolve();
+      await deliverAndCommit(remote.deliverNotify(resolutions));
+      await vi.waitFor(() =>
+        expect(mockRemoteComms.sendRemoteMessage).toHaveBeenCalledTimes(2),
+      );
+
+      expect(mockKernelStore.getRemoteSeqState(mockRemoteId)?.startSeq).toBe(1);
+    });
+
+    it('queues one crank for give-ups asked for before it runs', () => {
+      const remote = makeRemote();
+      vi.mocked(mockKernelQueue.enqueueInbox).mockReturnValueOnce(
+        new Promise(() => undefined),
+      );
+
+      remote.giveUp('network stopped');
+      remote.giveUp('not acknowledged after 3 retries');
+
+      expect(mockKernelQueue.enqueueInbox).toHaveBeenCalledTimes(1);
+    });
+
+    it('rejects a redemption asked for while the give-up waited', async () => {
+      const remote = makeRemote();
+      let giveUpWork: (() => unknown) | undefined;
+      vi.mocked(mockKernelQueue.enqueueInbox).mockImplementationOnce(
+        async (_what, work) => {
+          giveUpWork = work;
+          return undefined as never;
+        },
+      );
+
+      remote.giveUp('network stopped');
+      const redeem = remote.redeemOcapURL('ocap:something@peer,relay');
+      giveUpWork!();
+
+      await expect(redeem).rejects.toThrow('network stopped');
+    });
+
     it('restores pending messages on startup', async () => {
       // Pre-populate storage with persisted state (messages stored as plain strings)
       mockKernelStore.setRemoteNextSendSeq(mockRemoteId, 3);
@@ -2025,6 +2074,10 @@ describe('RemoteHandle', () => {
         fireLastAckTimer();
         await drainSends();
       }
+      expect(mockKernelQueue.enqueueInbox).toHaveBeenCalledWith(
+        'give up on a remote',
+        expect.any(Function),
+      );
       expect(onGiveUp).toHaveBeenCalledWith(mockRemotePeerId);
     });
 
@@ -2153,6 +2206,10 @@ describe('RemoteHandle', () => {
         // The redemption rejects with the giveUp/rejectAllPending reason,
         // which is the terminal error's message string.
         await expect(redeem).rejects.toThrow(terminalError.message);
+        expect(mockKernelQueue.enqueueInbox).toHaveBeenCalledWith(
+          'give up on a remote',
+          expect.any(Function),
+        );
         expect(onGiveUp).toHaveBeenCalledWith(mockRemotePeerId);
       },
     );

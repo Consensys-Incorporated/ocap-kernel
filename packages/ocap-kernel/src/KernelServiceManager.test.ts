@@ -49,6 +49,14 @@ describe('KernelServiceManager', () => {
     mockKernelQueue = {
       enqueueMessage: vi.fn(),
       resolvePromises: vi.fn(),
+      // Runs the work at once, as the queue does before its run loop starts.
+      enqueueInbox: vi.fn<KernelQueue['enqueueInbox']>(async (_what, work) => {
+        const outcome = await work();
+        if ('failure' in outcome) {
+          throw outcome.failure;
+        }
+        return outcome.value;
+      }),
       waitForCrank: vi.fn(),
       run: vi.fn(),
     } as unknown as KernelQueue;
@@ -309,7 +317,7 @@ describe('KernelServiceManager', () => {
       expect(mockKernelQueue.resolvePromises).not.toHaveBeenCalled();
     });
 
-    it('successfully invokes a service method with result', async () => {
+    it('settles the result in a crank of its own', async () => {
       const { method: testMethod, calls } = makeTrackableMethod(async () =>
         Promise.resolve('test result'),
       );
@@ -326,12 +334,19 @@ describe('KernelServiceManager', () => {
       };
 
       serviceManager.invokeKernelService(registered.kref, message);
+      expect(mockKernelQueue.enqueueInbox).not.toHaveBeenCalled();
       await delay();
 
       expect(calls).toStrictEqual([['arg1']]);
-      expect(mockKernelQueue.resolvePromises).toHaveBeenCalledWith('kernel', [
-        ['kp123', false, kser('test result')],
-      ]);
+      expect(mockKernelQueue.enqueueInbox).toHaveBeenCalledExactlyOnceWith(
+        'settle a kernel service result',
+        expect.any(Function),
+      );
+      expect(mockKernelQueue.resolvePromises).toHaveBeenCalledWith(
+        'kernel',
+        [['kp123', false, kser('test result')]],
+        false,
+      );
     });
 
     it('handles errors when invoking service method with result', async () => {
@@ -354,9 +369,17 @@ describe('KernelServiceManager', () => {
       serviceManager.invokeKernelService(registered.kref, message);
       await delay();
 
-      expect(mockKernelQueue.resolvePromises).toHaveBeenCalledWith('kernel', [
-        ['kp123', true, makeKernelError('DELIVERY_FAILED', testError.message)],
-      ]);
+      expect(mockKernelQueue.resolvePromises).toHaveBeenCalledWith(
+        'kernel',
+        [
+          [
+            'kp123',
+            true,
+            makeKernelError('DELIVERY_FAILED', testError.message),
+          ],
+        ],
+        false,
+      );
     });
 
     it('handles errors when invoking service method without result', async () => {
@@ -444,15 +467,19 @@ describe('KernelServiceManager', () => {
       serviceManager.invokeKernelService(registered.kref, message);
       await delay();
 
-      expect(mockKernelQueue.resolvePromises).toHaveBeenCalledWith('kernel', [
+      expect(mockKernelQueue.resolvePromises).toHaveBeenCalledWith(
+        'kernel',
         [
-          'kp123',
-          true,
-          expect.objectContaining({
-            body: expect.stringContaining('unknownMethod'),
-          }),
+          [
+            'kp123',
+            true,
+            expect.objectContaining({
+              body: expect.stringContaining('unknownMethod'),
+            }),
+          ],
         ],
-      ]);
+        false,
+      );
     });
 
     it('handles unknown method without result', async () => {
@@ -498,15 +525,19 @@ describe('KernelServiceManager', () => {
       serviceManager.invokeKernelService(registered.kref, message);
       await delay();
 
-      expect(mockKernelQueue.resolvePromises).toHaveBeenCalledWith('kernel', [
+      expect(mockKernelQueue.resolvePromises).toHaveBeenCalledWith(
+        'kernel',
         [
-          'kp123',
-          true,
-          expect.objectContaining({
-            body: expect.stringContaining('anyMethod'),
-          }),
+          [
+            'kp123',
+            true,
+            expect.objectContaining({
+              body: expect.stringContaining('anyMethod'),
+            }),
+          ],
         ],
-      ]);
+        false,
+      );
     });
 
     it('invokes methods on a proxy-based service (simulated remote presence)', async () => {
@@ -539,9 +570,11 @@ describe('KernelServiceManager', () => {
       await delay();
 
       expect(calls).toStrictEqual([['arg1']]);
-      expect(mockKernelQueue.resolvePromises).toHaveBeenCalledWith('kernel', [
-        ['kp123', false, kser('remote result')],
-      ]);
+      expect(mockKernelQueue.resolvePromises).toHaveBeenCalledWith(
+        'kernel',
+        [['kp123', false, kser('remote result')]],
+        false,
+      );
     });
 
     it('handles service method that returns undefined', async () => {
@@ -562,9 +595,61 @@ describe('KernelServiceManager', () => {
       serviceManager.invokeKernelService(registered.kref, message);
       await delay();
 
-      expect(mockKernelQueue.resolvePromises).toHaveBeenCalledWith('kernel', [
-        ['kp123', false, kser(undefined)],
-      ]);
+      expect(mockKernelQueue.resolvePromises).toHaveBeenCalledWith(
+        'kernel',
+        [['kp123', false, kser(undefined)]],
+        false,
+      );
+    });
+
+    it('rejects the result when its resolution cannot be written', async () => {
+      const { kref } = serviceManager.registerKernelServiceObject(
+        'testService',
+        { testMethod: () => 'test result' },
+      );
+      vi.mocked(mockKernelQueue.resolvePromises).mockImplementationOnce(() => {
+        throw new Error('kp123 was already resolved');
+      });
+
+      serviceManager.invokeKernelService(kref, {
+        methargs: kser(['testMethod', []]),
+        result: asKRef('kp123'),
+      });
+      await delay();
+
+      expect(mockKernelQueue.resolvePromises).toHaveBeenLastCalledWith(
+        'kernel',
+        [
+          [
+            'kp123',
+            true,
+            makeKernelError('DELIVERY_FAILED', 'kp123 was already resolved'),
+          ],
+        ],
+        false,
+      );
+    });
+
+    it('logs a result the inbox refuses', async () => {
+      const loggerErrorSpy = vi.spyOn(logger, 'error');
+      const refusal = new Error('Kernel run loop is stopping');
+      vi.mocked(mockKernelQueue.enqueueInbox).mockRejectedValueOnce(refusal);
+      const { kref } = serviceManager.registerKernelServiceObject(
+        'testService',
+        { testMethod: () => 'test result' },
+      );
+
+      serviceManager.invokeKernelService(kref, {
+        methargs: kser(['testMethod', []]),
+        result: asKRef('kp123'),
+      });
+      await delay();
+
+      expect(mockKernelQueue.enqueueInbox).toHaveBeenCalledTimes(1);
+      expect(loggerErrorSpy).toHaveBeenCalledExactlyOnceWith(
+        'Kernel service result kp123 could not be delivered:',
+        refusal,
+      );
     });
   });
 
@@ -629,9 +714,11 @@ describe('KernelServiceManager', () => {
       await delay();
 
       expect(calls).toStrictEqual([['hello']]);
-      expect(mockKernelQueue.resolvePromises).toHaveBeenCalledWith('kernel', [
-        ['kp200', false, kser('pong')],
-      ]);
+      expect(mockKernelQueue.resolvePromises).toHaveBeenCalledWith(
+        'kernel',
+        [['kp200', false, kser('pong')]],
+        false,
+      );
     });
   });
 
