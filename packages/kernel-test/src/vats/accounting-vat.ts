@@ -32,6 +32,12 @@ type VatData = {
 };
 
 /**
+ * Long enough that the delivery a callback is scheduled in has ended before
+ * it runs, since one that runs during the delivery is the delivery's work.
+ */
+const AFTER_DELIVERY = 100;
+
+/**
  * Build function for a vat that accounts for its objects below the kernel:
  * one that wraps an object with `accountable`, declares a hand-off with
  * `convey`, keeps what it is handed in durable state, and sends from timer
@@ -80,7 +86,7 @@ export function buildRootObject({ VatData }: { VatData: VatData }) {
            */
           poke(): string {
             pinged = new Promise((resolve) => {
-              setTimeout(() => resolve(E(holder).ping()), 0);
+              setTimeout(() => resolve(E(holder).ping()), AFTER_DELIVERY);
             });
             return 'poked';
           },
@@ -152,7 +158,7 @@ export function buildRootObject({ VatData }: { VatData: VatData }) {
       return new Promise((resolve) => {
         setTimeout(() => {
           resolve(E(held).poke());
-        }, 0);
+        }, AFTER_DELIVERY);
       });
     },
 

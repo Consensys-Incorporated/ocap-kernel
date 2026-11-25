@@ -75,11 +75,14 @@ describe('VatSupervisor', () => {
       await stream.receiveInput({
         id: 'test-id-2',
         method: 'deliver',
-        params: [
-          'message',
-          'o+0',
-          { methargs: kser(['fizz', []]), result: null },
-        ],
+        params: {
+          delivery: [
+            'message',
+            'o+0',
+            { methargs: kser(['fizz', []]), result: null },
+          ],
+          crankNumber: 1,
+        },
         jsonrpc: '2.0',
       });
       await delay(100);
