@@ -32,13 +32,14 @@ export const makeNativeParser = (): TreeSitter => {
  * Make a JavaScript parser backed by the native tree-sitter binding in this
  * realm. Only for a realm that has not run lockdown: tree-sitter builds its
  * node classes with a direct `eval`, which a locked-down realm replaces with
- * a safe evaluator that cannot see the binding's module scope.
+ * a safe evaluator that cannot see the binding's module scope. Without
+ * lockdown there is no `harden`, so the parser is returned unhardened.
  *
  * @returns The parser.
  */
 export const makeTreeSitterParser = (): Parser => {
   const parser = makeNativeParser();
-  return harden({
+  return {
     parse: async (code: string) => fromSyntaxNode(parser.parse(code).rootNode),
-  });
+  };
 };
