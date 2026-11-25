@@ -52,6 +52,8 @@ export type {
 } from './accountability/service.ts';
 export type {
   AccountabilityRecord,
+  AccountabilityRecordView,
+  CauseView,
   ConveyanceRecord,
   DeliveryRecord,
   IntroductionRecord,

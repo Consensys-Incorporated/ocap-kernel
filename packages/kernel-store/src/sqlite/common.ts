@@ -166,6 +166,10 @@ function buildAccountabilityRecordsWhere(
     conditions.push('(endpoint = ? OR sender = ?)');
     params.push(filter.involving, filter.involving);
   }
+  if (filter.crank !== undefined) {
+    conditions.push('crank = ?');
+    params.push(filter.crank);
+  }
   if (filter.throughCrank !== undefined) {
     conditions.push('crank <= ?');
     params.push(filter.throughCrank);

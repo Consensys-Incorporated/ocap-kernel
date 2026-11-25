@@ -590,7 +590,7 @@ Requested like any other service, `services: ['accountability']`:
 | ------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `track(obj, { recordArgs?, trace? })` | start recording deliveries to and conveyances of `obj` in this kernel; with `trace`, also start a trace from each delivery to `obj`, bounded by `trace.hopLimit` (see [Traces](#traces)) |
 | `untrack(obj)`                        | stop                                                                                                                                                                                     |
-| `history(obj)`                        | this endpoint's records about `obj`: the owner sees every record; another holder sees only its own chain of custody and the deliveries it sent                                           |
+| `history(obj)`                        | this endpoint's records about `obj`, as a vat reads them: the owner sees every record; another holder sees only its own chain of custody and the deliveries it sent                      |
 | `chain(obj)`                          | the caller's chain of custody for `obj`, including any cross-kernel segments, with each hop resolved to parties                                                                          |
 | `trace(traceId)`                      | the records of a trace this endpoint took part in                                                                                                                                        |
 | `receipt()`                           | a signed receipt for the delivery the caller is handling, which the kernel knows from the call's `cause`                                                                                 |
@@ -624,7 +624,13 @@ delivering in once liveslots carries that through the vat's asynchronous
 endowments, so a callback scheduled during a delivery is charged to it. Vat
 code sees none of it. A crank number handed to a vat would be an attractive nuisance:
 the vat would be tempted to pass it on to a remote party as the name of a
-call, which it is not.
+call, which it is not. So what `history` and `trace` return to a vat is a
+view of the records with no crank number, and with each cause named by the
+record of the delivery it answers, where the kernel wrote one, and
+`'unrecorded'` otherwise; the sequence number stays, since it names a record,
+which is what a reader of records needs. A receipt or a segment carries crank
+numbers under the kernel's signature, where a crank number is exactly what
+it claims to be: that kernel's name for one of its own cranks.
 
 ### Host and operator
 
@@ -688,6 +694,14 @@ downstream.
 was the first design, so a vat could name the call it was handling; the
 `cause` on its sends names it better, and keeps a kernel-local number out of
 vat code.
+
+**No crank numbers for vats.** `history` and `trace` return a view of the
+records that leaves the crank number out and names each cause by the record
+of its delivery instead. A vat has no use for a kernel-local number except
+as a name for something it is not, and the records give it what it does
+need: which delivery a send answered, by a record it can read. Signed
+receipts and segments keep their crank numbers, which the signature binds to
+the kernel that minted them.
 
 **Record storage.** Records go in a dedicated SQLite table rather than the
 `kv` table. They are append-only, keyed by sequence number, and queried by

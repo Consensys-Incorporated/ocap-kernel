@@ -2,7 +2,8 @@ import { makeDefaultExo } from '@metamask/kernel-utils/exo';
 import { assert } from '@metamask/superstruct';
 
 import { TrackOptionsStruct } from './types.ts';
-import type { AccountabilityRecord, TrackOptions } from './types.ts';
+import type { AccountabilityRecordView, TrackOptions } from './types.ts';
+import { viewRecords } from './view.ts';
 import { attempt } from '../KernelQueue.ts';
 import type { KernelQueue } from '../KernelQueue.ts';
 import { krefOf } from '../liveslots/kernel-marshal.ts';
@@ -34,10 +35,11 @@ export type AccountabilityService = {
   /** Withdraw this caller's tracking of an object. */
   untrack(caller: Caller, obj: SlotValue): Promise<void>;
   /**
-   * Read the records about an object. The owner sees every record; another
-   * holder sees only its own chain of custody and the deliveries it sent.
+   * Read the records about an object, as a vat reads them. The owner sees
+   * every record; another holder sees only its own chain of custody and the
+   * deliveries it sent.
    */
-  history(caller: Caller, obj: SlotValue): Promise<AccountabilityRecord[]>;
+  history(caller: Caller, obj: SlotValue): Promise<AccountabilityRecordView[]>;
 };
 
 /**
@@ -118,15 +120,18 @@ export function makeAccountabilityService({
     async history(
       { caller }: Caller,
       obj: SlotValue,
-    ): Promise<AccountabilityRecord[]> {
+    ): Promise<AccountabilityRecordView[]> {
       const kref = objectKrefOf(obj);
       return kernelQueue.enqueueInbox("read an object's history", async () =>
         attempt(() =>
           harden(
-            kernelStore.getAccountabilityRecords(
-              kernelStore.getOwner(kref) === caller
-                ? { kref }
-                : { kref, involving: caller },
+            viewRecords(
+              kernelStore,
+              kernelStore.getAccountabilityRecords(
+                kernelStore.getOwner(kref) === caller
+                  ? { kref }
+                  : { kref, involving: caller },
+              ),
             ),
           ),
         ),

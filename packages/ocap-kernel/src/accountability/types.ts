@@ -23,6 +23,7 @@ export const AccountabilityRecordFilterStruct = object({
   sender: exactOptional(string()),
   involving: exactOptional(string()),
   trace: exactOptional(string()),
+  crank: exactOptional(integer()),
   throughCrank: exactOptional(integer()),
   afterSeq: exactOptional(integer()),
   limit: exactOptional(integer()),
@@ -108,6 +109,31 @@ export type AccountabilityRecordInput<
 > = Kind extends AccountabilityRecord
   ? Omit<Kind, 'seq' | 'witness' | 'crankNumber'>
   : never;
+
+/**
+ * A cause as a vat reads it. The crank number a cause names means nothing
+ * outside the kernel, so a vat is shown the record of the delivery that
+ * crank made to the sender instead, by its sequence number, where the kernel
+ * wrote one.
+ */
+export type CauseView = { delivery: number } | 'async' | 'unrecorded';
+
+type ViewOf<Record> = Record extends unknown
+  ? Omit<Record, 'crankNumber' | 'cause'> &
+      (Record extends { cause: Cause }
+        ? { cause: CauseView }
+        : 'cause' extends keyof Record
+          ? { cause?: CauseView }
+          : object)
+  : never;
+
+/**
+ * A record as a vat reads it: without the crank number, which names a kernel
+ * execution step and would be an attractive nuisance in a vat's hands, and
+ * with its cause as a {@link CauseView}. The sequence number stays: it names
+ * a record, which is what a reader of records needs.
+ */
+export type AccountabilityRecordView = ViewOf<AccountabilityRecord>;
 
 /**
  * What a tracker asks to have recorded. `recordArgs` keeps the arguments of

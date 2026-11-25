@@ -1,7 +1,7 @@
 import { makeSQLKernelDatabase } from '@metamask/kernel-store/sqlite/nodejs';
 import { kunser } from '@metamask/ocap-kernel';
 import type {
-  AccountabilityRecord,
+  AccountabilityRecordView,
   IntroductionRecord,
   Kernel,
   KRef,
@@ -62,7 +62,7 @@ describe('accountability', () => {
       kernel,
       tracker,
       'history',
-    )) as AccountabilityRecord[];
+    )) as AccountabilityRecordView[];
 
     const thing = history[0]?.kind === 'introduction' ? history[0].kref : '';
     expect(history).toStrictEqual([
@@ -103,6 +103,10 @@ describe('accountability', () => {
     ]);
     expect(history[2]).not.toHaveProperty('args');
     expect(history.every((record) => record.witness === 'kernel')).toBe(true);
+    expect(history.some((record) => 'crankNumber' in record)).toBe(false);
+    expect(history[2]).toStrictEqual(
+      expect.objectContaining({ cause: 'unrecorded' }),
+    );
   });
 
   it('keeps the arguments when asked, and keeps the records once untracked', async () => {

@@ -114,9 +114,13 @@ describe('accountability service', () => {
       });
     });
 
-    it('shows the owner every record about the object', async () => {
+    it('shows the owner every record about the object, as a vat reads them', async () => {
       const records = await service.history({ caller: owner }, kslot(ko1));
       expect(records.map((record) => record.seq)).toStrictEqual([1, 2, 3]);
+      expect(records.some((record) => 'crankNumber' in record)).toBe(false);
+      expect(records[2]).toStrictEqual(
+        expect.objectContaining({ kind: 'delivery', cause: 'unrecorded' }),
+      );
     });
 
     it('shows another holder its own chain of custody and the deliveries it sent', async () => {
