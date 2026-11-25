@@ -93,6 +93,16 @@ operations like sending messages, resolving [kernel promises](#kernel-promise), 
 persistent storage. See [VatSyscall](../packages/ocap-kernel/src/VatSyscall.ts) and the
 [syscall service](../packages/ocap-kernel/src/services/syscall.ts).
 
+### late syscall
+
+A [syscall](#syscall) that reaches the kernel while its [vat](#vat) has no `initVat` or
+[delivery](#delivery) to answer. A vat makes one from a timer or a fetch callback that fires
+after the delivery that set it up has returned, so "late" is relative to that delivery. The
+kernel puts it in the [inbox](#inbox), and the [run loop](#run-loop) applies it in a
+[crank](#crank) of its own, before the vat's next delivery and in the order the vat made it. An
+illegal one, or an `exit`, terminates the vat. See `handleLateSyscall` in
+[VatSyscall](../packages/ocap-kernel/src/vats/VatSyscall.ts).
+
 ### delivery
 
 The process of sending a message or notification to a [vat](#vat) in a [crank](#crank).
@@ -216,8 +226,9 @@ The [run loop](#run-loop)'s in-memory queue of work from outside it: the host ca
 `reapVats`, `reapRemotes`, `collectGarbage`, `registerKernelServiceObject`, `initIdentity`,
 `initRemoteComms` and `issueOcapURL`, and acting on a remote, for an ocap URL redemption or for a
 peer's message when the peer has no handle yet or an earlier message of its own still waits.
-The kernel's own code puts a kernel service's result there, a peer's acknowledgement, and
-giving up on a peer. The run loop takes each in a [crank](#crank) of its own, and its caller hears nothing of it
+The kernel's own code puts a kernel service's result there, a peer's acknowledgement, giving up
+on a peer, and a vat's [late syscall](#late-syscall).
+The run loop takes each in a [crank](#crank) of its own, and its caller hears nothing of it
 before that crank commits. See `enqueueInbox` in
 [KernelQueue](../packages/ocap-kernel/src/KernelQueue.ts).
 

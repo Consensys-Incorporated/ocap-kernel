@@ -986,11 +986,14 @@ export type CrankResult = {
  * How work from the run loop's inbox ends: what its caller is told once the
  * crank has committed. A `failure` is for the caller's own error, such as
  * naming a vat that does not exist; the work's writes stand unless `abort`
- * is set too, which rolls them back as a failed delivery's are.
+ * is set too, which rolls them back as a failed delivery's are. `terminate`
+ * ends a vat in the crank, as a delivery's does.
  */
-export type InboxOutcome<Value> =
+export type InboxOutcome<Value> = (
   | { value: Value; failure?: never; abort?: never }
-  | { failure: Error; value?: never; abort?: boolean };
+  | { failure: Error; value?: never; abort?: boolean }
+) &
+  Pick<CrankResult, 'terminate'>;
 
 export type VatDeliveryResult = [VatCheckpoint, string | null];
 

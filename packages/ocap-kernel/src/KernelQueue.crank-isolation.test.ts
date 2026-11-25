@@ -25,6 +25,7 @@ import type {
   PlatformServices,
   RunLoopItem,
   VatConfig,
+  VatId,
 } from './types.ts';
 import { VatHandle } from './vats/VatHandle.ts';
 import { VatManager } from './vats/VatManager.ts';
@@ -75,9 +76,11 @@ async function setUp() {
   const [kpid] = kernelStore.initKernelPromise();
   kernelStore.addPromiseSubscriber(asVatId('v3'), kpid);
 
-  const kernelQueue = new KernelQueue(kernelStore, async (vatId) =>
-    kernelStore.markVatAsTerminated(vatId),
-  );
+  const terminated: VatId[] = [];
+  const kernelQueue = new KernelQueue(kernelStore, async (vatId) => {
+    terminated.push(vatId);
+    kernelStore.markVatAsTerminated(vatId);
+  });
 
   const logger = new Logger('test');
   for (const level of ['log', 'warn', 'error', 'debug'] as const) {
@@ -168,6 +171,7 @@ async function setUp() {
     target,
     sentinel,
     kpid,
+    terminated,
   };
 }
 
@@ -254,7 +258,9 @@ async function abortACrankWhile(
     }
     // Recorded only for the types the rows observe; anything new must be wired
     // to its real handler before a row can say what it did.
-    if (!['send', 'notify', 'dropExports'].includes(item.type)) {
+    if (
+      !['send', 'notify', 'dropExports', 'retireExports'].includes(item.type)
+    ) {
       throw new Error(`test deliver does not handle ${item.type}`);
     }
     delivered.push(item);
@@ -306,20 +312,6 @@ function notified(delivered: RunLoopItem[], kpid: KRef): string[] {
   return delivered.flatMap((item) =>
     item.type === 'notify' && item.kpid === kpid ? [item.endpointId] : [],
   );
-}
-
-/**
- * Hand `v2`'s syscall to the kernel as its worker would, asserting it was
- * accepted so that a refused syscall cannot pass for a lost one.
- *
- * @param vatSyscall - `v2`'s syscall handler.
- * @param vso - The syscall.
- */
-function syscallFromV2(
-  vatSyscall: VatSyscall,
-  vso: Parameters<VatSyscall['handleSyscall']>[0],
-): void {
-  expect(vatSyscall.handleSyscall(vso)).toStrictEqual(['ok', null]);
 }
 
 /**
@@ -612,45 +604,80 @@ describe('a writer acting while a crank aborts', () => {
     });
   });
 
-  it('vat async resolve: the resolution is lost with the aborted crank (gap, #1177)', async () => {
+  it('vat late resolve: the resolution lands in a crank of its own', async () => {
     const harness = await setUp();
     const { kernelStore, vatSyscall, kpid } = harness;
     kernelStore.setPromiseDecider(kpid, asVatId('v2'));
     kernelStore.addCListEntry(asVatId('v2'), kpid, asVRef('p+5'));
     const delivered = await abortACrankWhile(harness, async () => {
-      syscallFromV2(vatSyscall, ['resolve', [['p+5', false, kser('done')]]]);
-      expect(kernelStore.getKernelPromise(kpid).state).toBe('fulfilled');
+      vatSyscall.handleLateSyscall(['resolve', [['p+5', false, kser('done')]]]);
+      expect(kernelStore.getKernelPromise(kpid).state).toBe('unresolved');
+    });
+    const { state, value } = kernelStore.getKernelPromise(kpid);
+    expect({
+      state,
+      value,
+      notified: notified(delivered, kpid),
+    }).toStrictEqual({
+      state: 'fulfilled',
+      value: kser('done'),
+      notified: ['v3'],
+    });
+  });
+
+  it('vat late sends: the messages land in cranks of their own, in order', async () => {
+    const harness = await setUp();
+    const { vatSyscall, target } = harness;
+    const delivered = await abortACrankWhile(harness, async () => {
+      for (const [method, result] of [
+        ['first', 'p+6'],
+        ['second', 'p+7'],
+      ]) {
+        vatSyscall.handleLateSyscall([
+          'send',
+          'o-1',
+          { methargs: kser([method, []]), result },
+        ]);
+      }
+    });
+    expect(methodsSentTo(delivered, target)).toStrictEqual(['first', 'second']);
+  });
+
+  it('vat late illegal resolve: its crank rolls back and the vat is terminated', async () => {
+    const harness = await setUp();
+    const { kernelStore, vatSyscall, kpid, terminated } = harness;
+    kernelStore.setPromiseDecider(kpid, asVatId('v2'));
+    kernelStore.addCListEntry(asVatId('v2'), kpid, asVRef('p+5'));
+    const delivered = await abortACrankWhile(harness, async () => {
+      vatSyscall.handleLateSyscall([
+        'resolve',
+        [
+          ['p+5', false, kser('done')],
+          ['p+5', false, kser('again')],
+        ],
+      ]);
     });
     expect({
       state: kernelStore.getKernelPromise(kpid).state,
       notified: notified(delivered, kpid),
-    }).toStrictEqual({ state: 'unresolved', notified: [] });
+      terminated: terminated.includes(asVatId('v2')),
+    }).toStrictEqual({ state: 'unresolved', notified: [], terminated: true });
   });
 
-  it('vat async send: the message is lost with the aborted crank (gap, #1177)', async () => {
-    const harness = await setUp();
-    const { vatSyscall, target } = harness;
-    const delivered = await abortACrankWhile(harness, async () => {
-      syscallFromV2(vatSyscall, [
-        'send',
-        'o-1',
-        { methargs: kser(['fromVat', []]), result: 'p+6' },
-      ]);
-    });
-    expect(methodsSentTo(delivered, target)).toStrictEqual([]);
-  });
-
-  it('vat async dropImports: the drop is lost with the aborted crank (gap, #1177)', async () => {
+  it('vat late dropImports: the drop lands in a crank of its own', async () => {
     const harness = await setUp();
     const { kernelStore, vatSyscall, target } = harness;
     const delivered = await abortACrankWhile(harness, async () => {
-      syscallFromV2(vatSyscall, ['dropImports', ['o-1']]);
-      expect(kernelStore.getReachableFlag(asVatId('v2'), target)).toBe(false);
+      vatSyscall.handleLateSyscall(['dropImports', ['o-1']]);
+      expect(kernelStore.getReachableFlag(asVatId('v2'), target)).toBe(true);
     });
     expect({
       reachable: kernelStore.getReachableFlag(asVatId('v2'), target),
       dropExports: delivered.filter((item) => item.type === 'dropExports'),
-    }).toStrictEqual({ reachable: true, dropExports: [] });
+    }).toStrictEqual({
+      reachable: false,
+      dropExports: [{ type: 'dropExports', endpointId: 'v3', krefs: [target] }],
+    });
   });
 
   it('lost-vat retirement, when the next crank aborts too: the vat stays retired', async () => {
