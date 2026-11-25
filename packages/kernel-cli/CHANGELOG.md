@@ -29,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `bundle` makes a vat bundle that SES accepts when a dependency contains text that only looks like an `import()` expression, such as acorn's error messages ([#1331](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1331))
 - `daemon queueMessage` decodes a result that carries a `kpid` instead of printing it raw; `--raw` output includes the `kpid` ([#1285](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1285))
 - `kernel daemon start` refuses to start when another daemon is already listening on the same Unix socket, instead of unlinking the socket and orphaning the running process ([#952](https://github.com/MetaMask/ocap-kernel/pull/952))
 - Daemon fatal-path visibility: `daemon-entry` now installs handlers for `uncaughtException`, `unhandledRejection`, `SIGHUP`, and `exit` that append a synchronous fingerprint line to `daemon.log` before terminating ([#966](https://github.com/MetaMask/ocap-kernel/pull/966))
