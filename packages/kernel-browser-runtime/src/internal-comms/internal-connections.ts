@@ -21,7 +21,7 @@ export type KernelRpcReplyStream = PostMessageDuplexStream<
   JsonRpcCall
 >;
 
-type HandleInternalMessage = (
+export type HandleInternalMessage = (
   request: JsonRpcCall,
 ) => Promise<JsonRpcResponse | void>;
 
