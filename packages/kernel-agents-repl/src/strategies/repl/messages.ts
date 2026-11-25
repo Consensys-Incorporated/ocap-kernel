@@ -3,9 +3,8 @@ import { Message } from '@ocap/kernel-agents/types/messages';
 import type { Transcript } from '@ocap/kernel-agents/types/messages';
 
 import { makeCompartment } from './compartment.ts';
-import { parse } from './parse/javascript.ts';
 import { firstStatement } from './parse/syntax-tree.ts';
-import type { SyntaxTree } from './parse/syntax-tree.ts';
+import type { Parser, SyntaxTree } from './parse/syntax-tree.ts';
 import { ERROR, RETURN } from './symbols.ts';
 
 export type StatementType = 'import' | 'evaluation' | 'comment';
@@ -87,10 +86,14 @@ export class StatementMessage<
    * Creates a statement message from code by parsing it and determining its type.
    *
    * @param code - The code string to parse into a statement message.
+   * @param parser - The parser to parse it with.
    * @returns A statement message of the appropriate type.
    */
-  static fromCode(code: string): StatementMessage {
-    return statementMessageFromCode(code);
+  static async fromCode(
+    code: string,
+    parser: Parser,
+  ): Promise<StatementMessage> {
+    return statementMessageFromCode(code, parser);
   }
 }
 
@@ -154,10 +157,14 @@ export class EvaluationMessage extends StatementMessage<'evaluation'> {
  * Make a statement message from code.
  *
  * @param code - The code to parse.
+ * @param parser - The parser to parse it with.
  * @returns A statement message.
  */
-function statementMessageFromCode(code: string): StatementMessage {
-  const statement = firstStatement(parse(code));
+async function statementMessageFromCode(
+  code: string,
+  parser: Parser,
+): Promise<StatementMessage> {
+  const statement = firstStatement(await parser.parse(code));
   switch (statement.type) {
     case 'comment':
       return new CommentMessage(code, statement);

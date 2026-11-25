@@ -17,6 +17,10 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
+    "./parser/tree-sitter": {
+      "types": "./dist/strategies/repl/parse/tree-sitter.d.ts",
+      "default": "./dist/strategies/repl/parse/tree-sitter.js"
+    },
     "./package.json": "./package.json"
   },
   "files": [

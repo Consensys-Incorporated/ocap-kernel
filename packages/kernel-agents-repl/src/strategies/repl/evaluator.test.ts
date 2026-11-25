@@ -12,7 +12,12 @@ import {
   StatementMessage,
 } from './messages.ts';
 import type { ReplTranscript } from './messages.ts';
+import { makeTreeSitterParser } from './parse/tree-sitter.ts';
 import type { EvaluatorState } from './types.ts';
+
+const parser = makeTreeSitterParser();
+const fromCode = async (code: string): Promise<StatementMessage> =>
+  StatementMessage.fromCode(code, parser);
 
 describe('evaluator', () => {
   let state: EvaluatorState;
@@ -27,14 +32,14 @@ describe('evaluator', () => {
   const evaluateStatements = async (...statements: string[]) => {
     const history: ReplTranscript = [];
     for (const statement of statements) {
-      await evaluator(history, StatementMessage.fromCode(statement));
+      await evaluator(history, await fromCode(statement));
     }
   };
 
   describe('evaluates statements', () => {
     it('evaluates expressions', async () => {
       const history: ReplTranscript = [];
-      const result = await evaluator(history, StatementMessage.fromCode('42;'));
+      const result = await evaluator(history, await fromCode('42;'));
       expect(result).toBeInstanceOf(ResultMessage);
       expect(result?.messageBody.return).toBe('42');
     });
@@ -86,7 +91,7 @@ describe('evaluator', () => {
     });
 
     it('rejects variable declarations', async () => {
-      const statement = StatementMessage.fromCode('var x = 1;');
+      const statement = await fromCode('var x = 1;');
       await expect(evaluator([], statement)).rejects.toThrow(
         'Variable declarations are not allowed',
       );
@@ -103,20 +108,14 @@ describe('evaluator', () => {
   describe('creates result messages', () => {
     it('creates result with return value', async () => {
       const history: ReplTranscript = [];
-      const result = await evaluator(
-        history,
-        StatementMessage.fromCode('"hello";'),
-      );
+      const result = await evaluator(history, await fromCode('"hello";'));
       expect(result).toBeInstanceOf(ResultMessage);
       expect(result?.messageBody.return).toBe('"hello"');
     });
 
     it('creates result with declaration value', async () => {
       const history: ReplTranscript = [];
-      const result = await evaluator(
-        history,
-        StatementMessage.fromCode('const x = 42;'),
-      );
+      const result = await evaluator(history, await fromCode('const x = 42;'));
       expect(result).toBeInstanceOf(ResultMessage);
       expect(result?.messageBody.value).toBe('x: 42');
     });
@@ -125,7 +124,7 @@ describe('evaluator', () => {
       const history: ReplTranscript = [];
       const result = await evaluator(
         history,
-        StatementMessage.fromCode('for (let i = 0; i < 1; i++) {}'),
+        await fromCode('for (let i = 0; i < 1; i++) {}'),
       );
       expect(result).toBeNull();
     });
@@ -135,10 +134,7 @@ describe('evaluator', () => {
     it('does not update state when evaluation has error', async () => {
       const initialState = { consts: {}, lets: {} };
       const history: ReplTranscript = [];
-      await evaluator(
-        history,
-        StatementMessage.fromCode('const x = undefined.y;'),
-      );
+      await evaluator(history, await fromCode('const x = undefined.y;'));
       expect(state).toStrictEqual(initialState);
     });
   });
@@ -156,7 +152,7 @@ describe('evaluator', () => {
         },
       });
       const history: ReplTranscript = [];
-      await evaluatorWithCap(history, StatementMessage.fromCode('testCap();'));
+      await evaluatorWithCap(history, await fromCode('testCap();'));
       expect(mockCap).toHaveBeenCalled();
     });
 
@@ -177,10 +173,7 @@ describe('evaluator', () => {
         },
       });
       const history: ReplTranscript = [];
-      await evaluatorWithCaps(
-        history,
-        StatementMessage.fromCode('cap1() + cap2();'),
-      );
+      await evaluatorWithCaps(history, await fromCode('cap1() + cap2();'));
       expect(cap1).toHaveBeenCalled();
       expect(cap2).toHaveBeenCalled();
     });

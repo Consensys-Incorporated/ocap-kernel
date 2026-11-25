@@ -6,10 +6,11 @@ import {
 } from '@ocap/kernel-agents/utils';
 
 import { StatementMessage } from './messages.ts';
+import type { Parser } from './parse/syntax-tree.ts';
 import { makeSampleCollector } from './sample-collector.ts';
 
 export const makeReader =
-  ({ logger }: { logger?: Logger }) =>
+  ({ parser, logger }: { parser: Parser; logger?: Logger }) =>
   async ({
     stream,
     abort,
@@ -33,5 +34,5 @@ export const makeReader =
           ...ifDefined({ logger: gatherLogger }),
         }),
     );
-    return StatementMessage.fromCode(code);
+    return await StatementMessage.fromCode(code, parser);
   };
