@@ -1,3 +1,4 @@
+import 'ses'; // The REPL needs the real Compartment, not the mock.
 import '@ocap/repo-tools/test-utils/mock-endoify';
 
 import { makeOllamaNodejsKernelService } from '@metamask/kernel-language-model-service/ollama/nodejs';
