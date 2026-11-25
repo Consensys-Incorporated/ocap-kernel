@@ -2,6 +2,8 @@ import { toHex } from '@metamask/kernel-utils';
 
 import { DEFAULT_HOP_LIMIT } from './types.ts';
 import type { TraceContext, TraceOptions } from './types.ts';
+import type { KernelStore } from '../store/index.ts';
+import type { EndpointId } from '../types.ts';
 
 /**
  * Start a trace at a root act.
@@ -32,4 +34,45 @@ export function nextHop(
     return undefined;
   }
   return harden({ ...trace, hop: trace.hop + 1 });
+}
+
+/**
+ * The trace of the delivery a crank made to an endpoint, read back from the
+ * record the kernel kept of it.
+ *
+ * @param options - Options bag.
+ * @param options.kernelStore - The kernel's store.
+ * @param options.endpoint - The endpoint delivered to.
+ * @param options.crank - The crank.
+ * @returns The trace, as the delivery carried it, or undefined if the kernel
+ * has no record of a traced delivery to the endpoint in that crank.
+ */
+export function traceOfDelivery({
+  kernelStore,
+  endpoint,
+  crank,
+}: {
+  kernelStore: KernelStore;
+  endpoint: EndpointId;
+  crank: number;
+}): TraceContext | undefined {
+  for (const record of kernelStore.getAccountabilityRecords({
+    endpoint,
+    crank,
+    witness: 'kernel',
+  })) {
+    if (
+      (record.kind === 'delivery' || record.kind === 'resolution') &&
+      record.traceId !== undefined &&
+      record.hop !== undefined &&
+      record.hopLimit !== undefined
+    ) {
+      return harden({
+        id: record.traceId,
+        hop: record.hop,
+        hopLimit: record.hopLimit,
+      });
+    }
+  }
+  return undefined;
 }

@@ -265,7 +265,10 @@ describe('VatHandle', () => {
       expect(sendVatCommandMock).toHaveBeenCalledTimes(1);
       expect(sendVatCommandMock).toHaveBeenCalledWith({
         method: 'deliver',
-        params: ['message', target, message],
+        params: {
+          delivery: ['message', target, message],
+          crankNumber: mockKernelStore.getCrankNumber(),
+        },
       });
     });
   });
@@ -283,7 +286,10 @@ describe('VatHandle', () => {
       expect(sendVatCommandMock).toHaveBeenCalledTimes(1);
       expect(sendVatCommandMock).toHaveBeenCalledWith({
         method: 'deliver',
-        params: ['notify', resolutions],
+        params: {
+          delivery: ['notify', resolutions],
+          crankNumber: mockKernelStore.getCrankNumber(),
+        },
       });
     });
   });
@@ -299,7 +305,10 @@ describe('VatHandle', () => {
       expect(sendVatCommandMock).toHaveBeenCalledTimes(1);
       expect(sendVatCommandMock).toHaveBeenCalledWith({
         method: 'deliver',
-        params: ['dropExports', vrefs],
+        params: {
+          delivery: ['dropExports', vrefs],
+          crankNumber: mockKernelStore.getCrankNumber(),
+        },
       });
     });
   });
@@ -315,7 +324,10 @@ describe('VatHandle', () => {
       expect(sendVatCommandMock).toHaveBeenCalledTimes(1);
       expect(sendVatCommandMock).toHaveBeenCalledWith({
         method: 'deliver',
-        params: ['retireExports', vrefs],
+        params: {
+          delivery: ['retireExports', vrefs],
+          crankNumber: mockKernelStore.getCrankNumber(),
+        },
       });
     });
   });
@@ -331,7 +343,10 @@ describe('VatHandle', () => {
       expect(sendVatCommandMock).toHaveBeenCalledTimes(1);
       expect(sendVatCommandMock).toHaveBeenCalledWith({
         method: 'deliver',
-        params: ['retireImports', vrefs],
+        params: {
+          delivery: ['retireImports', vrefs],
+          crankNumber: mockKernelStore.getCrankNumber(),
+        },
       });
     });
   });
@@ -346,7 +361,10 @@ describe('VatHandle', () => {
       expect(sendVatCommandMock).toHaveBeenCalledTimes(1);
       expect(sendVatCommandMock).toHaveBeenCalledWith({
         method: 'deliver',
-        params: ['bringOutYourDead'],
+        params: {
+          delivery: ['bringOutYourDead'],
+          crankNumber: mockKernelStore.getCrankNumber(),
+        },
       });
     });
   });

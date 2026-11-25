@@ -3,6 +3,8 @@ import {
   tuple,
   literal,
   array,
+  number,
+  object,
   string,
   record,
   union,
@@ -67,22 +69,31 @@ const VatDeliveryParamsStruct = union([
   BringOutYourDeadDeliveryStruct,
 ]);
 
-type VatDeliveryParams = Infer<typeof VatDeliveryParamsStruct>;
+export type VatDeliveryParams = Infer<typeof VatDeliveryParamsStruct>;
+
+/** A delivery, and the crank the kernel makes it in. */
+const DeliverParamsStruct = object({
+  delivery: VatDeliveryParamsStruct,
+  crankNumber: number(),
+});
+
+type DeliverParams = Infer<typeof DeliverParamsStruct>;
 
 export type DeliverSpec = MethodSpec<
   'deliver',
-  VatDeliveryParams,
+  DeliverParams,
   Promise<VatDeliveryResult>
 >;
 
 export const deliverSpec: DeliverSpec = {
   method: 'deliver',
-  params: VatDeliveryParamsStruct,
+  params: DeliverParamsStruct,
   result: VatDeliveryResultStruct,
 } as const;
 
 export type HandleDelivery = (
-  params: VatDeliveryParams,
+  delivery: VatDeliveryParams,
+  crankNumber: number,
 ) => Promise<VatDeliveryResult>;
 
 type DeliverHooks = {
@@ -91,7 +102,7 @@ type DeliverHooks = {
 
 export type DeliverHandler = Handler<
   'deliver',
-  VatDeliveryParams,
+  DeliverParams,
   Promise<VatDeliveryResult>,
   DeliverHooks
 >;
@@ -99,7 +110,7 @@ export type DeliverHandler = Handler<
 export const deliverHandler: DeliverHandler = {
   ...deliverSpec,
   hooks: { handleDelivery: true },
-  implementation: async ({ handleDelivery }, params) => {
-    return await handleDelivery(params);
+  implementation: async ({ handleDelivery }, { delivery, crankNumber }) => {
+    return await handleDelivery(delivery, crankNumber);
   },
 } as const;

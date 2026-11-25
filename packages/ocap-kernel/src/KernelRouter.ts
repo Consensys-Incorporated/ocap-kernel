@@ -361,7 +361,7 @@ export class KernelRouter {
     const { endpointId, target } = route;
     const { message, sender, cause } = item;
     this.#logCrank(
-      `deliver ${endpointId} send ${target}<-${JSON.stringify(message)} from ${sender}, cause ${cause}`,
+      `deliver ${endpointId} send ${target}<-${JSON.stringify(message)} from ${sender}, cause ${JSON.stringify(cause)}`,
     );
     if (endpointId) {
       const trackers = this.#kernelStore.getTrackers(target);

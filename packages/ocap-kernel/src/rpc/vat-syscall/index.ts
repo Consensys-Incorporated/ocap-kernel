@@ -3,15 +3,22 @@ import type {
   HandlerRecord,
 } from '@metamask/kernel-rpc-methods';
 
-import { vatSyscallSpec, vatSyscallHandler } from './vat-syscall.ts';
+import {
+  scheduledSyscallHandler,
+  scheduledSyscallSpec,
+  vatSyscallSpec,
+  vatSyscallHandler,
+} from './vat-syscall.ts';
 
 export const vatSyscallHandlers = {
   syscall: vatSyscallHandler,
-} as HandlerRecord<typeof vatSyscallHandler>;
+  scheduledSyscall: scheduledSyscallHandler,
+} as HandlerRecord<typeof vatSyscallHandler | typeof scheduledSyscallHandler>;
 
 export const vatSyscallMethodSpecs = {
   syscall: vatSyscallSpec,
-} as MethodSpecRecord<typeof vatSyscallSpec>;
+  scheduledSyscall: scheduledSyscallSpec,
+} as MethodSpecRecord<typeof vatSyscallSpec | typeof scheduledSyscallSpec>;
 
 type Handlers = (typeof vatSyscallHandlers)[keyof typeof vatSyscallHandlers];
 

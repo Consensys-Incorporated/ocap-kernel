@@ -30,6 +30,7 @@ import {
 } from '@metamask/utils';
 
 import { loadBundle } from './bundle-loader.ts';
+import { DeliveryContext } from './delivery-context.ts';
 import { createDefaultEndowments, VatEndowmentsStruct } from './endowments.ts';
 import type { AllowedGlobalName, MakeAllowedGlobals } from './endowments.ts';
 import { makeGCAndFinalize } from '../garbage-collection/gc-finalize.ts';
@@ -123,6 +124,9 @@ export class VatSupervisor {
   /** What the vat's `http` capability makes requests with, if granted one. */
   readonly #endowmentsFetch: typeof fetch | undefined;
 
+  /** The crank the vat's work is charged to. */
+  readonly #context = new DeliveryContext();
+
   /**
    * Promise of the in-flight termination, or `null` if not yet started.
    * Concurrent callers share this promise so they all await the same
@@ -180,9 +184,10 @@ export class VatSupervisor {
       `makeAllowedGlobals returned an invalid VatEndowments value for vat "${id}"`,
     );
     // Defense in depth: custom `MakeAllowedGlobals` factories may skip hardening.
-    this.#allowedGlobals = harden(endowments.globals);
+    this.#allowedGlobals = harden(this.#chargingTimers(endowments.globals));
     this.#endowmentsTeardown = endowments.teardown;
-    this.#endowmentsFetch = endowments.fetch;
+    this.#endowmentsFetch =
+      endowments.fetch && this.#context.fetch(endowments.fetch);
 
     this.#rpcClient = new RpcClient(
       vatSyscallMethodSpecs,
@@ -296,28 +301,60 @@ export class VatSupervisor {
     //    without waiting for responses, assuming success.
     // - The kernel applies a syscall on receipt during a delivery, and in a crank of its own otherwise.
     // - The vat is terminated and that crank is rolled back if a syscall fails.
-    this.#rpcClient
-      .notify('syscall', coerceVatSyscallObject(vso))
+    const syscall = coerceVatSyscallObject(vso);
+    // A syscall during a delivery is the crank's; the kernel knows which.
+    const cause = this.#context.delivering ? undefined : this.#context.crank;
+    (cause === undefined
+      ? this.#rpcClient.notify('syscall', syscall)
+      : this.#rpcClient.notify('scheduledSyscall', { syscall, cause })
+    )
       // Just to please the linter (notifications never reject)
       .catch(() => undefined);
     return ['ok', null];
   }
 
   /**
+   * Timer endowments whose callbacks are charged to the crank they were
+   * scheduled in.
+   *
+   * @param globals - The endowments.
+   * @returns The endowments, with the timers replaced.
+   */
+  #chargingTimers(globals: Record<string, unknown>): Record<string, unknown> {
+    const charged = { ...globals };
+    for (const name of ['setTimeout', 'setInterval']) {
+      const set = globals[name];
+      if (typeof set === 'function') {
+        charged[name] = this.#context.timer(
+          set as (handler: unknown, ...rest: unknown[]) => unknown,
+        );
+      }
+    }
+    return charged;
+  }
+
+  /**
    * Delivers a message to the vat and captures the result.
    *
    * @param params - The delivery object containing the message to deliver.
+   * @param crankNumber - The crank the kernel makes the delivery in, if it said.
    * @returns A tuple indicating success or failure along with any error information.
    */
-  async #deliver(params: VatDeliveryObject): Promise<VatDeliveryResult> {
-    if (!this.#dispatch) {
+  async #deliver(
+    params: VatDeliveryObject,
+    crankNumber?: number,
+  ): Promise<VatDeliveryResult> {
+    const dispatch = this.#dispatch;
+    if (!dispatch) {
       throw new Error(`cannot deliver before vat is loaded`);
     }
 
     let deliveryError: string | null = null;
 
     try {
-      await this.#dispatch(harden(params));
+      await this.#context.deliver(crankNumber, async () =>
+        dispatch(harden(params)),
+      );
     } catch (error) {
       // Handle delivery errors
       deliveryError = error instanceof Error ? error.message : String(error);
@@ -335,6 +372,7 @@ export class VatSupervisor {
    * @param vatConfig - Configuration object describing the vat to be intialized.
    * @param state - A Map representing the current persistent state of the vat.
    * @param allowedGlobalNames - Optional list of allowed global names to restrict the available endowments.
+   * @param crankNumber - The crank the kernel starts the vat in, if it said.
    * @returns a promise for a checkpoint of the new vat, with the content
    * hash of the bundle it loaded.
    */
@@ -342,6 +380,7 @@ export class VatSupervisor {
     vatConfig: VatConfig,
     state: Map<string, string>,
     allowedGlobalNames: AllowedGlobalName[] | undefined,
+    crankNumber: number | undefined,
   ): Promise<InitVatResult> {
     if (this.#loaded) {
       throw Error(
@@ -474,7 +513,10 @@ export class VatSupervisor {
     this.#dispatch = liveslots.dispatch;
     const serParam = marshal.toCapData(harden(parameters)) as CapData<string>;
 
-    const started = await this.#deliver(harden(['startVat', serParam]));
+    const started = await this.#deliver(
+      harden(['startVat', serParam]),
+      crankNumber,
+    );
     return harden([...started, bundleHash]);
   }
 }

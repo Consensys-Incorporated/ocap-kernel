@@ -597,19 +597,32 @@ narrower than one might hope:
 
 - **Durable-kind state.** When a durable object is created or its state is
   written, liveslots serializes the state and sees every reference in it. That
-  is an incorporation, recorded as `incorporation { object: vref, slots,
-  crankNumber }` with `witness: 'liveslots'`, and it is the only form of
-  incorporation anything can observe. Incorporation into a virtual or
-  ephemeral object, or by closure, remains invisible.
+  is an incorporation, and it is the only form of incorporation anything can
+  observe. The kernel reads it from the state writes a delivery returns,
+  before applying them: for each tracked reference newly in a durable
+  object's state, it records `incorporation { kref, endpoint, object: vref,
+  objectKref?, crankNumber }` with `witness: 'liveslots'`, naming the
+  durable object as the vat does and, once exported, as the kernel does. A
+  reference already in the state is not recorded again. Liveslots is not
+  changed to report it; the write it makes is the report, and the witness
+  says whose it is. Incorporation into a durable collection such as the
+  baggage, a virtual or ephemeral object, or a closure remains invisible.
 - **Asynchronous continuations.** The vat's `setTimeout`, `setInterval`, and
-  `fetch` are attenuated endowments the kernel supplies, so liveslots can
-  carry the delivery context of the crank that scheduled a callback into the
-  callback's execution. A send issued from that callback then has a real
-  `cause` rather than `'async'`, and inherits the scheduling delivery's trace.
+  `fetch` are attenuated endowments the kernel supplies, so the supervisor
+  can carry the delivery context of the crank that scheduled a callback into
+  the callback's execution. The `deliver` command names its crank; the
+  supervisor charges a timer callback, and the continuation of a `fetch` and
+  of each read of its response's body, to the crank that scheduled it, for
+  the callback's run and the microtasks that follow it; and a syscall issued
+  there goes to the kernel as a `scheduledSyscall` naming the crank. The
+  kernel takes the name of a crank it has run, records the send's cause as
+  `{ crankNumber, witness: 'liveslots' }` rather than `'async'`, and carries
+  the scheduling delivery's trace on, one hop further, where it recorded one.
   This is the one place a liveslots layer improves a kernel-witnessed record
   rather than adding a weaker one: the cause it supplies is the kernel's own
-  delivery, and the kernel can check that the named crank did deliver to that
-  vat.
+  delivery, which the kernel confirms where it kept a record of it, as it does
+  for every traced or tracked delivery; elsewhere it takes the supervisor's
+  word, and the witness on the cause says so.
 
 What liveslots does not see is a direct method call from one of the vat's
 objects to another, or a reference captured in a closure, and no
@@ -618,15 +631,22 @@ vat between a delivery and the sends it produces is not something liveslots
 can report, only something it can bracket.
 
 **A support library**, imported by vat code and outside the trusted computing
-base, is the only way to account at object granularity within a vat. An
-`accountable(exo)` wrapper records each method invocation on the wrapped
-object as an `exercise`, stamped with the current delivery context, and a
-`convey(ref, to)` helper records a hand-off the developer chooses to declare.
-These are `witness: 'vat'` records, written through the accountability
-service into the same table as everything else. They cover exactly the
+base, is the only way to account at object granularity within a vat.
+`makeAccounting(service)`, from `@metamask/kernel-utils/accountable`, gives a
+vat an `accountable(exo)` wrapper, which records each method invocation on
+the wrapper as an `exercise { kref, endpoint, method, cause }` of it, and a
+`convey(ref, to)` helper, which records a hand-off the developer chooses to
+declare as a `conveyance` with `via: 'declared'`, the object handed to as its
+`carrier` and that object's owner as `to`. Both go through the service's
+`exercise` and `convey` methods, and the kernel supplies what the vat cannot
+be trusted to: the caller, the delivery the report was sent from as the
+record's `cause`, and that delivery's trace, so that a traced act's
+`trace` reads through the objects of a wrapped vat. The kernel checks only
+that an exercised object is the caller's. These are `witness: 'vat'`
+records, in the same table as everything else. They cover exactly the
 objects a developer wrapped and the hand-offs a developer declared, and they
-are the vat's own word. A receipt or a cross-kernel segment never includes
-them; `history` and `trace` return them, marked.
+are the vat's own word. A receipt, a chain of custody, or a cross-kernel
+segment never includes them; `history` and `trace` return them, marked.
 
 The vat's own word is not nothing, though. The kernel records who vouched for
 the bundle the vat runs, through the implementer attestation on its content
@@ -664,6 +684,8 @@ Requested like any other service, `services: ['accountability']`:
 | `chain(obj)`                          | the caller's chain of custody for `obj`, including any cross-kernel segments, with each hop resolved to parties                                                                          |
 | `trace(traceId)`                      | the records of a trace this endpoint took part in, as a vat reads them                                                                                                                   |
 | `receipt()`                           | a signed receipt for the delivery the caller is handling, which the kernel knows from the call's `cause`                                                                                 |
+| `exercise(obj, method)`               | record, on the caller's word, that a method of an object of its was invoked, from the delivery the caller is handling; what the `accountable` wrapper reports                            |
+| `convey(obj, to)`                     | record, on the caller's word, that it handed an object to another, from the delivery the caller is handling; what the `convey` helper reports                                            |
 
 The visibility rule on `history` is the one place this design has to make an
 access decision, and it follows the reference graph: holding a reference
@@ -701,19 +723,20 @@ same goes for the sender: a vat that wants attribution asks the service,
 which is asynchronous and keeps attribution in the record-keeping path rather
 than on the fast path where it would invite use as an access check.
 
-The supervisor, which is kernel code, will be told the crank it is
-delivering in once liveslots carries that through the vat's asynchronous
-endowments, so a callback scheduled during a delivery is charged to it. Vat
-code sees none of it. A crank number handed to a vat would be an attractive nuisance:
-the vat would be tempted to pass it on to a remote party as the name of a
-call, which it is not. So what `history` and `trace` return to a vat is a
-view of the records with no crank number, and with each cause named by the
-record of the delivery it answers, where the kernel wrote one, and
-`'unrecorded'` otherwise; the sequence number stays, since it names a record,
-which is what a reader of records needs. A chain names each acquisition by
-its record the same way. A receipt carries its crank number under the
-kernel's signature, where a crank number is exactly what it claims to be:
-that kernel's name for one of its own cranks.
+The supervisor, which is kernel code, is told the crank it is delivering in
+and carries it through the vat's asynchronous endowments, so a callback
+scheduled during a delivery is charged to it. Vat code sees none of it. A
+crank number handed to a vat would be an attractive nuisance: the vat would
+be tempted to pass it on to a remote party as the name of a call, which it is
+not. So what `history` and `trace` return to a vat is a view of the records
+with no crank number, and with each cause named by the record of the
+delivery it answers, where the kernel wrote one, and `'unrecorded'`
+otherwise; a cause on the supervisor's word keeps its `witness`, with the
+delivery where the kernel recorded one. The sequence number stays, since it
+names a record, which is what a reader of records needs. A chain names each
+acquisition by its record the same way. A receipt carries its crank number
+under the kernel's signature, where a crank number is exactly what it claims
+to be: that kernel's name for one of its own cranks.
 
 ### Host and operator
 
@@ -881,13 +904,30 @@ delivery that terminated its vat and was rolled back is invisible to
 accountability, and visible only to the logger. Accepted; nothing the vat did
 in that delivery took effect.
 
-**Asynchronous vat activity.** Until liveslots carries delivery context
-through the vat's async endowments, a send issued outside a crank has `cause:
-'async'` and breaks the causal chain at that vat. This is honest: the kernel
-did not see what caused it. Once liveslots does carry it, the cause is the
-scheduling delivery, which the kernel can confirm it made; what stays
-unverifiable is only that the callback was the one scheduled then, which is
-the liveslots trust level and is marked as such.
+**Asynchronous vat activity.** A send a vat issues between deliveries, from a
+callback the supervisor cannot charge to a delivery, has `cause: 'async'`
+whatever crank happens to be open, and breaks the causal chain at that vat.
+This is honest: the kernel did not see what caused it. Where the supervisor
+can charge it, the cause is the scheduling delivery, which the kernel confirms
+where it recorded that delivery; what stays unverifiable is that the callback
+was the one scheduled then, which is the liveslots trust level and is marked
+as such on the cause.
+
+**A callback's crank by bracketing, not by context propagation.** The
+supervisor charges a callback to a crank from when it starts until the next
+macrotask, which covers the callback and the microtasks it leaves behind, and
+lifts the charge with a timer of its own queued as the callback starts. An
+`AsyncContext`-style mechanism would follow the work exactly, across
+macrotasks too, but nothing of the kind is available to the supervisor, and
+the bracket covers what a vat's `await` chains do between host events. A
+callback scheduled from a charged callback is charged to the same crank.
+
+**Incorporation read from the state write, not reported by liveslots.** The
+delivery result already carries every vatstore write, and the state of a
+durable object is written whole, so the kernel can see each reference newly
+in it without liveslots saying anything. Reading it costs one parse per
+durable-object write that carries a tracked reference, and no change to code
+this repository imports.
 
 ## Implementation strategy
 

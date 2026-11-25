@@ -1,3 +1,5 @@
+import { makeLiveSlots } from '@agoric/swingset-liveslots';
+import type { VatDeliveryObject } from '@agoric/swingset-liveslots';
 import type { PlatformFactory } from '@metamask/kernel-platforms';
 import { delay, isJsonRpcMessage, toHex } from '@metamask/kernel-utils';
 import type { JsonRpcMessage } from '@metamask/kernel-utils';
@@ -329,7 +331,9 @@ describe('VatSupervisor', () => {
       expect(factory).toHaveBeenCalledTimes(1);
     });
 
-    const endowmentsFetch = (() => undefined) as unknown as typeof fetch;
+    const endowmentsFetch = vi.fn(async () =>
+      Promise.resolve(new Response('body')),
+    ) as unknown as typeof fetch;
     const suppliedFetch = (() => undefined) as unknown as typeof fetch;
     const fsOptions = { makeReadFile: () => undefined };
 
@@ -338,7 +342,7 @@ describe('VatSupervisor', () => {
         name: "builds http on the endowments' fetch",
         fetch: endowmentsFetch,
         platformOptions: {},
-        expected: { http: { fetch: endowmentsFetch } },
+        expected: { http: { fetch: expect.any(Function) } },
       },
       {
         name: 'builds http on a fetch platformOptions supply',
@@ -350,7 +354,7 @@ describe('VatSupervisor', () => {
         name: 'keeps the other platformOptions',
         fetch: endowmentsFetch,
         platformOptions: { fs: fsOptions },
-        expected: { fs: fsOptions, http: { fetch: endowmentsFetch } },
+        expected: { fs: fsOptions, http: { fetch: expect.any(Function) } },
       },
       {
         name: 'passes platformOptions through when the endowments have no fetch',
@@ -391,6 +395,38 @@ describe('VatSupervisor', () => {
       expect(makePlatform).toHaveBeenCalledWith(platformConfig, expected);
     });
 
+    it("makes http's requests through the endowments' fetch", async () => {
+      const makePlatform = vi.fn().mockResolvedValue({});
+      const platformConfig = { http: { allow: [{ host: 'example.test' }] } };
+      const { stream } = await makeVatSupervisor({
+        makePlatform,
+        makeAllowedGlobals: () => ({
+          ...makeVatEndowments({}),
+          fetch: endowmentsFetch,
+        }),
+        fetchBlob: vi.fn().mockResolvedValue({
+          ok: true,
+          text: vi.fn().mockResolvedValue(''),
+        }),
+      });
+      await stream.receiveInput({
+        id: 'test-init',
+        method: 'initVat',
+        params: {
+          vatConfig: { bundleSpec: 'test.bundle', platformConfig },
+          state: [],
+        },
+        jsonrpc: '2.0',
+      });
+      await delay(50);
+      const [[, options]] = makePlatform.mock.calls as [
+        [unknown, { http: { fetch: typeof fetch } }],
+      ];
+      const response = await options.http.fetch('https://example.test/');
+      expect(endowmentsFetch).toHaveBeenCalledWith('https://example.test/');
+      expect(await response.text()).toBe('body');
+    });
+
     it('rejects an unknown global at the initVat RPC boundary', async () => {
       // VatConfig.globals is now typed as AllowedGlobalName[] and validated by
       // AllowedGlobalNameStruct at the RPC boundary, so an unknown name is
@@ -429,6 +465,171 @@ describe('VatSupervisor', () => {
           error: expect.objectContaining({
             message: expect.stringContaining('Invalid params'),
           }),
+        }),
+      );
+    });
+  });
+
+  describe('syscalls', () => {
+    type VatNamespace = { setTimeout: typeof setTimeout };
+    type Dispatch = (delivery: VatDeliveryObject) => Promise<void>;
+
+    /**
+     * Start a vat, with its endowed `setTimeout` in hand.
+     *
+     * @param options - Options.
+     * @param options.crankNumber - The crank the kernel starts the vat in.
+     * @param options.onStart - What the vat does as it starts.
+     * @returns The supervisor, the kernel's side of its stream, what the
+     * kernel received, the vat's namespace, and a setter for what the vat
+     * does on a delivery.
+     */
+    const startVat = async ({
+      crankNumber,
+      onStart = async () => undefined,
+    }: {
+      crankNumber?: number;
+      onStart?: (vat: VatNamespace, supervisor: VatSupervisor) => Promise<void>;
+    }): Promise<{
+      supervisor: VatSupervisor;
+      stream: TestDuplexStream<JsonRpcMessage, JsonRpcMessage>;
+      received: ReturnType<typeof vi.fn>;
+      vat: VatNamespace;
+      setDispatch: (dispatch: Dispatch) => void;
+    }> => {
+      const received = vi.fn();
+      const holder: {
+        vat?: VatNamespace;
+        dispatch?: Dispatch;
+        supervisor?: VatSupervisor;
+      } = {};
+      vi.mocked(makeLiveSlots).mockImplementationOnce((...args: unknown[]) => {
+        const buildVatNamespace = args[6] as (
+          endowments: object,
+          inescapable: object,
+        ) => Promise<VatNamespace>;
+        return {
+          dispatch: async (delivery: VatDeliveryObject) => {
+            holder.vat ??= await buildVatNamespace({}, {});
+            if (delivery[0] === 'startVat' && holder.supervisor) {
+              await onStart(holder.vat, holder.supervisor);
+            }
+            await holder.dispatch?.(delivery);
+          },
+          makeVat: vi.fn(),
+        } as unknown as ReturnType<typeof makeLiveSlots>;
+      });
+      const { supervisor, stream } = await makeVatSupervisor({
+        dispatch: received,
+        makeAllowedGlobals: () =>
+          makeVatEndowments({ setTimeout: globalThis.setTimeout }),
+        fetchBlob: vi.fn().mockResolvedValue({
+          ok: true,
+          text: vi
+            .fn()
+            .mockResolvedValue(
+              '{"moduleFormat":"iife","code":"var __vatExports__ = { setTimeout };"}',
+            ),
+        }),
+      });
+      holder.supervisor = supervisor;
+      await stream.receiveInput({
+        id: 'init',
+        method: 'initVat',
+        params: {
+          vatConfig: { bundleSpec: 'test.bundle', globals: ['setTimeout'] },
+          state: [],
+          ...(crankNumber === undefined ? {} : { crankNumber }),
+        },
+        jsonrpc: '2.0',
+      });
+      await delay(50);
+      if (!holder.vat) {
+        throw new Error('the vat did not start');
+      }
+      return {
+        supervisor,
+        stream,
+        received,
+        vat: holder.vat,
+        setDispatch: (dispatch) => {
+          holder.dispatch = dispatch;
+        },
+      };
+    };
+
+    const deliver = async (
+      stream: TestDuplexStream<JsonRpcMessage, JsonRpcMessage>,
+      crankNumber: number,
+    ): Promise<void> => {
+      await stream.receiveInput({
+        id: 'deliver',
+        method: 'deliver',
+        params: { delivery: ['bringOutYourDead'], crankNumber },
+        jsonrpc: '2.0',
+      });
+      await delay(50);
+    };
+
+    it("sends a syscall made during a delivery as the delivery's", async () => {
+      const { supervisor, stream, received, setDispatch } = await startVat({
+        crankNumber: 3,
+      });
+      setDispatch(async () => {
+        supervisor.executeSyscall(['subscribe', 'kp1']);
+      });
+      await deliver(stream, 5);
+
+      expect(received).toHaveBeenCalledWith(
+        expect.objectContaining({
+          method: 'syscall',
+          params: ['subscribe', 'kp1'],
+        }),
+      );
+    });
+
+    it('sends one made from a callback scheduled during a delivery as scheduled in its crank', async () => {
+      const { supervisor, stream, received, vat, setDispatch } = await startVat(
+        { crankNumber: 3 },
+      );
+      setDispatch(async () => {
+        vat.setTimeout(() => supervisor.executeSyscall(['subscribe', 'kp1']));
+      });
+      await deliver(stream, 5);
+
+      expect(received).toHaveBeenCalledWith(
+        expect.objectContaining({
+          method: 'scheduledSyscall',
+          params: { syscall: ['subscribe', 'kp1'], cause: 5 },
+        }),
+      );
+    });
+
+    it('charges a callback scheduled as the vat starts to the crank of its start', async () => {
+      const { received } = await startVat({
+        crankNumber: 3,
+        onStart: async (vat, supervisor) => {
+          vat.setTimeout(() => supervisor.executeSyscall(['subscribe', 'kp1']));
+        },
+      });
+
+      expect(received).toHaveBeenCalledWith(
+        expect.objectContaining({
+          method: 'scheduledSyscall',
+          params: { syscall: ['subscribe', 'kp1'], cause: 3 },
+        }),
+      );
+    });
+
+    it("sends one made from a callback scheduled in no crank as the vat's own", async () => {
+      const { supervisor, received, vat } = await startVat({});
+      vat.setTimeout(() => supervisor.executeSyscall(['subscribe', 'kp1']));
+      await delay(50);
+
+      expect(received).toHaveBeenCalledWith(
+        expect.objectContaining({
+          method: 'syscall',
+          params: ['subscribe', 'kp1'],
         }),
       );
     });

@@ -149,7 +149,8 @@ export function buildChain({
 
 /**
  * How an endpoint came to hold an object: every conveyance of it to the
- * endpoint, or failing those its introduction.
+ * endpoint, or failing those its introduction. On the kernel's word only: a
+ * conveyance a vat declared is the vat's.
  *
  * @param options - Options bag.
  * @param options.kernelStore - The kernel's store.
@@ -168,6 +169,7 @@ function acquisitionsOf({
 }): Acquisition[] {
   const conveyances = kernelStore.getAccountabilityRecords({
     kind: 'conveyance',
+    witness: 'kernel',
     kref,
     endpoint,
   }) as ConveyanceRecord[];
@@ -176,13 +178,14 @@ function acquisitionsOf({
       conveyances.map(({ sender, via, seq }) => ({
         kind: 'conveyance',
         sender,
-        via,
+        via: via as Acquisition['via'],
         seq,
       })),
     );
   }
   const introductions = kernelStore.getAccountabilityRecords({
     kind: 'introduction',
+    witness: 'kernel',
     kref,
     endpoint,
   }) as IntroductionRecord[];

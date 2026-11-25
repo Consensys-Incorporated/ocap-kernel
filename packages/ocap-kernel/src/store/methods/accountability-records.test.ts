@@ -339,6 +339,7 @@ describe('accountability record methods', () => {
         crankNumber: 0,
         traceId: 'trace-1',
         hop: 1,
+        hopLimit: 8,
         kpid: 'kp3',
         endpoint: v1,
         sender: v2,

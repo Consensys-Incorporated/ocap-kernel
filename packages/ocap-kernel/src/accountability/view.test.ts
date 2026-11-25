@@ -4,7 +4,7 @@ import type { AccountabilityRecord } from './types.ts';
 import { viewRecords } from './view.ts';
 import { makeKernelStore } from '../store/index.ts';
 import type { KernelStore } from '../store/index.ts';
-import type { KRef } from '../types.ts';
+import type { Cause, KRef } from '../types.ts';
 import { asVatId } from '../../test/branded.ts';
 import { makeMapKernelDatabase } from '../../test/storage.ts';
 
@@ -15,7 +15,7 @@ describe('records as a vat reads them', () => {
   let kernelStore: KernelStore;
   let ko1: KRef;
 
-  const poke = (cause: number | 'async'): void =>
+  const poke = (cause: Cause): void =>
     kernelStore.recordDelivery({
       target: ko1,
       targetEndpoint: owner,
@@ -72,6 +72,26 @@ describe('records as a vat reads them', () => {
       'unrecorded',
     ],
     ["'async' as it is", (): void => poke('async'), 'async'],
+    [
+      "the delivery and the supervisor's word, for a scheduled send",
+      (): void => {
+        kernelStore.recordDelivery({
+          target: ko1,
+          targetEndpoint: holder,
+          sender: owner,
+          cause: 0,
+          method: 'nudge',
+          message: { methargs: { body: '#["nudge",[]]', slots: [] } },
+        });
+        poke({ crankNumber: 0, witness: 'liveslots' });
+      },
+      { delivery: 1, witness: 'liveslots' },
+    ],
+    [
+      "the supervisor's word alone, for a scheduled send the kernel has no record of",
+      (): void => poke({ crankNumber: 0, witness: 'liveslots' }),
+      { witness: 'liveslots' },
+    ],
   ])('names a cause by %s', (_what, arrange, cause) => {
     arrange();
     const records = kernelStore.getAccountabilityRecords();
@@ -80,5 +100,29 @@ describe('records as a vat reads them', () => {
       expect.objectContaining({ kind: 'delivery', cause }),
     );
     expect(views.at(-1)).not.toHaveProperty('crankNumber');
+  });
+
+  it("names an exercise's cause by the delivery to the vat reporting it", () => {
+    kernelStore.recordDelivery({
+      target: ko1,
+      targetEndpoint: owner,
+      sender: holder,
+      cause: 0,
+      method: 'poke',
+      message: { methargs: { body: '#["poke",[]]', slots: [] } },
+    });
+    kernelStore.recordExercise({
+      kref: ko1,
+      endpoint: owner,
+      method: 'poke',
+      cause: 0,
+    });
+    const views = viewRecords(
+      kernelStore,
+      kernelStore.getAccountabilityRecords(),
+    );
+    expect(views.at(-1)).toStrictEqual(
+      expect.objectContaining({ kind: 'exercise', cause: { delivery: 1 } }),
+    );
   });
 });

@@ -235,6 +235,11 @@ describe('accountability service', () => {
     it.each([
       ['outside a delivery', 'async' as const, 'outside a delivery'],
       [
+        "from a callback, on the supervisor's word",
+        { crankNumber: 7, witness: 'liveslots' } as const,
+        'outside a delivery',
+      ],
+      [
         'for a delivery that left no record',
         7,
         'no record of the delivery to v1 in crank 7',

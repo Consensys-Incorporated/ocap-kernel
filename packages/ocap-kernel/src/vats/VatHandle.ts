@@ -16,10 +16,12 @@ import type { DuplexStream } from '@metamask/streams';
 import { isJsonRpcNotification, isJsonRpcResponse } from '@metamask/utils';
 import type { JsonRpcNotification, JsonRpcResponse } from '@metamask/utils';
 
+import { recordIncorporations } from '../accountability/incorporations.ts';
 import type { KernelQueue } from '../KernelQueue.ts';
 import { makeFatalKernelError } from '../liveslots/kernel-marshal.ts';
 import { vatMethodSpecs, vatSyscallHandlers } from '../rpc/index.ts';
 import type { PingVatResult, VatMethod } from '../rpc/index.ts';
+import type { VatDeliveryParams } from '../rpc/vat/deliver.ts';
 import type { KernelStore } from '../store/index.ts';
 import type {
   EndpointMessage,
@@ -140,12 +142,12 @@ export class VatHandle implements EndpointHandle {
       `${this.vatId}:`,
     );
     this.#rpcService = new RpcService(vatSyscallHandlers, {
-      handleSyscall: (params) => {
+      handleSyscall: (params, scheduledIn) => {
         const vso = params as VatSyscallObject;
         if (this.#vatSyscall.delivering) {
-          this.#vatSyscall.handleSyscall(vso);
+          this.#vatSyscall.handleSyscall(vso, scheduledIn);
         } else {
-          this.#vatSyscall.handleLateSyscall(vso);
+          this.#vatSyscall.handleLateSyscall(vso, scheduledIn);
         }
       },
     });
@@ -200,6 +202,10 @@ export class VatHandle implements EndpointHandle {
         state: this.#vatStore.getKVData(),
         ...(this.#allowedGlobalNames
           ? { allowedGlobalNames: this.#allowedGlobalNames }
+          : {}),
+        // At boot, a persisted vat starts in no crank.
+        ...(this.#kernelStore.isInCrank()
+          ? { crankNumber: this.#kernelStore.getCrankNumber() }
           : {}),
       },
     });
@@ -277,6 +283,20 @@ export class VatHandle implements EndpointHandle {
   }
 
   /**
+   * Make a delivery to the vat, in the crank in progress.
+   *
+   * @param delivery - The delivery.
+   * @returns The crank result.
+   */
+  async #deliver(delivery: VatDeliveryParams): Promise<CrankResult> {
+    await this.sendVatCommand({
+      method: 'deliver',
+      params: { delivery, crankNumber: this.#kernelStore.getCrankNumber() },
+    });
+    return this.#getDeliveryCrankResult();
+  }
+
+  /**
    * Make a 'message' delivery to the vat.
    *
    * @param target - The VRef of the object to which the message is addressed.
@@ -287,11 +307,7 @@ export class VatHandle implements EndpointHandle {
     target: ERef,
     message: EndpointMessage,
   ): Promise<CrankResult> {
-    await this.sendVatCommand({
-      method: 'deliver',
-      params: ['message', target, message],
-    });
-    return this.#getDeliveryCrankResult();
+    return this.#deliver(['message', target, message]);
   }
 
   /**
@@ -301,11 +317,7 @@ export class VatHandle implements EndpointHandle {
    * @returns The crank result.
    */
   async deliverNotify(resolutions: VatOneResolution[]): Promise<CrankResult> {
-    await this.sendVatCommand({
-      method: 'deliver',
-      params: ['notify', resolutions],
-    });
-    return this.#getDeliveryCrankResult();
+    return this.#deliver(['notify', resolutions]);
   }
 
   /**
@@ -315,11 +327,7 @@ export class VatHandle implements EndpointHandle {
    * @returns The crank result.
    */
   async deliverDropExports(vrefs: ERef[]): Promise<CrankResult> {
-    await this.sendVatCommand({
-      method: 'deliver',
-      params: ['dropExports', vrefs],
-    });
-    return this.#getDeliveryCrankResult();
+    return this.#deliver(['dropExports', vrefs]);
   }
 
   /**
@@ -329,11 +337,7 @@ export class VatHandle implements EndpointHandle {
    * @returns The crank result.
    */
   async deliverRetireExports(vrefs: ERef[]): Promise<CrankResult> {
-    await this.sendVatCommand({
-      method: 'deliver',
-      params: ['retireExports', vrefs],
-    });
-    return this.#getDeliveryCrankResult();
+    return this.#deliver(['retireExports', vrefs]);
   }
 
   /**
@@ -343,11 +347,7 @@ export class VatHandle implements EndpointHandle {
    * @returns The crank result.
    */
   async deliverRetireImports(vrefs: ERef[]): Promise<CrankResult> {
-    await this.sendVatCommand({
-      method: 'deliver',
-      params: ['retireImports', vrefs],
-    });
-    return this.#getDeliveryCrankResult();
+    return this.#deliver(['retireImports', vrefs]);
   }
 
   /**
@@ -356,11 +356,7 @@ export class VatHandle implements EndpointHandle {
    * @returns The crank result.
    */
   async deliverBringOutYourDead(): Promise<CrankResult> {
-    await this.sendVatCommand({
-      method: 'deliver',
-      params: ['bringOutYourDead'],
-    });
-    return this.#getDeliveryCrankResult();
+    return this.#deliver(['bringOutYourDead']);
   }
 
   /**
@@ -443,6 +439,14 @@ export class VatHandle implements EndpointHandle {
       // On an error the state goes unwritten: the vat is terminated and the
       // crank rolled back.
       if (noErrors) {
+        if (method === 'deliver') {
+          recordIncorporations({
+            kernelStore: this.#kernelStore,
+            vatStore: this.#vatStore,
+            vatId: this.vatId,
+            sets,
+          });
+        }
         this.#vatStore.updateKVData(sets, deletes);
       }
     }

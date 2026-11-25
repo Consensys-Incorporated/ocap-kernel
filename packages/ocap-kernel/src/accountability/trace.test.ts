@@ -1,12 +1,16 @@
 import { is } from '@metamask/superstruct';
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 
-import { nextHop, startTrace } from './trace.ts';
+import { nextHop, startTrace, traceOfDelivery } from './trace.ts';
 import {
   MAX_HOP_LIMIT,
   TraceContextStruct,
   TraceOptionsStruct,
 } from './types.ts';
+import { makeKernelStore } from '../store/index.ts';
+import type { KernelStore } from '../store/index.ts';
+import { asKRef, asVatId } from '../../test/branded.ts';
+import { makeMapKernelDatabase } from '../../test/storage.ts';
 
 describe('startTrace', () => {
   it('starts at hop zero with the default limit, under a fresh id', () => {
@@ -82,5 +86,75 @@ describe('TraceOptionsStruct', () => {
     ['a fractional limit', { hopLimit: 1.5 }, false],
   ])('%s is %s', (_what, options, accepted) => {
     expect(is(options, TraceOptionsStruct)).toBe(accepted);
+  });
+});
+
+describe('traceOfDelivery', () => {
+  const vat = asVatId('v1');
+  let kernelStore: KernelStore;
+
+  beforeEach(() => {
+    kernelStore = makeKernelStore(makeMapKernelDatabase());
+  });
+
+  it('reads the trace of a recorded delivery back', () => {
+    kernelStore.recordDelivery({
+      target: asKRef('ko1'),
+      targetEndpoint: vat,
+      sender: 'kernel',
+      cause: 'async',
+      method: 'poke',
+      message: { methargs: { body: '', slots: [] } },
+      trace: { id: 'trace-1', hop: 2, hopLimit: 8 },
+    });
+    expect(
+      traceOfDelivery({ kernelStore, endpoint: vat, crank: 0 }),
+    ).toStrictEqual({ id: 'trace-1', hop: 2, hopLimit: 8 });
+  });
+
+  it('reads the trace of a recorded resolution back', () => {
+    kernelStore.recordResolution({
+      kpid: asKRef('kp1'),
+      endpoint: vat,
+      sender: 'kernel',
+      rejected: false,
+      slots: [],
+      trace: { id: 'trace-2', hop: 1, hopLimit: 3 },
+    });
+    expect(
+      traceOfDelivery({ kernelStore, endpoint: vat, crank: 0 }),
+    ).toStrictEqual({ id: 'trace-2', hop: 1, hopLimit: 3 });
+  });
+
+  it.each([
+    ['no record', (): void => undefined],
+    [
+      'a record of an untraced delivery',
+      (): void =>
+        kernelStore.recordDelivery({
+          target: asKRef('ko1'),
+          targetEndpoint: vat,
+          sender: 'kernel',
+          cause: 'async',
+          method: 'poke',
+          message: { methargs: { body: '', slots: [] } },
+        }),
+    ],
+    [
+      'a record on a trace of another kind',
+      (): void =>
+        kernelStore.recordExercise({
+          kref: asKRef('ko1'),
+          endpoint: vat,
+          method: 'poke',
+          cause: 0,
+          trace: { id: 'trace-3', hop: 0, hopLimit: 8 },
+        }),
+    ],
+  ])('finds nothing in %s', (_what, record) => {
+    record();
+    expect(
+      traceOfDelivery({ kernelStore, endpoint: vat, crank: 0 }),
+    ).toBeUndefined();
   });
 });

@@ -151,11 +151,15 @@ function makeWorkers() {
      */
     methodsDelivered: (vatId: VatId): string[] =>
       (delivered.get(vatId) ?? []).flatMap((params) => {
-        const [kind, , message] = params as [
-          string,
-          string,
-          { methargs: { body: string; slots: KRef[] } },
-        ];
+        const [kind, , message] = (
+          params as {
+            delivery: [
+              string,
+              string,
+              { methargs: { body: string; slots: KRef[] } },
+            ];
+          }
+        ).delivery;
         return kind === 'message'
           ? [(kunser(message.methargs) as [string])[0]]
           : [];

@@ -370,6 +370,7 @@ export async function makeSQLKernelDatabase({
     SQL_QUERIES.CLEAR_ACCOUNTABILITY_RECORDS,
   );
   const sqlVatstoreGetAll = db.prepare(SQL_QUERIES.GET_ALL_VS);
+  const sqlVatstoreGet = db.prepare(SQL_QUERIES.GET_VS);
   const sqlVatstoreSet = db.prepare(SQL_QUERIES.SET_VS);
   const sqlVatstoreDelete = db.prepare(SQL_QUERIES.DELETE_VS);
   const sqlVatstoreDeleteAll = db.prepare(SQL_QUERIES.DELETE_VS_ALL);
@@ -440,6 +441,23 @@ export async function makeSQLKernelDatabase({
     }
 
     /**
+     * Read one entry of the vatstore.
+     *
+     * @param key - The key.
+     * @returns The value, if present.
+     */
+    function getKVValue(key: string): string | undefined {
+      try {
+        sqlVatstoreGet.bind([vatID, key]);
+        return sqlVatstoreGet.step()
+          ? (sqlVatstoreGet.getString(0) as string)
+          : undefined;
+      } finally {
+        sqlVatstoreGet.reset();
+      }
+    }
+
+    /**
      * Update the state of the vatstore
      *
      * @param sets - A map of key values that have been changed.
@@ -472,6 +490,7 @@ export async function makeSQLKernelDatabase({
 
     return {
       getKVData,
+      getKVValue,
       updateKVData: guardWrite(updateKVData),
     };
   }

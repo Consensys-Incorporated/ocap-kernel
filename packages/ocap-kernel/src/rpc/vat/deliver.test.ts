@@ -8,14 +8,25 @@ describe('deliverHandler', () => {
     const handleDelivery = vi.fn(async () =>
       Promise.resolve({ checkpoint: 'fake' }),
     ) as unknown as HandleDelivery;
-    const result = deliverHandler.implementation({ handleDelivery }, [
-      'message',
-      'test',
+    const result = deliverHandler.implementation(
+      { handleDelivery },
       {
-        methargs: { body: 'test', slots: [] },
-        result: null,
+        delivery: [
+          'message',
+          'test',
+          { methargs: { body: 'test', slots: [] }, result: null },
+        ],
+        crankNumber: 7,
       },
-    ]);
+    );
+    expect(handleDelivery).toHaveBeenCalledWith(
+      [
+        'message',
+        'test',
+        { methargs: { body: 'test', slots: [] }, result: null },
+      ],
+      7,
+    );
     expect(await result).toStrictEqual({
       checkpoint: 'fake',
     });
@@ -26,14 +37,17 @@ describe('deliverHandler', () => {
       throw new Error('fake');
     });
     await expect(
-      deliverHandler.implementation({ handleDelivery }, [
-        'message',
-        'test',
+      deliverHandler.implementation(
+        { handleDelivery },
         {
-          methargs: { body: 'test', slots: [] },
-          result: null,
+          delivery: [
+            'message',
+            'test',
+            { methargs: { body: 'test', slots: [] }, result: null },
+          ],
+          crankNumber: 7,
         },
-      ]),
+      ),
     ).rejects.toThrow('fake');
   });
 });
