@@ -10,3 +10,8 @@ export type {
   Parser,
   SyntaxTree,
 } from './strategies/repl/parse/syntax-tree.ts';
+export {
+  PARSER_SERVICE_NAME,
+  makeKernelParserService,
+  makeParserClient,
+} from './strategies/repl/parse/service.ts';

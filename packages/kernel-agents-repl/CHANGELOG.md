@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add `makeKernelParserService` and `makeParserClient`, so a host can offer its parser to vats as a kernel service and a vat can hand `makeReplAgent` a client for it ([#1256](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1256))
+- `@ocap/kernel-agents-repl/parser/tree-sitter-worker` exports `makeTreeSitterWorkerParser`, which runs the native binding in a worker thread so that a host that has run lockdown can parse ([#1256](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1256))
 - `@ocap/kernel-agents-repl/parser/tree-sitter` exports `makeTreeSitterParser`, the native tree-sitter binding as a `Parser` for a realm that has not run lockdown ([#1255](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1255))
 
 ### Changed
