@@ -30,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- **BREAKING:** `bundleVat` and `bundleVats` need the optional peer dependency `@endo/evasive-transform` ([#1331](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1331))
 - `stringify` includes an `AggregateError`'s `errors`, each with its own `cause` chain ([#1094](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1094))
 
 ### Removed
@@ -38,6 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `bundleVat` and `bundleVats` rewrite text that SES rejects outside an `import()` expression, such as `"import()"` in a dependency's error message, so that the vat starts ([#1331](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1331))
 - Bump `@libp2p/crypto` from `5.1.14` to `5.1.23`, so `startRelay` no longer throws `Invalid JWK OKP key` on Node 24.22 ([#1185](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1185))
 
 ## [0.5.0]
