@@ -2,6 +2,7 @@ import type { Logger } from '@metamask/logger';
 
 import { makeIOListenerService } from './io-service.ts';
 import type { IOListener, IOListenerFactory } from './types.ts';
+import type { KernelQueue } from '../KernelQueue.ts';
 import type { KernelService } from '../KernelServiceManager.ts';
 import type { IOConfig, KRef } from '../types.ts';
 
@@ -16,6 +17,7 @@ type ReleaseAnonymous = (kref: KRef) => void;
 
 type IOManagerOptions = {
   factory: IOListenerFactory;
+  kernelQueue: KernelQueue;
   registerService: RegisterService;
   unregisterService: UnregisterService;
   registerAnonymous: RegisterAnonymous;
@@ -38,6 +40,8 @@ type SubclusterIOState = {
 export class IOManager {
   readonly #factory: IOListenerFactory;
 
+  readonly #kernelQueue: KernelQueue;
+
   readonly #registerService: RegisterService;
 
   readonly #unregisterService: UnregisterService;
@@ -56,6 +60,7 @@ export class IOManager {
    *
    * @param options - Constructor options.
    * @param options.factory - Factory for creating IO listeners.
+   * @param options.kernelQueue - The kernel's queue.
    * @param options.registerService - Function to register a kernel service.
    * @param options.unregisterService - Function to unregister a kernel service.
    * @param options.registerAnonymous - Function to host an accepted
@@ -65,6 +70,7 @@ export class IOManager {
    */
   constructor({
     factory,
+    kernelQueue,
     registerService,
     unregisterService,
     registerAnonymous,
@@ -72,6 +78,7 @@ export class IOManager {
     logger,
   }: IOManagerOptions) {
     this.#factory = factory;
+    this.#kernelQueue = kernelQueue;
     this.#registerService = registerService;
     this.#unregisterService = unregisterService;
     this.#registerAnonymous = registerAnonymous;
@@ -82,6 +89,9 @@ export class IOManager {
 
   /**
    * Create IO listeners for a subcluster and register them as kernel services.
+   * This and {@link destroyChannels} run inside a launch's or a termination's
+   * crank and write the store directly. A listener service acts from outside
+   * the run loop, so each of its writes takes an inbox crank.
    *
    * @param subclusterId - The ID of the subcluster.
    * @param ioConfig - The IO configuration map from listener names to configs.
@@ -101,15 +111,28 @@ export class IOManager {
         listeners.set(name, listener);
 
         const service = makeIOListenerService(serviceName, listener, config, {
-          register: (connection, label) => {
-            const kref = this.#registerAnonymous(connection, label);
-            connectionKrefs.add(kref);
-            return kref;
-          },
-          release: (kref) => {
-            connectionKrefs.delete(kref);
-            this.#releaseAnonymous(kref);
-          },
+          register: async (connection, label) =>
+            this.#kernelQueue.enqueueInbox('host an IO connection', () => {
+              const state = this.#subclusters.get(subclusterId);
+              if (state?.connectionKrefs !== connectionKrefs) {
+                // Destroyed while this waited for its crank, so nothing
+                // would release the connection.
+                return {
+                  failure: new Error(
+                    `IO listener "${serviceName}" is gone; connection "${label}" was not hosted`,
+                  ),
+                };
+              }
+              const kref = this.#registerAnonymous(connection, label);
+              connectionKrefs.add(kref);
+              return { value: kref };
+            }),
+          release: async (kref) =>
+            this.#kernelQueue.enqueueInbox('release an IO connection', () => {
+              connectionKrefs.delete(kref);
+              this.#releaseAnonymous(kref);
+              return { value: undefined };
+            }),
         });
         this.#registerService(serviceName, service);
         serviceNames.push(serviceName);
@@ -120,10 +143,6 @@ export class IOManager {
       } catch (error) {
         // Clean up anything we already created before re-throwing
         await this.#closeListeners(listeners);
-        for (const kref of connectionKrefs) {
-          this.#releaseAnonymous(kref);
-        }
-        connectionKrefs.clear();
         for (const registeredName of serviceNames) {
           try {
             this.#unregisterService(registeredName);

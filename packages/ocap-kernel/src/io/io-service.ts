@@ -10,10 +10,10 @@ import type { IOConfig } from '../types.ts';
  * kernel object reachable only by reference.
  */
 export type ConnectionHost = {
-  /** Host `connection` and return its kref. */
-  register: (connection: object, label: string) => KRef;
+  /** Host `connection` and return its kref, once that is committed. */
+  register: (connection: object, label: string) => Promise<KRef>;
   /** Release a previously hosted connection. */
-  release: (kref: KRef) => void;
+  release: (kref: KRef) => Promise<void>;
 };
 
 /**
@@ -49,7 +49,7 @@ export function makeIOConnectionService(
   name: string,
   channel: IOChannel,
   config: IOConfig,
-  onClose: () => void,
+  onClose: () => Promise<void>,
 ): object {
   const direction = config.direction ?? 'inout';
   let closed = false;
@@ -77,7 +77,7 @@ export function makeIOConnectionService(
       try {
         await channel.close();
       } finally {
-        onClose();
+        await onClose();
       }
     },
   });
@@ -112,6 +112,7 @@ export function makeIOListenerService(
    * dropped its sockets but left every accepted connection's kref pinned.
    */
   const hostedConnections = new Set<KRef>();
+  let listenerClosed = false;
 
   return makeDefaultExo(name, {
     async accept(): Promise<unknown> {
@@ -131,24 +132,38 @@ export function makeIOListenerService(
         connectionName,
         channel,
         config,
-        () => {
+        async () => {
           if (hosted.kref) {
             hostedConnections.delete(hosted.kref);
-            host.release(hosted.kref);
+            await host.release(hosted.kref);
           }
         },
       );
-      hosted.kref = host.register(connection, connectionName);
-      hostedConnections.add(hosted.kref);
-      return kslot(hosted.kref, connectionName);
+      let kref: KRef;
+      try {
+        kref = await host.register(connection, connectionName);
+      } catch (error) {
+        // Nobody will ever hold this connection to close it.
+        await channel.close().catch(() => undefined);
+        throw error;
+      }
+      if (listenerClosed) {
+        // Closed while the registration waited for its crank, so `close()`
+        // did not see this connection to release it.
+        await host.release(kref);
+        return null;
+      }
+      hosted.kref = kref;
+      hostedConnections.add(kref);
+      return kslot(kref, connectionName);
     },
 
     async close(): Promise<void> {
       await listener.close();
-      for (const kref of [...hostedConnections]) {
-        hostedConnections.delete(kref);
-        host.release(kref);
-      }
+      listenerClosed = true;
+      const krefs = [...hostedConnections];
+      hostedConnections.clear();
+      await Promise.all(krefs.map(async (kref) => host.release(kref)));
     },
   });
 }

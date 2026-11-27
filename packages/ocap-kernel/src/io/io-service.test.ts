@@ -65,13 +65,13 @@ function makeHost(): ConnectionHost & {
   return {
     registered,
     released,
-    register: (connection: object, label: string): KRef => {
+    register: async (connection: object, label: string): Promise<KRef> => {
       next += 1;
       const kref = `ko${next}` as KRef;
       registered.push({ kref, label, connection });
       return kref;
     },
-    release: (kref: KRef): void => {
+    release: async (kref: KRef): Promise<void> => {
       released.push(kref);
     },
   };
@@ -361,6 +361,49 @@ describe('makeIOListenerService', () => {
     await listener.close();
 
     expect(host.released).toStrictEqual(['ko1', 'ko2']);
+  });
+
+  it('closes a connection that could not be hosted', async () => {
+    const channel = makeChannel();
+    const host = makeHost();
+    host.register = async () => {
+      throw new Error('refused');
+    };
+    const listener = makeIOListenerService(
+      'io:s1:repl',
+      makeListener([channel]),
+      makeConfig(),
+      host,
+    ) as ListenerFacet;
+
+    await expect(listener.accept()).rejects.toThrow('refused');
+    expect(channel.close).toHaveBeenCalledOnce();
+  });
+
+  it('releases a connection hosted after the listener closed', async () => {
+    const host = makeHost();
+    const { register } = host;
+    let finishRegistering = (): void => undefined;
+    const registering = new Promise<void>((resolve) => {
+      finishRegistering = resolve;
+    });
+    host.register = async (connection, label) => {
+      await registering;
+      return register(connection, label);
+    };
+    const listener = makeIOListenerService(
+      'io:s1:repl',
+      makeListener([makeChannel()]),
+      makeConfig(),
+      host,
+    ) as ListenerFacet;
+
+    const accepted = listener.accept();
+    await listener.close();
+    finishRegistering();
+
+    expect(await accepted).toBeNull();
+    expect(host.released).toStrictEqual(['ko1']);
   });
 
   it('does not release a connection twice when it was already closed', async () => {

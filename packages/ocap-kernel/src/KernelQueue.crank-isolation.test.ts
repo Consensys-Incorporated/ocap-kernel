@@ -7,13 +7,17 @@ import { Logger } from '@metamask/logger';
 import type { DuplexStream } from '@metamask/streams';
 import { describe, it, expect, vi } from 'vitest';
 
+import { IOManager } from './io/IOManager.ts';
+import type { IOChannel } from './io/types.ts';
 import { KernelQueue } from './KernelQueue.ts';
 import { KernelServiceManager } from './KernelServiceManager.ts';
 import {
+  krefOf,
   kser,
   kunser,
   makeFatalKernelError,
 } from './liveslots/kernel-marshal.ts';
+import type { SlotValue } from './liveslots/kernel-marshal.ts';
 import { startRemoteComms } from './remotes/kernel/remote-comms.ts';
 import { OcapURLManager } from './remotes/kernel/OcapURLManager.ts';
 import { RemoteManager } from './remotes/kernel/RemoteManager.ts';
@@ -338,6 +342,63 @@ async function sendOneMessageToPeer(harness: Harness): Promise<string> {
 }
 
 /**
+ * Launch-time IO setup for one listener, on the harness's store and queue.
+ *
+ * @param harness - What {@link setUp} returned.
+ * @returns The listener's service, a function that connects a peer to it, and
+ * a function giving the connection service hosted at a kref.
+ */
+async function setUpListener(harness: Harness) {
+  const { kernelStore, kernelQueue } = harness;
+  const serviceManager = new KernelServiceManager({ kernelStore, kernelQueue });
+  const channels: IOChannel[] = [];
+  const waiting: ((channel: IOChannel) => void)[] = [];
+  const ioManager = new IOManager({
+    factory: async () => ({
+      accept: async () =>
+        channels.shift() ??
+        new Promise<IOChannel>((resolve) => {
+          waiting.push(resolve);
+        }),
+      close: async () => undefined,
+    }),
+    kernelQueue,
+    registerService:
+      serviceManager.registerKernelServiceObject.bind(serviceManager),
+    unregisterService:
+      serviceManager.unregisterKernelServiceObject.bind(serviceManager),
+    registerAnonymous:
+      serviceManager.registerAnonymousKernelObject.bind(serviceManager),
+    releaseAnonymous:
+      serviceManager.releaseAnonymousKernelObject.bind(serviceManager),
+  });
+  await ioManager.createChannels('s1', { repl: { type: 'console' } });
+  const listener = serviceManager.getKernelService('io:s1:repl')?.service as {
+    accept: () => Promise<unknown>;
+  };
+  return {
+    listener,
+    connect: () => {
+      const channel: IOChannel = {
+        read: async () => null,
+        write: async () => undefined,
+        close: async () => undefined,
+      };
+      const accept = waiting.shift();
+      if (accept) {
+        accept(channel);
+      } else {
+        channels.push(channel);
+      }
+    },
+    connectionAt: (kref: KRef) =>
+      serviceManager.getKernelServiceByKref(kref)?.service as
+        | { close: () => Promise<void> }
+        | undefined,
+  };
+}
+
+/**
  * Make `kpid` a promise the peer decides.
  *
  * @param harness - What {@link setUp} returned.
@@ -579,6 +640,58 @@ describe('a writer acting while a crank aborts', () => {
       value: kser('done'),
       notified: ['v3'],
     });
+  });
+
+  it('iO connection accepted: it is hosted in a crank of its own', async () => {
+    const harness = await setUp();
+    const { kernelStore, kernelQueue } = harness;
+    const { listener, connect, connectionAt } = await setUpListener(harness);
+    const accepted = listener.accept();
+    const enqueueInbox = vi.spyOn(kernelQueue, 'enqueueInbox');
+    await abortACrankWhile(harness, async () => {
+      connect();
+      await vi.waitFor(() =>
+        expect(enqueueInbox).toHaveBeenCalledWith(
+          'host an IO connection',
+          expect.any(Function),
+        ),
+      );
+      expect(kernelStore.getAnonymousKernelObjects()).toStrictEqual([]);
+    });
+    const kref = krefOf((await accepted) as SlotValue);
+    expect({
+      recorded: kernelStore.getAnonymousKernelObjects(),
+      pinned: kernelStore.isObjectPinned(kref),
+      routed: connectionAt(kref) !== undefined,
+    }).toStrictEqual({ recorded: [kref], pinned: true, routed: true });
+  });
+
+  it('iO connection closed: it is released in a crank of its own', async () => {
+    const harness = await setUp();
+    const { kernelStore, kernelQueue } = harness;
+    const { listener, connect, connectionAt } = await setUpListener(harness);
+    connect();
+    // The loop has not started, so this is hosted at once.
+    const kref = krefOf((await listener.accept()) as SlotValue);
+    const connection = connectionAt(kref);
+    const enqueueInbox = vi.spyOn(kernelQueue, 'enqueueInbox');
+    let closed: Promise<void> | undefined;
+    await abortACrankWhile(harness, async () => {
+      closed = connection?.close();
+      await vi.waitFor(() =>
+        expect(enqueueInbox).toHaveBeenCalledWith(
+          'release an IO connection',
+          expect.any(Function),
+        ),
+      );
+      expect(kernelStore.isObjectPinned(kref)).toBe(true);
+    });
+    await closed;
+    expect({
+      recorded: kernelStore.getAnonymousKernelObjects(),
+      pinned: kernelStore.isObjectPinned(kref),
+      routed: connectionAt(kref) !== undefined,
+    }).toStrictEqual({ recorded: [], pinned: false, routed: false });
   });
 
   it('peer incarnation change: the new incarnation and its rejections land in a crank of their own', async () => {
