@@ -667,8 +667,8 @@ export class KernelQueue {
       // restart it and terminate the vat only after a certain number of failed
       // retries. This is probably where we should implement the vat restart logic.
     }
-    // Vat termination during delivery is triggered by an illegal syscall
-    // or by syscall.exit().
+    // A vat is terminated for an illegal syscall or a syscall.exit(), made in
+    // a delivery or outside one.
     if (crankResult?.terminate) {
       const { vatId, info } = crankResult.terminate;
       await this.#terminateVat(vatId, info);

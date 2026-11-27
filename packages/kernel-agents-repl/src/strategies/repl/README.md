@@ -10,7 +10,7 @@ An agent's user conceives of actions as capability invocations like `buyNFT('pen
 
 ### REPL Evaluation
 
-Javascript statements are broadly separated into _declarations_, _expressions_, and _everything else_. We can tell them apart using a [parser](./parse/javascript.ts).
+Javascript statements are broadly separated into _declarations_, _expressions_, and _everything else_. We can tell them apart using a [parser](./parse/syntax-tree.ts). Whoever makes the agent supplies the parser, so the agent itself carries no native code; [`makeTreeSitterParser`](./parse/tree-sitter.ts) wraps the native tree-sitter binding.
 
 A declaration alters the namespace of the evaluated lexical scope, i.e. `let x;` or `function foo() {}`. Declarations, expressions and everything else can all alter the state of the REPL (by executing code), e.g. `console.log('hello');` or `foo('bar');`, but an expression has an implied return value, e.g. `foo(bar);` might return `3` even though the value was not assigned.
 

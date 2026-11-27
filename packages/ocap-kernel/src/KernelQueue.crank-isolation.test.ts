@@ -1,4 +1,5 @@
 import type { CapData } from '@endo/marshal';
+import { makePromiseKit } from '@endo/promise-kit';
 import { makeSQLKernelDatabase } from '@metamask/kernel-store/sqlite/nodejs';
 import { delay } from '@metamask/kernel-utils';
 import type { JsonRpcMessage } from '@metamask/kernel-utils';
@@ -7,6 +8,7 @@ import type { DuplexStream } from '@metamask/streams';
 import { describe, it, expect, vi } from 'vitest';
 
 import { KernelQueue } from './KernelQueue.ts';
+import { KernelServiceManager } from './KernelServiceManager.ts';
 import {
   kser,
   kunser,
@@ -23,6 +25,7 @@ import type {
   PlatformServices,
   RunLoopItem,
   VatConfig,
+  VatId,
 } from './types.ts';
 import { VatHandle } from './vats/VatHandle.ts';
 import { VatManager } from './vats/VatManager.ts';
@@ -73,9 +76,11 @@ async function setUp() {
   const [kpid] = kernelStore.initKernelPromise();
   kernelStore.addPromiseSubscriber(asVatId('v3'), kpid);
 
-  const kernelQueue = new KernelQueue(kernelStore, async (vatId) =>
-    kernelStore.markVatAsTerminated(vatId),
-  );
+  const terminated: VatId[] = [];
+  const kernelQueue = new KernelQueue(kernelStore, async (vatId) => {
+    terminated.push(vatId);
+    kernelStore.markVatAsTerminated(vatId);
+  });
 
   const logger = new Logger('test');
   for (const level of ['log', 'warn', 'error', 'debug'] as const) {
@@ -166,6 +171,7 @@ async function setUp() {
     target,
     sentinel,
     kpid,
+    terminated,
   };
 }
 
@@ -241,16 +247,20 @@ async function abortACrankWhile(
       return await vatManager.performVatTermination(item.vatId, item.reason);
     }
     if (item.type === 'remoteInbound') {
+      // As the router discards a peer message that cannot be taken.
       return await remoteManager
         .getRemote(item.remoteId)
-        .deliverInbound(item.message);
+        .deliverInbound(item.message)
+        .catch(() => ({ abort: true }));
     }
     if (item.type === 'peerIncarnation') {
       return remoteManager.applyIncarnationChange(item);
     }
     // Recorded only for the types the rows observe; anything new must be wired
     // to its real handler before a row can say what it did.
-    if (!['send', 'notify', 'dropExports'].includes(item.type)) {
+    if (
+      !['send', 'notify', 'dropExports', 'retireExports'].includes(item.type)
+    ) {
       throw new Error(`test deliver does not handle ${item.type}`);
     }
     delivered.push(item);
@@ -261,6 +271,11 @@ async function abortACrankWhile(
   // A writer that throws kills the loop instead of reaching the abort.
   await Promise.race([abortDelivered, running]);
   await kernelQueue.waitForCrank();
+  // The inbox is taken in order, so whatever the writer put there has
+  // committed once this has. Refused if the writer killed the loop.
+  await kernelQueue
+    .enqueueInbox('follow the writer', () => ({ value: undefined }))
+    .catch(() => undefined);
   // Behind anything the writer queued, so the loop delivers that first.
   // Arrivals take turns with the run queue, so only the writer's first arrival
   // is sure to come before it.
@@ -297,20 +312,6 @@ function notified(delivered: RunLoopItem[], kpid: KRef): string[] {
   return delivered.flatMap((item) =>
     item.type === 'notify' && item.kpid === kpid ? [item.endpointId] : [],
   );
-}
-
-/**
- * Hand `v2`'s syscall to the kernel as its worker would, asserting it was
- * accepted so that a refused syscall cannot pass for a lost one.
- *
- * @param vatSyscall - `v2`'s syscall handler.
- * @param vso - The syscall.
- */
-function syscallFromV2(
-  vatSyscall: VatSyscall,
-  vso: Parameters<VatSyscall['handleSyscall']>[0],
-): void {
-  expect(vatSyscall.handleSyscall(vso)).toStrictEqual(['ok', null]);
 }
 
 /**
@@ -483,7 +484,7 @@ describe('a writer acting while a crank aborts', () => {
     expect(methodsSentTo(delivered, target)).toStrictEqual(['fromPeer']);
   });
 
-  it('peer ACK: the acknowledged message is restored with the aborted crank (gap, #1152)', async () => {
+  it('peer ACK: the acknowledgement lands in a crank of its own', async () => {
     const harness = await setUp();
     const { kernelStore, remote, remoteManager } = harness;
     const pending = await sendOneMessageToPeer(harness);
@@ -492,26 +493,92 @@ describe('a writer acting while a crank aborts', () => {
         PEER_ID,
         JSON.stringify({ ack: 1 }),
       );
-      expect(kernelStore.getPendingMessage(remote.remoteId, 1)).toBeUndefined();
+      expect(kernelStore.getPendingMessage(remote.remoteId, 1)).toBe(pending);
     });
     expect({
       pending: kernelStore.getPendingMessage(remote.remoteId, 1),
       startSeq: kernelStore.getRemoteSeqState(remote.remoteId)?.startSeq,
-    }).toStrictEqual({ pending, startSeq: 1 });
+    }).toStrictEqual({ pending: undefined, startSeq: 2 });
   });
 
-  it('peer give-up: its rejections are lost with the aborted crank (gap, #1152)', async () => {
+  it('peer ACK on a message its crank discards: the acknowledgement is still written', async () => {
+    const harness = await setUp();
+    const { kernelStore, remote, remoteManager } = harness;
+    await sendOneMessageToPeer(harness);
+    await abortACrankWhile(harness, async () => {
+      await remoteManager.handleRemoteMessage(
+        PEER_ID,
+        JSON.stringify({
+          seq: 1,
+          ack: 1,
+          method: 'redeemURLReply',
+          params: [true, 'no-such-key', 'ro+5'],
+        }),
+      );
+    });
+    expect({
+      pending: kernelStore.getPendingMessage(remote.remoteId, 1),
+      startSeq: kernelStore.getRemoteSeqState(remote.remoteId)?.startSeq,
+    }).toStrictEqual({ pending: undefined, startSeq: 2 });
+  });
+
+  it('peer give-up: its rejections land in a crank of their own', async () => {
     const harness = await setUp();
     const { kernelStore, kpid, onGiveUp } = harness;
     letPeerDecide(harness);
     const delivered = await abortACrankWhile(harness, async () => {
       onGiveUp(PEER_ID);
-      expect(kernelStore.getKernelPromise(kpid).state).toBe('rejected');
+      expect(kernelStore.getKernelPromise(kpid).state).toBe('unresolved');
     });
+    const { state, value } = kernelStore.getKernelPromise(kpid);
     expect({
-      state: kernelStore.getKernelPromise(kpid).state,
+      state,
+      reason: value?.body,
       notified: notified(delivered, kpid),
-    }).toStrictEqual({ state: 'unresolved', notified: [] });
+    }).toStrictEqual({
+      state: 'rejected',
+      reason: expect.stringContaining('[KERNEL:CONNECTION_LOST]'),
+      notified: ['v3'],
+    });
+  });
+
+  it('kernel service result: the resolution lands in a crank of its own', async () => {
+    const harness = await setUp();
+    const { kernelStore, kernelQueue, kpid } = harness;
+    const serviceManager = new KernelServiceManager({
+      kernelStore,
+      kernelQueue,
+    });
+    const { promise, resolve } = makePromiseKit<string>();
+    const { kref } = serviceManager.registerKernelServiceObject('slow', {
+      work: async () => promise,
+    });
+    kernelStore.setPromiseDecider(kpid, 'kernel');
+    serviceManager.invokeKernelService(kref, {
+      methargs: kser(['work', []]),
+      result: kpid,
+    });
+    const enqueueInbox = vi.spyOn(kernelQueue, 'enqueueInbox');
+    const delivered = await abortACrankWhile(harness, async () => {
+      resolve('done');
+      await vi.waitFor(() =>
+        expect(enqueueInbox).toHaveBeenCalledWith(
+          'settle a kernel service result',
+          expect.any(Function),
+        ),
+      );
+      expect(kernelStore.getKernelPromise(kpid).state).toBe('unresolved');
+    });
+    const { state, value } = kernelStore.getKernelPromise(kpid);
+    expect({
+      state,
+      value,
+      notified: notified(delivered, kpid),
+    }).toStrictEqual({
+      state: 'fulfilled',
+      value: kser('done'),
+      notified: ['v3'],
+    });
   });
 
   it('peer incarnation change: the new incarnation and its rejections land in a crank of their own', async () => {
@@ -537,45 +604,80 @@ describe('a writer acting while a crank aborts', () => {
     });
   });
 
-  it('vat async resolve: the resolution is lost with the aborted crank (gap, #1152)', async () => {
+  it('vat late resolve: the resolution lands in a crank of its own', async () => {
     const harness = await setUp();
     const { kernelStore, vatSyscall, kpid } = harness;
     kernelStore.setPromiseDecider(kpid, asVatId('v2'));
     kernelStore.addCListEntry(asVatId('v2'), kpid, asVRef('p+5'));
     const delivered = await abortACrankWhile(harness, async () => {
-      syscallFromV2(vatSyscall, ['resolve', [['p+5', false, kser('done')]]]);
-      expect(kernelStore.getKernelPromise(kpid).state).toBe('fulfilled');
+      vatSyscall.handleLateSyscall(['resolve', [['p+5', false, kser('done')]]]);
+      expect(kernelStore.getKernelPromise(kpid).state).toBe('unresolved');
+    });
+    const { state, value } = kernelStore.getKernelPromise(kpid);
+    expect({
+      state,
+      value,
+      notified: notified(delivered, kpid),
+    }).toStrictEqual({
+      state: 'fulfilled',
+      value: kser('done'),
+      notified: ['v3'],
+    });
+  });
+
+  it('vat late sends: the messages land in cranks of their own, in order', async () => {
+    const harness = await setUp();
+    const { vatSyscall, target } = harness;
+    const delivered = await abortACrankWhile(harness, async () => {
+      for (const [method, result] of [
+        ['first', 'p+6'],
+        ['second', 'p+7'],
+      ]) {
+        vatSyscall.handleLateSyscall([
+          'send',
+          'o-1',
+          { methargs: kser([method, []]), result },
+        ]);
+      }
+    });
+    expect(methodsSentTo(delivered, target)).toStrictEqual(['first', 'second']);
+  });
+
+  it('vat late illegal resolve: its crank rolls back and the vat is terminated', async () => {
+    const harness = await setUp();
+    const { kernelStore, vatSyscall, kpid, terminated } = harness;
+    kernelStore.setPromiseDecider(kpid, asVatId('v2'));
+    kernelStore.addCListEntry(asVatId('v2'), kpid, asVRef('p+5'));
+    const delivered = await abortACrankWhile(harness, async () => {
+      vatSyscall.handleLateSyscall([
+        'resolve',
+        [
+          ['p+5', false, kser('done')],
+          ['p+5', false, kser('again')],
+        ],
+      ]);
     });
     expect({
       state: kernelStore.getKernelPromise(kpid).state,
       notified: notified(delivered, kpid),
-    }).toStrictEqual({ state: 'unresolved', notified: [] });
+      terminated: terminated.includes(asVatId('v2')),
+    }).toStrictEqual({ state: 'unresolved', notified: [], terminated: true });
   });
 
-  it('vat async send: the message is lost with the aborted crank (gap, #1152)', async () => {
-    const harness = await setUp();
-    const { vatSyscall, target } = harness;
-    const delivered = await abortACrankWhile(harness, async () => {
-      syscallFromV2(vatSyscall, [
-        'send',
-        'o-1',
-        { methargs: kser(['fromVat', []]), result: 'p+6' },
-      ]);
-    });
-    expect(methodsSentTo(delivered, target)).toStrictEqual([]);
-  });
-
-  it('vat async dropImports: the drop is lost with the aborted crank (gap, #1152)', async () => {
+  it('vat late dropImports: the drop lands in a crank of its own', async () => {
     const harness = await setUp();
     const { kernelStore, vatSyscall, target } = harness;
     const delivered = await abortACrankWhile(harness, async () => {
-      syscallFromV2(vatSyscall, ['dropImports', ['o-1']]);
-      expect(kernelStore.getReachableFlag(asVatId('v2'), target)).toBe(false);
+      vatSyscall.handleLateSyscall(['dropImports', ['o-1']]);
+      expect(kernelStore.getReachableFlag(asVatId('v2'), target)).toBe(true);
     });
     expect({
       reachable: kernelStore.getReachableFlag(asVatId('v2'), target),
       dropExports: delivered.filter((item) => item.type === 'dropExports'),
-    }).toStrictEqual({ reachable: true, dropExports: [] });
+    }).toStrictEqual({
+      reachable: false,
+      dropExports: [{ type: 'dropExports', endpointId: 'v3', krefs: [target] }],
+    });
   });
 
   it('lost-vat retirement, when the next crank aborts too: the vat stays retired', async () => {
