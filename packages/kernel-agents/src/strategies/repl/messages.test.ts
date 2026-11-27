@@ -1,4 +1,3 @@
-import 'ses';
 import '@ocap/repo-tools/test-utils/mock-endoify';
 import { describe, it, expect } from 'vitest';
 

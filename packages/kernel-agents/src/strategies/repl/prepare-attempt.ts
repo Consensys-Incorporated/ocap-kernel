@@ -1,7 +1,8 @@
 import { mergeDisjointRecords } from '@metamask/kernel-utils';
 import type { Logger } from '@metamask/logger';
-import { extractCapabilitySchemas } from '@ocap/kernel-agents/capabilities/capability';
-import { makeEnd } from '@ocap/kernel-agents/capabilities/end';
+
+import { extractCapabilitySchemas } from '../../capabilities/capability.ts';
+import { makeEnd } from '../../capabilities/end.ts';
 import type {
   PREP,
   Objective,
@@ -9,9 +10,8 @@ import type {
   CapabilityRecord,
   Progress,
   PrepareAttempt,
-} from '@ocap/kernel-agents/types';
-import { ifDefined } from '@ocap/kernel-agents/utils';
-
+} from '../../types.ts';
+import { ifDefined } from '../../utils.ts';
 import { makeEvaluator } from './evaluator.ts';
 import type { State, Observation, Action } from './messages.ts';
 import {

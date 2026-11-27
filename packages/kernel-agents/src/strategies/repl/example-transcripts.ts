@@ -1,7 +1,7 @@
-import { extractCapabilitySchemas } from '@ocap/kernel-agents/capabilities/capability';
-import { end } from '@ocap/kernel-agents/capabilities/end';
-import { search } from '@ocap/kernel-agents/capabilities/examples';
-import type { CapabilityRecord } from '@ocap/kernel-agents/types';
+import { extractCapabilitySchemas } from '../../capabilities/capability.ts';
+import { end } from '../../capabilities/end.ts';
+import { search } from '../../capabilities/examples.ts';
+import type { CapabilityRecord } from '../../types.ts';
 
 import type { ReplTranscript } from './messages.ts';
 import {

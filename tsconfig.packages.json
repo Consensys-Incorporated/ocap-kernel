@@ -74,6 +74,9 @@
       "@ocap/kernel-agents/json": [
         "./packages/kernel-agents/src/strategies/json-agent.ts"
       ],
+      "@ocap/kernel-agents/repl": [
+        "./packages/kernel-agents/src/strategies/repl-agent.ts"
+      ],
       "@ocap/kernel-agents/test-utils": [
         "./packages/kernel-agents/src/test-utils.ts"
       ],

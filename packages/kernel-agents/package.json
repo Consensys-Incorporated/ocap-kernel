@@ -25,6 +25,10 @@
       "types": "./dist/strategies/chat-agent.d.ts",
       "default": "./dist/strategies/chat-agent.js"
     },
+    "./repl": {
+      "types": "./dist/strategies/repl-agent.d.ts",
+      "default": "./dist/strategies/repl-agent.js"
+    },
     "./agent": {
       "types": "./dist/agent.d.ts",
       "default": "./dist/agent.js"
@@ -103,6 +107,7 @@
     "@metamask/kernel-language-model-service": "workspace:^",
     "@metamask/kernel-utils": "workspace:^",
     "@metamask/logger": "workspace:^",
+    "acorn": "^8.15.0",
     "partial-json": "^0.1.7",
     "ses": "^2.3.0"
   }

@@ -1,7 +1,7 @@
 import { stringify } from '@metamask/kernel-utils';
-import { Message } from '@ocap/kernel-agents/types/messages';
-import type { Transcript } from '@ocap/kernel-agents/types/messages';
 
+import { Message } from '../../types/messages.ts';
+import type { Transcript } from '../../types/messages.ts';
 import { makeCompartment } from './compartment.ts';
 import { parseFirstStatement } from './parse/statement.ts';
 import type { StatementNode } from './parse/statement.ts';

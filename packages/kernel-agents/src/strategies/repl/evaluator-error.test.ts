@@ -1,4 +1,3 @@
-import 'ses';
 import '@ocap/repo-tools/test-utils/mock-endoify';
 import { EvaluatorError, SampleGenerationError } from '@metamask/kernel-errors';
 import { describe, it, expect } from 'vitest';
