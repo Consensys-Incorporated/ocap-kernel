@@ -6,6 +6,7 @@ import type {
 import { build } from 'vite';
 
 import type { VatBundle } from '../vat-bundle.ts';
+import { evadeCensorPlugin } from './evade-censor-plugin.ts';
 import { exportMetadataPlugin } from './export-metadata-plugin.ts';
 import { replaceNodeEnvPlugin } from './replace-node-env-plugin.ts';
 import { stripCommentsPlugin } from './strip-comments-plugin.ts';
@@ -106,6 +107,7 @@ export async function bundleVat(sourcePath: string): Promise<VatBundle> {
             removeDynamicImportsPlugin(),
             replaceNodeEnvPlugin(),
             stripCommentsPlugin(),
+            evadeCensorPlugin(),
             metadataPlugin,
           ],
         },
