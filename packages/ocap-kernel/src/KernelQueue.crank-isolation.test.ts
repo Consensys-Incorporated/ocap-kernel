@@ -192,10 +192,14 @@ async function abortACrankWhile(
 ): Promise<RunLoopItem[]> {
   const { kernelQueue, vatManager, remoteManager, doomed, target, sentinel } =
     harness;
-  kernelQueue.enqueueSend(doomed, {
-    methargs: kser(['work', []]),
-    result: null,
-  });
+  kernelQueue.enqueueSend(
+    doomed,
+    {
+      methargs: kser(['work', []]),
+      result: null,
+    },
+    { sender: 'kernel' },
+  );
 
   const delivered: RunLoopItem[] = [];
   let abortedOnce = false;
@@ -279,10 +283,14 @@ async function abortACrankWhile(
   // Behind anything the writer queued, so the loop delivers that first.
   // Arrivals take turns with the run queue, so only the writer's first arrival
   // is sure to come before it.
-  kernelQueue.enqueueSend(sentinel, {
-    methargs: kser(['stop', []]),
-    result: null,
-  });
+  kernelQueue.enqueueSend(
+    sentinel,
+    {
+      methargs: kser(['stop', []]),
+      result: null,
+    },
+    { sender: 'kernel' },
+  );
   await expect(running).rejects.toThrow(KILL_RUN_LOOP);
   // A writer that waits for the crank may still be finishing.
   await delay(10);
@@ -554,10 +562,11 @@ describe('a writer acting while a crank aborts', () => {
       work: async () => promise,
     });
     kernelStore.setPromiseDecider(kpid, 'kernel');
-    serviceManager.invokeKernelService(kref, {
-      methargs: kser(['work', []]),
-      result: kpid,
-    });
+    serviceManager.invokeKernelService(
+      kref,
+      { methargs: kser(['work', []]), result: kpid },
+      'kernel',
+    );
     const enqueueInbox = vi.spyOn(kernelQueue, 'enqueueInbox');
     const delivered = await abortACrankWhile(harness, async () => {
       resolve('done');
@@ -690,10 +699,14 @@ describe('a writer acting while a crank aborts', () => {
       doomed,
       sentinel,
     } = harness;
-    kernelQueue.enqueueSend(doomed, {
-      methargs: kser(['work', []]),
-      result: null,
-    });
+    kernelQueue.enqueueSend(
+      doomed,
+      {
+        methargs: kser(['work', []]),
+        result: null,
+      },
+      { sender: 'kernel' },
+    );
     let doomedDeliveries = 0;
     const deliver = async (
       item: RunLoopItem,
@@ -723,10 +736,14 @@ describe('a writer acting while a crank aborts', () => {
 
     const running = kernelQueue.run(deliver);
     await vi.waitFor(() => expect(doomedDeliveries).toBe(3));
-    kernelQueue.enqueueSend(sentinel, {
-      methargs: kser(['stop', []]),
-      result: null,
-    });
+    kernelQueue.enqueueSend(
+      sentinel,
+      {
+        methargs: kser(['stop', []]),
+        result: null,
+      },
+      { sender: 'kernel' },
+    );
     await expect(running).rejects.toThrow(KILL_RUN_LOOP);
     harness.remoteManager.cleanup();
 

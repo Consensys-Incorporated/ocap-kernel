@@ -14,6 +14,7 @@ import type {
 import type { StoreContext } from '../types.ts';
 import * as clistModule from './clist.ts';
 import * as reachableModule from './reachable.ts';
+import * as accountabilityRecordsModule from './accountability-records.ts';
 import * as refCountModule from './refcount.ts';
 import { getTranslators } from './translators.ts';
 import * as vatModule from './vat.ts';
@@ -26,11 +27,22 @@ describe('getTranslators', () => {
   const mockExportFromEndpoint = vi.fn();
   const mockSetReachableFlag = vi.fn();
   const mockKernelRefExists = vi.fn();
-  const mockCtx = {} as StoreContext;
+  const mockRecordIntroduction = vi.fn();
+  const mockCtx = { recordIntroductions: true } as StoreContext;
 
   beforeEach(() => {
     vi.clearAllMocks();
     mockKernelRefExists.mockReturnValue(true);
+    mockCtx.recordIntroductions = true;
+
+    vi.spyOn(
+      accountabilityRecordsModule,
+      'getAccountabilityRecordMethods',
+    ).mockReturnValue({
+      recordIntroduction: mockRecordIntroduction,
+    } as unknown as ReturnType<
+      typeof accountabilityRecordsModule.getAccountabilityRecordMethods
+    >);
 
     vi.spyOn(clistModule, 'getCListMethods').mockReturnValue({
       krefToEref: mockKrefToEref,
@@ -75,6 +87,32 @@ describe('getTranslators', () => {
       expect(mockKrefToEref).toHaveBeenCalledWith(vatId, kref);
       expect(mockAllocateErefForKref).toHaveBeenCalledWith(vatId, kref);
       expect(result).toStrictEqual(expectedEref);
+    });
+
+    it('records an introduction for an object it imports', () => {
+      const vatId = asVatId('v1');
+      const kref = asKRef('ko1');
+      mockKrefToEref.mockReturnValue(undefined);
+      mockAllocateErefForKref.mockReturnValue(asVRef('o-1'));
+      const { translateRefKtoE } = getTranslators(mockCtx);
+      translateRefKtoE(vatId, kref, true);
+      expect(mockRecordIntroduction).toHaveBeenCalledWith({
+        kref,
+        endpoint: vatId,
+      });
+    });
+
+    it.each([
+      ['a promise', asKRef('kp1'), true],
+      ['an object with introduction recording off', asKRef('ko1'), false],
+    ])('records no introduction for %s', (_what, kref, recording) => {
+      const vatId = asVatId('v1');
+      mockCtx.recordIntroductions = recording;
+      mockKrefToEref.mockReturnValue(undefined);
+      mockAllocateErefForKref.mockReturnValue(asVRef('o-1'));
+      const { translateRefKtoE } = getTranslators(mockCtx);
+      translateRefKtoE(vatId, kref, true);
+      expect(mockRecordIntroduction).not.toHaveBeenCalled();
     });
 
     it('refuses to import a kref the kernel has deleted', () => {

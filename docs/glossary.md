@@ -110,6 +110,30 @@ Deliveries can be of type 'message', 'notify', 'dropExports', 'retireExports',
 'retireImports', or 'bringOutYourDead'. See the [kernel router](#kernel-router)
 ([KernelRouter](../packages/ocap-kernel/src/KernelRouter.ts)) for delivery logic.
 
+### accountability record
+
+A row the [kernel](#kernel) writes, inside the [crank's](#crank) transaction, about
+something it saw done with an object: an [introduction](#introduction), a delivery to a
+[tracked object](#tracked-object), or a conveyance of one. Each names its witness, the
+layer vouching for it, which for now is always the kernel. Records outlive the objects
+they describe and are deleted only by `Kernel.pruneAccountabilityRecords`, or with
+the rest of the store by `clearStorage`. See
+[Accountability and provenance](./accountability.md) and
+[accountability-records.ts](../packages/ocap-kernel/src/store/methods/accountability-records.ts).
+
+### introduction
+
+An endpoint's first acquisition of an object, recorded when the kernel allocates the
+[clist](#clist) entry for it, naming the [crank](#crank) and the sender of the message or
+[promise resolution](#promise-resolution) that carried it. Recorded for every object
+unless the kernel is made with `accountability.recordIntroductions` off.
+
+### tracked object
+
+An object a holder has asked the `accountability` [kernel service](#kernel-service) to
+record every delivery to and every conveyance of, in this kernel. It stays tracked, and
+pinned, until the last holder that asked untracks it or is terminated, or its owner is.
+
 ### marshaling
 
 The process of serializing and deserializing data for transmission between [vats](#vat).

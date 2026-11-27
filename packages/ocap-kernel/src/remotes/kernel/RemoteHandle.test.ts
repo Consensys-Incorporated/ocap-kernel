@@ -683,10 +683,11 @@ describe('RemoteHandle', () => {
       params: ['message', targetRRef, message],
     });
     await receiveAndRunCrank(remote, delivery);
-    expect(mockKernelQueue.enqueueSend).toHaveBeenCalledWith(targetKRef, {
-      methargs: message.methargs,
-      result: resultKRef,
-    });
+    expect(mockKernelQueue.enqueueSend).toHaveBeenCalledWith(
+      targetKRef,
+      { methargs: message.methargs, result: resultKRef },
+      { sender: remote.remoteId },
+    );
     expect(mockKernelStore.translateRefEtoK(remote.remoteId, targetRRef)).toBe(
       targetKRef,
     );

@@ -1,4 +1,11 @@
-import type { KVStore, KernelDatabase, VatStore } from '@metamask/kernel-store';
+import type {
+  KVStore,
+  KernelDatabase,
+  AccountabilityRecordFilter,
+  AccountabilityRecordRow,
+  AccountabilityRecordStore,
+  VatStore,
+} from '@metamask/kernel-store';
 
 import { markStoreFaults } from '../src/store/utils/store-fault.ts';
 import { keySearch } from '../src/utils/key-search.ts';
@@ -104,6 +111,50 @@ function makeMapVatStore(_vatID: string): ClearableVatStore {
 }
 
 /**
+ * Make a mock accountability record store backed by an array.
+ *
+ * @returns The mock {@link AccountabilityRecordStore}.
+ */
+export function makeArrayAccountabilityRecordStore(): AccountabilityRecordStore {
+  const rows: AccountabilityRecordRow[] = [];
+  let nextSeq = 1;
+  const matches =
+    (filter: AccountabilityRecordFilter) =>
+    (row: AccountabilityRecordRow): boolean =>
+      (filter.kind === undefined || row.kind === filter.kind) &&
+      (filter.kref === undefined || row.kref === filter.kref) &&
+      (filter.endpoint === undefined || row.endpoint === filter.endpoint) &&
+      (filter.sender === undefined || row.sender === filter.sender) &&
+      (filter.trace === undefined || row.trace === filter.trace) &&
+      (filter.involving === undefined ||
+        row.endpoint === filter.involving ||
+        row.sender === filter.involving) &&
+      (filter.crank === undefined || row.crank === filter.crank) &&
+      (filter.throughCrank === undefined || row.crank <= filter.throughCrank) &&
+      (filter.afterSeq === undefined || row.seq > filter.afterSeq);
+  const select = (
+    filter: AccountabilityRecordFilter,
+  ): AccountabilityRecordRow[] =>
+    rows.filter(matches(filter)).slice(0, filter.limit ?? rows.length);
+  return {
+    append: (row) => {
+      const seq = nextSeq;
+      nextSeq += 1;
+      rows.push({ ...row, seq });
+      return seq;
+    },
+    query: (filter = {}) => select(filter),
+    delete: (filter = {}) => {
+      const doomed = new Set(select(filter).map((row) => row.seq));
+      const kept = rows.filter((row) => !doomed.has(row.seq));
+      rows.length = 0;
+      rows.push(...kept);
+      return doomed.size;
+    },
+  };
+}
+
+/**
  * Make a mock Kernel database using Maps.
  *
  * @returns the mock {@link KernelDatabase}.
@@ -111,10 +162,13 @@ function makeMapVatStore(_vatID: string): ClearableVatStore {
 export function makeMapKernelDatabase(): KernelDatabase {
   const map = new Map<string, string>();
   const vatStores = new Map<string, ClearableVatStore>();
+  const accountabilityRecords = makeArrayAccountabilityRecordStore();
   return {
     kernelKVStore: makeMapKVStoreInternal(map),
+    accountabilityRecords,
     clear: () => {
       map.clear();
+      accountabilityRecords.delete();
       for (const vs of vatStores.values()) {
         vs.clear();
       }

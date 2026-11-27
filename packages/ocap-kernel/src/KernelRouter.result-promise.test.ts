@@ -84,10 +84,14 @@ describe('a result promise whose delivery fails', () => {
     kernelStore.initEndpoint(r1);
     const target = kernelStore.exportFromEndpoint(r1, asRRef('ro+1'));
     const [result] = kernelStore.initKernelPromise();
-    kernelQueue.enqueueSend(target, {
-      methargs: kser(['ping', []]),
-      result,
-    });
+    kernelQueue.enqueueSend(
+      target,
+      {
+        methargs: kser(['ping', []]),
+        result,
+      },
+      { sender: 'kernel' },
+    );
     return result;
   }
 

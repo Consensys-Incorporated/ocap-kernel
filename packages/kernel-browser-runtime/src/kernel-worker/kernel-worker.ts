@@ -1,3 +1,4 @@
+import { makePromiseKit } from '@endo/promise-kit';
 import { JsonRpcServer } from '@metamask/json-rpc-engine/v2';
 import { makeSQLKernelDatabase } from '@metamask/kernel-store/sqlite/wasm';
 import { isJsonRpcMessage, stringify } from '@metamask/kernel-utils';
@@ -16,6 +17,7 @@ import {
 } from '../background-captp.ts';
 import type { CapTPMessage } from '../background-captp.ts';
 import { receiveInternalConnections } from '../internal-comms/internal-connections.ts';
+import type { HandleInternalMessage } from '../internal-comms/internal-connections.ts';
 import { PlatformServicesClient } from '../PlatformServicesClient.ts';
 import { setupConsoleForwarding } from '../utils/console-forwarding.ts';
 import { makeKernelCapTP } from './captp/index.ts';
@@ -32,6 +34,11 @@ main().catch(logger.error);
  * Run the kernel.
  */
 async function main(): Promise<void> {
+  // Before anything slow: a panel asks to connect over a broadcast channel,
+  // which keeps nothing for a listener that comes later.
+  const handlerKit = makePromiseKit<HandleInternalMessage>();
+  receiveInternalConnections({ handlerPromise: handlerKit.promise, logger });
+
   const port = await receiveMessagePort(
     (listener) => globalThis.addEventListener('message', listener),
     (listener) => globalThis.removeEventListener('message', listener),
@@ -86,20 +93,17 @@ async function main(): Promise<void> {
     },
   });
 
-  const handlerP = kernelP.then((kernel) => {
-    const server = new JsonRpcServer({
-      middleware: [
-        makeLoggingMiddleware(logger.subLogger('internal-rpc')),
-        makePanelMessageMiddleware(kernel, kernelDatabase),
-      ],
-    });
-    return async (request: JsonRpcMessage) => server.handle(request);
-  });
-
-  receiveInternalConnections({
-    handlerPromise: handlerP,
-    logger,
-  });
+  handlerKit.resolve(
+    kernelP.then((kernel) => {
+      const server = new JsonRpcServer({
+        middleware: [
+          makeLoggingMiddleware(logger.subLogger('internal-rpc')),
+          makePanelMessageMiddleware(kernel, kernelDatabase),
+        ],
+      });
+      return async (request: JsonRpcMessage) => server.handle(request);
+    }),
+  );
 
   const kernel = await kernelP;
 

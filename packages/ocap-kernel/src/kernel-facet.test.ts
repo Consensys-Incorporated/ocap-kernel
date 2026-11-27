@@ -32,6 +32,7 @@ const makeMockKernel = (): KernelFacetSource => ({
     kref: asKRef('ko1'),
     service: {},
     systemOnly: false,
+    withCaller: false,
   }),
   releaseResult: async () => Promise.resolve(),
   reset: async () => Promise.resolve(),

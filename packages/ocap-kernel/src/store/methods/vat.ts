@@ -5,6 +5,7 @@ import { getCListMethods } from './clist.ts';
 import { getObjectMethods } from './object.ts';
 import { getPromiseMethods } from './promise.ts';
 import { getReachableMethods } from './reachable.ts';
+import { getAccountabilityRecordMethods } from './accountability-records.ts';
 import { getRemoteMethods } from './remote.ts';
 import type {
   EndpointId,
@@ -44,6 +45,7 @@ export function getVatMethods(ctx: StoreContext) {
   const { initKernelObject } = getObjectMethods(ctx);
   const { addCListEntry } = getCListMethods(ctx);
   const { getRemoteIDs } = getRemoteMethods(ctx);
+  const { untrackAll, untrackEndpoint } = getAccountabilityRecordMethods(ctx);
 
   /**
    * Delete all persistent state associated with an endpoint.
@@ -59,6 +61,7 @@ export function getVatMethods(ctx: StoreContext) {
    * @param endpointId - The endpoint whose state is to be deleted.
    */
   function deleteEndpoint(endpointId: EndpointId): void {
+    untrackEndpoint(endpointId);
     const prefix = getCListPrefix(endpointId);
     // Snapshot the keys: forgetKref deletes both halves of a pair, so mutating
     // while walking the live key sequence would step over entries.
@@ -289,6 +292,9 @@ export function getVatMethods(ctx: StoreContext) {
       ctx.kv.delete(getSlotKey(vatID, vatSlot));
       // An export entry holds no count, so there is nothing to release; the
       // object is now orphaned, and GC retires it once importers let go.
+      // Tracking would pin it past that, for records of deliveries to an
+      // object that no longer exists.
+      untrackAll(kref);
       ctx.maybeFreeKrefs.add(kref);
       work.exports += 1;
     }
@@ -422,6 +428,7 @@ export function getVatMethods(ctx: StoreContext) {
         const { vatSlot } = getReachableAndVatSlot(endpointId, kref);
         ctx.kv.delete(getSlotKey(endpointId, kref));
         ctx.kv.delete(getSlotKey(endpointId, vatSlot));
+        untrackAll(kref);
         ctx.maybeFreeKrefs.add(kref);
       }
     }

@@ -225,9 +225,11 @@ describe('c-list reference accounting', () => {
       // The caller rejects the orphans first, which is what releases the
       // unsettled-promise reference and clears the decider
       expect([...kernelStore.getPromisesByDecider(v1)]).toStrictEqual([kpid]);
-      kernelStore.resolveKernelPromise(kpid, true, {
-        body: '#"gone"',
-        slots: [],
+      kernelStore.resolveKernelPromise({
+        kpid,
+        rejected: true,
+        value: { body: '#"gone"', slots: [] },
+        resolver: v1,
       });
       kernelStore.markVatAsTerminated(v1);
 

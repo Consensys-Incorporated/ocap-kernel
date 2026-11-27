@@ -6,7 +6,7 @@ import { delay, waitUntilQuiescent } from '@metamask/kernel-utils';
 import { Logger } from '@metamask/logger';
 import type { DuplexStream } from '@metamask/streams';
 import type { Mocked, MockInstance } from 'vitest';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { assert, describe, it, expect, vi, beforeEach } from 'vitest';
 
 import { Kernel } from './Kernel.ts';
 import { kser } from './liveslots/kernel-marshal.ts';
@@ -25,6 +25,9 @@ import type {
 import { VatHandle } from './vats/VatHandle.ts';
 import { asKRef, asSubclusterId, asVatId } from '../test/branded.ts';
 import { KernelServiceManager } from './KernelServiceManager.ts';
+import * as storeModule from './store/index.ts';
+import { makeKernelStore } from './store/index.ts';
+import type { KernelStore } from './store/index.ts';
 import { makeMapKernelDatabase } from '../test/storage.ts';
 import { markStoreFaults } from './store/utils/store-fault.ts';
 
@@ -1955,7 +1958,7 @@ describe('Kernel', () => {
           helperStoppedBeforeRunLoop: true,
           vats: ['v3', 'v4'],
           subclusters: [{ id: 's2', vats: { boot: 'v3', helper: 'v4' } }],
-          root: 'ko6',
+          root: 'ko7',
         });
       },
     );
@@ -2006,6 +2009,117 @@ describe('Kernel', () => {
     });
   });
 
+  describe('accountability', () => {
+    it('registers the accountability service with the caller passed in', async () => {
+      const register = vi.spyOn(
+        KernelServiceManager.prototype,
+        'registerKernelServiceObject',
+      );
+      await Kernel.make(mockPlatformServices, mockKernelDatabase);
+      expect(register).toHaveBeenCalledWith(
+        'accountability',
+        expect.anything(),
+        { withCaller: true },
+      );
+    });
+
+    it.each([
+      ['records introductions by default', {}, 1],
+      [
+        'records no introductions when asked not to',
+        { accountability: { recordIntroductions: false } },
+        0,
+      ],
+    ])('%s', async (_what, options, expected) => {
+      let kernelStore: KernelStore | undefined;
+      vi.spyOn(storeModule, 'makeKernelStore').mockImplementationOnce(
+        (...args) => {
+          kernelStore = makeKernelStore(...args);
+          return kernelStore;
+        },
+      );
+      await Kernel.make(mockPlatformServices, mockKernelDatabase, options);
+      assert(kernelStore);
+      const kref = kernelStore.initKernelObject(asVatId('v1'));
+      kernelStore.initEndpoint(asVatId('v2'));
+      kernelStore.translateRefKtoE(asVatId('v2'), kref, true);
+      expect(
+        kernelStore.getAccountabilityRecords({ kind: 'introduction' }),
+      ).toHaveLength(expected);
+    });
+
+    it('exports and prunes records', async () => {
+      const kernel = await Kernel.make(
+        mockPlatformServices,
+        mockKernelDatabase,
+      );
+      mockKernelDatabase.accountabilityRecords.append({
+        kind: 'conveyance',
+        witness: 'kernel',
+        crank: 1,
+        kref: 'ko1',
+        endpoint: 'v1',
+        sender: 'v2',
+        trace: null,
+        data: JSON.stringify({
+          kind: 'conveyance',
+          witness: 'kernel',
+          crankNumber: 1,
+          kref: 'ko1',
+          sender: 'v2',
+          to: 'v1',
+          via: 'message',
+          carrier: 'ko1',
+        }),
+      });
+      expect(
+        await kernel.exportAccountabilityRecords({ kref: 'ko1' }),
+      ).toStrictEqual([
+        {
+          seq: 1,
+          kind: 'conveyance',
+          witness: 'kernel',
+          crankNumber: 1,
+          kref: 'ko1',
+          sender: 'v2',
+          to: 'v1',
+          via: 'message',
+          carrier: 'ko1',
+        },
+      ]);
+      expect(await kernel.pruneAccountabilityRecords({ kref: 'ko2' })).toBe(0);
+      expect(await kernel.pruneAccountabilityRecords()).toBe(1);
+      expect(await kernel.exportAccountabilityRecords()).toStrictEqual([]);
+    });
+
+    it.each([
+      ['a field left undefined', { kref: undefined }],
+      ['a field it does not know', { krefs: 'ko1' }],
+    ])('refuses a filter with %s, deleting nothing', async (_what, filter) => {
+      const kernel = await Kernel.make(
+        mockPlatformServices,
+        mockKernelDatabase,
+      );
+      mockKernelDatabase.accountabilityRecords.append({
+        kind: 'introduction',
+        witness: 'kernel',
+        crank: 1,
+        kref: 'ko1',
+        endpoint: 'v1',
+        sender: null,
+        trace: null,
+        data: '{}',
+      });
+      await expect(
+        kernel.pruneAccountabilityRecords(filter as never),
+      ).rejects.toThrow(/kref/u);
+      await expect(
+        kernel.exportAccountabilityRecords(filter as never),
+      ).rejects.toThrow(/kref/u);
+      expect(await kernel.exportAccountabilityRecords()).toHaveLength(1);
+    });
+  });
+
   describe('pinVatRoot and unpinVatRoot', () => {
     it('pins and unpins a vat root correctly', async () => {
       const kernel = await Kernel.make(
@@ -2014,7 +2128,7 @@ describe('Kernel', () => {
       );
       const config = makeSingleVatClusterConfig();
       await kernel.launchSubcluster(config);
-      expect(await kernel.pinVatRoot(asVatId('v1'))).toBe('ko4');
+      expect(await kernel.pinVatRoot(asVatId('v1'))).toBe('ko5');
       expect(await kernel.unpinVatRoot(asVatId('v1'))).toBeUndefined();
     });
   });

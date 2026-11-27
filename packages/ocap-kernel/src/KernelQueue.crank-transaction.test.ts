@@ -195,10 +195,14 @@ describe('the reference count audit inside a crank', () => {
     kernelStore.setVatConfig(asVatId('v1'), { bundleName: 'vat1' });
     kernelStore.initEndpoint(asVatId('v1'));
     const target = kernelStore.exportFromEndpoint(asVatId('v1'), asVRef('o+1'));
-    kernelQueue.enqueueSend(target, {
-      methargs: kser(['ping', []]),
-      result: null,
-    });
+    kernelQueue.enqueueSend(
+      target,
+      {
+        methargs: kser(['ping', []]),
+        result: null,
+      },
+      { sender: 'kernel' },
+    );
 
     let delivered = 0;
     const deliver = async (item: RunLoopItem): Promise<undefined> => {
@@ -213,7 +217,7 @@ describe('the reference count audit inside a crank', () => {
         kernelQueue.enqueueSend(
           target,
           { methargs: kser(['pong', []]), result: null },
-          false,
+          { sender: 'kernel', immediate: false },
         );
         return undefined;
       }

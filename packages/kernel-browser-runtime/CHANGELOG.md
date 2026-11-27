@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- The kernel worker listens for panel connections before it opens its database and starts the kernel, so a panel that opens during a slow start is no longer left waiting forever ([#1308](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1308))
 - The platform services server forgets a vat worker that fails to terminate, so the vat's next worker is no longer refused as a duplicate ([#1149](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1149))
 - Process platform-services RPC request handlers in the background so a request handler that fires a reentrant outbound RPC (e.g. transport handshake calling back into the kernel) cannot deadlock waiting for its response ([#948](https://github.com/MetaMask/ocap-kernel/pull/948))
 

@@ -76,6 +76,8 @@ describe('KernelQueue', () => {
       createCrankSavepoint: vi.fn(),
       rollbackCrank: vi.fn(),
       waitForCrank: vi.fn(),
+      isInCrank: vi.fn().mockReturnValue(false),
+      getCrankNumber: vi.fn().mockReturnValue(1),
       // Crank buffer methods
       bufferCrankOutput: vi.fn(),
       flushCrankBuffer: vi.fn().mockReturnValue([]),
@@ -184,6 +186,8 @@ describe('KernelQueue', () => {
       const mockItem: RunQueueItem = {
         type: 'send',
         target: asKRef('ko123'),
+        sender: 'kernel',
+        cause: 'async',
         message: {} as KernelMessage,
       };
       (
@@ -210,6 +214,8 @@ describe('KernelQueue', () => {
       const mockItem: RunQueueItem = {
         type: 'send',
         target: asKRef('ko123'),
+        sender: 'kernel',
+        cause: 'async',
         message: { result: 'kp99' } as KernelMessage,
       };
       (kernelStore.runQueueLength as unknown as MockInstance)
@@ -245,6 +251,8 @@ describe('KernelQueue', () => {
         const mockItem: RunQueueItem = {
           type: 'send',
           target: asKRef('ko123'),
+          sender: 'kernel',
+          cause: 'async',
           message: {} as KernelMessage,
         };
         (kernelStore.runQueueLength as unknown as MockInstance)
@@ -275,6 +283,8 @@ describe('KernelQueue', () => {
       const mockItem: RunQueueItem = {
         type: 'send',
         target: asKRef('ko123'),
+        sender: 'kernel',
+        cause: 'async',
         message: {} as KernelMessage,
       };
       (
@@ -300,6 +310,8 @@ describe('KernelQueue', () => {
       const mockItem: RunQueueItem = {
         type: 'send',
         target: asKRef('ko123'),
+        sender: 'kernel',
+        cause: 'async',
         message: {} as KernelMessage,
       };
       (
@@ -326,6 +338,8 @@ describe('KernelQueue', () => {
       const mockItem: RunQueueItem = {
         type: 'send',
         target: asKRef('ko123'),
+        sender: 'kernel',
+        cause: 'async',
         message: {} as KernelMessage,
       };
       (kernelStore.runQueueLength as unknown as MockInstance).mockReturnValue(
@@ -354,6 +368,8 @@ describe('KernelQueue', () => {
       const mockItem: RunQueueItem = {
         type: 'send',
         target: asKRef('ko123'),
+        sender: 'kernel',
+        cause: 'async',
         message: {} as KernelMessage,
       };
       const terminateInfo = {
@@ -597,10 +613,11 @@ describe('KernelQueue', () => {
       {
         teardown: 'enqueueSend',
         call: (queue: KernelQueue) =>
-          queue.enqueueSend(asKRef('ko123'), {
-            methargs: { body: 'x', slots: [] },
-            result: null,
-          }),
+          queue.enqueueSend(
+            asKRef('ko123'),
+            { methargs: { body: 'x', slots: [] }, result: null },
+            { sender: 'kernel' },
+          ),
         didWork: () => kernelStore.enqueueRun,
       },
     ])(
@@ -684,6 +701,8 @@ describe('KernelQueue', () => {
           methargs: expect.anything(),
           result: 'kp1',
         }),
+        sender: 'kernel',
+        cause: 'async',
       });
       expect(kernelQueue.subscriptions.has(asKRef('kp1'))).toBe(true);
       const subscription = kernelQueue.subscriptions.get(asKRef('kp1'));
@@ -829,6 +848,8 @@ describe('KernelQueue', () => {
           type: 'send',
           target: 'ko123',
           message: { methargs: kser(['first', []]), result: 'kp1' },
+          sender: 'kernel',
+          cause: 'async',
         },
         { type: 'terminateVat', vatId: 'v1' },
         'write',
@@ -836,6 +857,8 @@ describe('KernelQueue', () => {
           type: 'send',
           target: 'ko123',
           message: { methargs: kser(['second', []]), result: 'kp1' },
+          sender: 'kernel',
+          cause: 'async',
         },
       ]);
       expect(kernelStore.incrementCrankNumber).toHaveBeenCalledTimes(6);
@@ -911,6 +934,22 @@ describe('KernelQueue', () => {
   });
 
   describe('enqueueSend', () => {
+    it('charges a send issued in a crank to that crank', () => {
+      (kernelStore.isInCrank as unknown as MockInstance).mockReturnValue(true);
+      (kernelStore.getCrankNumber as unknown as MockInstance).mockReturnValue(
+        7,
+      );
+      const message = { methargs: { body: '', slots: [] } } as KernelMessage;
+      kernelQueue.enqueueSend(asKRef('ko123'), message, { sender: v1 });
+      expect(kernelStore.enqueueRun).toHaveBeenCalledWith({
+        type: 'send',
+        target: 'ko123',
+        message,
+        sender: v1,
+        cause: 7,
+      });
+    });
+
     it('enqueues a send message and increments reference counts', () => {
       const target = asKRef('ko123');
       const message: KernelMessage = {
@@ -920,7 +959,7 @@ describe('KernelQueue', () => {
         },
         result: asKRef('kp2'),
       };
-      kernelQueue.enqueueSend(target, message);
+      kernelQueue.enqueueSend(target, message, { sender: 'kernel' });
       expect(kernelStore.incrementRefCount).toHaveBeenCalledWith(
         target,
         'queue|target',
@@ -941,6 +980,8 @@ describe('KernelQueue', () => {
         type: 'send',
         target,
         message,
+        sender: 'kernel',
+        cause: 'async',
       });
     });
 
@@ -950,7 +991,7 @@ describe('KernelQueue', () => {
         methargs: { body: 'method args', slots: [] },
         result: null,
       };
-      kernelQueue.enqueueSend(target, message);
+      kernelQueue.enqueueSend(target, message, { sender: 'kernel' });
       expect(kernelStore.incrementRefCount).toHaveBeenCalledTimes(1);
       expect(kernelStore.incrementRefCount).toHaveBeenCalledWith(
         target,
@@ -960,6 +1001,8 @@ describe('KernelQueue', () => {
         type: 'send',
         target,
         message,
+        sender: 'kernel',
+        cause: 'async',
       });
     });
   });
@@ -1404,6 +1447,8 @@ describe('KernelQueue', () => {
         type: 'send',
         target: 'ko123',
         message: { methargs: kser(['test', []]), result: 'kp1' },
+        sender: 'kernel',
+        cause: 'async',
       },
     },
   ])(
@@ -1416,8 +1461,13 @@ describe('KernelQueue', () => {
       (kernelStore.rollbackCrank as unknown as MockInstance).mockImplementation(
         () => events.push('rollbackCrank'),
       );
-      (kernelStore.endCrank as unknown as MockInstance).mockImplementation(() =>
-        events.push('endCrank'),
+      (kernelStore.endCrank as unknown as MockInstance).mockImplementation(
+        () => {
+          events.push('endCrank');
+          (kernelStore.isInCrank as unknown as MockInstance).mockReturnValue(
+            false,
+          );
+        },
       );
       (kernelStore.runQueueLength as unknown as MockInstance).mockReturnValue(
         1,
@@ -1569,15 +1619,39 @@ describe('KernelQueue', () => {
         endpointId: 'v3',
         kpid,
       });
-      expect(kernelStore.resolveKernelPromise).toHaveBeenCalledWith(
+      expect(kernelStore.resolveKernelPromise).toHaveBeenCalledWith({
         kpid,
-        false,
-        { body: 'resolved value', slots: ['ko1'] },
-      );
+        rejected: false,
+        value: { body: 'resolved value', slots: ['ko1'] },
+        resolver: endpointId,
+      });
       // Kernel subscription callback is NOT called immediately - deferred to flush
       expect(resolveHandler).not.toHaveBeenCalled();
       // Subscription is still registered, will be invoked during flush
       expect(kernelQueue.subscriptions.has(kpid)).toBe(true);
+    });
+
+    it('re-enqueues the messages queued on a promise with their own provenance', () => {
+      const kpid = asKRef('kp123');
+      const message = { methargs: { body: '', slots: [] } } as KernelMessage;
+      (kernelStore.getKernelPromise as unknown as MockInstance).mockReturnValue(
+        { state: 'unresolved', decider: v1, subscribers: [] },
+      );
+      (
+        kernelStore.resolveKernelPromise as unknown as MockInstance
+      ).mockReturnValueOnce([{ message, sender: asVatId('v3'), cause: 5 }]);
+
+      kernelQueue.resolvePromises(v1, [
+        [kpid, false, { body: '', slots: [] } as CapData<KRef>],
+      ]);
+
+      expect(kernelStore.enqueueRun).toHaveBeenCalledWith({
+        type: 'send',
+        target: kpid,
+        message,
+        sender: 'v3',
+        cause: 5,
+      });
     });
 
     it('handles resolutions with undefined vatId (kernel decider)', () => {
@@ -1617,11 +1691,12 @@ describe('KernelQueue', () => {
         endpointId: 'v2',
         kpid,
       });
-      expect(kernelStore.resolveKernelPromise).toHaveBeenCalledWith(
+      expect(kernelStore.resolveKernelPromise).toHaveBeenCalledWith({
         kpid,
-        false,
-        resolution[2],
-      );
+        rejected: false,
+        value: resolution[2],
+        resolver: 'kernel',
+      });
       // Kernel subscription callback is NOT called immediately - deferred to flush
       expect(resolveHandler).not.toHaveBeenCalled();
       expect(kernelQueue.subscriptions.has(kpid)).toBe(true);
@@ -1652,11 +1727,12 @@ describe('KernelQueue', () => {
       kernelQueue.resolvePromises(endpointId, [resolution], false);
       // No notifications buffered because no subscribers
       expect(kernelStore.bufferCrankOutput).not.toHaveBeenCalled();
-      expect(kernelStore.resolveKernelPromise).toHaveBeenCalledWith(
+      expect(kernelStore.resolveKernelPromise).toHaveBeenCalledWith({
         kpid,
-        false,
-        resolution[2],
-      );
+        rejected: false,
+        value: resolution[2],
+        resolver: endpointId,
+      });
       // Kernel subscription callback is NOT called immediately - deferred to flush
       expect(resolveHandler).not.toHaveBeenCalled();
       expect(kernelQueue.subscriptions.has(kpid)).toBe(true);
@@ -1718,6 +1794,8 @@ describe('KernelQueue', () => {
       const mockItem: RunQueueItem = {
         type: 'send',
         target: asKRef('ko123'),
+        sender: 'kernel',
+        cause: 'async',
         message: { result: 'kp99' } as KernelMessage,
       };
       const terminateInfo = {
@@ -1755,6 +1833,8 @@ describe('KernelQueue', () => {
       const mockItem: RunQueueItem = {
         type: 'send',
         target: asKRef('ko123'),
+        sender: 'kernel',
+        cause: 'async',
         message: { result: 'kp99' } as KernelMessage,
       };
       (kernelStore.runQueueLength as unknown as MockInstance)
@@ -2058,8 +2138,20 @@ describe('KernelQueue', () => {
   describe('one-item-per-crank', () => {
     it('calls startCrank/endCrank for each delivered item', async () => {
       const items: RunQueueItem[] = [
-        { type: 'send', target: asKRef('ko1'), message: {} as KernelMessage },
-        { type: 'send', target: asKRef('ko2'), message: {} as KernelMessage },
+        {
+          type: 'send',
+          target: asKRef('ko1'),
+          message: {} as KernelMessage,
+          sender: 'kernel',
+          cause: 'async',
+        },
+        {
+          type: 'send',
+          target: asKRef('ko2'),
+          message: {} as KernelMessage,
+          sender: 'kernel',
+          cause: 'async',
+        },
       ];
       let dequeueCount = 0;
       (
@@ -2168,6 +2260,8 @@ describe('KernelQueue', () => {
       const mockItem: RunQueueItem = {
         type: 'send',
         target: asKRef('ko1'),
+        sender: 'kernel',
+        cause: 'async',
         message: {} as KernelMessage,
       };
       (kernelStore.runQueueLength as unknown as MockInstance)
@@ -2209,6 +2303,8 @@ describe('KernelQueue', () => {
       const mockItem: RunQueueItem = {
         type: 'send',
         target: asKRef('ko1'),
+        sender: 'kernel',
+        cause: 'async',
         message: {} as KernelMessage,
       };
       (kernelStore.runQueueLength as unknown as MockInstance)

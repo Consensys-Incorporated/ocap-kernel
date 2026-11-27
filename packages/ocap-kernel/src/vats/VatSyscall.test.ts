@@ -45,6 +45,7 @@ describe('VatSyscall', () => {
       getVatConfig: vi.fn(() => ({})),
       isVatActive: vi.fn(() => true),
       isInCrank: vi.fn(() => true),
+      getCrankNumber: vi.fn(() => 7),
     } as unknown as KernelStore;
     logger = {
       debug: vi.fn(),
@@ -68,11 +69,28 @@ describe('VatSyscall', () => {
     } as KernelMessage;
     const vso = ['send', target, message] as VatSyscallObject;
     vatSys.handleSyscall(vso);
-    expect(kernelQueue.enqueueSend).toHaveBeenCalledWith(
-      target,
-      message,
-      false,
-    );
+    expect(kernelQueue.enqueueSend).toHaveBeenCalledWith(target, message, {
+      sender: 'v1',
+      cause: 'async',
+      immediate: false,
+    });
+  });
+
+  it.each([
+    ['the delivery in flight', true, 7],
+    ["nothing, while another vat's crank is open", false, 'async'],
+  ])('charges a send to %s', (_what, delivering, cause) => {
+    vatSys.delivering = delivering;
+    const target = 'ko1';
+    const message = {
+      methargs: { body: '', slots: [] },
+    } as KernelMessage;
+    vatSys.handleSyscall(['send', target, message] as VatSyscallObject);
+    expect(kernelQueue.enqueueSend).toHaveBeenCalledWith(target, message, {
+      sender: 'v1',
+      cause,
+      immediate: false,
+    });
   });
 
   it('calls resolvePromises for resolve syscall', async () => {
@@ -94,7 +112,11 @@ describe('VatSyscall', () => {
     } as KernelMessage;
     const vso = ['send', target, message] as VatSyscallObject;
     vatSys.handleSyscall(vso);
-    expect(kernelQueue.enqueueSend).toHaveBeenCalledWith(target, message, true);
+    expect(kernelQueue.enqueueSend).toHaveBeenCalledWith(target, message, {
+      sender: 'v1',
+      cause: 'async',
+      immediate: true,
+    });
   });
 
   it('resolves promises immediately when outside a crank', () => {
@@ -288,11 +310,11 @@ describe('VatSyscall', () => {
 
       const work = vi.mocked(kernelQueue.enqueueInbox).mock.lastCall?.[1];
       expect(await work?.()).toStrictEqual({ value: undefined });
-      expect(kernelQueue.enqueueSend).toHaveBeenCalledWith(
-        'ko1',
-        send[2],
-        false,
-      );
+      expect(kernelQueue.enqueueSend).toHaveBeenCalledWith('ko1', send[2], {
+        sender: 'v1',
+        cause: 'async',
+        immediate: false,
+      });
     });
 
     it('rolls back and terminates the vat if it is illegal', async () => {

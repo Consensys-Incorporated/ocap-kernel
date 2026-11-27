@@ -202,6 +202,20 @@ describe('GC methods', () => {
     });
   });
 
+  describe('orphanKernelObject', () => {
+    it("takes the object's tracking with its owner", () => {
+      const kref = kernelStore.initKernelObject(v1);
+      kernelStore.trackObject(kref, v2);
+      expect(kernelStore.isTracked(kref)).toBe(true);
+
+      kernelStore.orphanKernelObject(kref, v1);
+
+      expect(kernelStore.getOwner(kref)).toBeUndefined();
+      expect(kernelStore.isTracked(kref)).toBe(false);
+      expect(kernelStore.getTrackers(kref)).toStrictEqual({});
+    });
+  });
+
   describe('retireKernelObjects', () => {
     it('retires objects by notifying importers', () => {
       // First, set up vat configurations so they are recognized by getVatIDs()

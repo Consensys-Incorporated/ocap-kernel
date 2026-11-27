@@ -52,6 +52,13 @@ export class VatSyscall {
   /** The illegal syscall that was received */
   illegalSyscall: { vatId: VatId; info: CapData<KRef> } | undefined;
 
+  /**
+   * Whether a delivery to the vat is in flight, which makes a syscall part
+   * of the vat's answer to it. A syscall at any other time is the vat's own
+   * doing between deliveries, whatever crank happens to be open.
+   */
+  delivering = false;
+
   /** The error when delivery failed */
   deliveryError: string | undefined;
 
@@ -87,7 +94,11 @@ export class VatSyscall {
    */
   #handleSyscallSend(target: KRef, message: KernelMessage): void {
     const immediate = !this.#kernelStore.isInCrank();
-    this.#kernelQueue.enqueueSend(target, message, immediate);
+    this.#kernelQueue.enqueueSend(target, message, {
+      sender: this.vatId,
+      cause: this.delivering ? this.#kernelStore.getCrankNumber() : 'async',
+      immediate,
+    });
   }
 
   /**

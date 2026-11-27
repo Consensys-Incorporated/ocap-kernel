@@ -15,8 +15,16 @@ import { makeKernelSlot } from '../utils/kernel-slots.ts';
  */
 // oxlint-disable-next-line typescript/explicit-function-return-type
 export function getObjectMethods(ctx: StoreContext) {
-  const { getSlotKey, incCounter, refCountKey, getOwnerKey, getRevokedKey } =
-    getBaseMethods(ctx.kv);
+  const {
+    getSlotKey,
+    incCounter,
+    refCountKey,
+    getOwnerKey,
+    getRevokedKey,
+    getCreatedKey,
+    getTrackedKey,
+    getTrackerKey,
+  } = getBaseMethods(ctx.kv);
 
   /**
    * Create a new kernel object, born unreferenced at `(0, 0)`. Every unit of
@@ -31,8 +39,22 @@ export function getObjectMethods(ctx: StoreContext) {
   function initKernelObject(owner: EndpointId | 'kernel'): KRef {
     const koId = getNextObjectId();
     ctx.kv.set(getOwnerKey(koId), owner);
+    // Outside a crank, as for a kernel service registered at boot, this is the
+    // last crank's number: the object postdates it.
+    ctx.kv.set(getCreatedKey(koId), ctx.crankNumber.get() ?? '0');
     setObjectRefCount(koId, { reachable: 0, recognizable: 0 });
     return koId;
+  }
+
+  /**
+   * Get the number of the crank a kernel object was created in.
+   *
+   * @param koId - The KRef of the kernel object of interest.
+   * @returns The crank number, or undefined if the object is unknown.
+   */
+  function getObjectCreationCrank(koId: KRef): number | undefined {
+    const raw = ctx.kv.get(getCreatedKey(koId));
+    return raw === undefined ? undefined : Number(raw);
   }
 
   /**
@@ -82,6 +104,14 @@ export function getObjectMethods(ctx: StoreContext) {
     ctx.kv.delete(getOwnerKey(koId));
     ctx.kv.delete(refCountKey(koId));
     ctx.kv.delete(getRevokedKey(koId));
+    ctx.kv.delete(getCreatedKey(koId));
+    const trackers = ctx.kv.get(getTrackedKey(koId));
+    if (trackers !== undefined) {
+      for (const tracker of Object.keys(JSON.parse(trackers))) {
+        ctx.kv.delete(getTrackerKey(tracker, koId));
+      }
+      ctx.kv.delete(getTrackedKey(koId));
+    }
   }
 
   /**
@@ -137,6 +167,7 @@ export function getObjectMethods(ctx: StoreContext) {
 
   return {
     initKernelObject,
+    getObjectCreationCrank,
     getOwner,
     getRootObject,
     isRootObject,

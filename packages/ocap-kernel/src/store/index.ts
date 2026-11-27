@@ -26,12 +26,15 @@
  *   queue.${queueName}.head = NN             // queue head index
  *   queue.${queueName}.tail = NN             // queue tail index
  *   queue.${queueName}.${NN} = JSON(ITEM)    // queue entry #NN: a RunQueueItem
- *                                            // on `run`, a KernelMessage on a
- *                                            // ${kpid} queue
+ *                                            // on `run`, a PromiseQueueEntry on
+ *                                            // a ${kpid} queue
  *
  * Kernel objects
  *   ${koid}.refCount = NN,NN                 // reachable,recognizable counts
  *   ${koid}.owner = ${endid} | kernel        // owner (where the object is)
+ *   ${koid}.created = NN                     // number of the crank it was created in
+ *   tracked.${koid} = JSON(TRACKERS)         // who tracks it, if anyone, and what for
+ *   tracker.${endid}.${koid} = 1             // ${endid} tracks ${koid}, for finding them when it goes
  *
  * Kernel promises
  *   ${kpid}.refCount = NN                    // reference count
@@ -39,6 +42,7 @@
  *   ${kpid}.subscribers = JSON([${endid}])   // array of who is waiting for settlement
  *   ${kpid}.decider = ${endid} | kernel      // who decides on settlement
  *   ${kpid}.value = JSON(CAPDATA)            // value settled to, if settled
+ *   ${kpid}.resolver = ${endid} | kernel     // who settled it, if settled
  *
  * C-lists (both directions share one prefix; see `getCListPrefix`)
  *   ${endid}.c.${eref} = ${kref}             // ERef->KRef mapping
@@ -68,6 +72,9 @@
  *   ocapURLObjects.${kref} = NN              // number of ocap URLs naming ${kref}
  *   heldResult.${kpid} = ${time}             // when ${kpid} was held for a `queueMessage` caller
  *   kernelService.${serviceName} = ${koid}   // kref of kernel service object ${serviceName}
+ *
+ * The kernel's accountability records are not in the key value store: they are
+ * in the database's `accountability_records` table (see `methods/accountability-records.ts`).
  */
 
 import { Fail } from '@endo/errors';
@@ -87,6 +94,7 @@ import { getPinMethods } from './methods/pinned.ts';
 import { getPromiseMethods } from './methods/promise.ts';
 import { getQueueMethods } from './methods/queue.ts';
 import { getReachableMethods } from './methods/reachable.ts';
+import { getAccountabilityRecordMethods } from './methods/accountability-records.ts';
 import { getRefCountAuditMethods } from './methods/refcount-audit.ts';
 import { getRefCountMethods } from './methods/refcount.ts';
 import { getRelayMethods } from './methods/relay.ts';
@@ -217,6 +225,8 @@ export function makeKernelStore(kdb: KernelDatabase, logger?: Logger) {
     savepoints: [],
     crankBuffer: [],
     auditRefCounts: false,
+    accountabilityRecords: kdb.accountabilityRecords,
+    recordIntroductions: true,
     // Logging
     logger: logger?.subLogger({ tags: ['kernel-store'] }),
   };
@@ -240,6 +250,7 @@ export function makeKernelStore(kdb: KernelDatabase, logger?: Logger) {
   const subclusters = getSubclusterMethods(context);
   const activity = getActivityMethods(kv);
   const relay = getRelayMethods({ kv, logger: context.logger });
+  const accountabilityRecords = getAccountabilityRecordMethods(context);
 
   /**
    * Create a new VatStore for a vat.
@@ -342,6 +353,7 @@ export function makeKernelStore(kdb: KernelDatabase, logger?: Logger) {
     ...subclusters,
     ...activity,
     ...relay,
+    ...accountabilityRecords,
     makeVatStore,
     deleteVat,
     clear,

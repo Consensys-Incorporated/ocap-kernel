@@ -22,9 +22,11 @@ import type {
 import type { StoreContext } from '../types.ts';
 import { getCListMethods } from './clist.ts';
 import { getReachableMethods } from './reachable.ts';
+import { getAccountabilityRecordMethods } from './accountability-records.ts';
 import { getRefCountMethods } from './refcount.ts';
 import { getVatMethods } from './vat.ts';
 import { Fail, assert } from '../../utils/assert.ts';
+import { isPromiseRef } from '../utils/promise-ref.ts';
 
 /**
  * Create a translator object that provides functionality for translating
@@ -40,6 +42,7 @@ export function getTranslators(ctx: StoreContext) {
   const { setReachableFlag } = getReachableMethods(ctx);
   const { kernelRefExists } = getRefCountMethods(ctx);
   const { exportFromEndpoint } = getVatMethods(ctx);
+  const { recordIntroduction } = getAccountabilityRecordMethods(ctx);
 
   /**
    * Reverse the direction indicator in an RRef.
@@ -87,6 +90,9 @@ export function getTranslators(ctx: StoreContext) {
         kernelRefExists(kref) ||
           Fail`cannot import deleted kref ${kref} into ${endpointId}`;
         eref = allocateErefForKref(endpointId, kref);
+        if (ctx.recordIntroductions && !isPromiseRef(kref)) {
+          recordIntroduction({ kref, endpoint: endpointId });
+        }
       } else {
         throw Fail`unmapped kref ${kref} endpoint=${endpointId}`;
       }

@@ -11,7 +11,7 @@ import { describe, expect, it, onTestFinished } from 'vitest';
 
 import { getBundleSpec, makeKernel, makeTestLogger } from './utils.ts';
 
-const V1_ROOT = 'ko4' as KRef;
+const V1_ROOT = 'ko5' as KRef;
 
 /**
  * Launch the narrowing vat.

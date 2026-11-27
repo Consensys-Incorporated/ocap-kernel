@@ -1,7 +1,11 @@
 import type { CapData } from '@endo/marshal';
-import type { KernelDatabase } from '@metamask/kernel-store';
+import type {
+  KernelDatabase,
+  AccountabilityRecordFilter,
+} from '@metamask/kernel-store';
 import { isCapData } from '@metamask/kernel-utils';
 import { Logger } from '@metamask/logger';
+import { assert } from '@metamask/superstruct';
 
 import { IOManager } from './io/IOManager.ts';
 import type { IOListenerFactory } from './io/types.ts';
@@ -9,6 +13,9 @@ import { makeKernelFacet } from './kernel-facet.ts';
 import type { KernelFacet } from './kernel-facet.ts';
 import { attempt, KernelQueue } from './KernelQueue.ts';
 import { KernelRouter } from './KernelRouter.ts';
+import { makeAccountabilityService } from './accountability/service.ts';
+import { AccountabilityRecordFilterStruct } from './accountability/types.ts';
+import type { AccountabilityRecord } from './accountability/types.ts';
 import { KernelServiceManager } from './KernelServiceManager.ts';
 import type { KernelService } from './KernelServiceManager.ts';
 import { kslot, kunser } from './liveslots/kernel-marshal.ts';
@@ -121,6 +128,9 @@ export class Kernel {
    * audit walks the whole store.
    * @param options.kernelServices - Kernel services to register before the run
    * loop starts.
+   * @param options.accountability - Accountability options.
+   * @param options.accountability.recordIntroductions - Whether to record each
+   * endpoint's first acquisition of each object. Defaults to `true`.
    */
   // oxlint-disable-next-line ocap/no-restricted-syntax
   private constructor(
@@ -137,6 +147,7 @@ export class Kernel {
       vatRelaunchTimeoutMs?: number;
       auditRefCounts?: boolean;
       kernelServices?: { name: string; service: object }[];
+      accountability?: { recordIntroductions?: boolean };
     } = {},
   ) {
     this.#platformServices = platformServices;
@@ -146,6 +157,9 @@ export class Kernel {
     this.#kernelStore = makeKernelStore(kernelDatabase, this.#logger);
     if (options.auditRefCounts) {
       this.#kernelStore.setRefCountAuditing(true);
+    }
+    if (options.accountability?.recordIntroductions === false) {
+      this.#kernelStore.setIntroductionRecording(false);
     }
     if (!this.#kernelStore.isInitialized()) {
       this.#kernelStore.markInitialized();
@@ -256,6 +270,14 @@ export class Kernel {
       redemptionService.name,
       redemptionService.service,
     );
+    this.#kernelServiceManager.registerKernelServiceObject(
+      'accountability',
+      makeAccountabilityService({
+        kernelStore: this.#kernelStore,
+        kernelQueue: this.#kernelQueue,
+      }),
+      { withCaller: true },
+    );
     for (const { name, service } of options.kernelServices ?? []) {
       this.#kernelServiceManager.registerKernelServiceObject(name, service);
     }
@@ -282,6 +304,10 @@ export class Kernel {
    * ground truth at the end of each crank and throw on any mismatch.
    * @param options.kernelServices - Kernel services to register before the run
    * loop starts.
+   * @param options.accountability - Accountability options.
+   * @param options.accountability.recordIntroductions - Whether to record each
+   * endpoint's first acquisition of each object, one record per c-list entry.
+   * Defaults to `true`.
    * @returns A promise for the new kernel instance.
    */
   static async make(
@@ -299,6 +325,7 @@ export class Kernel {
       vatRelaunchTimeoutMs?: number;
       auditRefCounts?: boolean;
       kernelServices?: { name: string; service: object }[];
+      accountability?: { recordIntroductions?: boolean };
     } = {},
   ): Promise<Kernel> {
     const kernel = new Kernel(platformServices, kernelDatabase, options);
@@ -575,6 +602,44 @@ export class Kernel {
   }
 
   /**
+   * Read the kernel's accountability records, in the order written, in a
+   * crank of its own, so a record an open crank may still roll back is not
+   * read.
+   *
+   * @param filter - Which records; all of them if omitted.
+   * @returns The records.
+   */
+  async exportAccountabilityRecords(
+    filter?: AccountabilityRecordFilter,
+  ): Promise<AccountabilityRecord[]> {
+    assert(filter ?? {}, AccountabilityRecordFilterStruct);
+    return this.#kernelQueue.enqueueInbox(
+      'export accountability records',
+      async () =>
+        attempt(() => this.#kernelStore.getAccountabilityRecords(filter)),
+    );
+  }
+
+  /**
+   * Delete accountability records, in a crank of its own. Nothing else
+   * deletes them: collecting an object leaves its records, and so does
+   * revoking it.
+   *
+   * @param filter - Which records; all of them if omitted.
+   * @returns How many were deleted.
+   */
+  async pruneAccountabilityRecords(
+    filter?: AccountabilityRecordFilter,
+  ): Promise<number> {
+    assert(filter ?? {}, AccountabilityRecordFilterStruct);
+    return this.#kernelQueue.enqueueInbox(
+      'prune accountability records',
+      async () =>
+        attempt(() => this.#kernelStore.pruneAccountabilityRecords(filter)),
+    );
+  }
+
+  /**
    * Issue an OCAP URL for a kernel reference.
    *
    * @param kref - The kref of the object to issue an OCAP URL for.
@@ -603,12 +668,14 @@ export class Kernel {
    * @param options - Registration options.
    * @param options.systemOnly - Whether the service is only available to system
    * subclusters. Defaults to `false`.
+   * @param options.withCaller - Whether to call each method with the calling
+   * endpoint, as `{ caller }`, ahead of the arguments. Defaults to `false`.
    * @returns A promise for the registration details including the kref.
    */
   async registerKernelServiceObject(
     name: string,
     object: object,
-    options?: { systemOnly?: boolean },
+    options?: { systemOnly?: boolean; withCaller?: boolean },
   ): Promise<KernelService> {
     return this.#kernelQueue.enqueueInbox(
       'register a kernel service',

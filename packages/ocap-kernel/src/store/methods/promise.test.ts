@@ -6,7 +6,12 @@ import { getPromiseMethods } from './promise.ts';
 import { getQueueMethods } from './queue.ts';
 import { getRefCountMethods } from './refcount.ts';
 import { asKRef, asVatId } from '../../../test/branded.ts';
-import type { KRef, KernelMessage, VatId } from '../../types.ts';
+import type {
+  KRef,
+  KernelMessage,
+  PromiseQueueEntry,
+  VatId,
+} from '../../types.ts';
 import type { StoreContext } from '../types.ts';
 import * as promiseRefModule from '../utils/promise-ref.ts';
 
@@ -173,12 +178,14 @@ describe('promise store methods', () => {
       const kpid = asKRef('kp123');
       mockKV.set(`${kpid}.state`, 'fulfilled');
       mockKV.set(`${kpid}.value`, '{"body":"someValue","slots":[]}');
+      mockKV.set(`${kpid}.resolver`, 'v1');
 
       const result = promiseMethods.getKernelPromise(kpid);
 
       expect(result).toStrictEqual({
         state: 'fulfilled',
         value: { body: 'someValue', slots: [] },
+        resolver: 'v1',
       });
     });
 
@@ -307,12 +314,18 @@ describe('promise store methods', () => {
         body: 'someValue',
         slots: ['o+1' as KRef, 'o+2' as KRef],
       };
-      const message1: KernelMessage = {
-        methargs: { body: 'method1', slots: [asKRef('ko7')] },
-        result: asKRef('kp8'),
+      const message1: PromiseQueueEntry = {
+        message: {
+          methargs: { body: 'method1', slots: [asKRef('ko7')] },
+          result: asKRef('kp8'),
+        },
+        sender: 'v2' as VatId,
+        cause: 3,
       };
-      const message2: KernelMessage = {
-        methargs: { body: 'method2', slots: [] },
+      const message2: PromiseQueueEntry = {
+        message: { methargs: { body: 'method2', slots: [] } },
+        sender: 'kernel',
+        cause: 'async',
       };
 
       mockKV.set(`${kpid}.state`, 'unresolved');
@@ -324,22 +337,21 @@ describe('promise store methods', () => {
         .mockReturnValueOnce(message2)
         .mockReturnValueOnce(undefined);
 
-      const queuedMessages = promiseMethods.resolveKernelPromise(
+      const queuedMessages = promiseMethods.resolveKernelPromise({
         kpid,
-        false,
+        rejected: false,
         value,
-      );
+        resolver: 'v1' as VatId,
+      });
 
       expect(mockQueue.dequeue).toHaveBeenCalledTimes(3);
       // Now returns messages instead of calling enqueueRun
-      expect(queuedMessages).toStrictEqual([
-        [kpid, message1],
-        [kpid, message2],
-      ]);
+      expect(queuedMessages).toStrictEqual([message1, message2]);
       expect(mockEnqueueRun).not.toHaveBeenCalled();
 
       expect(mockKV.get(`${kpid}.state`)).toBe('fulfilled');
       expect(mockKV.get(`${kpid}.value`)).toBe(JSON.stringify(value));
+      expect(mockKV.get(`${kpid}.resolver`)).toBe('v1');
       expect(mockKV.has(`${kpid}.decider`)).toBe(false);
       expect(mockKV.has(`${kpid}.subscribers`)).toBe(false);
       expect(mockQueue.delete).toHaveBeenCalled();
@@ -364,9 +376,15 @@ describe('promise store methods', () => {
 
       mockQueue.dequeue.mockReturnValue(undefined);
 
-      promiseMethods.resolveKernelPromise(kpid, true, value);
+      promiseMethods.resolveKernelPromise({
+        kpid,
+        rejected: true,
+        value,
+        resolver: 'kernel',
+      });
 
       expect(mockKV.get(`${kpid}.state`)).toBe('rejected');
+      expect(mockKV.get(`${kpid}.resolver`)).toBe('kernel');
       expect(mockKV.get(`${kpid}.value`)).toBe(JSON.stringify(value));
       expect(mockKV.has(`${kpid}.decider`)).toBe(false);
       expect(mockKV.has(`${kpid}.subscribers`)).toBe(false);
@@ -377,13 +395,17 @@ describe('promise store methods', () => {
   describe('enqueuePromiseMessage', () => {
     it('adds a message to the promise queue', () => {
       const kpid = asKRef('kp123');
-      const message = {
-        methargs: { body: 'test', slots: [] },
-        result: null as KRef | null,
+      const entry: PromiseQueueEntry = {
+        message: {
+          methargs: { body: 'test', slots: [] },
+          result: null as KRef | null,
+        },
+        sender: 'kernel',
+        cause: 'async',
       };
-      promiseMethods.enqueuePromiseMessage(kpid, message);
+      promiseMethods.enqueuePromiseMessage(kpid, entry);
       expect(mockProvideStoredQueue).toHaveBeenCalledWith(kpid, false);
-      expect(mockQueue.enqueue).toHaveBeenCalledWith(message);
+      expect(mockQueue.enqueue).toHaveBeenCalledWith(entry);
     });
 
     it('takes a reference on everything the queued message carries', () => {
@@ -393,7 +415,11 @@ describe('promise store methods', () => {
         result: asKRef('kp3'),
       };
 
-      promiseMethods.enqueuePromiseMessage(kpid, message);
+      promiseMethods.enqueuePromiseMessage(kpid, {
+        message,
+        sender: 'kernel',
+        cause: 'async',
+      });
 
       expect(mockIncrementRefCount.mock.calls).toStrictEqual([
         [kpid, 'promiseQueue|target'],
@@ -407,23 +433,43 @@ describe('promise store methods', () => {
   describe('getKernelPromiseMessageQueue', () => {
     it('retrieves all messages from the promise queue', () => {
       const kpid = asKRef('kp123');
-      const message1: KernelMessage = {
-        method: 'method1',
-      } as unknown as KernelMessage;
-      const message2: KernelMessage = {
-        method: 'method2',
-      } as unknown as KernelMessage;
+      const entry1 = {
+        message: { method: 'method1' } as unknown as KernelMessage,
+        sender: 'v1',
+        cause: 1,
+      };
+      const entry2 = {
+        message: { method: 'method2' } as unknown as KernelMessage,
+        sender: 'v2',
+        cause: 'async',
+      };
 
       mockQueue.dequeue
-        .mockReturnValueOnce(message1)
-        .mockReturnValueOnce(message2)
+        .mockReturnValueOnce(entry1)
+        .mockReturnValueOnce(entry2)
         .mockReturnValueOnce(undefined);
 
       const result = promiseMethods.getKernelPromiseMessageQueue(kpid);
 
-      expect(result).toStrictEqual([message1, message2]);
+      expect(result).toStrictEqual([entry1, entry2]);
       expect(mockProvideStoredQueue).toHaveBeenCalledWith(kpid, false);
       expect(mockQueue.dequeue).toHaveBeenCalledTimes(3);
+    });
+
+    it("reads an entry written before provenance was kept as the kernel's, with no cause", () => {
+      const kpid = asKRef('kp123');
+      const message = {
+        methargs: { body: '#[]', slots: [] },
+        result: null,
+      } as KernelMessage;
+
+      mockQueue.dequeue
+        .mockReturnValueOnce(message)
+        .mockReturnValueOnce(undefined);
+
+      expect(promiseMethods.getKernelPromiseMessageQueue(kpid)).toStrictEqual([
+        { message, sender: 'kernel', cause: 'async' },
+      ]);
     });
 
     it('returns an empty array for an empty queue', () => {
