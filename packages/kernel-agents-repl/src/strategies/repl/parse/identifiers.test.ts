@@ -1,15 +1,13 @@
 import '@ocap/repo-tools/test-utils/mock-endoify';
 
+import type { FunctionDeclaration, VariableDeclaration } from 'acorn';
 import { describe, it, expect } from 'vitest';
 
 import { extractNamesFromDeclaration } from './identifiers.ts';
-import { firstStatement } from './syntax-tree.ts';
-import type { SyntaxTree } from './syntax-tree.ts';
-import { makeTreeSitterParser } from './tree-sitter.ts';
+import { parseFirstStatement } from './statement.ts';
 
-const parser = makeTreeSitterParser();
-const parseStatement = async (code: string): Promise<SyntaxTree> =>
-  firstStatement(await parser.parse(code));
+const parseStatement = (code: string) =>
+  parseFirstStatement(code) as VariableDeclaration | FunctionDeclaration;
 
 describe('extractNamesFromDeclaration', () => {
   it.each([
@@ -17,8 +15,8 @@ describe('extractNamesFromDeclaration', () => {
     ['function* x() { yield 1; }', ['x']],
     ['async function x() { return 1; }', ['x']],
     ['async function* x() { yield 1; }', ['x']],
-  ])('extracts declaration names from %s', async (text, expected) => {
-    const statement = await parseStatement(text);
+  ])('extracts declaration names from %s', (text, expected) => {
+    const statement = parseStatement(text);
     expect(extractNamesFromDeclaration(statement)).toStrictEqual(expected);
   });
 
@@ -41,38 +39,20 @@ describe('extractNamesFromDeclaration', () => {
       [`${keyword} { x: { y, z } } = { x: { y: 1, z: 2 } };`, ['y', 'z']],
       [`${keyword} { x: { y, z: w } } = obj;`, ['y', 'w']],
       [`${keyword} { a = "b" } = { c: "d" };`, ['a']],
+      // Nested and defaulted patterns; a default's value declares nothing
+      [`${keyword} [[a], b] = arr;`, ['a', 'b']],
+      [`${keyword} [{ a }] = arr;`, ['a']],
+      [`${keyword} { a: [b = 1, ...c] } = obj;`, ['b', 'c']],
+      [`${keyword} { a: b = c } = obj;`, ['b']],
+      [`${keyword} [a = b] = arr;`, ['a']],
       // Arrow function definition
       [`${keyword} foo = (x) => x;`, ['foo']],
       [`${keyword} foo = ([x]) => x;`, ['foo']],
       [`${keyword} foo = ({x}) => x;`, ['foo']],
       [`${keyword} x = 1, y = 2, z = 3;`, ['x', 'y', 'z']],
-    ])('extracts declaration names from %s', async (text, expected) => {
-      const statement = await parseStatement(text);
+    ])('extracts declaration names from %s', (text, expected) => {
+      const statement = parseStatement(text);
       expect(extractNamesFromDeclaration(statement)).toStrictEqual(expected);
     });
-  });
-
-  it('throws for declaration with childless declarator', () => {
-    expect(() =>
-      // @ts-expect-error Destructive testing
-      extractNamesFromDeclaration({
-        type: 'lexical_declaration',
-        children: [
-          { type: 'const', text: 'const' },
-          { type: 'declarator', children: [] },
-          { type: ';', text: ';' },
-        ] as unknown as [SyntaxTree, SyntaxTree, SyntaxTree],
-      }),
-    ).toThrow('Internal: Declarator missing pattern');
-  });
-
-  it.each([
-    ['expression_statement', '1 + 1'],
-    ['for_statement', 'for (let i = 0; i < 10; i++) { console.log(i); }'],
-  ])('throws for %s', async (statementType, code) => {
-    const statement = await parseStatement(code);
-    expect(() => extractNamesFromDeclaration(statement)).toThrow(
-      `Unknown declaration type: ${statementType}`,
-    );
   });
 });

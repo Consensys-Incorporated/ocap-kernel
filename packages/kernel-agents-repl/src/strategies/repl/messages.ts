@@ -3,8 +3,8 @@ import { Message } from '@ocap/kernel-agents/types/messages';
 import type { Transcript } from '@ocap/kernel-agents/types/messages';
 
 import { makeCompartment } from './compartment.ts';
-import { firstStatement } from './parse/syntax-tree.ts';
-import type { Parser, SyntaxTree } from './parse/syntax-tree.ts';
+import { parseFirstStatement } from './parse/statement.ts';
+import type { StatementNode } from './parse/statement.ts';
 import { ERROR, RETURN } from './symbols.ts';
 
 export type StatementType = 'import' | 'evaluation' | 'comment';
@@ -40,7 +40,7 @@ export const observeJson = (value: JsonObservation): string =>
  */
 export abstract class ReplMessage<
   Type extends ReplMessageType,
-  Body extends Record<JsonKey, JsonObservation | SyntaxTree>,
+  Body extends Record<JsonKey, JsonObservation | StatementNode>,
 >
   extends Message<Type, Body>
   implements ReplObservable, JsonObservable
@@ -72,7 +72,7 @@ export abstract class ReplMessage<
  */
 export class StatementMessage<
   Type extends StatementType = StatementType,
-> extends ReplMessage<Type, { code: string; node?: SyntaxTree }> {
+> extends ReplMessage<Type, { code: string; node?: StatementNode }> {
   /**
    * Serializes the statement to a REPL-formatted string with prompt prefix.
    *
@@ -86,14 +86,10 @@ export class StatementMessage<
    * Creates a statement message from code by parsing it and determining its type.
    *
    * @param code - The code string to parse into a statement message.
-   * @param parser - The parser to parse it with.
    * @returns A statement message of the appropriate type.
    */
-  static async fromCode(
-    code: string,
-    parser: Parser,
-  ): Promise<StatementMessage> {
-    return statementMessageFromCode(code, parser);
+  static fromCode(code: string): StatementMessage {
+    return statementMessageFromCode(code);
   }
 }
 
@@ -105,10 +101,9 @@ export class CommentMessage extends StatementMessage<'comment'> {
    * Constructs a new {@link CommentMessage}.
    *
    * @param code - The comment code string.
-   * @param node - The parsed statement, when it will be evaluated.
    */
-  constructor(code: string, node?: SyntaxTree) {
-    super('comment', { code, ...(node && { node }) });
+  constructor(code: string) {
+    super('comment', { code });
   }
 }
 
@@ -122,7 +117,7 @@ export class ImportMessage extends StatementMessage<'import'> {
    * @param code - The import statement code string.
    * @param node - The parsed statement, when it will be evaluated.
    */
-  constructor(code: string, node?: SyntaxTree) {
+  constructor(code: string, node?: StatementNode) {
     super('import', { code, ...(node && { node }) });
   }
 
@@ -148,7 +143,7 @@ export class EvaluationMessage extends StatementMessage<'evaluation'> {
    * @param code - The code to evaluate.
    * @param node - The parsed statement, when it will be evaluated.
    */
-  constructor(code: string, node?: SyntaxTree) {
+  constructor(code: string, node?: StatementNode) {
     super('evaluation', { code, ...(node && { node }) });
   }
 }
@@ -157,21 +152,18 @@ export class EvaluationMessage extends StatementMessage<'evaluation'> {
  * Make a statement message from code.
  *
  * @param code - The code to parse.
- * @param parser - The parser to parse it with.
  * @returns A statement message.
  */
-async function statementMessageFromCode(
-  code: string,
-  parser: Parser,
-): Promise<StatementMessage> {
-  const statement = firstStatement(await parser.parse(code));
-  switch (statement.type) {
-    case 'comment':
-      return new CommentMessage(code, statement);
-    case 'import_statement':
-      return new ImportMessage(code, statement);
+function statementMessageFromCode(code: string): StatementMessage {
+  const node = parseFirstStatement(code);
+  if (!node) {
+    return new CommentMessage(code);
+  }
+  switch (node.type) {
+    case 'ImportDeclaration':
+      return new ImportMessage(code, node);
     default: // XXX Maybe too permissive as the default case.
-      return new EvaluationMessage(code, statement);
+      return new EvaluationMessage(code, node);
   }
 }
 

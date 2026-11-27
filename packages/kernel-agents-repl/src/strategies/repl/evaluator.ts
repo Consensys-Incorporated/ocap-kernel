@@ -14,15 +14,15 @@ import {
   ResultMessage,
 } from './messages.ts';
 import type { ReplTranscript, StatementMessage } from './messages.ts';
-import { toSExpression } from './parse/syntax-tree.ts';
-import type { SyntaxTree } from './parse/syntax-tree.ts';
+import { textOf } from './parse/statement.ts';
+import type { ParsedStatement } from './parse/statement.ts';
 import { prepareEvaluation } from './prepare-evaluation.ts';
 import { ERROR, RETURN } from './symbols.ts';
 import type { EvaluatorState } from './types.ts';
 
 type Validation =
   | { earlyResult: ResultMessage | null }
-  | { earlyResult?: never; node: SyntaxTree };
+  | { earlyResult?: never; parsed: ParsedStatement };
 
 const validateStatement = (statement: StatementMessage): Validation => {
   if (statement instanceof CommentMessage) {
@@ -44,12 +44,12 @@ const validateStatement = (statement: StatementMessage): Validation => {
       [
         'Internal: Unknown statement',
         `statement: ${code}`,
-        `type: ${node ? toSExpression(node) : 'unparsed'}`,
+        `type: ${node?.type ?? 'unparsed'}`,
       ].join('\n'),
     );
   }
   // Otherwise, proceed with the evaluation.
-  return { node };
+  return { parsed: { node, text: textOf(node, code) } };
 };
 
 export const makeEvaluator = ({
@@ -79,7 +79,7 @@ export const makeEvaluator = ({
     // Prepare the evaluation.
     const { code, endowments, result, commit } = prepareEvaluation(
       state,
-      validation.node,
+      validation.parsed,
       ifDefined({ logger }),
     );
 

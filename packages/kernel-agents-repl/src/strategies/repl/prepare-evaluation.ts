@@ -1,11 +1,13 @@
 import { EvaluatorError } from '@metamask/kernel-errors';
 import type { Logger } from '@metamask/logger';
+import type { FunctionDeclaration, VariableDeclaration } from 'acorn';
 
 import { extractNamesFromDeclaration } from './parse/identifiers.ts';
-import { toSExpression } from './parse/syntax-tree.ts';
-import type { SyntaxTree } from './parse/syntax-tree.ts';
+import type { ParsedStatement } from './parse/statement.ts';
 import { ERROR, RETURN } from './symbols.ts';
 import type { EvaluatorState, VariableRecord } from './types.ts';
+
+type Declaration = ParsedStatement<VariableDeclaration | FunctionDeclaration>;
 
 /**
  * Creates a wrapper for a function that throws EvaluatorError if the wrapped function throws.
@@ -134,60 +136,51 @@ const makeCaptor = (
 
 export const prepareEvaluation = (
   state: EvaluatorState,
-  statement: SyntaxTree,
+  statement: ParsedStatement,
   options: { logger?: Logger } = {},
 ): Evaluable => {
-  switch (statement.type) {
-    case 'lexical_declaration':
-      switch (statement.children[0]?.type) {
+  const { node, text } = statement;
+  switch (node.type) {
+    case 'VariableDeclaration':
+      switch (node.kind) {
         case 'const':
-          return prepareImmutableDeclaration(state, statement, options);
+          return prepareImmutableDeclaration(state, { node, text }, options);
         case 'let':
-          return prepareMutableDeclaration(state, statement, options);
-        case undefined:
+          return prepareMutableDeclaration(state, { node, text }, options);
+        case 'var':
+          throw new Error(`Variable declarations are not allowed: "${text}"`);
         default:
           throw new Error(
             [
-              `Unknown lexical_declaration.`,
-              `statement: ${statement.text}`,
-              `type: ${toSExpression(statement)}`,
+              `Unknown variable declaration.`,
+              `statement: ${text}`,
+              `kind: ${node.kind}`,
             ].join('\n'),
           );
       }
-    case 'function_declaration':
-    case 'generator_function_declaration':
-      return prepareMutableDeclaration(state, statement, options);
-    case 'variable_declaration':
-      throw new Error(
-        `Variable declarations are not allowed: "${statement.text}"`,
-      );
-    case 'expression_statement':
+    case 'FunctionDeclaration':
+      return prepareMutableDeclaration(state, { node, text }, options);
+    case 'ExpressionStatement':
       return prepareExpression(state, statement, options);
-    case 'import_statement':
+    case 'ImportDeclaration':
       throw new SyntaxError(
         'Imports are not allowed. All accessible capabilities are already imported.',
       );
-    case 'if_statement':
-    case 'for_statement':
-    case 'for_in_statement':
-    case 'for_of_statement':
-    case 'for_await_of_statement':
-    case 'for_await_in_statement':
-    case 'for_await_statement':
-    case 'while_statement':
-    case 'do_while_statement':
-    case 'switch_statement':
-    case 'try_statement':
-    case 'catch_clause':
-    case 'finally_clause':
-      // XXX The above case selector is probably long enough to be the default
+    case 'IfStatement':
+    case 'ForStatement':
+    case 'ForInStatement':
+    case 'ForOfStatement':
+    case 'WhileStatement':
+    case 'DoWhileStatement':
+    case 'SwitchStatement':
+    case 'TryStatement':
       return prepareStatement(state, statement, options);
     default:
       throw new Error(
         [
           `Unknown statement type.`,
-          `statement: ${statement.text}`,
-          `type: ${toSExpression(statement)}`,
+          `statement: ${text}`,
+          `type: ${node.type}`,
         ].join('\n'),
       );
   }
@@ -202,11 +195,11 @@ export const prepareEvaluation = (
  */
 function prepareDeclaration(
   state: EvaluatorState,
-  statement: SyntaxTree,
+  statement: Declaration,
 ): Omit<Evaluable, 'commit'> & { captured: VariableRecord } {
   const { consts, lets } = state;
   const [captured, $capture] = makeCaptor(Object.keys(lets));
-  const names = extractNamesFromDeclaration(statement);
+  const names = extractNamesFromDeclaration(statement.node);
   const [value, $return] = makeCaptor(names);
   const result: EvaluationResult = { value };
   const $catch = wrap((caught: unknown) => (result[ERROR] = caught));
@@ -233,7 +226,7 @@ function prepareDeclaration(
  */
 function prepareMutableDeclaration(
   state: EvaluatorState,
-  statement: SyntaxTree,
+  statement: Declaration,
   options: { logger?: Logger } = {},
 ): Evaluable {
   const { endowments, code, result, captured } = prepareDeclaration(
@@ -269,7 +262,7 @@ function prepareMutableDeclaration(
  */
 function prepareImmutableDeclaration(
   state: EvaluatorState,
-  statement: SyntaxTree,
+  statement: Declaration,
   options: { logger?: Logger } = {},
 ): Evaluable {
   const { endowments, code, result, captured } = prepareDeclaration(
@@ -316,7 +309,7 @@ const stripTrailingSemicolons = (code: string): string =>
  */
 function prepareExpression(
   state: EvaluatorState,
-  statement: SyntaxTree,
+  statement: ParsedStatement,
   options: { logger?: Logger } = {},
 ): Evaluable {
   const { consts, lets } = state;
@@ -361,7 +354,7 @@ function prepareExpression(
  */
 function prepareStatement(
   state: EvaluatorState,
-  statement: SyntaxTree,
+  statement: ParsedStatement,
   options: { logger?: Logger } = {},
 ): Evaluable {
   const { consts, lets } = state;

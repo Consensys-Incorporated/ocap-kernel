@@ -46,18 +46,6 @@ if [ -d node_modules/node-datachannel ] && \
     fi
 fi
 
-# Check and rebuild tree-sitter
-if [ -d node_modules/tree-sitter ] && \
-   { [ "$FORCE_REBUILD" -eq 1 ] || \
-   [ ! -f node_modules/tree-sitter/build/Release/tree_sitter_runtime_binding.node ]; \
-   }; then
-    echo "🔨 Building tree-sitter..."
-    if ! npm rebuild tree-sitter; then
-        echo "❌ Failed to build tree-sitter" >&2
-        BUILD_FAILED=1
-    fi
-fi
-
 # Exit with error if any builds failed
 if [ $BUILD_FAILED -eq 1 ]; then
     echo "⚠️  Some native modules failed to build. This may cause runtime errors." >&2
