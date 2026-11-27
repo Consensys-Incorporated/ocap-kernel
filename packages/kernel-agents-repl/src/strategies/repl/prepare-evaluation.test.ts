@@ -4,7 +4,8 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import type { MockInstance } from 'vitest';
 
 import * as identifiers from './parse/identifiers.ts';
-import type { SyntaxTree } from './parse/syntax-tree.ts';
+import { parseFirstStatement, textOf } from './parse/statement.ts';
+import type { ParsedStatement } from './parse/statement.ts';
 import { prepareEvaluation } from './prepare-evaluation.ts';
 import { ERROR, RETURN } from './symbols.ts';
 import type { EvaluatorState } from './types.ts';
@@ -17,22 +18,23 @@ describe('prepareEvaluation', () => {
   let state: EvaluatorState;
   const mockExtractNames = vi.mocked(identifiers.extractNamesFromDeclaration);
 
-  const createMockNode = (
-    type: string,
-    text: string,
-    children: SyntaxTree[] = [],
-  ): SyntaxTree => ({ type, text, isNamed: true, children });
+  // As the evaluator builds it.
+  const parsed = (code: string): ParsedStatement => {
+    const node = parseFirstStatement(code);
+    if (!node) {
+      throw new Error(`Not a statement: ${code}`);
+    }
+    return { node, text: textOf(node, code) };
+  };
 
   beforeEach(() => {
     state = { consts: {}, lets: {} };
     vi.clearAllMocks();
   });
 
-  describe('lexical_declaration', () => {
+  describe('const and let declarations', () => {
     it('prepares const declaration', () => {
-      const statement = createMockNode('lexical_declaration', 'const x = 1;', [
-        createMockNode('const', 'const'),
-      ]);
+      const statement = parsed('const x = 1;');
       mockExtractNames.mockReturnValue(['x']);
 
       const evaluable = prepareEvaluation(state, statement);
@@ -48,9 +50,7 @@ describe('prepareEvaluation', () => {
     });
 
     it('prepares let declaration', () => {
-      const statement = createMockNode('lexical_declaration', 'let y = 2;', [
-        createMockNode('let', 'let'),
-      ]);
+      const statement = parsed('let y = 2;');
       mockExtractNames.mockReturnValue(['y']);
 
       const evaluable = prepareEvaluation(state, statement);
@@ -60,22 +60,16 @@ describe('prepareEvaluation', () => {
       expect(evaluable.code).toContain('$return(y);');
     });
 
-    it('throws for unknown lexical_declaration', () => {
-      const statement = createMockNode(
-        'lexical_declaration',
-        'unknown x = 1;',
-        [createMockNode('unknown', 'unknown')],
-      );
+    it('throws for an unknown declaration kind', () => {
+      const statement = parsed('using x = f();');
 
       expect(() => prepareEvaluation(state, statement)).toThrow(
-        'Unknown lexical_declaration',
+        'Unknown variable declaration',
       );
     });
 
     it('commits const declaration to consts', () => {
-      const statement = createMockNode('lexical_declaration', 'const x = 1;', [
-        createMockNode('const', 'const'),
-      ]);
+      const statement = parsed('const x = 1;');
       mockExtractNames.mockReturnValue(['x']);
 
       const evaluable = prepareEvaluation(state, statement);
@@ -87,9 +81,7 @@ describe('prepareEvaluation', () => {
     });
 
     it('commits let declaration to lets', () => {
-      const statement = createMockNode('lexical_declaration', 'let y = 2;', [
-        createMockNode('let', 'let'),
-      ]);
+      const statement = parsed('let y = 2;');
       mockExtractNames.mockReturnValue(['y']);
 
       const evaluable = prepareEvaluation(state, statement);
@@ -101,9 +93,7 @@ describe('prepareEvaluation', () => {
     });
 
     it('does not commit when result has error', () => {
-      const statement = createMockNode('lexical_declaration', 'const x = 1;', [
-        createMockNode('const', 'const'),
-      ]);
+      const statement = parsed('const x = 1;');
       mockExtractNames.mockReturnValue(['x']);
 
       const evaluable = prepareEvaluation(state, statement);
@@ -116,9 +106,7 @@ describe('prepareEvaluation', () => {
 
     it('captures lets namespace on commit', () => {
       state.lets = { existing: 'value' };
-      const statement = createMockNode('lexical_declaration', 'const x = 1;', [
-        createMockNode('const', 'const'),
-      ]);
+      const statement = parsed('const x = 1;');
       mockExtractNames.mockReturnValue(['x']);
 
       const evaluable = prepareEvaluation(state, statement);
@@ -131,12 +119,9 @@ describe('prepareEvaluation', () => {
     });
   });
 
-  describe('function_declaration', () => {
+  describe('function declarations', () => {
     it('prepares function declaration', () => {
-      const statement = createMockNode(
-        'function_declaration',
-        'function foo() { return 1; }',
-      );
+      const statement = parsed('function foo() { return 1; }');
       mockExtractNames.mockReturnValue(['foo']);
 
       const evaluable = prepareEvaluation(state, statement);
@@ -147,10 +132,7 @@ describe('prepareEvaluation', () => {
     });
 
     it('prepares generator function declaration', () => {
-      const statement = createMockNode(
-        'generator_function_declaration',
-        'function* gen() { yield 1; }',
-      );
+      const statement = parsed('function* gen() { yield 1; }');
       mockExtractNames.mockReturnValue(['gen']);
 
       const evaluable = prepareEvaluation(state, statement);
@@ -160,9 +142,9 @@ describe('prepareEvaluation', () => {
     });
   });
 
-  describe('expression_statement', () => {
+  describe('expression statements', () => {
     it('prepares expression statement', () => {
-      const statement = createMockNode('expression_statement', '1 + 1;');
+      const statement = parsed('1 + 1;');
 
       const evaluable = prepareEvaluation(state, statement);
 
@@ -172,7 +154,7 @@ describe('prepareEvaluation', () => {
     });
 
     it('strips trailing semicolons from expression', () => {
-      const statement = createMockNode('expression_statement', '42;;;');
+      const statement = parsed('42;;;');
 
       const evaluable = prepareEvaluation(state, statement);
 
@@ -180,7 +162,7 @@ describe('prepareEvaluation', () => {
     });
 
     it('commits expression result', () => {
-      const statement = createMockNode('expression_statement', '42;');
+      const statement = parsed('42;');
 
       const evaluable = prepareEvaluation(state, statement);
       evaluable.result[RETURN] = 42;
@@ -190,7 +172,7 @@ describe('prepareEvaluation', () => {
     });
 
     it('throws when result has no return and no error', () => {
-      const statement = createMockNode('expression_statement', '42;');
+      const statement = parsed('42;');
 
       const evaluable = prepareEvaluation(state, statement);
 
@@ -200,7 +182,7 @@ describe('prepareEvaluation', () => {
     });
 
     it('does not throw when result has error', () => {
-      const statement = createMockNode('expression_statement', '42;');
+      const statement = parsed('42;');
 
       const evaluable = prepareEvaluation(state, statement);
       evaluable.result[ERROR] = new Error('test error');
@@ -211,21 +193,17 @@ describe('prepareEvaluation', () => {
 
   describe('statement types', () => {
     it.each([
-      ['if_statement', 'if (true) { }'],
-      ['for_statement', 'for (let i = 0; i < 10; i++) { }'],
-      ['for_in_statement', 'for (let x in obj) { }'],
-      ['for_of_statement', 'for (let x of arr) { }'],
-      ['for_await_of_statement', 'for await (let x of asyncIter) { }'],
-      ['for_await_in_statement', 'for await (let x in asyncIter) { }'],
-      ['for_await_statement', 'for await (let x of asyncIter) { }'],
-      ['while_statement', 'while (true) { }'],
-      ['do_while_statement', 'do { } while (true);'],
-      ['switch_statement', 'switch (x) { case 1: break; }'],
-      ['try_statement', 'try { } catch (e) { }'],
-      ['catch_clause', 'catch (e) { }'],
-      ['finally_clause', 'finally { }'],
-    ])('prepares %s', (type, code) => {
-      const statement = createMockNode(type, code);
+      ['an if', 'if (true) { }'],
+      ['a for', 'for (let i = 0; i < 10; i++) { }'],
+      ['a for-in', 'for (let x in obj) { }'],
+      ['a for-of', 'for (let x of arr) { }'],
+      ['a for-await-of', 'for await (let x of asyncIter) { }'],
+      ['a while', 'while (true) { }'],
+      ['a do-while', 'do { } while (true);'],
+      ['a switch', 'switch (x) { case 1: break; }'],
+      ['a try', 'try { } catch (e) { } finally { }'],
+    ])('prepares %s statement', (_case, code) => {
+      const statement = parsed(code);
 
       const evaluable = prepareEvaluation(state, statement);
 
@@ -236,7 +214,7 @@ describe('prepareEvaluation', () => {
     });
 
     it('commits statement without error', () => {
-      const statement = createMockNode('if_statement', 'if (true) { }');
+      const statement = parsed('if (true) { }');
 
       const evaluable = prepareEvaluation(state, statement);
       evaluable.commit();
@@ -245,7 +223,7 @@ describe('prepareEvaluation', () => {
     });
 
     it('does not commit when statement has error', () => {
-      const statement = createMockNode('if_statement', 'if (true) { }');
+      const statement = parsed('if (true) { }');
 
       const evaluable = prepareEvaluation(state, statement);
       evaluable.result[ERROR] = new Error('test error');
@@ -256,19 +234,16 @@ describe('prepareEvaluation', () => {
   });
 
   describe('error cases', () => {
-    it('throws for variable_declaration', () => {
-      const statement = createMockNode('variable_declaration', 'var x = 1;');
+    it('throws for a var declaration', () => {
+      const statement = parsed('var x = 1;');
 
       expect(() => prepareEvaluation(state, statement)).toThrow(
         'Variable declarations are not allowed',
       );
     });
 
-    it('throws for import_statement', () => {
-      const statement = createMockNode(
-        'import_statement',
-        'import { x } from "module";',
-      );
+    it('throws for an import', () => {
+      const statement = parsed('import { x } from "module";');
 
       expect(() => prepareEvaluation(state, statement)).toThrow(
         'Imports are not allowed',
@@ -277,7 +252,7 @@ describe('prepareEvaluation', () => {
     });
 
     it('throws for unknown statement type', () => {
-      const statement = createMockNode('unknown_type', 'unknown code');
+      const statement = parsed('class A {}');
 
       expect(() => prepareEvaluation(state, statement)).toThrow(
         'Unknown statement type',
@@ -302,12 +277,7 @@ describe('prepareEvaluation', () => {
     ])(
       'logs commit for %s declaration',
       (_, code, names, value, logMessage) => {
-        const statement = createMockNode('lexical_declaration', code, [
-          createMockNode(
-            code.split(' ')[0] as string,
-            code.split(' ')[0] as string,
-          ),
-        ]);
+        const statement = parsed(code);
         mockExtractNames.mockReturnValue(names);
 
         const evaluable = prepareEvaluation(state, statement, { logger });
@@ -320,9 +290,7 @@ describe('prepareEvaluation', () => {
     );
 
     it('logs error on commit', () => {
-      const statement = createMockNode('lexical_declaration', 'const x = 1;', [
-        createMockNode('const', 'const'),
-      ]);
+      const statement = parsed('const x = 1;');
       mockExtractNames.mockReturnValue(['x']);
 
       const evaluable = prepareEvaluation(state, statement, { logger });
@@ -333,7 +301,7 @@ describe('prepareEvaluation', () => {
     });
 
     it('logs expression return value', () => {
-      const statement = createMockNode('expression_statement', '42;');
+      const statement = parsed('42;');
       const evaluable = prepareEvaluation(state, statement, { logger });
       evaluable.result[RETURN] = 42;
       evaluable.commit();
@@ -344,7 +312,7 @@ describe('prepareEvaluation', () => {
 
   describe('wrap function', () => {
     it('wraps function to throw EvaluatorError on error', () => {
-      const statement = createMockNode('expression_statement', '42;');
+      const statement = parsed('42;');
 
       const evaluable = prepareEvaluation(state, statement);
       const { $catch } = evaluable.endowments.$frame;
@@ -355,7 +323,7 @@ describe('prepareEvaluation', () => {
     });
 
     it('handles non-Error values', () => {
-      const statement = createMockNode('expression_statement', '42;');
+      const statement = parsed('42;');
 
       const evaluable = prepareEvaluation(state, statement);
       const { $catch } = evaluable.endowments.$frame;
@@ -368,9 +336,7 @@ describe('prepareEvaluation', () => {
 
   describe('makeCaptor', () => {
     it('creates captor that captures values', () => {
-      const statement = createMockNode('lexical_declaration', 'let x = 1;', [
-        createMockNode('let', 'let'),
-      ]);
+      const statement = parsed('let x = 1;');
       mockExtractNames.mockReturnValue(['x']);
 
       const evaluable = prepareEvaluation(state, statement);
@@ -383,9 +349,7 @@ describe('prepareEvaluation', () => {
     });
 
     it('throws for reserved captor name', () => {
-      const statement = createMockNode('lexical_declaration', 'let x = 1;', [
-        createMockNode('let', 'let'),
-      ]);
+      const statement = parsed('let x = 1;');
       mockExtractNames.mockReturnValue(['$UNIQUE']);
 
       expect(() => prepareEvaluation(state, statement)).toThrow(
@@ -398,7 +362,7 @@ describe('prepareEvaluation', () => {
     it('wraps code with consts and lets', () => {
       state.consts = { a: 1 };
       state.lets = { b: 2 };
-      const statement = createMockNode('expression_statement', 'a + b;');
+      const statement = parsed('a + b;');
 
       const evaluable = prepareEvaluation(state, statement);
 
@@ -408,7 +372,7 @@ describe('prepareEvaluation', () => {
     });
 
     it('wraps code without consts or lets', () => {
-      const statement = createMockNode('expression_statement', '42;');
+      const statement = parsed('42;');
 
       const evaluable = prepareEvaluation(state, statement);
 
@@ -420,7 +384,7 @@ describe('prepareEvaluation', () => {
     });
 
     it('wraps code in async IIFE', () => {
-      const statement = createMockNode('expression_statement', '42;');
+      const statement = parsed('42;');
 
       const evaluable = prepareEvaluation(state, statement);
 
@@ -433,7 +397,7 @@ describe('prepareEvaluation', () => {
     });
 
     it('includes try-catch-finally block', () => {
-      const statement = createMockNode('expression_statement', '42;');
+      const statement = parsed('42;');
 
       const evaluable = prepareEvaluation(state, statement);
 

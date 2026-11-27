@@ -1,3 +1,4 @@
+import { SampleGenerationError } from '@metamask/kernel-errors';
 import type { Logger } from '@metamask/logger';
 import {
   ifDefined,
@@ -6,11 +7,10 @@ import {
 } from '@ocap/kernel-agents/utils';
 
 import { StatementMessage } from './messages.ts';
-import type { Parser } from './parse/syntax-tree.ts';
 import { makeSampleCollector } from './sample-collector.ts';
 
 export const makeReader =
-  ({ parser, logger }: { parser: Parser; logger?: Logger }) =>
+  ({ logger }: { logger?: Logger }) =>
   async ({
     stream,
     abort,
@@ -34,5 +34,13 @@ export const makeReader =
           ...ifDefined({ logger: gatherLogger }),
         }),
     );
-    return await StatementMessage.fromCode(code, parser);
+    try {
+      return StatementMessage.fromCode(code);
+    } catch (error) {
+      // A sample that does not parse is resampled, as an empty one is.
+      throw new SampleGenerationError(
+        code,
+        error instanceof Error ? error : new Error(String(error)),
+      );
+    }
   };

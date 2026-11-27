@@ -8,7 +8,6 @@ import { getMoonPhase } from '@ocap/kernel-agents/capabilities/examples';
 import { count, add, multiply } from '@ocap/kernel-agents/capabilities/math';
 import { makeJsonAgent } from '@ocap/kernel-agents/json';
 import { makeReplAgent } from '@ocap/kernel-agents-repl';
-import { makeTreeSitterParser } from '@ocap/kernel-agents-repl/parser/tree-sitter';
 import { fetchMock } from '@ocap/repo-tools/test-utils/fetch-mock';
 import {
   afterAll,
@@ -35,13 +34,9 @@ const makeJsonAgentWithMathCapabilities = (args: MakeAgentArgs) =>
     capabilities: { count, add, multiply, ...args.capabilities },
   });
 
-const parser = makeTreeSitterParser();
-const makeReplAgentWithParser = (args: MakeAgentArgs) =>
-  makeReplAgent({ ...args, parser });
-
 describe.skipIf(LMS_PROVIDER !== 'ollama').each([
   ['json', makeJsonAgentWithMathCapabilities],
-  ['repl', makeReplAgentWithParser],
+  ['repl', makeReplAgent],
 ])(
   '%s agent',
   (strategy: string, makeAgent: (args: MakeAgentArgs) => Agent) => {

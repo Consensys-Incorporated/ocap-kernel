@@ -12,8 +12,7 @@ import {
   StatementMessage,
   observeJson,
 } from './messages.ts';
-import type { SyntaxTree } from './parse/syntax-tree.ts';
-import { makeTreeSitterParser } from './parse/tree-sitter.ts';
+import { parseFirstStatement } from './parse/statement.ts';
 import { ERROR, RETURN } from './symbols.ts';
 
 describe('observeJson', () => {
@@ -38,14 +37,17 @@ describe('observeJson', () => {
 });
 
 describe('StatementMessage', () => {
-  const parser = makeTreeSitterParser();
-
   it.each([
-    ['// comment', CommentMessage, 'comment', 'comment'],
-    ['import { foo } from "bar";', ImportMessage, 'import', 'import_statement'],
-    ['1 + 1;', EvaluationMessage, 'evaluation', 'expression_statement'],
-  ])('creates %s from code', async (code, Class, type, nodeType) => {
-    const message = await StatementMessage.fromCode(code, parser);
+    ['// comment', CommentMessage, 'comment', undefined],
+    [
+      'import { foo } from "bar";',
+      ImportMessage,
+      'import',
+      'ImportDeclaration',
+    ],
+    ['1 + 1;', EvaluationMessage, 'evaluation', 'ExpressionStatement'],
+  ])('creates %s from code', (code, Class, type, nodeType) => {
+    const message = StatementMessage.fromCode(code);
     expect(message).toBeInstanceOf(Class);
     expect(message.messageType).toBe(type);
     expect(message.messageBody.code).toBe(code);
@@ -54,13 +56,20 @@ describe('StatementMessage', () => {
   });
 });
 
+describe('CommentMessage', () => {
+  it('creates a message', () => {
+    const message = new CommentMessage('// comment');
+    expect(message.messageType).toBe('comment');
+    expect(message.messageBody).toStrictEqual({ code: '// comment' });
+  });
+});
+
 describe.each([
-  ['CommentMessage', CommentMessage, '// comment', 'comment'],
   ['ImportMessage', ImportMessage, 'import { foo } from "bar";', 'import'],
   ['EvaluationMessage', EvaluationMessage, '1 + 1;', 'evaluation'],
 ])('%s', (_, Class, code, type) => {
   it('creates message with node', () => {
-    const node = { type } as SyntaxTree;
+    const node = parseFirstStatement(code);
     const message = new Class(code, node);
     expect(message.messageType).toBe(type);
     expect(message.messageBody).toStrictEqual({ code, node });

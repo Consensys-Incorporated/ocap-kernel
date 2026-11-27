@@ -17,10 +17,6 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
-    "./parser/tree-sitter": {
-      "types": "./dist/strategies/repl/parse/tree-sitter.d.ts",
-      "default": "./dist/strategies/repl/parse/tree-sitter.js"
-    },
     "./package.json": "./package.json"
   },
   "files": [
@@ -63,7 +59,6 @@
     "@metamask/kernel-utils": "workspace:^",
     "@metamask/logger": "workspace:^",
     "@ocap/kernel-agents": "workspace:^",
-    "tree-sitter": "^0.25.0",
-    "tree-sitter-javascript": "^0.25.0"
+    "acorn": "^8.15.0"
   }
 }

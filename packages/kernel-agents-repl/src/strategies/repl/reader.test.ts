@@ -1,14 +1,13 @@
 import '@ocap/repo-tools/test-utils/mock-endoify';
 
+import { SampleGenerationError } from '@metamask/kernel-errors';
 import type { Logger } from '@metamask/logger';
 import { makeTestStream } from '@ocap/kernel-agents/test-utils';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-import { makeTreeSitterParser } from './parse/tree-sitter.ts';
 import { makeReader } from './reader.ts';
 
 describe('reader', () => {
-  const parser = makeTreeSitterParser();
   let logger: Logger;
 
   beforeEach(() => {
@@ -29,9 +28,21 @@ describe('reader', () => {
       [`console.log("hello");${stop}`],
       transform,
     );
-    const reader = makeReader({ parser, logger });
+    const reader = makeReader({ logger });
     const statement = await reader({ stream, abort, stop });
     expect(statement.toReplString()).toBe('> console.log("hello");');
+  });
+
+  it.each([
+    ['an invalid statement', 'const = 1;'],
+    ['a valid statement followed by invalid code', 'f();\n```'],
+  ])('rejects %s as a sample to retry', async (_case, code) => {
+    const stop = '</|>';
+    const { stream, abort } = makeTestStream([`${code}${stop}`], transform);
+    const reader = makeReader({ logger });
+    await expect(reader({ stream, abort, stop })).rejects.toThrow(
+      SampleGenerationError,
+    );
   });
 
   it('throws an error if the stream has no stop token', async () => {
@@ -39,7 +50,7 @@ describe('reader', () => {
       [`console.log("hello");`],
       transform,
     );
-    const reader = makeReader({ parser, logger });
+    const reader = makeReader({ logger });
     await expect(reader({ stream, abort, stop: '</|>' })).rejects.toThrow(
       'Stream ended without a parse event',
     );
@@ -48,7 +59,7 @@ describe('reader', () => {
   it('throws an error if the stream is empty', async () => {
     const stop = '</|>';
     const { stream, abort } = makeTestStream([], transform);
-    const reader = makeReader({ parser, logger });
+    const reader = makeReader({ logger });
     await expect(reader({ stream, abort, stop })).rejects.toThrow(
       'Stream ended without a parse event',
     );
