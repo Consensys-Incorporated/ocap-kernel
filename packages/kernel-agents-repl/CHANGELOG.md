@@ -16,4 +16,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **BREAKING:** `makeReplAgent` requires a `parser`, and statements are parsed asynchronously in the reader rather than in message constructors. `StatementMessage.fromCode` takes the parser and returns a promise, and a statement constructed without a parsed node is a transcript-only message that the evaluator rejects ([#1255](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1255))
 - The REPL no longer loads `ses` itself; it uses the `Compartment` global of the realm that ran lockdown, so it can be bundled into a vat ([#1255](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1255))
 
+### Fixed
+
+- A REPL statement can no longer run code outside its compartment, or change the evaluator's state except by declaring names ([#1333](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1333))
+- Declaring `$frame`, `$capture`, `$catch`, `$return`, `consts`, `lets` or `__proto__` is an error, rather than breaking every later statement ([#1333](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1333))
+
 [Unreleased]: https://github.com/Consensys-Incorporated/ocap-kernel/
