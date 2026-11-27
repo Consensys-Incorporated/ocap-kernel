@@ -103,6 +103,11 @@ export function makeAccountabilityService({
           if (!endpointExists(caller)) {
             throw Error(`${caller} no longer exists`);
           }
+          // An orphaned object's tracking went with its owner, and a pin put
+          // on it now, nothing would withdraw.
+          if (kernelStore.getOwner(kref) === undefined) {
+            throw Error(`${kref} no longer has an owner`);
+          }
           kernelStore.trackObject(kref, caller, options);
         }),
       );
