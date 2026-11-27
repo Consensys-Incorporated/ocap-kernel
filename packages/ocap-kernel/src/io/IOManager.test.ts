@@ -4,6 +4,7 @@ import type { Mock } from 'vitest';
 
 import { IOManager } from './IOManager.ts';
 import type { IOChannel, IOListener, IOListenerFactory } from './types.ts';
+import type { KernelQueue } from '../KernelQueue.ts';
 import type { KernelService } from '../KernelServiceManager.ts';
 import type { IOConfig, KRef } from '../types.ts';
 
@@ -19,7 +20,49 @@ const makeListener = (): IOListener => ({
 });
 
 /** The vat-facing shape of a listener service, for driving it in tests. */
-type ListenerFacet = { accept: () => Promise<unknown> };
+type ListenerFacet = {
+  accept: () => Promise<unknown>;
+};
+
+type InboxWork = Parameters<KernelQueue['enqueueInbox']>[1];
+
+/**
+ * A queue whose inbox holds each item until `drain` runs it, as the run loop
+ * holds one until its crank.
+ *
+ * @returns The queue, and a function that runs what the inbox holds.
+ */
+const makeKernelQueue = (): {
+  kernelQueue: KernelQueue;
+  enqueueInbox: Mock<KernelQueue['enqueueInbox']>;
+  drain: () => Promise<void>;
+} => {
+  const held: (() => Promise<void>)[] = [];
+  const enqueueInbox = vi.fn(
+    async (_what: string, work: InboxWork) =>
+      new Promise((resolve, reject) => {
+        held.push(async () => {
+          const outcome = await work();
+          if ('failure' in outcome) {
+            reject(outcome.failure as Error);
+          } else {
+            resolve(outcome.value);
+          }
+        });
+      }),
+  ) as unknown as Mock<KernelQueue['enqueueInbox']>;
+  return {
+    kernelQueue: { enqueueInbox } as unknown as KernelQueue,
+    enqueueInbox,
+    drain: async () => {
+      // A macrotask, so a service method reaches its inbox call first.
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      for (const run of held.splice(0)) {
+        await run();
+      }
+    },
+  };
+};
 
 type IOManagerOptions = ConstructorParameters<typeof IOManager>[0];
 
@@ -34,8 +77,18 @@ describe('IOManager', () => {
   let listeners: IOListener[];
   let registeredServices: Map<string, ListenerFacet>;
   let nextAnonymousId: number;
+  let kernelQueue: KernelQueue;
+  let enqueueInbox: Mock<KernelQueue['enqueueInbox']>;
+  let drain: () => Promise<void>;
+
+  const accept = async (service: ListenerFacet | undefined) => {
+    const accepted = service?.accept();
+    await drain();
+    return accepted;
+  };
 
   beforeEach(() => {
+    ({ kernelQueue, enqueueInbox, drain } = makeKernelQueue());
     listeners = [];
     registeredServices = new Map();
     nextAnonymousId = 0;
@@ -60,6 +113,7 @@ describe('IOManager', () => {
 
     manager = new IOManager({
       factory,
+      kernelQueue,
       registerService,
       unregisterService,
       registerAnonymous,
@@ -100,13 +154,39 @@ describe('IOManager', () => {
         repl: { type: 'socket', path: '/tmp/repl.sock' } as IOConfig,
       });
 
-      await registeredServices.get('io:s1:repl')?.accept();
+      await accept(registeredServices.get('io:s1:repl'));
 
       expect(registerAnonymous).toHaveBeenCalledWith(
         expect.any(Object),
         'io:s1:repl:c1',
       );
     });
+
+    it.each([
+      ['destroyed', false],
+      ['destroyed and created again', true],
+    ])(
+      'drops a connection whose subcluster is %s before its crank',
+      async (_what, createdAgain) => {
+        const ioConfig = {
+          repl: { type: 'socket', path: '/tmp/repl.sock' } as IOConfig,
+        };
+        await manager.createChannels('s1', ioConfig);
+        const accepted = registeredServices.get('io:s1:repl')?.accept();
+        await vi.waitFor(() => expect(enqueueInbox).toHaveBeenCalledOnce());
+
+        await manager.destroyChannels('s1');
+        if (createdAgain) {
+          await manager.createChannels('s1', ioConfig);
+        }
+        await drain();
+
+        await expect(accepted).rejects.toThrow(
+          'IO listener "io:s1:repl" is gone; connection "io:s1:repl:c1" was not hosted',
+        );
+        expect(registerAnonymous).not.toHaveBeenCalled();
+      },
+    );
 
     it('cleans up on factory failure', async () => {
       const successListener = makeListener();
@@ -121,6 +201,7 @@ describe('IOManager', () => {
 
       const mgr = new IOManager({
         factory: failingFactory,
+        kernelQueue,
         registerService,
         unregisterService,
         registerAnonymous,
@@ -141,38 +222,6 @@ describe('IOManager', () => {
       expect(unregisterService).toHaveBeenCalledWith('io:s1:first');
     });
 
-    it('releases already-accepted connections on factory failure', async () => {
-      let callCount = 0;
-      const failingFactory = vi.fn(async () => {
-        callCount += 1;
-        if (callCount === 2) {
-          // Accept a connection on the first listener before the second
-          // listener's creation blows up, so rollback has something to undo.
-          await registeredServices.get('io:s1:first')?.accept();
-          throw new Error('factory error');
-        }
-        return makeListener();
-      }) as unknown as IOListenerFactory;
-
-      const mgr = new IOManager({
-        factory: failingFactory,
-        registerService,
-        unregisterService,
-        registerAnonymous,
-        releaseAnonymous,
-        logger,
-      });
-
-      await expect(
-        mgr.createChannels('s1', {
-          first: { type: 'socket', path: '/tmp/a.sock' } as IOConfig,
-          second: { type: 'socket', path: '/tmp/b.sock' } as IOConfig,
-        }),
-      ).rejects.toThrow('factory error');
-
-      expect(releaseAnonymous).toHaveBeenCalledWith('ko901');
-    });
-
     it('does not mask factory error when unregister fails during rollback', async () => {
       const successListener = makeListener();
       let callCount = 0;
@@ -191,6 +240,7 @@ describe('IOManager', () => {
 
       const mgr = new IOManager({
         factory: failingFactory,
+        kernelQueue,
         registerService,
         unregisterService: failingUnregister,
         registerAnonymous,
@@ -234,8 +284,8 @@ describe('IOManager', () => {
         repl: { type: 'socket', path: '/tmp/repl.sock' } as IOConfig,
       });
       const service = registeredServices.get('io:s1:repl');
-      await service?.accept();
-      await service?.accept();
+      await accept(service);
+      await accept(service);
 
       await manager.destroyChannels('s1');
 
@@ -255,6 +305,7 @@ describe('IOManager', () => {
 
       const mgr = new IOManager({
         factory,
+        kernelQueue,
         registerService,
         unregisterService: failingUnregister,
         registerAnonymous,
@@ -288,6 +339,7 @@ describe('IOManager', () => {
 
       const mgr = new IOManager({
         factory: errorFactory,
+        kernelQueue,
         registerService,
         unregisterService,
         registerAnonymous,

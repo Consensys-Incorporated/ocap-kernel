@@ -90,6 +90,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- An IO connection is hosted on `accept()` and released on `close()`, each in a crank of its own. An abort of the crank open at the time used to hand the vat a connection the store no longer had, or leave a closed one pinned until the next start ([#1335](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1335))
 - A syscall a vat makes outside its own delivery, from a timer or a fetch callback, runs in a crank of its own, ahead of the vat's next delivery. It used to join whatever crank was open, whose abort undid it after the vat was told it succeeded. One that arrives once `stop` has begun is refused and logged ([#1323](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1323))
 - A kernel service's result is written in a crank of its own, so one that settles while another crank is open is no longer lost, leaving the calling vat waiting, when that crank aborts. A result that cannot be written, such as one that settles after `stop` or after a wipe, is logged instead of raising an unhandled rejection ([#1319](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1319))
 - Giving up on a peer runs in a crank of its own, so the rejections of its promises are no longer lost when the crank open at the time aborts, and a failure while giving up stops the kernel ([#1319](https://github.com/Consensys-Incorporated/ocap-kernel/pull/1319))

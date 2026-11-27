@@ -198,6 +198,7 @@ export class Kernel {
     if (options.ioListenerFactory) {
       this.#ioManager = new IOManager({
         factory: options.ioListenerFactory,
+        kernelQueue: this.#kernelQueue,
         registerService:
           this.#kernelServiceManager.registerKernelServiceObject.bind(
             this.#kernelServiceManager,

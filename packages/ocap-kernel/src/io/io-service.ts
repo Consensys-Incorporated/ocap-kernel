@@ -10,10 +10,10 @@ import type { IOConfig } from '../types.ts';
  * kernel object reachable only by reference.
  */
 export type ConnectionHost = {
-  /** Host `connection` and return its kref. */
-  register: (connection: object, label: string) => KRef;
-  /** Release a previously hosted connection. */
-  release: (kref: KRef) => void;
+  /** Host `connection`; resolves with its kref once the hosting is committed. */
+  register: (connection: object, label: string) => Promise<KRef>;
+  /** Release a hosted connection; resolves once the release is committed. */
+  release: (kref: KRef) => Promise<void>;
 };
 
 /**
@@ -41,7 +41,7 @@ export type ConnectionHost = {
  * name (e.g. `io:s1:repl:c3`).
  * @param channel - The channel for this connection.
  * @param config - The IO configuration for the owning listener.
- * @param onClose - Invoked after the channel closes, so the host can stop
+ * @param onClose - Awaited after the channel closes, so the host can stop
  * hosting this connection.
  * @returns A remotable with `read()`, `write()`, and `close()`.
  */
@@ -49,7 +49,7 @@ export function makeIOConnectionService(
   name: string,
   channel: IOChannel,
   config: IOConfig,
-  onClose: () => void,
+  onClose: () => Promise<void>,
 ): object {
   const direction = config.direction ?? 'inout';
   let closed = false;
@@ -77,7 +77,7 @@ export function makeIOConnectionService(
       try {
         await channel.close();
       } finally {
-        onClose();
+        await onClose();
       }
     },
   });
@@ -112,6 +112,7 @@ export function makeIOListenerService(
    * dropped its sockets but left every accepted connection's kref pinned.
    */
   const hostedConnections = new Set<KRef>();
+  let listenerClosed = false;
 
   return makeDefaultExo(name, {
     async accept(): Promise<unknown> {
@@ -123,32 +124,45 @@ export function makeIOListenerService(
       }
       nextConnectionId += 1;
       const connectionName = `${name}:c${nextConnectionId}`;
-      // Hosting needs the connection object, but the connection's close
-      // handler needs the resulting kref, so the kref is shared through a
-      // holder that is filled in immediately after registration.
-      const hosted: { kref?: KRef } = {};
+      // Hosting needs the connection object, and the connection's close
+      // handler needs the kref that hosting gives.
+      let kref: KRef | undefined;
       const connection = makeIOConnectionService(
         connectionName,
         channel,
         config,
-        () => {
-          if (hosted.kref) {
-            hostedConnections.delete(hosted.kref);
-            host.release(hosted.kref);
+        async () => {
+          if (kref) {
+            hostedConnections.delete(kref);
+            await host.release(kref);
           }
         },
       );
-      hosted.kref = host.register(connection, connectionName);
-      hostedConnections.add(hosted.kref);
-      return kslot(hosted.kref, connectionName);
+      try {
+        kref = await host.register(connection, connectionName);
+      } catch (error) {
+        // Nobody will ever hold this connection to close it.
+        await channel.close().catch(() => undefined);
+        throw error;
+      }
+      if (listenerClosed) {
+        // Closed while the registration was pending, so `close()` did not
+        // see this connection to release it.
+        await host.release(kref);
+        return null;
+      }
+      hostedConnections.add(kref);
+      return kslot(kref, connectionName);
     },
 
     async close(): Promise<void> {
+      // Set first, so a registration that commits while the listener is
+      // still closing is released by `accept()`.
+      listenerClosed = true;
       await listener.close();
-      for (const kref of [...hostedConnections]) {
-        hostedConnections.delete(kref);
-        host.release(kref);
-      }
+      const krefs = [...hostedConnections];
+      hostedConnections.clear();
+      await Promise.all(krefs.map(async (kref) => host.release(kref)));
     },
   });
 }

@@ -227,7 +227,8 @@ The [run loop](#run-loop)'s in-memory queue of work from outside it: the host ca
 `initRemoteComms` and `issueOcapURL`, and acting on a remote, for an ocap URL redemption or for a
 peer's message when the peer has no handle yet or an earlier message of its own still waits.
 The kernel's own code puts a kernel service's result there, a peer's acknowledgement, giving up
-on a peer, and a vat's [late syscall](#late-syscall).
+on a peer, a vat's [late syscall](#late-syscall), and the hosting and release of an IO
+connection.
 The run loop takes each in a [crank](#crank) of its own, and its caller hears nothing of it
 before that crank commits. See `enqueueInbox` in
 [KernelQueue](../packages/ocap-kernel/src/KernelQueue.ts).

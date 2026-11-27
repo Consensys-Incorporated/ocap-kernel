@@ -1,3 +1,4 @@
+import { makePromiseKit } from '@endo/promise-kit';
 import { describe, it, expect, vi } from 'vitest';
 
 import {
@@ -65,13 +66,13 @@ function makeHost(): ConnectionHost & {
   return {
     registered,
     released,
-    register: (connection: object, label: string): KRef => {
+    register: async (connection: object, label: string): Promise<KRef> => {
       next += 1;
       const kref = `ko${next}` as KRef;
       registered.push({ kref, label, connection });
       return kref;
     },
-    release: (kref: KRef): void => {
+    release: async (kref: KRef): Promise<void> => {
       released.push(kref);
     },
   };
@@ -362,6 +363,81 @@ describe('makeIOListenerService', () => {
 
     expect(host.released).toStrictEqual(['ko1', 'ko2']);
   });
+
+  it('closes a connection that could not be hosted', async () => {
+    const channel = makeChannel();
+    const host = makeHost();
+    host.register = async () => {
+      throw new Error('refused');
+    };
+    const listener = makeIOListenerService(
+      'io:s1:repl',
+      makeListener([channel]),
+      makeConfig(),
+      host,
+    ) as ListenerFacet;
+
+    await expect(listener.accept()).rejects.toThrow('refused');
+    expect(channel.close).toHaveBeenCalledOnce();
+  });
+
+  it('releases a connection hosted while the listener closes', async () => {
+    const host = makeHost();
+    const { register } = host;
+    const registering = makePromiseKit<void>();
+    host.register = async (connection, label) => {
+      await registering.promise;
+      return register(connection, label);
+    };
+    const underlying = makeListener([makeChannel()]);
+    const closing = makePromiseKit<void>();
+    vi.mocked(underlying.close).mockReturnValue(closing.promise);
+    const listener = makeIOListenerService(
+      'io:s1:repl',
+      underlying,
+      makeConfig(),
+      host,
+    ) as ListenerFacet;
+
+    const accepted = listener.accept();
+    const closed = listener.close();
+    registering.resolve();
+
+    expect(await accepted).toBeNull();
+    closing.resolve();
+    await closed;
+    expect(host.released).toStrictEqual(['ko1']);
+  });
+
+  it.each(['connection', 'listener'] as const)(
+    'settles a %s close() once the release has',
+    async (closing) => {
+      const host = makeHost();
+      const releasing = makePromiseKit<void>();
+      host.release = async () => releasing.promise;
+      const listener = makeIOListenerService(
+        'io:s1:repl',
+        makeListener([makeChannel()]),
+        makeConfig(),
+        host,
+      ) as ListenerFacet;
+      await listener.accept();
+      const closer =
+        closing === 'listener'
+          ? listener
+          : (host.registered[0]?.connection as unknown as ConnectionFacet);
+
+      let settled = false;
+      const closed = closer.close().then(() => {
+        settled = true;
+        return undefined;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(settled).toBe(false);
+      releasing.resolve();
+      await closed;
+    },
+  );
 
   it('does not release a connection twice when it was already closed', async () => {
     const host = makeHost();
