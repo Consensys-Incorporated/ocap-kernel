@@ -1,11 +1,7 @@
 import { SampleGenerationError } from '@metamask/kernel-errors';
 import type { Logger } from '@metamask/logger';
-import {
-  ifDefined,
-  withAbort,
-  gatherStreamingResponse,
-} from '@ocap/kernel-agents/utils';
 
+import { ifDefined, withAbort, gatherStreamingResponse } from '../../utils.ts';
 import { StatementMessage } from './messages.ts';
 import { makeSampleCollector } from './sample-collector.ts';
 

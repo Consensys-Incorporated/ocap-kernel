@@ -7,7 +7,7 @@ import type { MakeAgentArgs, Agent } from '@ocap/kernel-agents';
 import { getMoonPhase } from '@ocap/kernel-agents/capabilities/examples';
 import { count, add, multiply } from '@ocap/kernel-agents/capabilities/math';
 import { makeJsonAgent } from '@ocap/kernel-agents/json';
-import { makeReplAgent } from '@ocap/kernel-agents-repl';
+import { makeReplAgent } from '@ocap/kernel-agents/repl';
 import { fetchMock } from '@ocap/repo-tools/test-utils/fetch-mock';
 import {
   afterAll,

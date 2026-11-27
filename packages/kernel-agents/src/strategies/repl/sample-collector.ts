@@ -1,6 +1,7 @@
 import { SampleGenerationError } from '@metamask/kernel-errors';
 import type { Logger } from '@metamask/logger';
-import type { SampleCollector } from '@ocap/kernel-agents/types';
+
+import type { SampleCollector } from '../../types.ts';
 
 /**
  * A simple sample collector that collects content from a stream until a stop

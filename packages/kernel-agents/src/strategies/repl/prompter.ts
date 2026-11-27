@@ -1,4 +1,4 @@
-import { ifDefined } from '@ocap/kernel-agents/utils';
+import { ifDefined } from '../../utils.ts';
 
 import { exampleTranscripts } from './example-transcripts.ts';
 import type { ReplTranscript } from './messages.ts';

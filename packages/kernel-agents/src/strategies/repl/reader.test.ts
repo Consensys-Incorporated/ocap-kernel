@@ -2,9 +2,9 @@ import '@ocap/repo-tools/test-utils/mock-endoify';
 
 import { SampleGenerationError } from '@metamask/kernel-errors';
 import type { Logger } from '@metamask/logger';
-import { makeTestStream } from '@ocap/kernel-agents/test-utils';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
+import { makeTestStream } from '../../test-utils.ts';
 import { makeReader } from './reader.ts';
 
 describe('reader', () => {
