@@ -23,6 +23,7 @@ import type {
 import { MAX_VAT_MESSAGE_LENGTH } from './vat-limits.ts';
 import { VatHandle } from './VatHandle.ts';
 import { VatSyscall } from './VatSyscall.ts';
+import type { InitVatResult } from '../rpc/vat/initVat.ts';
 import { makeMapKernelDatabase } from '../../test/storage.ts';
 
 vi.mock('@endo/eventual-send', () => ({
@@ -76,7 +77,11 @@ describe('VatHandle', () => {
     mockKernelStore = makeKernelStore(makeMapKernelDatabase());
     sendVatCommandMock = vi
       .spyOn(VatHandle.prototype, 'sendVatCommand')
-      .mockResolvedValueOnce(['fake', null] as unknown as VatDeliveryResult);
+      .mockResolvedValueOnce([
+        'fake',
+        null,
+        'sha256:00',
+      ] as unknown as InitVatResult);
   });
 
   describe('init', () => {
@@ -93,6 +98,23 @@ describe('VatHandle', () => {
           },
         },
       });
+    });
+
+    it('keeps the bundle hash the worker reports', async () => {
+      await makeVat();
+      expect(mockKernelStore.getVatBundleHash(asVatId('v0'))).toBe('sha256:00');
+    });
+
+    it('keeps no bundle hash when the first delivery failed', async () => {
+      sendVatCommandMock
+        .mockReset()
+        .mockResolvedValueOnce([
+          'fake',
+          'boom',
+          'sha256:00',
+        ] as unknown as InitVatResult);
+      await makeVat();
+      expect(mockKernelStore.getVatBundleHash(asVatId('v0'))).toBeUndefined();
     });
 
     it.each([
@@ -429,6 +451,7 @@ describe('VatHandle', () => {
                 result: [
                   [[['big', 'x'.repeat(MAX_VAT_MESSAGE_LENGTH)]], ['kept']],
                   null,
+                  'sha256:00',
                 ],
               })
               .catch(() => undefined);
@@ -516,7 +539,7 @@ describe('VatHandle', () => {
       });
       await delay(10);
       await syscall('during initVat');
-      await answer('v0:1', [[[], []], null]);
+      await answer('v0:1', [[[], []], null, 'sha256:00']);
       const vat = await making;
       const idlePing = vat.ping();
       await delay(10);

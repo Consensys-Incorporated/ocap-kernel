@@ -148,6 +148,27 @@ export function getVatMethods(ctx: StoreContext) {
   }
 
   /**
+   * Record the content hash of the bundle a vat runs. Under the vat's own
+   * prefix, so its cleanup takes it.
+   *
+   * @param vatID - The vat.
+   * @param bundleHash - The hash.
+   */
+  function setVatBundleHash(vatID: VatId, bundleHash: string): void {
+    kv.set(`${vatID}.bundleHash`, bundleHash);
+  }
+
+  /**
+   * Get the content hash of the bundle a vat runs.
+   *
+   * @param vatID - The vat.
+   * @returns The hash, or undefined if the vat has not reported one.
+   */
+  function getVatBundleHash(vatID: VatId): string | undefined {
+    return kv.get(`${vatID}.bundleHash`);
+  }
+
+  /**
    * Checks if an endpoint imports the specified kernel slot.
    *
    * @param endpointId - The ID of the endpoint to check.
@@ -468,6 +489,8 @@ export function getVatMethods(ctx: StoreContext) {
     getAllVatRecords,
     getVatConfig,
     setVatConfig,
+    setVatBundleHash,
+    getVatBundleHash,
     deleteVatConfig,
     getVatIDs,
     importsKernelSlot,

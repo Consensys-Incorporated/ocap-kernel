@@ -44,6 +44,9 @@ export const SQL_QUERIES = {
   CREATE_INDEX_ACCOUNTABILITY_RECORDS_TRACE: `
     CREATE INDEX IF NOT EXISTS accountability_records_trace ON accountability_records (trace, seq)
   `,
+  CREATE_INDEX_ACCOUNTABILITY_RECORDS_CRANK: `
+    CREATE INDEX IF NOT EXISTS accountability_records_crank ON accountability_records (endpoint, crank)
+  `,
   APPEND_ACCOUNTABILITY_RECORD: `
     INSERT INTO accountability_records (kind, witness, crank, kref, endpoint, sender, trace, data)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)

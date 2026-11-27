@@ -8,14 +8,18 @@ import { getPinMethods } from './pinned.ts';
 import type {
   AccountabilityRecord,
   AccountabilityRecordInput,
+  Attribution,
   ConveyanceRecord,
   DeliveryRecord,
   IntroductionRecord,
+  StoredAttestation,
   TrackOptions,
   Trackers,
 } from '../../accountability/types.ts';
 import type { EndpointId, KRef, KernelMessage, Sender } from '../../types.ts';
 import type { StoreContext } from '../types.ts';
+
+const ATTESTATION_BASE = 'attestation.';
 
 /**
  * Create an accountability records store object that provides functionality
@@ -195,8 +199,9 @@ export function getAccountabilityRecordMethods(ctx: StoreContext) {
   }
 
   /**
-   * Record a message delivered to a tracked object. The arguments are kept if
-   * any tracker asked for them.
+   * Record a message delivered to a tracked object, or one the host
+   * attributed to a party. The arguments are kept if any tracker asked for
+   * them.
    *
    * @param options - Options bag.
    * @param options.target - The object.
@@ -205,6 +210,7 @@ export function getAccountabilityRecordMethods(ctx: StoreContext) {
    * @param options.cause - The crank the message was issued in.
    * @param options.method - The method invoked.
    * @param options.message - The message.
+   * @param options.attribution - What the host said about the act, if anything.
    */
   function recordDelivery({
     target,
@@ -213,9 +219,11 @@ export function getAccountabilityRecordMethods(ctx: StoreContext) {
     cause,
     method,
     message,
+    attribution,
   }: Pick<DeliveryRecord, 'target' | 'targetEndpoint' | 'sender' | 'cause'> & {
     method: string;
     message: KernelMessage;
+    attribution?: Attribution | undefined;
   }): void {
     const recordArgs = Object.values(getTrackers(target)).some(
       (options) => options.recordArgs,
@@ -231,6 +239,12 @@ export function getAccountabilityRecordMethods(ctx: StoreContext) {
       result: message.result ?? null,
       ...(recordArgs ? { args: message.methargs } : {}),
       wallClock: Date.now(),
+      ...(attribution?.onBehalfOf === undefined
+        ? {}
+        : { onBehalfOf: attribution.onBehalfOf }),
+      ...(attribution?.intent === undefined
+        ? {}
+        : { intent: attribution.intent }),
     });
   }
 
@@ -283,6 +297,56 @@ export function getAccountabilityRecordMethods(ctx: StoreContext) {
     ctx.recordIntroductions = enabled;
   }
 
+  /**
+   * Keep an attestation. One the kernel already holds, by its signature, is
+   * not kept twice.
+   *
+   * @param attestation - The attestation.
+   */
+  function addAttestation(attestation: StoredAttestation): void {
+    const key = `${ATTESTATION_BASE}${attestation.kind}.${attestation.subject}`;
+    const held = getAttestations({
+      kind: attestation.kind,
+      subject: attestation.subject,
+    });
+    if (held.some(({ signature }) => signature === attestation.signature)) {
+      return;
+    }
+    ctx.kv.set(key, JSON.stringify([...held, attestation]));
+  }
+
+  /**
+   * Read attestations.
+   *
+   * @param filter - Which attestations; all of them if omitted.
+   * @param filter.kind - Of this kind.
+   * @param filter.subject - About this subject.
+   * @returns The attestations.
+   */
+  function getAttestations({
+    kind,
+    subject,
+  }: {
+    kind?: StoredAttestation['kind'];
+    subject?: string;
+  } = {}): StoredAttestation[] {
+    const parse = (key: string): StoredAttestation[] => {
+      const raw = ctx.kv.get(key);
+      return raw === undefined ? [] : (JSON.parse(raw) as StoredAttestation[]);
+    };
+    if (kind !== undefined && subject !== undefined) {
+      return parse(`${ATTESTATION_BASE}${kind}.${subject}`);
+    }
+    const prefix =
+      kind === undefined ? ATTESTATION_BASE : `${ATTESTATION_BASE}${kind}.`;
+    return [...getPrefixedKeys(prefix)]
+      .flatMap(parse)
+      .filter(
+        (attestation) =>
+          subject === undefined || attestation.subject === subject,
+      );
+  }
+
   return {
     getTrackers,
     isTracked,
@@ -296,5 +360,7 @@ export function getAccountabilityRecordMethods(ctx: StoreContext) {
     getAccountabilityRecords,
     pruneAccountabilityRecords,
     setIntroductionRecording,
+    addAttestation,
+    getAttestations,
   };
 }

@@ -54,6 +54,7 @@ export function describeAccountabilityRecordStore(
       ['sender', { sender: 'kernel' }, [2]],
       ['trace', { trace: 't1' }, [3]],
       ['involving, as endpoint or sender', { involving: 'v2' }, [1, 3, 4]],
+      ['crank', { crank: 2 }, [2]],
       ['throughCrank', { throughCrank: 2 }, [1, 2]],
       ['afterSeq', { afterSeq: 2 }, [3, 4]],
       ['limit', { limit: 2 }, [1, 2]],

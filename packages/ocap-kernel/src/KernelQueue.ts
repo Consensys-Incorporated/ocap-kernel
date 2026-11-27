@@ -29,6 +29,7 @@ import type {
   VatId,
 } from './types.ts';
 import { insistKRef } from './types.ts';
+import type { Attribution } from './accountability/types.ts';
 import { Fail } from './utils/assert.ts';
 
 /**
@@ -784,6 +785,7 @@ export class KernelQueue {
    * @param target - The object to which the message is directed.
    * @param method - The method to be invoked.
    * @param args - Message arguments.
+   * @param attribution - What the host says about the act, if anything.
    *
    * @returns a promise for the (CapData encoded) result of the message
    * invocation, with the `kpid` to pass to `releaseResult` if it carries
@@ -795,6 +797,7 @@ export class KernelQueue {
     target: KRef,
     method: string,
     args: unknown[],
+    attribution?: Attribution,
   ): Promise<QueueMessageResult> {
     insistKRef(target);
     // TODO(#562): Use logger instead.
@@ -808,6 +811,7 @@ export class KernelQueue {
       this.#writeMessage({
         target,
         methargs,
+        attribution,
         subscription: { resolve, reject },
       });
       return { value: undefined };
@@ -853,15 +857,19 @@ export class KernelQueue {
    * @param message.target - The object to which the message is directed.
    * @param message.methargs - The method and arguments, serialized.
    * @param message.subscription - How to answer the caller.
+   * @param message.attribution - What the host said about the act, if
+   * anything.
    */
   #writeMessage({
     target,
     methargs,
     subscription,
+    attribution,
   }: {
     target: KRef;
     methargs: CapData<KRef>;
     subscription: Subscription;
+    attribution?: Attribution | undefined;
   }): void {
     // Checked first, so that a missing kref rejects the answer with
     // `OBJECT_DELETED` rather than throwing out of the crank.
@@ -881,7 +889,11 @@ export class KernelQueue {
     // The caller has no c-list, so until it releases the result this is what
     // keeps the krefs in it alive.
     this.#kernelStore.holdResult(result);
-    this.enqueueSend(target, { methargs, result }, { sender: 'kernel' });
+    this.enqueueSend(
+      target,
+      { methargs, result },
+      { sender: 'kernel', attribution },
+    );
     // Last: a write that threw must leave no subscription behind.
     this.subscriptions.set(result, subscription);
   }
@@ -960,6 +972,8 @@ export class KernelQueue {
    * waited on a promise, which keeps the cause it was issued with.
    * @param options.immediate - If true (the default), enqueue immediately; if
    * false, buffer for crank completion.
+   * @param options.attribution - What the host said about the act, on a send
+   * it queued.
    */
   enqueueSend(
     target: KRef,
@@ -970,7 +984,13 @@ export class KernelQueue {
         ? this.#kernelStore.getCrankNumber()
         : 'async',
       immediate = true,
-    }: { sender: Sender; cause?: Cause; immediate?: boolean },
+      attribution,
+    }: {
+      sender: Sender;
+      cause?: Cause;
+      immediate?: boolean;
+      attribution?: Attribution | undefined;
+    },
   ): void {
     this.#kernelStore.incrementRefCount(target, 'queue|target');
     if (message.result) {
@@ -985,6 +1005,7 @@ export class KernelQueue {
       message,
       sender,
       cause,
+      ...(attribution === undefined ? {} : { attribution }),
     };
     if (immediate) {
       this.#enqueueRun(item);
@@ -1274,8 +1295,13 @@ export class KernelQueue {
       });
 
       // Enqueue the queued messages (immediate or buffered based on flag).
-      for (const { message, sender, cause } of queuedMessages) {
-        this.enqueueSend(kpid, message, { sender, cause, immediate });
+      for (const { message, sender, cause, attribution } of queuedMessages) {
+        this.enqueueSend(kpid, message, {
+          sender,
+          cause,
+          immediate,
+          attribution,
+        });
       }
 
       // A held result stays held only while a caller is about to be handed

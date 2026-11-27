@@ -7,6 +7,7 @@ import type { KernelQueue } from './KernelQueue.ts';
 import { kser, kunser, makeKernelError } from './liveslots/kernel-marshal.ts';
 import type { KernelStore } from './store/index.ts';
 import type {
+  Cause,
   KernelOneResolution,
   KRef,
   KernelMessage,
@@ -28,8 +29,9 @@ export type KernelService = {
   service: object;
   systemOnly: boolean;
   /**
-   * Whether each method is called with `{ caller }`, the endpoint the kernel
-   * saw the message come from, ahead of the caller's own arguments.
+   * Whether each method is called with `{ caller, cause }`, the endpoint the
+   * kernel saw the message come from and the crank it was sent in, ahead of
+   * the caller's own arguments.
    */
   withCaller: boolean;
 };
@@ -93,7 +95,8 @@ export class KernelServiceManager {
    * @param options.systemOnly - Whether the service is only available to system
    * subclusters. Defaults to `false`.
    * @param options.withCaller - Whether to call each method with the calling
-   * endpoint, as `{ caller }`, ahead of the arguments. Defaults to `false`.
+   * endpoint and the crank it called from, as `{ caller, cause }`, ahead of
+   * the arguments. Defaults to `false`.
    * @returns The registered kernel service with its kref.
    */
   registerKernelServiceObject(
@@ -274,12 +277,14 @@ export class KernelServiceManager {
    *
    * @param target - The target kref of the service.
    * @param message - The message to invoke the service with.
-   * @param sender - Who sent it.
+   * @param provenance - Who sent it, and from which crank.
+   * @param provenance.sender - The sender.
+   * @param provenance.cause - The crank the send was issued in.
    */
   invokeKernelService(
     target: KRef,
     message: KernelMessage,
-    sender: Sender,
+    { sender, cause }: { sender: Sender; cause: Cause },
   ): void {
     const kernelService = this.#kernelServicesByObject.get(target);
     if (!kernelService) {
@@ -316,7 +321,7 @@ export class KernelServiceManager {
         (...methodArgs: unknown[]) => unknown
       >;
       const callArgs = kernelService.withCaller
-        ? [harden({ caller: sender }), ...args]
+        ? [harden({ caller: sender, cause }), ...args]
         : args;
       // oxlint-disable-next-line typescript/no-non-null-assertion
       const resultPromise = E(service)[method]!(...callArgs);

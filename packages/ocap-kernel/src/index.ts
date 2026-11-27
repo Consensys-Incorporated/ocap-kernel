@@ -48,18 +48,46 @@ export type {
 } from './remotes/kernel/OcapURLManager.ts';
 export type {
   AccountabilityService,
-  Caller,
+  CallContext,
+  Receipt,
 } from './accountability/service.ts';
 export type {
   AccountabilityRecord,
   AccountabilityRecordView,
   CauseView,
+  Attestation,
+  AttestationClaim,
+  Attribution,
+  Intent,
   ConveyanceRecord,
   DeliveryRecord,
   IntroductionRecord,
+  PartyRef,
+  StoredAttestation,
   TrackOptions,
   Witness,
 } from './accountability/types.ts';
+export type { Acquisition, Chain, ChainHop } from './accountability/chain.ts';
+export type {
+  AttestationFilter,
+  AttestationKeeper,
+} from './accountability/attestations.ts';
+export {
+  attestationSigningBytes,
+  makePartyVerifier,
+  partyScheme,
+} from './accountability/parties.ts';
+export type {
+  PartySignatureVerifier,
+  PartyVerifier,
+} from './accountability/parties.ts';
+export {
+  canonicalJson,
+  signingBytes,
+  verifyKernelSignature,
+} from './accountability/signing.ts';
+export type { KernelSigner, Signed } from './accountability/signing.ts';
+export type { AccountabilityExport, AccountabilityOptions } from './Kernel.ts';
 export {
   isVatId,
   isKRef,
