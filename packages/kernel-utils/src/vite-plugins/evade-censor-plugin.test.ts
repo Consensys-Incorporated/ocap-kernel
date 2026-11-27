@@ -30,14 +30,12 @@ const evaluate = (code: string): unknown =>
   Function(`return ${code}`)();
 
 describe('evadeCensorPlugin', () => {
-  // `evadeCensor` would re-print this as `({ ...(a&& b)})`.
-  it('leaves a chunk without censored text alone', async () => {
-    expect(await render('({ ...a && b })')).toBe('({ ...a && b })');
-  });
-
-  it('leaves a method named import alone', async () => {
-    const code = '({ import: (value) => value }).import(1)';
-    expect(await render(code)).toBe(code);
+  it.each([
+    // `evadeCensor` would re-print this as `({ ...(a&& b)})`.
+    ['a chunk without censored text', '({ ...a && b })'],
+    ['a method named import', '({ import: (value) => value }).import(1)'],
+  ])('leaves %s alone', async (_case, content) => {
+    expect(await render(content)).toStrictEqual(content);
   });
 
   // Parenthesized, since a string statement on its own is a directive, which
