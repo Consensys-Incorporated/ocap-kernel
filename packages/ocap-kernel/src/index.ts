@@ -63,10 +63,15 @@ export type {
   DeliveryRecord,
   IntroductionRecord,
   PartyRef,
+  QueueMessageOptions,
+  ResolutionRecord,
   StoredAttestation,
+  TraceContext,
+  TraceOptions,
   TrackOptions,
   Witness,
 } from './accountability/types.ts';
+export type { DeliveryEnvelope, NotifyEnvelope } from './types.ts';
 export type { Acquisition, Chain, ChainHop } from './accountability/chain.ts';
 export type {
   AttestationFilter,

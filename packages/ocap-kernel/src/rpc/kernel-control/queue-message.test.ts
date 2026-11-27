@@ -30,13 +30,24 @@ describe('queueMessageSpec', () => {
     );
   });
 
-  it('accepts an attribution as a fourth parameter', () => {
-    const attribution = { onBehalfOf: 'ed25519:00' };
+  it.each([
+    [
+      'an attribution and a trace request',
+      { onBehalfOf: 'ed25519:00', trace: { hopLimit: 3 } },
+    ],
+    ['a trace request alone', { trace: { hopLimit: 3 } }],
+  ])('accepts %s as a fourth parameter', (_what, options) => {
     expect(
-      queueMessageSpec.params.create(['ko123', 'methodName', [], attribution]),
-    ).toStrictEqual(['ko123', 'methodName', [], attribution]);
+      queueMessageSpec.params.create(['ko123', 'methodName', [], options]),
+    ).toStrictEqual(['ko123', 'methodName', [], options]);
+  });
+
+  it.each([
+    ['it does not know', { bogus: 1 }],
+    ['asking for a trace of no hops', { trace: { hopLimit: 0 } }],
+  ])('refuses a fourth parameter %s', (_what, options) => {
     expect(() =>
-      queueMessageSpec.params.create(['ko123', 'methodName', [], { bogus: 1 }]),
+      queueMessageSpec.params.create(['ko123', 'methodName', [], options]),
     ).toThrow('Expected the value to satisfy a union');
   });
 

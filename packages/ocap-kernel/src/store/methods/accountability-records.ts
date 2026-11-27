@@ -12,7 +12,9 @@ import type {
   ConveyanceRecord,
   DeliveryRecord,
   IntroductionRecord,
+  ResolutionRecord,
   StoredAttestation,
+  TraceContext,
   TrackOptions,
   Trackers,
 } from '../../accountability/types.ts';
@@ -147,6 +149,8 @@ export function getAccountabilityRecordMethods(ctx: StoreContext) {
       [kref, endpoint] = [input.target, input.targetEndpoint];
     } else if (input.kind === 'conveyance') {
       [kref, endpoint] = [input.kref, input.to];
+    } else if (input.kind === 'resolution') {
+      [kref, endpoint] = [input.kpid, input.endpoint];
     } else {
       [kref, endpoint] = [input.kref, input.endpoint];
     }
@@ -158,7 +162,7 @@ export function getAccountabilityRecordMethods(ctx: StoreContext) {
       kref,
       endpoint,
       sender: input.sender,
-      trace: null,
+      trace: input.kind === 'introduction' ? null : (input.traceId ?? null),
       data: JSON.stringify({ ...input, witness: 'kernel', crankNumber }),
     });
   }
@@ -199,9 +203,26 @@ export function getAccountabilityRecordMethods(ctx: StoreContext) {
   }
 
   /**
-   * Record a message delivered to a tracked object, or one the host
-   * attributed to a party. The arguments are kept if any tracker asked for
-   * them.
+   * The trace fields of a record on a trace.
+   *
+   * @param trace - The trace, if any.
+   * @returns The fields, or none.
+   */
+  function traced(trace: TraceContext): { traceId: string; hop: number };
+  function traced(
+    trace: TraceContext | undefined,
+  ): { traceId: string; hop: number } | Record<string, never>;
+  // eslint-disable-next-line ocap/require-jsdoc
+  function traced(
+    trace: TraceContext | undefined,
+  ): { traceId: string; hop: number } | Record<string, never> {
+    return trace === undefined ? {} : { traceId: trace.id, hop: trace.hop };
+  }
+
+  /**
+   * Record a message delivered to a tracked object, one the host attributed
+   * to a party, or one on a trace. The arguments are kept if any tracker
+   * asked for them.
    *
    * @param options - Options bag.
    * @param options.target - The object.
@@ -211,6 +232,7 @@ export function getAccountabilityRecordMethods(ctx: StoreContext) {
    * @param options.method - The method invoked.
    * @param options.message - The message.
    * @param options.attribution - What the host said about the act, if anything.
+   * @param options.trace - The trace the message carried, if any.
    */
   function recordDelivery({
     target,
@@ -220,16 +242,19 @@ export function getAccountabilityRecordMethods(ctx: StoreContext) {
     method,
     message,
     attribution,
+    trace,
   }: Pick<DeliveryRecord, 'target' | 'targetEndpoint' | 'sender' | 'cause'> & {
     method: string;
     message: KernelMessage;
     attribution?: Attribution | undefined;
+    trace?: TraceContext | undefined;
   }): void {
     const recordArgs = Object.values(getTrackers(target)).some(
       (options) => options.recordArgs,
     );
     appendAccountabilityRecord({
       kind: 'delivery',
+      ...traced(trace),
       target,
       targetEndpoint,
       sender,
@@ -252,11 +277,40 @@ export function getAccountabilityRecordMethods(ctx: StoreContext) {
    * Record a tracked object carried to an endpoint.
    *
    * @param conveyance - The conveyance.
+   * @param conveyance.trace - The trace it rode on, if any.
    */
-  function recordConveyance(
-    conveyance: Omit<AccountabilityRecordInput<ConveyanceRecord>, 'kind'>,
-  ): void {
-    appendAccountabilityRecord({ kind: 'conveyance', ...conveyance });
+  function recordConveyance({
+    trace,
+    ...conveyance
+  }: Omit<
+    AccountabilityRecordInput<ConveyanceRecord>,
+    'kind' | 'traceId' | 'hop'
+  > & { trace?: TraceContext | undefined }): void {
+    appendAccountabilityRecord({
+      kind: 'conveyance',
+      ...traced(trace),
+      ...conveyance,
+    });
+  }
+
+  /**
+   * Record an endpoint being told of a settled promise, on a trace.
+   *
+   * @param resolution - The resolution.
+   * @param resolution.trace - Its trace.
+   */
+  function recordResolution({
+    trace,
+    ...resolution
+  }: Omit<
+    AccountabilityRecordInput<ResolutionRecord>,
+    'kind' | 'traceId' | 'hop'
+  > & { trace: TraceContext }): void {
+    appendAccountabilityRecord({
+      kind: 'resolution',
+      ...traced(trace),
+      ...resolution,
+    });
   }
 
   /**
@@ -357,6 +411,7 @@ export function getAccountabilityRecordMethods(ctx: StoreContext) {
     recordIntroduction,
     recordDelivery,
     recordConveyance,
+    recordResolution,
     getAccountabilityRecords,
     pruneAccountabilityRecords,
     setIntroductionRecording,

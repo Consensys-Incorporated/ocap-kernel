@@ -15,6 +15,7 @@ import type {
   RemoteId,
   RunLoopItem,
   RunQueueItem,
+  RunQueueItemSend,
 } from './types.ts';
 import { asKRef, asVatId } from '../test/branded.ts';
 
@@ -78,6 +79,7 @@ describe('KernelQueue', () => {
       waitForCrank: vi.fn(),
       isInCrank: vi.fn().mockReturnValue(false),
       getCrankNumber: vi.fn().mockReturnValue(1),
+      getCurrentDelivery: vi.fn().mockReturnValue(undefined),
       // Crank buffer methods
       bufferCrankOutput: vi.fn(),
       flushCrankBuffer: vi.fn().mockReturnValue([]),
@@ -718,11 +720,26 @@ describe('KernelQueue', () => {
     it('puts what the host said about the act on the send', async () => {
       const attribution = { onBehalfOf: 'ed25519:00' };
       kernelQueue
-        .enqueueMessage(asKRef('ko123'), 'test', [], attribution)
+        .enqueueMessage(asKRef('ko123'), 'test', [], { attribution })
         .catch(() => undefined);
       await Promise.resolve();
       expect(kernelStore.enqueueRun).toHaveBeenCalledWith(
         expect.objectContaining({ type: 'send', attribution }),
+      );
+    });
+
+    it('starts a trace when asked', async () => {
+      kernelQueue
+        .enqueueMessage(asKRef('ko123'), 'test', [], {
+          trace: { hopLimit: 3 },
+        })
+        .catch(() => undefined);
+      await Promise.resolve();
+      expect(kernelStore.enqueueRun).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'send',
+          trace: { id: expect.any(String), hop: 0, hopLimit: 3 },
+        }),
       );
     });
 
@@ -959,6 +976,57 @@ describe('KernelQueue', () => {
         sender: v1,
         cause: 7,
       });
+    });
+
+    it.each([
+      [
+        "the open crank's trace, one hop on",
+        { id: 't', hop: 1, hopLimit: 3 },
+        {},
+        { id: 't', hop: 2, hopLimit: 3 },
+      ],
+      [
+        "no trace once the open crank's has reached its limit",
+        { id: 't', hop: 2, hopLimit: 3 },
+        {},
+        undefined,
+      ],
+      [
+        'the trace given',
+        { id: 't', hop: 1, hopLimit: 3 },
+        { trace: { id: 'u', hop: 5, hopLimit: 9 } },
+        { id: 'u', hop: 5, hopLimit: 9 },
+      ],
+      [
+        'no trace when told none',
+        { id: 't', hop: 1, hopLimit: 3 },
+        { trace: null },
+        undefined,
+      ],
+    ])('carries %s', (_what, open, options, expected) => {
+      (
+        kernelStore.getCurrentDelivery as unknown as MockInstance
+      ).mockReturnValue({ via: 'message', sender: v1, trace: open });
+      const message = { methargs: { body: '', slots: [] } } as KernelMessage;
+      kernelQueue.enqueueSend(asKRef('ko123'), message, {
+        sender: v1,
+        ...options,
+      });
+      const [item] = (kernelStore.enqueueRun as unknown as MockInstance).mock
+        .calls[0] as [RunQueueItemSend];
+      expect(item.trace).toStrictEqual(expected);
+      expect('trace' in item).toBe(expected !== undefined);
+    });
+
+    it('carries no trace on a send issued while an ocap URL is redeemed', () => {
+      (
+        kernelStore.getCurrentDelivery as unknown as MockInstance
+      ).mockReturnValue({ via: 'ocap-url' });
+      const message = { methargs: { body: '', slots: [] } } as KernelMessage;
+      kernelQueue.enqueueSend(asKRef('ko123'), message, { sender: v1 });
+      const [item] = (kernelStore.enqueueRun as unknown as MockInstance).mock
+        .calls[0] as [RunQueueItemSend];
+      expect('trace' in item).toBe(false);
     });
 
     it('enqueues a send message and increments reference counts', () => {
@@ -1610,7 +1678,9 @@ describe('KernelQueue', () => {
         resolve: resolveHandler,
         reject: rejectHandler,
       });
-      kernelQueue.resolvePromises(endpointId, [resolution], false);
+      kernelQueue.resolvePromises(endpointId, [resolution], {
+        immediate: false,
+      });
       expect(kernelStore.incrementRefCount).toHaveBeenCalledWith(
         'ko1',
         'resolve|slot',
@@ -1665,6 +1735,51 @@ describe('KernelQueue', () => {
       });
     });
 
+    it("marks the promise with the crank's trace, and re-enqueues a queued message with its own", () => {
+      const kpid = asKRef('kp123');
+      const message = { methargs: { body: '', slots: [] } } as KernelMessage;
+      const own = { id: 'u', hop: 4, hopLimit: 8 };
+      (
+        kernelStore.getCurrentDelivery as unknown as MockInstance
+      ).mockReturnValue({
+        via: 'message',
+        sender: v1,
+        trace: { id: 't', hop: 1, hopLimit: 8 },
+      });
+      (kernelStore.getKernelPromise as unknown as MockInstance).mockReturnValue(
+        { state: 'unresolved', decider: v1, subscribers: [] },
+      );
+      (
+        kernelStore.resolveKernelPromise as unknown as MockInstance
+      ).mockReturnValueOnce([
+        { message, sender: asVatId('v3'), cause: 5, trace: own },
+        { message, sender: asVatId('v4'), cause: 6 },
+      ]);
+
+      kernelQueue.resolvePromises(v1, [
+        [kpid, false, { body: '', slots: [] } as CapData<KRef>],
+      ]);
+
+      expect(kernelStore.resolveKernelPromise).toHaveBeenCalledWith(
+        expect.objectContaining({
+          kpid,
+          trace: { id: 't', hop: 2, hopLimit: 8 },
+        }),
+      );
+      expect(kernelStore.enqueueRun).toHaveBeenCalledWith(
+        expect.objectContaining({ sender: 'v3', trace: own }),
+      );
+      const [[, fromV4]] = [
+        (kernelStore.enqueueRun as unknown as MockInstance).mock.calls.map(
+          ([item]) => item as RunQueueItemSend,
+        ),
+      ];
+      expect(fromV4).toStrictEqual(
+        expect.objectContaining({ sender: 'v4', cause: 6 }),
+      );
+      expect('trace' in (fromV4 as RunQueueItemSend)).toBe(false);
+    });
+
     it('re-enqueues a queued message with its attribution', () => {
       const kpid = asKRef('kp123');
       const message = { methargs: { body: '', slots: [] } } as KernelMessage;
@@ -1708,7 +1823,9 @@ describe('KernelQueue', () => {
         reject: rejectHandler,
       });
       const insistEndpointIdSpy = vi.spyOn(types, 'insistEndpointId');
-      kernelQueue.resolvePromises(undefined, [resolution], false);
+      kernelQueue.resolvePromises(undefined, [resolution], {
+        immediate: false,
+      });
       expect(insistEndpointIdSpy).not.toHaveBeenCalled();
       expect(kernelStore.incrementRefCount).toHaveBeenCalledWith(
         'ko1',
@@ -1757,7 +1874,9 @@ describe('KernelQueue', () => {
         resolve: resolveHandler,
         reject: rejectHandler,
       });
-      kernelQueue.resolvePromises(endpointId, [resolution], false);
+      kernelQueue.resolvePromises(endpointId, [resolution], {
+        immediate: false,
+      });
       // No notifications buffered because no subscribers
       expect(kernelStore.bufferCrankOutput).not.toHaveBeenCalled();
       expect(kernelStore.resolveKernelPromise).toHaveBeenCalledWith({
@@ -2394,7 +2513,7 @@ describe('KernelQueue', () => {
         kernelQueue.resolvePromises(
           v1,
           [[asKRef('kp1'), false, fulfilledValue]],
-          false,
+          { immediate: false },
         );
         return undefined;
       });

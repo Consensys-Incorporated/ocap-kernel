@@ -6,7 +6,10 @@ import {
   PeerRestartedError,
 } from '@metamask/kernel-errors';
 import { Logger } from '@metamask/logger';
+import { is } from '@metamask/superstruct';
 
+import { TraceContextStruct } from '../../accountability/types.ts';
+import type { TraceContext } from '../../accountability/types.ts';
 import {
   performDropImports,
   performRetireImports,
@@ -22,6 +25,8 @@ import type {
   EndpointMessage,
   KernelOneResolution,
   CrankResult,
+  DeliveryEnvelope,
+  NotifyEnvelope,
 } from '../../types.ts';
 import { insistERef, isRRef } from '../../types.ts';
 import type { RemoteComms } from '../types.ts';
@@ -68,6 +73,8 @@ type DeliveryParams =
 type Delivery = {
   method: 'deliver';
   params: DeliveryParams;
+  /** The trace the delivery is on, if any; a peer that has no use for it ignores it. */
+  trace?: TraceContext;
 };
 
 type RedeemURLRequest = {
@@ -144,6 +151,35 @@ type RemoteCommand = {
   seq: number;
   ack?: number;
 } & RemoteMessageBase;
+
+/**
+ * Split a notify's resolutions into runs on one trace each, in order, since
+ * a peer takes a command's trace for every resolution the command carries.
+ *
+ * @param resolutions - The resolutions.
+ * @param traces - The trace each settled promise on one is on, by eref.
+ * @returns The runs, with the trace each is on; one empty run for no
+ * resolutions.
+ */
+function batchByTrace(
+  resolutions: VatOneResolution[],
+  traces: Record<ERef, TraceContext>,
+): { batch: VatOneResolution[]; trace: TraceContext | undefined }[] {
+  const batches: {
+    batch: VatOneResolution[];
+    trace: TraceContext | undefined;
+  }[] = [];
+  for (const resolution of resolutions) {
+    const trace = traces[resolution[0] as ERef];
+    const last = batches.at(-1);
+    if (last !== undefined && last.trace?.id === trace?.id) {
+      last.batch.push(resolution);
+    } else {
+      batches.push({ batch: [resolution], trace });
+    }
+  }
+  return batches.length === 0 ? [{ batch: [], trace: undefined }] : batches;
+}
 
 /**
  * Handles communication with a remote kernel endpoint over the network.
@@ -1115,15 +1151,19 @@ export class RemoteHandle implements RemoteEndpointHandle {
    *
    * @param target - The ref of the object to which the message is addressed.
    * @param message - The message to deliver.
+   * @param envelope - What travels with it.
+   * @param envelope.trace - The trace it is on, if any.
    * @returns the crank result.
    */
   async deliverMessage(
     target: ERef,
     message: EndpointMessage,
+    { trace }: DeliveryEnvelope = {},
   ): Promise<CrankResult> {
     return this.#deliverToPeer({
       method: 'deliver',
       params: ['message', target, message],
+      ...(trace === undefined ? {} : { trace }),
     });
   }
 
@@ -1131,13 +1171,30 @@ export class RemoteHandle implements RemoteEndpointHandle {
    * Send a 'notify' delivery to the remote.
    *
    * @param resolutions - One or more promise resolutions to deliver.
+   * @param envelope - What travels with them.
+   * @param envelope.traces - The trace each settled promise on one is on.
    * @returns the crank result.
    */
-  async deliverNotify(resolutions: VatOneResolution[]): Promise<CrankResult> {
-    return this.#deliverToPeer({
-      method: 'deliver',
-      params: ['notify', resolutions],
-    });
+  async deliverNotify(
+    resolutions: VatOneResolution[],
+    { traces = {} }: NotifyEnvelope = {},
+  ): Promise<CrankResult> {
+    const persisted = batchByTrace(resolutions, traces).map(
+      ({ batch, trace }) =>
+        this.#persistRemoteCommand({
+          method: 'deliver',
+          params: ['notify', batch],
+          ...(trace === undefined ? {} : { trace }),
+        }),
+    );
+    return {
+      ...this.#myCrankResult,
+      afterCommit: async () => {
+        for (const command of persisted) {
+          this.#transmitRemoteCommand(command);
+        }
+      },
+    };
   }
 
   /**
@@ -1293,19 +1350,44 @@ export class RemoteHandle implements RemoteEndpointHandle {
   }
 
   /**
+   * The trace a delivery from the peer carries on: the one it names, if well
+   * formed and either new to this kernel or one that reached the peer from
+   * here. A peer that learned a trace id some other way cannot graft onto
+   * the trace.
+   *
+   * @param trace - The trace the peer named, if any.
+   * @returns The trace to carry on, or null.
+   */
+  #continuedTrace(trace: unknown): TraceContext | null {
+    if (!is(trace, TraceContextStruct)) {
+      return null;
+    }
+    const recorded = (involving?: RemoteId): boolean =>
+      this.#kernelStore.getAccountabilityRecords({
+        trace: trace.id,
+        limit: 1,
+        ...(involving === undefined ? {} : { involving }),
+      }).length > 0;
+    return !recorded() || recorded(this.remoteId) ? trace : null;
+  }
+
+  /**
    * Handle a delivery from the remote end.
    *
    * @param params - the delivery params, which vary based on the kind of delivery.
+   * @param trace - The trace the peer says the delivery is on, if any.
    */
-  #handleRemoteDeliver(params: DeliveryParams): void {
+  #handleRemoteDeliver(params: DeliveryParams, trace: unknown): void {
     const [method] = params;
+    // The peer's hop count stands: the delivery is the same hop here.
+    const carried = this.#continuedTrace(trace);
     switch (method) {
       case 'message': {
         const [, target, message] = params;
         this.#kernelQueue.enqueueSend(
           this.#kernelStore.translateRefEtoK(this.remoteId, target),
           this.#kernelStore.translateMessageEtoK(this.remoteId, message),
-          { sender: this.remoteId },
+          { sender: this.remoteId, trace: carried },
         );
         break;
       }
@@ -1327,7 +1409,10 @@ export class RemoteHandle implements RemoteEndpointHandle {
         );
         // Buffered for the crank's flush, so a host caller hears nothing an
         // abort takes back.
-        this.#kernelQueue.resolvePromises(this.remoteId, kResolutions, false);
+        this.#kernelQueue.resolvePromises(this.remoteId, kResolutions, {
+          immediate: false,
+          trace: carried,
+        });
         break;
       }
       case 'dropExports': {
@@ -1543,7 +1628,7 @@ export class RemoteHandle implements RemoteEndpointHandle {
 
     switch (method) {
       case 'deliver':
-        this.#handleRemoteDeliver(params);
+        this.#handleRemoteDeliver(params, command.trace);
         break;
       case 'redeemURL':
         deferredCompletion = await this.#handleRedeemURLRequest(...params);

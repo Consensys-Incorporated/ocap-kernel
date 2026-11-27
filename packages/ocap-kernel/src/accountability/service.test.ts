@@ -169,6 +169,57 @@ describe('accountability service', () => {
     });
   });
 
+  describe('trace', () => {
+    const trace = { id: 'trace-1', hop: 0, hopLimit: 8 };
+
+    beforeEach(() => {
+      kernelStore.recordDelivery({
+        target: ko1,
+        targetEndpoint: owner,
+        sender: holder,
+        cause: 2,
+        method: 'poke',
+        message: { methargs: { body: '#["poke",[]]', slots: [] } },
+        trace,
+      });
+      kernelStore.recordResolution({
+        kpid: asKRef('kp2'),
+        endpoint: holder,
+        sender: owner,
+        rejected: false,
+        slots: [],
+        trace: { ...trace, hop: 1 },
+      });
+      kernelStore.recordDelivery({
+        target: ko1,
+        targetEndpoint: owner,
+        sender: other,
+        cause: 4,
+        method: 'poke',
+        message: { methargs: { body: '#["poke",[]]', slots: [] } },
+      });
+    });
+
+    it.each([
+      ['the owner', owner, 'trace-1', [1, 2]],
+      ['a holder it reached', holder, 'trace-1', [1, 2]],
+      ['an endpoint it did not reach', other, 'trace-1', []],
+      ['anyone, of a trace there is no record of', owner, 'trace-2', []],
+    ])(
+      'shows %s the whole trace or none of it',
+      async (_who, caller, traceId, expected) => {
+        const records = await service.trace({ caller, cause: 1 }, traceId);
+        expect(records.map((record) => record.seq)).toStrictEqual(expected);
+      },
+    );
+
+    it('rejects a trace id that is not a string', async () => {
+      await expect(
+        service.trace({ caller: owner, cause: 1 }, 1 as never),
+      ).rejects.toThrow('Argument must be a trace ID');
+    });
+  });
+
   describe('receipt', () => {
     it('signs the record of the delivery the caller is handling', async () => {
       kernelStore.recordDelivery({

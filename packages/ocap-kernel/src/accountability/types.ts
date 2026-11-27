@@ -5,8 +5,11 @@ import {
   exactOptional,
   integer,
   literal,
+  min,
   object,
+  pattern,
   refine,
+  size,
   string,
   union,
 } from '@metamask/superstruct';
@@ -115,6 +118,56 @@ export const AttributionStruct = object({
 
 export type Attribution = Infer<typeof AttributionStruct>;
 
+/** The number of hops a trace records unless told otherwise. */
+export const DEFAULT_HOP_LIMIT = 8;
+
+/** The most hops a trace may be asked to record, here or by a peer. */
+export const MAX_HOP_LIMIT = 64;
+
+const HopLimitStruct = size(integer(), 1, MAX_HOP_LIMIT);
+
+/**
+ * What a trace is asked to be when it starts: how many hops to follow the
+ * root act for, `DEFAULT_HOP_LIMIT` if unsaid.
+ */
+export const TraceOptionsStruct = object({
+  hopLimit: exactOptional(HopLimitStruct),
+});
+
+export type TraceOptions = Infer<typeof TraceOptionsStruct>;
+
+/**
+ * A trace in flight: carried by every send and resolution a traced crank
+ * issues, one hop further than the delivery that crank handled, until the
+ * hop count reaches the limit. The limit travels with the trace, so a trace
+ * that crosses to another kernel keeps counting from where it was. The
+ * bounds hold a peer to what a local tracker could ask for.
+ */
+export const TraceContextStruct = refine(
+  object({
+    id: pattern(string(), /^[0-9a-f]{32}$/u),
+    hop: min(integer(), 0),
+    hopLimit: HopLimitStruct,
+  }),
+  'TraceContext',
+  (trace) =>
+    trace.hop < trace.hopLimit ||
+    `Expected a hop below the limit, but received: ${trace.hop} of ${trace.hopLimit}`,
+);
+
+export type TraceContext = Infer<typeof TraceContextStruct>;
+
+/**
+ * What the host passes with a `queueMessage`: its attribution of the act,
+ * and whether to trace what the act causes.
+ */
+export const QueueMessageOptionsStruct = object({
+  ...AttributionStruct.schema,
+  trace: exactOptional(TraceOptionsStruct),
+});
+
+export type QueueMessageOptions = Infer<typeof QueueMessageOptionsStruct>;
+
 /**
  * The layer vouching for a record. The kernel saw what a kernel-witnessed
  * record describes on its own paths. Liveslots runs in the vat process, where
@@ -131,6 +184,12 @@ type AccountabilityRecordBase = {
   crankNumber: number;
 };
 
+/** The trace a record is part of, if any. */
+type Traced = {
+  traceId?: string;
+  hop?: number;
+};
+
 /** An endpoint's first acquisition of an object. */
 export type IntroductionRecord = AccountabilityRecordBase & {
   kind: 'introduction';
@@ -145,42 +204,58 @@ export type IntroductionRecord = AccountabilityRecordBase & {
   via: 'message' | 'notify' | 'ocap-url' | 'unknown';
 };
 
-/** A message delivered to a tracked object. */
-export type DeliveryRecord = AccountabilityRecordBase & {
-  kind: 'delivery';
-  target: KRef;
-  targetEndpoint: EndpointId | 'kernel';
-  sender: Sender;
-  cause: Cause;
-  method: string;
-  /** The references the message carried, each once. */
-  slots: KRef[];
-  result: KRef | null;
-  /** The message's arguments, if a tracker asked for them. */
-  args?: CapData<KRef>;
-  /** When the kernel delivered it, in epoch milliseconds. */
-  wallClock: number;
-  /** The party the host did this for, if it said. */
-  onBehalfOf?: PartyRef;
-  /** The party's signed intent, if the host passed one. */
-  intent?: Intent;
-};
+/** A message delivered to a tracked object, attributed by the host, or traced. */
+export type DeliveryRecord = AccountabilityRecordBase &
+  Traced & {
+    kind: 'delivery';
+    target: KRef;
+    targetEndpoint: EndpointId | 'kernel';
+    sender: Sender;
+    cause: Cause;
+    method: string;
+    /** The references the message carried, each once. */
+    slots: KRef[];
+    result: KRef | null;
+    /** The message's arguments, if a tracker asked for them. */
+    args?: CapData<KRef>;
+    /** When the kernel delivered it, in epoch milliseconds. */
+    wallClock: number;
+    /** The party the host did this for, if it said. */
+    onBehalfOf?: PartyRef;
+    /** The party's signed intent, if the host passed one. */
+    intent?: Intent;
+  };
 
 /** A tracked object carried to an endpoint in a message or a resolution. */
-export type ConveyanceRecord = AccountabilityRecordBase & {
-  kind: 'conveyance';
-  kref: KRef;
-  sender: Sender;
-  to: EndpointId | 'kernel';
-  via: 'message' | 'notify';
-  /** The message's target or the resolved promise. */
-  carrier: KRef;
-};
+export type ConveyanceRecord = AccountabilityRecordBase &
+  Traced & {
+    kind: 'conveyance';
+    kref: KRef;
+    sender: Sender;
+    to: EndpointId | 'kernel';
+    via: 'message' | 'notify';
+    /** The message's target or the resolved promise. */
+    carrier: KRef;
+  };
+
+/** An endpoint told of a settled promise, on a trace. */
+export type ResolutionRecord = AccountabilityRecordBase &
+  Required<Traced> & {
+    kind: 'resolution';
+    kpid: KRef;
+    endpoint: EndpointId;
+    /** Who settled it. */
+    sender: Sender;
+    rejected: boolean;
+    /** The references the value carried, each once. */
+    slots: KRef[];
+  };
 
 export type AccountabilityRecord =
   | IntroductionRecord
   | DeliveryRecord
-  | ConveyanceRecord;
+  | ConveyanceRecord
+  | ResolutionRecord;
 
 /** A record as written, before the store numbers and stamps it. */
 export type AccountabilityRecordInput<
@@ -218,10 +293,14 @@ export type AccountabilityRecordView = ViewOf<AccountabilityRecord>;
  * What a tracker asks to have recorded. `recordArgs` keeps the arguments of
  * each message delivered to the object, and only the owner may ask for it:
  * the arguments are what other holders say to the object, and the owner is
- * the one party already entitled to hear them.
+ * the one party already entitled to hear them. `trace` has each delivery to
+ * the object start a trace, so that what the object does in response is
+ * recorded too.
  */
 export const TrackOptionsStruct = object({
   recordArgs: exactOptional(boolean()),
+  /** Start a trace from each delivery to the object. */
+  trace: exactOptional(TraceOptionsStruct),
 });
 
 export type TrackOptions = Infer<typeof TrackOptionsStruct>;

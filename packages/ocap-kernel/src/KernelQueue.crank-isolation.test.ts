@@ -244,7 +244,7 @@ async function abortACrankWhile(
       kernelQueue.resolvePromises(
         undefined,
         [[item.message.result, false, answer]],
-        false,
+        { immediate: false },
       );
     }
     if (item.type === 'terminateVat') {
