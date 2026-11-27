@@ -488,29 +488,6 @@ describe('Kernel', () => {
         });
       },
     );
-
-    it('stops the workers it started and rejects on a panic recorded after the starts', async () => {
-      const db = makeMapKernelDatabase();
-      const kernel1 = await Kernel.make(mockPlatformServices, db);
-      await kernel1.launchSubcluster(makeSingleVatClusterConfig());
-      await kernel1.stop();
-      const terminateAll = vi.spyOn(mockPlatformServices, 'terminateAll');
-      const panic = new Error('Kernel panic: syscall send from vat v1 failed');
-
-      const making = Kernel.make(mockPlatformServices, db);
-      // Clear for the starts' own check, as for a syscall during the removal.
-      mocks.KernelQueue.lastInstance.throwIfPanicked
-        .mockReturnValueOnce(undefined)
-        .mockImplementation(() => {
-          throw panic;
-        });
-
-      await expect(making).rejects.toBe(panic);
-      expect({
-        terminateAll: terminateAll.mock.calls.length,
-        runLoopStarted: mocks.KernelQueue.lastInstance.run.mock.calls.length,
-      }).toStrictEqual({ terminateAll: 1, runLoopStarted: 0 });
-    });
   });
 
   describe('queueMessage()', () => {

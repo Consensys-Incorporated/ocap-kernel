@@ -377,9 +377,6 @@ export class Kernel {
     try {
       await this.#vatManager.initializeAllVats();
       await this.#subclusterManager.removeSystemSubclustersWithoutBootstrapVat();
-      // A syscall's store fault during the removal, before the run loop can
-      // throw it.
-      this.#kernelQueue.throwIfPanicked();
     } catch (error) {
       this.#vatManager.expectWorkersToStop();
       await this.#platformServices
