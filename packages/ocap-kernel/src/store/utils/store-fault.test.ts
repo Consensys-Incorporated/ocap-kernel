@@ -1,6 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
 
-import { isStoreFault, markStoreFaults } from './store-fault.ts';
+import {
+  isStoreFault,
+  markStoreFaults,
+  markVatStoreFaults,
+} from './store-fault.ts';
 import { makeMapKVStore, makeStoreFault } from '../../../test/storage.ts';
 
 describe('markStoreFaults', () => {
@@ -47,6 +51,42 @@ describe('markStoreFaults', () => {
       found: 'value',
       refused: Error(`no record matching key '${key}'`),
       marked: false,
+    });
+  });
+});
+
+describe('markVatStoreFaults', () => {
+  it.each(['getKVData', 'updateKVData'] as const)(
+    'marks what %s throws',
+    (method) => {
+      const fault = new Error('disk I/O error');
+      const vatStore = markVatStoreFaults({
+        getKVData: () => [],
+        updateKVData: () => undefined,
+        [method]: () => {
+          throw fault;
+        },
+      });
+
+      expect(() => vatStore[method]([], [])).toThrow(fault);
+      expect(isStoreFault(fault)).toBe(true);
+    },
+  );
+
+  it('passes calls through', () => {
+    const updateKVData = vi.fn();
+    const vatStore = markVatStoreFaults({
+      getKVData: () => [['key', 'value']],
+      updateKVData,
+    });
+    vatStore.updateKVData([['other', 'value']], ['key']);
+
+    expect({
+      read: vatStore.getKVData(),
+      written: updateKVData.mock.calls,
+    }).toStrictEqual({
+      read: [['key', 'value']],
+      written: [[[['other', 'value']], ['key']]],
     });
   });
 });

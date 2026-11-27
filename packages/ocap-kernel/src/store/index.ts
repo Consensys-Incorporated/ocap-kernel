@@ -96,7 +96,7 @@ import { getSubclusterMethods } from './methods/subclusters.ts';
 import { getTranslators } from './methods/translators.ts';
 import { getVatMethods } from './methods/vat.ts';
 import type { StoreContext, StoredValue } from './types.ts';
-import { markStoreFaults } from './utils/store-fault.ts';
+import { markStoreFaults, markVatStoreFaults } from './utils/store-fault.ts';
 
 /**
  * The prefix shared by the issuance count of every object an ocap URL names,
@@ -249,7 +249,7 @@ export function makeKernelStore(kdb: KernelDatabase, logger?: Logger) {
    * @returns a a VatStore object for the given vat.
    */
   function makeVatStore(vatID: string): VatStore {
-    return kdb.makeVatStore(vatID);
+    return markVatStoreFaults(kdb.makeVatStore(vatID));
   }
 
   /**

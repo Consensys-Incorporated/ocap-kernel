@@ -23,6 +23,7 @@ import type { KRef, VatId, VatConfig, PlatformServices } from '../types.ts';
 import { VatHandle } from './VatHandle.ts';
 import { VatManager } from './VatManager.ts';
 import { asKRef, asSubclusterId, asVatId } from '../../test/branded.ts';
+import { makeStoreFault } from '../../test/storage.ts';
 
 const v1 = asVatId('v1');
 const s1 = asSubclusterId('s1');
@@ -187,6 +188,8 @@ describe('VatManager', () => {
       onRunLoopDeath: vi.fn(() => () => undefined),
       assertRunLoopAlive: vi.fn(),
       assertInboxOpen: vi.fn(),
+      panic: vi.fn(),
+      throwIfPanicked: vi.fn(),
     } as unknown as Mocked<KernelQueue>;
 
     mockLogger = new Logger('test');
@@ -410,6 +413,67 @@ describe('VatManager', () => {
         running: vatManager.getVatIds(),
       }).toStrictEqual({ settledBeforeTheLastStart: false, running: ['v2'] });
     });
+
+    it('panics on a store fault in a start, even one that times out while its worker stops', async () => {
+      vatManager = new VatManager({
+        platformServices: mockPlatformServices,
+        kernelStore: mockKernelStore,
+        kernelQueue: mockKernelQueue,
+        logger: mockLogger,
+        vatRelaunchTimeoutMs: 1,
+      });
+      const storeFault = makeStoreFault();
+      const panic = new Error('Kernel panic: start of vat v1 failed');
+      mockKernelQueue.panic.mockImplementation(() => {
+        mockKernelQueue.throwIfPanicked.mockImplementation(() => {
+          throw panic;
+        });
+        return panic;
+      });
+      makeVatHandleMock.mockRejectedValueOnce(storeFault);
+      mockPlatformServices.terminate.mockReturnValueOnce(
+        new Promise(() => undefined),
+      );
+
+      await expect(vatManager.initializeAllVats()).rejects.toBe(panic);
+      expect({
+        panics: mockKernelQueue.panic.mock.calls,
+        running: vatManager.getVatIds(),
+        terminated: mockKernelStore.markVatAsTerminated.mock.calls,
+        deleted: mockKernelStore.deleteVat.mock.calls,
+      }).toStrictEqual({
+        panics: [['start of vat v1 failed', storeFault]],
+        running: ['v2'],
+        terminated: [],
+        deleted: [],
+      });
+    });
+
+    it.each([
+      { what: 'failed', failStart: true, running: ['v2'] },
+      { what: 'succeeded', failStart: false, running: ['v1', 'v2'] },
+    ])(
+      'rejects with a panic recorded during a start that $what, without terminating the vat',
+      async ({ failStart, running }) => {
+        const panic = new Error(
+          'Kernel panic: syscall send from vat v1 failed',
+        );
+        mockKernelQueue.throwIfPanicked.mockImplementation(() => {
+          throw panic;
+        });
+        if (failStart) {
+          makeVatHandleMock.mockRejectedValueOnce(
+            new Error('Failed to initialize vat v1'),
+          );
+        }
+
+        await expect(vatManager.initializeAllVats()).rejects.toBe(panic);
+        expect({
+          running: vatManager.getVatIds(),
+          deleted: mockKernelStore.deleteVat.mock.calls,
+        }).toStrictEqual({ running, deleted: [] });
+      },
+    );
 
     it('rejects with every failed termination', async () => {
       vi.spyOn(mockLogger, 'error').mockReturnValue();
@@ -1533,6 +1597,33 @@ describe('VatManager', () => {
       await crankResult?.afterCommit?.();
       await expect(restarting).rejects.toThrow(
         expect.objectContaining({ message, cause: launchError }),
+      );
+    });
+
+    it.each([
+      {
+        what: 'a store fault in the relaunch',
+        failure: makeStoreFault(),
+        panic: undefined,
+      },
+      {
+        what: 'the panic recorded in a relaunch that failed',
+        failure: new Error('Vat v1 did not start within 1 ms'),
+        panic: new Error('Kernel panic: start of vat v1 failed'),
+      },
+    ])('throws $what', async ({ failure, panic }) => {
+      await vatManager.runVat(v1, createMockVatConfig());
+      leaveRequestQueued();
+      vatManager.restartVat(v1).catch(() => undefined);
+      if (panic) {
+        mockKernelQueue.throwIfPanicked.mockImplementation(() => {
+          throw panic;
+        });
+      }
+      mockPlatformServices.launch.mockRejectedValueOnce(failure);
+
+      await expect(vatManager.performVatRestart(v1)).rejects.toBe(
+        panic ?? failure,
       );
     });
 

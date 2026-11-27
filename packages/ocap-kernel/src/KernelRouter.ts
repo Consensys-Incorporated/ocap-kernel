@@ -729,7 +729,11 @@ export class KernelRouter {
       // A vat whose channel dies mid-delivery has its pending commands
       // rejected and its handle taken in one step, so a vat with no handle by
       // now is what tells that apart from a kernel fault.
-      if (!isVatId(endpointId) || this.#isVatRunning(endpointId)) {
+      if (
+        isStoreFault(error) ||
+        !isVatId(endpointId) ||
+        this.#isVatRunning(endpointId)
+      ) {
         throw error;
       }
       if (!this.#kernelStore.isVatActive(endpointId)) {

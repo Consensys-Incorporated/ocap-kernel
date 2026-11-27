@@ -83,7 +83,14 @@ async function setUp(
       makeNewWorker({ kernelStore, kernelQueue, target, kpid }),
     );
   await vatManager.runVat(asVatId('v1'), config);
-  return { kernelStore, kernelQueue, vatManager, platformServices, target };
+  return {
+    kdb,
+    kernelStore,
+    kernelQueue,
+    vatManager,
+    platformServices,
+    target,
+  };
 }
 
 /**
@@ -142,6 +149,39 @@ describe('a restart whose relaunch fails', () => {
     expect(restored).toBeUndefined();
     expect(platformServices.launch).toHaveBeenCalledTimes(2);
     expect(kernelStore.getTerminatedVats()).toStrictEqual(['v1']);
+  });
+});
+
+describe('a restart whose relaunch hits a store fault', () => {
+  it('stops the kernel and keeps the vat, with its restart still queued', async () => {
+    const { kdb, kernelStore, kernelQueue, vatManager } = await setUp(
+      async ({ kernelStore: store }) => {
+        // As VatHandle's #init reads the vat's state.
+        store.makeVatStore('v1').getKVData();
+        throw new Error('unreachable');
+      },
+    );
+    vi.spyOn(kdb, 'makeVatStore').mockReturnValue({
+      getKVData: () => {
+        throw new Error('disk I/O error');
+      },
+      updateKVData: () => undefined,
+    });
+
+    const restarting = vatManager.restartVat(asVatId('v1'));
+    const running = kernelQueue.run(async () =>
+      vatManager.performVatRestart(asVatId('v1')),
+    );
+
+    await expect(running).rejects.toThrow(
+      'Kernel panic: start of vat v1 failed',
+    );
+    await expect(restarting).rejects.toThrow('Kernel run loop died');
+    expect({
+      active: kernelStore.isVatActive(asVatId('v1')),
+      terminated: kernelStore.getTerminatedVats(),
+      queued: kernelStore.runQueueLength(),
+    }).toStrictEqual({ active: true, terminated: [], queued: 1 });
   });
 });
 

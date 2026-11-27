@@ -199,6 +199,8 @@ const mocks = vi.hoisted(() => {
       }
     });
 
+    throwIfPanicked = vi.fn();
+
     assertInboxOpen = vi.fn((what: string) => {
       this.assertRunLoopAlive(what);
       if (this.#stopped) {

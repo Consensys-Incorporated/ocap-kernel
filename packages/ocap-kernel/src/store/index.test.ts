@@ -9,6 +9,7 @@ import {
   asVatId,
   asVRef,
 } from '../../test/branded.ts';
+import { isStoreFault } from './utils/store-fault.ts';
 import { makeMapKernelDatabase } from '../../test/storage.ts';
 import type { RunQueueItem } from '../types.ts';
 
@@ -615,6 +616,22 @@ describe('kernel store', () => {
       expect(ks.getNextVatId()).toBe('v1');
       expect(ks.getOwner(koId)).toBeUndefined();
       expect(mockKernelDatabase.kernelKVStore.get('customKey')).toBeUndefined();
+    });
+  });
+
+  describe('makeVatStore', () => {
+    it("marks a vat store's faults", () => {
+      const fault = new Error('disk I/O error');
+      vi.spyOn(mockKernelDatabase, 'makeVatStore').mockReturnValue({
+        getKVData: () => {
+          throw fault;
+        },
+        updateKVData: () => undefined,
+      });
+      const vatStore = makeKernelStore(mockKernelDatabase).makeVatStore(v1);
+
+      expect(() => vatStore.getKVData()).toThrow(fault);
+      expect(isStoreFault(fault)).toBe(true);
     });
   });
 

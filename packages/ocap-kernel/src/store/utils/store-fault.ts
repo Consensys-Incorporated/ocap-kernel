@@ -1,4 +1,4 @@
-import type { KVStore } from '@metamask/kernel-store';
+import type { KVStore, VatStore } from '@metamask/kernel-store';
 
 const storeFaults = new WeakSet<object>();
 
@@ -44,6 +44,20 @@ export function markStoreFaults(kv: KVStore): KVStore {
       marking(() => kv.getNextKey(previousKey)),
     set: (key: string, value: string) => marking(() => kv.set(key, value)),
     delete: (key: string) => marking(() => kv.delete(key)),
+  });
+}
+
+/**
+ * Wrap a vat's store as {@link markStoreFaults} wraps the kernel's.
+ *
+ * @param vatStore - The vat's store.
+ * @returns The wrapped store.
+ */
+export function markVatStoreFaults(vatStore: VatStore): VatStore {
+  return harden({
+    getKVData: () => marking(() => vatStore.getKVData()),
+    updateKVData: (sets, deletes) =>
+      marking(() => vatStore.updateKVData(sets, deletes)),
   });
 }
 
