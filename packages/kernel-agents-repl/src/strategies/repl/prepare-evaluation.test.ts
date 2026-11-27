@@ -37,8 +37,10 @@ describe('prepareEvaluation', () => {
 
       const evaluable = prepareEvaluation(state, statement);
 
-      expect(evaluable.endowments.consts).toBe(state.consts);
-      expect(evaluable.endowments.lets).toBe(state.lets);
+      expect(evaluable.endowments.consts).toStrictEqual(state.consts);
+      expect(evaluable.endowments.consts).not.toBe(state.consts);
+      expect(evaluable.endowments.lets).toStrictEqual(state.lets);
+      expect(evaluable.endowments.lets).not.toBe(state.lets);
       expect(evaluable.endowments.$frame.$capture).toBeDefined();
       expect(evaluable.endowments.$frame.$catch).toBeDefined();
       expect(evaluable.endowments.$frame.$return).toBeDefined();
@@ -367,31 +369,82 @@ describe('prepareEvaluation', () => {
   });
 
   describe('makeCaptor', () => {
-    it('creates captor that captures values', () => {
-      const statement = createMockNode('lexical_declaration', 'let x = 1;', [
+    it.each([
+      ['every name', [1, 2], { x: 1, y: 2 }],
+      ['a missing value as undefined', [1], { x: 1, y: undefined }],
+    ])('returns %s', (_case, values, expected) => {
+      const statement = createMockNode('lexical_declaration', 'let x, y;', [
         createMockNode('let', 'let'),
       ]);
-      mockExtractNames.mockReturnValue(['x']);
+      mockExtractNames.mockReturnValue(['x', 'y']);
 
       const evaluable = prepareEvaluation(state, statement);
-      const { $return } = evaluable.endowments.$frame;
+      const $return = evaluable.endowments.$frame.$return as (
+        ...args: unknown[]
+      ) => void;
+      $return(...values);
 
-      expect($return).toBeDefined();
-      // The captor function is created with specific names, so we test it indirectly
-      // by verifying the structure is correct
-      expect(evaluable.result.value).toBeDefined();
+      expect(evaluable.result.value).toStrictEqual(expected);
     });
 
-    it('throws for reserved captor name', () => {
+    it('captures the lets into the state on commit', () => {
+      state.lets = { x: 1, y: 2 };
+      const statement = createMockNode('expression_statement', '1;');
+
+      const evaluable = prepareEvaluation(state, statement);
+      const $capture = evaluable.endowments.$frame.$capture as (
+        ...args: unknown[]
+      ) => void;
+      $capture(3, 4);
+      evaluable.result[RETURN] = 1;
+      evaluable.commit();
+
+      expect(state.lets).toStrictEqual({ x: 3, y: 4 });
+    });
+
+    it.each([
+      '$frame',
+      '$capture',
+      '$catch',
+      '$return',
+      'consts',
+      'lets',
+      '__proto__',
+      'a)=>0,(globalThis.x = 1),()=>{}//',
+      'a b',
+    ])('throws for the declared name %s', (name) => {
       const statement = createMockNode('lexical_declaration', 'let x = 1;', [
         createMockNode('let', 'let'),
       ]);
-      mockExtractNames.mockReturnValue(['$UNIQUE']);
+      mockExtractNames.mockReturnValue([name]);
 
       expect(() => prepareEvaluation(state, statement)).toThrow(
-        'Captor name "$UNIQUE" is reserved',
+        `Cannot capture the name "${name}"`,
       );
     });
+
+    it('throws for a let name that is not an identifier', () => {
+      state.lets['a)=>0'] = 1;
+      const statement = createMockNode('expression_statement', '1;');
+
+      expect(() => prepareEvaluation(state, statement)).toThrow(
+        'Cannot capture the name "a)=>0"',
+      );
+    });
+
+    it.each(['café', '$x', '_y', 'z9'])(
+      'captures the identifier %s',
+      (name) => {
+        const statement = createMockNode('lexical_declaration', 'let x = 1;', [
+          createMockNode('let', 'let'),
+        ]);
+        mockExtractNames.mockReturnValue([name]);
+
+        expect(prepareEvaluation(state, statement).code).toContain(
+          `$return(${name});`,
+        );
+      },
+    );
   });
 
   describe('wrapAsyncEvaluation', () => {
