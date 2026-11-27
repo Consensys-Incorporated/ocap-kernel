@@ -89,9 +89,10 @@ export class IOManager {
 
   /**
    * Create IO listeners for a subcluster and register them as kernel services.
-   * This and {@link destroyChannels} run inside a launch's or a termination's
-   * crank and write the store directly. A listener service acts from outside
-   * the run loop, so each of its writes takes an inbox crank.
+   * This and {@link destroyChannels} write the store directly: their callers
+   * are inside a crank (a launch, a termination, a reset) or run at boot,
+   * before the run loop starts. A listener service acts from outside the run
+   * loop, so each of its writes takes an inbox crank.
    *
    * @param subclusterId - The ID of the subcluster.
    * @param ioConfig - The IO configuration map from listener names to configs.
@@ -115,7 +116,7 @@ export class IOManager {
             this.#kernelQueue.enqueueInbox('host an IO connection', () => {
               const state = this.#subclusters.get(subclusterId);
               if (state?.connectionKrefs !== connectionKrefs) {
-                // Destroyed while this waited for its crank, so nothing
+                // Destroyed, or never finished being created, so nothing
                 // would release the connection.
                 return {
                   failure: new Error(

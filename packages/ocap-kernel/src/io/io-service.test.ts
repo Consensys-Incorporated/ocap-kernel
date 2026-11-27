@@ -1,3 +1,4 @@
+import { makePromiseKit } from '@endo/promise-kit';
 import { describe, it, expect, vi } from 'vitest';
 
 import {
@@ -380,29 +381,31 @@ describe('makeIOListenerService', () => {
     expect(channel.close).toHaveBeenCalledOnce();
   });
 
-  it('releases a connection hosted after the listener closed', async () => {
+  it('releases a connection hosted while the listener closes', async () => {
     const host = makeHost();
     const { register } = host;
-    let finishRegistering = (): void => undefined;
-    const registering = new Promise<void>((resolve) => {
-      finishRegistering = resolve;
-    });
+    const registering = makePromiseKit<void>();
     host.register = async (connection, label) => {
-      await registering;
+      await registering.promise;
       return register(connection, label);
     };
+    const underlying = makeListener([makeChannel()]);
+    const closing = makePromiseKit<void>();
+    vi.mocked(underlying.close).mockReturnValue(closing.promise);
     const listener = makeIOListenerService(
       'io:s1:repl',
-      makeListener([makeChannel()]),
+      underlying,
       makeConfig(),
       host,
     ) as ListenerFacet;
 
     const accepted = listener.accept();
-    await listener.close();
-    finishRegistering();
+    const closed = listener.close();
+    registering.resolve();
 
     expect(await accepted).toBeNull();
+    closing.resolve();
+    await closed;
     expect(host.released).toStrictEqual(['ko1']);
   });
 
@@ -410,11 +413,8 @@ describe('makeIOListenerService', () => {
     'settles a %s close() once the release has',
     async (closing) => {
       const host = makeHost();
-      let finishReleasing = (): void => undefined;
-      host.release = async () =>
-        new Promise<void>((resolve) => {
-          finishReleasing = resolve;
-        });
+      const releasing = makePromiseKit<void>();
+      host.release = async () => releasing.promise;
       const listener = makeIOListenerService(
         'io:s1:repl',
         makeListener([makeChannel()]),
@@ -434,7 +434,7 @@ describe('makeIOListenerService', () => {
       });
       await new Promise((resolve) => setTimeout(resolve, 0));
       expect(settled).toBe(false);
-      finishReleasing();
+      releasing.resolve();
       await closed;
     },
   );

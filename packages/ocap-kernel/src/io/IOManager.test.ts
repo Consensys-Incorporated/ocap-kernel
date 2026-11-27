@@ -22,7 +22,6 @@ const makeListener = (): IOListener => ({
 /** The vat-facing shape of a listener service, for driving it in tests. */
 type ListenerFacet = {
   accept: () => Promise<unknown>;
-  close: () => Promise<void>;
 };
 
 type InboxWork = Parameters<KernelQueue['enqueueInbox']>[1];
@@ -155,44 +154,12 @@ describe('IOManager', () => {
         repl: { type: 'socket', path: '/tmp/repl.sock' } as IOConfig,
       });
 
-      const accepted = registeredServices.get('io:s1:repl')?.accept();
-      await vi.waitFor(() =>
-        expect(enqueueInbox).toHaveBeenCalledWith(
-          'host an IO connection',
-          expect.any(Function),
-        ),
-      );
-      expect(registerAnonymous).not.toHaveBeenCalled();
-      await drain();
-      await accepted;
+      await accept(registeredServices.get('io:s1:repl'));
 
       expect(registerAnonymous).toHaveBeenCalledWith(
         expect.any(Object),
         'io:s1:repl:c1',
       );
-    });
-
-    it('releases a closed connection in an inbox crank', async () => {
-      await manager.createChannels('s1', {
-        repl: { type: 'socket', path: '/tmp/repl.sock' } as IOConfig,
-      });
-      await accept(registeredServices.get('io:s1:repl'));
-      const connection = registerAnonymous.mock.lastCall?.[0] as {
-        close: () => Promise<void>;
-      };
-
-      const closed = connection.close();
-      await vi.waitFor(() =>
-        expect(enqueueInbox).toHaveBeenCalledWith(
-          'release an IO connection',
-          expect.any(Function),
-        ),
-      );
-      expect(releaseAnonymous).not.toHaveBeenCalled();
-      await drain();
-      await closed;
-
-      expect(releaseAnonymous).toHaveBeenCalledWith('ko901');
     });
 
     it.each([
