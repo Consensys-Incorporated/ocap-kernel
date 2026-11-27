@@ -82,10 +82,6 @@ describe('IOManager', () => {
   let enqueueInbox: Mock<KernelQueue['enqueueInbox']>;
   let drain: () => Promise<void>;
 
-  /**
-   * @param service - A listener service.
-   * @returns What its `accept()` gives once its inbox work has run.
-   */
   const accept = async (service: ListenerFacet | undefined) => {
     const accepted = service?.accept();
     await drain();
@@ -199,21 +195,31 @@ describe('IOManager', () => {
       expect(releaseAnonymous).toHaveBeenCalledWith('ko901');
     });
 
-    it('drops a connection whose subcluster is destroyed before its crank', async () => {
-      await manager.createChannels('s1', {
-        repl: { type: 'socket', path: '/tmp/repl.sock' } as IOConfig,
-      });
-      const accepted = registeredServices.get('io:s1:repl')?.accept();
-      await vi.waitFor(() => expect(enqueueInbox).toHaveBeenCalledOnce());
+    it.each([
+      ['destroyed', false],
+      ['destroyed and created again', true],
+    ])(
+      'drops a connection whose subcluster is %s before its crank',
+      async (_what, createdAgain) => {
+        const ioConfig = {
+          repl: { type: 'socket', path: '/tmp/repl.sock' } as IOConfig,
+        };
+        await manager.createChannels('s1', ioConfig);
+        const accepted = registeredServices.get('io:s1:repl')?.accept();
+        await vi.waitFor(() => expect(enqueueInbox).toHaveBeenCalledOnce());
 
-      await manager.destroyChannels('s1');
-      await drain();
+        await manager.destroyChannels('s1');
+        if (createdAgain) {
+          await manager.createChannels('s1', ioConfig);
+        }
+        await drain();
 
-      await expect(accepted).rejects.toThrow(
-        'IO listener "io:s1:repl" is gone; connection "io:s1:repl:c1" was not hosted',
-      );
-      expect(registerAnonymous).not.toHaveBeenCalled();
-    });
+        await expect(accepted).rejects.toThrow(
+          'IO listener "io:s1:repl" is gone; connection "io:s1:repl:c1" was not hosted',
+        );
+        expect(registerAnonymous).not.toHaveBeenCalled();
+      },
+    );
 
     it('cleans up on factory failure', async () => {
       const successListener = makeListener();

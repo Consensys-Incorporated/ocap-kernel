@@ -642,7 +642,7 @@ describe('a writer acting while a crank aborts', () => {
     });
   });
 
-  it('iO connection accepted: it is hosted in a crank of its own', async () => {
+  it('listener accept: the IO connection is hosted in a crank of its own', async () => {
     const harness = await setUp();
     const { kernelStore, kernelQueue } = harness;
     const { listener, connect, connectionAt } = await setUpListener(harness);
@@ -666,7 +666,7 @@ describe('a writer acting while a crank aborts', () => {
     }).toStrictEqual({ recorded: [kref], pinned: true, routed: true });
   });
 
-  it('iO connection closed: it is released in a crank of its own', async () => {
+  it('connection close: the IO connection is released in a crank of its own', async () => {
     const harness = await setUp();
     const { kernelStore, kernelQueue } = harness;
     const { listener, connect, connectionAt } = await setUpListener(harness);

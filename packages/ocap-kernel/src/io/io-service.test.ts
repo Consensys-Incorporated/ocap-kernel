@@ -406,6 +406,39 @@ describe('makeIOListenerService', () => {
     expect(host.released).toStrictEqual(['ko1']);
   });
 
+  it.each(['connection', 'listener'] as const)(
+    'settles a %s close() once the release has',
+    async (closing) => {
+      const host = makeHost();
+      let finishReleasing = (): void => undefined;
+      host.release = async () =>
+        new Promise<void>((resolve) => {
+          finishReleasing = resolve;
+        });
+      const listener = makeIOListenerService(
+        'io:s1:repl',
+        makeListener([makeChannel()]),
+        makeConfig(),
+        host,
+      ) as ListenerFacet;
+      await listener.accept();
+      const closer =
+        closing === 'listener'
+          ? listener
+          : (host.registered[0]?.connection as unknown as ConnectionFacet);
+
+      let settled = false;
+      const closed = closer.close().then(() => {
+        settled = true;
+        return undefined;
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(settled).toBe(false);
+      finishReleasing();
+      await closed;
+    },
+  );
+
   it('does not release a connection twice when it was already closed', async () => {
     const host = makeHost();
     const listener = makeIOListenerService(
