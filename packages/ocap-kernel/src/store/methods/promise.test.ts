@@ -300,6 +300,20 @@ describe('promise store methods', () => {
     });
   });
 
+  describe('clearPromiseDecider', () => {
+    it('leaves a kernel promise with no decider', () => {
+      const [kpid] = promiseMethods.initKernelPromise();
+      promiseMethods.setPromiseDecider(kpid, 'v1' as VatId);
+
+      promiseMethods.clearPromiseDecider(kpid);
+
+      expect(promiseMethods.getKernelPromise(kpid)).toStrictEqual({
+        state: 'unresolved',
+        subscribers: [],
+      });
+    });
+  });
+
   describe('resolveKernelPromise', () => {
     it('fulfills a promise and returns queued messages', () => {
       const kpid = asKRef('kp123');

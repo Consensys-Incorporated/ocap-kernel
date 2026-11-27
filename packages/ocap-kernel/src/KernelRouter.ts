@@ -217,9 +217,8 @@ export class KernelRouter {
 
     const routeAsSplat = (error?: CapData<KRef>): MessageRoute => {
       if (message.result && error) {
-        // Use the current decider as the resolver. After a crank rollback,
-        // the decider may have reverted to the sending vat rather than the
-        // (now-terminated) target vat.
+        // Undefined: a queued send's result has no decider, and rolling back
+        // a delivery un-names the (now-terminated) target vat.
         const promise = this.#kernelStore.getKernelPromise(message.result);
         this.#kernelQueue.resolvePromises(promise?.decider, [
           [message.result, true, error],

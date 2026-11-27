@@ -153,6 +153,15 @@ export function getPromiseMethods(ctx: StoreContext) {
   }
 
   /**
+   * Leave a kernel promise with no decider.
+   *
+   * @param kpid - The KRef of the promise.
+   */
+  function clearPromiseDecider(kpid: KRef): void {
+    ctx.kv.delete(`${kpid}.decider`);
+  }
+
+  /**
    * Resolve a kernel promise, updating its state and returning any queued messages.
    * The queued messages should be buffered by the caller for eventual delivery.
    *
@@ -317,6 +326,7 @@ export function getPromiseMethods(ctx: StoreContext) {
     getNextPromiseId,
     addPromiseSubscriber,
     setPromiseDecider,
+    clearPromiseDecider,
     resolveKernelPromise,
     enqueuePromiseMessage,
     getKernelPromiseMessageQueue,

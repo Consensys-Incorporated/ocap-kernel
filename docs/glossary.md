@@ -139,8 +139,10 @@ The endpoint authorized to settle (fulfill or reject) a [kernel promise](#kernel
 Analogous to a function call: when vat A sends `E(obj).foo()` to vat B, vat A is the
 caller waiting for a result, and vat B is the callee that computes it. B becomes the
 decider of the result's kernel promise at [delivery](#delivery) time, just as a callee
-determines the return value of a function call. Only the decider can resolve the kernel
-promise — attempts by other endpoints are rejected. After [crank](#crank) rollback, the
+determines the return value of a function call. From the send until then the kernel
+promise has no decider, so terminating A while the message is still queued does not
+reject it. Only the decider can resolve the kernel promise — attempts by other
+endpoints are rejected. After [crank](#crank) rollback, the
 decider reverts to its pre-delivery value, which matters for error handling (e.g.,
 rejecting the kernel promise of a message sent to a terminated [vat](#vat)). See
 [`setPromiseDecider`](../packages/ocap-kernel/src/store/methods/promise.ts) and the
