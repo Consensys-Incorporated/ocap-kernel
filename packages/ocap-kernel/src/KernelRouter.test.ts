@@ -3,6 +3,7 @@ import { VatNotFoundError } from '@metamask/kernel-errors';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { Mock, MockInstance } from 'vitest';
 
+import type { Segment, SegmentIssuer } from './accountability/segments.ts';
 import { KernelQueue } from './KernelQueue.ts';
 import { KernelRouter } from './KernelRouter.ts';
 import { kser, kslot, makeKernelError } from './liveslots/kernel-marshal.ts';
@@ -38,6 +39,7 @@ describe('KernelRouter', () => {
   let getEndpoint: (endpointId: EndpointId) => EndpointHandle;
   let endpointHandle: EndpointHandle;
   let kernelRouter: KernelRouter;
+  let segmentIssuer: { issue: Mock<SegmentIssuer['issue']> };
   let mockRestartVat: Mock<(vatId: VatId) => Promise<CrankResult | undefined>>;
   let mockTerminateVat: Mock<
     (vatId: VatId, reason?: CapData<KRef>) => Promise<CrankResult | undefined>
@@ -115,6 +117,7 @@ describe('KernelRouter', () => {
     kernelQueue = {
       resolvePromises: vi.fn(),
     } as unknown as KernelQueue;
+    segmentIssuer = { issue: vi.fn(async () => []) };
 
     mockInvokeKernelService = vi.fn();
     mockRestartVat = vi.fn(async () => undefined);
@@ -123,6 +126,7 @@ describe('KernelRouter', () => {
 
     // Create the router to test
     kernelRouter = new KernelRouter({
+      segmentIssuer,
       kernelStore,
       kernelQueue,
       getEndpoint,
@@ -254,6 +258,82 @@ describe('KernelRouter', () => {
           via: 'message',
           carrier: target,
         });
+      });
+
+      it.each([
+        ['has not held before', undefined, true],
+        ['already holds', 'ro+2', false],
+      ])(
+        'sends a remote the segments for a tracked object it %s',
+        async (_what, held, sent) => {
+          const remote = asRemoteId('r1');
+          const target = asKRef('ko123');
+          const tracked = asKRef('ko2');
+          const segment = { payload: 'segment' } as unknown as Segment;
+          (kernelStore.getOwner as unknown as MockInstance).mockReturnValueOnce(
+            remote,
+          );
+          (kernelStore.isTracked as unknown as MockInstance).mockImplementation(
+            (kref: KRef) => kref === tracked,
+          );
+          (kernelStore.krefToEref as unknown as MockInstance).mockReturnValue(
+            held,
+          );
+          segmentIssuer.issue.mockResolvedValue([segment]);
+          const message: KernelMessage = {
+            methargs: kser(['poke', [kslot(tracked), kslot(tracked)]]),
+            result: null,
+          };
+          await kernelRouter.deliver({
+            type: 'send',
+            target,
+            message,
+            sender: asVatId('v2'),
+            cause: 3,
+          });
+          expect(segmentIssuer.issue.mock.calls).toStrictEqual(
+            sent
+              ? [
+                  [
+                    {
+                      kref: tracked,
+                      ref: `translated-${tracked}`,
+                      holder: 'v2',
+                    },
+                  ],
+                ]
+              : [],
+          );
+          expect(endpointHandle.deliverMessage).toHaveBeenCalledWith(
+            `translated-${target}`,
+            message,
+            sent ? { segments: { [`translated-${tracked}`]: [segment] } } : {},
+          );
+        },
+      );
+
+      it('sends a vat no segments', async () => {
+        const target = asKRef('ko123');
+        const tracked = asKRef('ko2');
+        (kernelStore.getOwner as unknown as MockInstance).mockReturnValueOnce(
+          v1,
+        );
+        (kernelStore.isTracked as unknown as MockInstance).mockImplementation(
+          (kref: KRef) => kref === tracked,
+        );
+        await kernelRouter.deliver({
+          type: 'send',
+          target,
+          message: { methargs: kser(['poke', [kslot(tracked)]]), result: null },
+          sender: asVatId('v2'),
+          cause: 3,
+        });
+        expect(segmentIssuer.issue).not.toHaveBeenCalled();
+        expect(endpointHandle.deliverMessage).toHaveBeenCalledWith(
+          `translated-${target}`,
+          expect.any(Object),
+          {},
+        );
       });
 
       it('starts a trace at an object whose tracker asked for one, as long as the longest asked', async () => {
@@ -1024,6 +1104,46 @@ describe('KernelRouter', () => {
           via: 'notify',
           carrier: kpid,
         });
+      });
+
+      it('sends a remote the segments for a tracked object a resolution carries to it for the first time', async () => {
+        const remote = asRemoteId('r1');
+        const kpid = asKRef('kp123');
+        const tracked = asKRef('ko7');
+        const segment = { payload: 'segment' } as unknown as Segment;
+        (
+          kernelStore.getKernelPromise as unknown as MockInstance
+        ).mockReturnValue({
+          state: 'fulfilled',
+          value: { body: '#"$0"', slots: [tracked] },
+          resolver: asVatId('v2'),
+        });
+        (kernelStore.krefToEref as unknown as MockInstance).mockReturnValueOnce(
+          'rp+123',
+        );
+        (
+          kernelStore.getKpidsToRetire as unknown as MockInstance
+        ).mockReturnValueOnce([kpid]);
+        (kernelStore.isTracked as unknown as MockInstance).mockImplementation(
+          (kref: KRef) => kref === tracked,
+        );
+        segmentIssuer.issue.mockResolvedValue([segment]);
+
+        await kernelRouter.deliver({
+          type: 'notify',
+          endpointId: remote,
+          kpid,
+        });
+
+        expect(segmentIssuer.issue).toHaveBeenCalledExactlyOnceWith({
+          kref: tracked,
+          ref: `translated-${tracked}`,
+          holder: 'v2',
+        });
+        expect(endpointHandle.deliverNotify).toHaveBeenCalledWith(
+          expect.any(Array),
+          { segments: { [`translated-${tracked}`]: [segment] } },
+        );
       });
 
       it('records a resolution on a trace, and hands the trace on', async () => {

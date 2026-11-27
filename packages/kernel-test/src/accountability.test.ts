@@ -354,6 +354,7 @@ describe('accountability', () => {
     expect(chain).toStrictEqual({
       kref: expect.stringMatching(/^ko\d+$/u),
       owner: trackerVat,
+      segments: [],
       hops: [
         {
           endpoint: holderVat,

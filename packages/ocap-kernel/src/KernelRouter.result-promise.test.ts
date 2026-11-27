@@ -42,6 +42,7 @@ describe('a result promise whose delivery fails', () => {
     } as unknown as EndpointHandle;
     const logger = { error: vi.fn(), log: vi.fn() } as unknown as Logger;
     const kernelRouter = new KernelRouter({
+      segmentIssuer: { issue: async () => [] },
       kernelStore,
       kernelQueue,
       getEndpoint: () => endpoint,

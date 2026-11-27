@@ -94,6 +94,7 @@ describe('buildChain', () => {
     ).toStrictEqual({
       kref: ko1,
       owner,
+      segments: [],
       hops: [
         {
           endpoint: holder,
@@ -141,6 +142,7 @@ describe('buildChain', () => {
     ).toStrictEqual({
       kref: ko1,
       owner,
+      segments: [],
       hops: [
         {
           endpoint: holder,
@@ -170,6 +172,7 @@ describe('buildChain', () => {
     ).toStrictEqual({
       kref: ko1,
       owner,
+      segments: [],
       hops: [
         {
           endpoint: holder,
@@ -241,12 +244,38 @@ describe('buildChain', () => {
     ]);
   });
 
+  it('carries the segments the object came with', () => {
+    const segment = {
+      payload: {
+        kind: 'segment' as const,
+        ref: 'ro-1',
+        kref: 'ko7',
+        owner: 'v1',
+        hops: [],
+      },
+      signer: 'remote-peer',
+      incarnationId: 'inc',
+      signature: 'sig',
+    };
+    const imported = kernelStore.initKernelObject(remote);
+    kernelStore.setSegments(imported, [segment as never]);
+    expect(
+      buildChain({
+        kernelStore,
+        kref: imported,
+        holder: remote,
+        peerId: undefined,
+      }).segments,
+    ).toStrictEqual([segment]);
+  });
+
   it('is just the owner for the owner', () => {
     expect(
       buildChain({ kernelStore, kref: ko1, holder: owner, peerId: undefined }),
     ).toStrictEqual({
       kref: ko1,
       owner,
+      segments: [],
       hops: [{ endpoint: owner, parties: [], acquisitions: [] }],
     });
   });

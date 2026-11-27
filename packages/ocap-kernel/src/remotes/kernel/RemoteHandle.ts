@@ -8,6 +8,8 @@ import {
 import { Logger } from '@metamask/logger';
 import { is } from '@metamask/superstruct';
 
+import { verifySegments } from '../../accountability/segments.ts';
+import type { Segment } from '../../accountability/segments.ts';
 import { TraceContextStruct } from '../../accountability/types.ts';
 import type { TraceContext } from '../../accountability/types.ts';
 import {
@@ -75,6 +77,11 @@ type Delivery = {
   params: DeliveryParams;
   /** The trace the delivery is on, if any; a peer that has no use for it ignores it. */
   trace?: TraceContext;
+  /**
+   * The chain of custody of each tracked object the delivery carries to the
+   * peer for the first time, by the object's ref in the peer's frame.
+   */
+  segments?: Record<ERef, Segment[]>;
 };
 
 type RedeemURLRequest = {
@@ -152,33 +159,54 @@ type RemoteCommand = {
   ack?: number;
 } & RemoteMessageBase;
 
+type NotifyBatch = {
+  batch: VatOneResolution[];
+  trace: TraceContext | undefined;
+  segments: Record<ERef, Segment[]> | undefined;
+};
+
 /**
  * Split a notify's resolutions into runs on one trace each, in order, since
  * a peer takes a command's trace for every resolution the command carries.
+ * Each object's segments go with the first run that carries the object.
  *
  * @param resolutions - The resolutions.
  * @param traces - The trace each settled promise on one is on, by eref.
+ * @param segments - The segments of each object carried for the first time,
+ * by eref.
  * @returns The runs, with the trace each is on; one empty run for no
  * resolutions.
  */
 function batchByTrace(
   resolutions: VatOneResolution[],
   traces: Record<ERef, TraceContext>,
-): { batch: VatOneResolution[]; trace: TraceContext | undefined }[] {
-  const batches: {
-    batch: VatOneResolution[];
-    trace: TraceContext | undefined;
-  }[] = [];
+  segments: Record<ERef, Segment[]>,
+): NotifyBatch[] {
+  const batches: NotifyBatch[] = [];
+  const unsent = new Map(Object.entries(segments));
   for (const resolution of resolutions) {
-    const trace = traces[resolution[0] as ERef];
+    const [rpid, , data] = resolution;
+    const trace = traces[rpid as ERef];
     const last = batches.at(-1);
-    if (last !== undefined && last.trace?.id === trace?.id) {
-      last.batch.push(resolution);
-    } else {
-      batches.push({ batch: [resolution], trace });
+    const batch =
+      last !== undefined && last.trace?.id === trace?.id
+        ? last
+        : { batch: [], trace, segments: undefined };
+    if (batch !== last) {
+      batches.push(batch);
+    }
+    batch.batch.push(resolution);
+    for (const slot of (data as CapData<ERef>).slots) {
+      const carried = unsent.get(slot);
+      if (carried !== undefined) {
+        unsent.delete(slot);
+        batch.segments = { ...batch.segments, [slot]: carried };
+      }
     }
   }
-  return batches.length === 0 ? [{ batch: [], trace: undefined }] : batches;
+  return batches.length === 0
+    ? [{ batch: [], trace: undefined, segments: undefined }]
+    : batches;
 }
 
 /**
@@ -1153,17 +1181,20 @@ export class RemoteHandle implements RemoteEndpointHandle {
    * @param message - The message to deliver.
    * @param envelope - What travels with it.
    * @param envelope.trace - The trace it is on, if any.
+   * @param envelope.segments - The segments of each object it carries to
+   * the peer for the first time.
    * @returns the crank result.
    */
   async deliverMessage(
     target: ERef,
     message: EndpointMessage,
-    { trace }: DeliveryEnvelope = {},
+    { trace, segments }: DeliveryEnvelope = {},
   ): Promise<CrankResult> {
     return this.#deliverToPeer({
       method: 'deliver',
       params: ['message', target, message],
       ...(trace === undefined ? {} : { trace }),
+      ...(segments === undefined ? {} : { segments }),
     });
   }
 
@@ -1173,18 +1204,21 @@ export class RemoteHandle implements RemoteEndpointHandle {
    * @param resolutions - One or more promise resolutions to deliver.
    * @param envelope - What travels with them.
    * @param envelope.traces - The trace each settled promise on one is on.
+   * @param envelope.segments - The segments of each object they carry to
+   * the peer for the first time.
    * @returns the crank result.
    */
   async deliverNotify(
     resolutions: VatOneResolution[],
-    { traces = {} }: NotifyEnvelope = {},
+    { traces = {}, segments = {} }: NotifyEnvelope = {},
   ): Promise<CrankResult> {
-    const persisted = batchByTrace(resolutions, traces).map(
-      ({ batch, trace }) =>
+    const persisted = batchByTrace(resolutions, traces, segments).map(
+      ({ batch, trace, segments: carried }) =>
         this.#persistRemoteCommand({
           method: 'deliver',
           params: ['notify', batch],
           ...(trace === undefined ? {} : { trace }),
+          ...(carried === undefined ? {} : { segments: carried }),
         }),
     );
     return {
@@ -1372,31 +1406,81 @@ export class RemoteHandle implements RemoteEndpointHandle {
   }
 
   /**
+   * Keep the segments the peer sent with the objects a delivery carries,
+   * as far as they check. Only an object of the peer's own can come with
+   * segments, and only the delivery's own slots are looked at, so the peer
+   * cannot have this kernel check more than the delivery carries.
+   *
+   * @param slots - The delivery's slots, already translated.
+   * @param segments - What the peer sent, keyed by slot, if anything.
+   */
+  async #keepSegments(slots: ERef[], segments: unknown): Promise<void> {
+    if (typeof segments !== 'object' || segments === null) {
+      return;
+    }
+    for (const ref of new Set(slots)) {
+      if (!Object.hasOwn(segments, ref)) {
+        continue;
+      }
+      const kref = this.#kernelStore.erefToKref(this.remoteId, ref);
+      if (
+        kref === undefined ||
+        this.#kernelStore.getOwner(kref) !== this.remoteId
+      ) {
+        continue;
+      }
+      const verified = await verifySegments({
+        segments: (segments as Record<string, unknown>)[ref],
+        peerId: this.#peerId,
+        ref,
+      });
+      if (verified.length > 0) {
+        this.#kernelStore.setSegments(kref, verified);
+      }
+    }
+  }
+
+  /**
    * Handle a delivery from the remote end.
    *
    * @param params - the delivery params, which vary based on the kind of delivery.
    * @param trace - The trace the peer says the delivery is on, if any.
+   * @param segments - The segments the peer sent with it, if any.
    */
-  #handleRemoteDeliver(params: DeliveryParams, trace: unknown): void {
+  async #handleRemoteDeliver(
+    params: DeliveryParams,
+    trace: unknown,
+    segments: unknown,
+  ): Promise<void> {
     const [method] = params;
     // The peer's hop count stands: the delivery is the same hop here.
     const carried = this.#continuedTrace(trace);
     switch (method) {
       case 'message': {
         const [, target, message] = params;
-        this.#kernelQueue.enqueueSend(
-          this.#kernelStore.translateRefEtoK(this.remoteId, target),
-          this.#kernelStore.translateMessageEtoK(this.remoteId, message),
-          { sender: this.remoteId, trace: carried },
+        const kTarget = this.#kernelStore.translateRefEtoK(
+          this.remoteId,
+          target,
         );
+        const kMessage = this.#kernelStore.translateMessageEtoK(
+          this.remoteId,
+          message,
+        );
+        await this.#keepSegments(message.methargs.slots, segments);
+        this.#kernelQueue.enqueueSend(kTarget, kMessage, {
+          sender: this.remoteId,
+          trace: carried,
+        });
         break;
       }
       case 'notify': {
         const [, resolutions] = params;
+        const slots: ERef[] = [];
         const kResolutions: KernelOneResolution[] = resolutions.map(
           (resolution) => {
             const [rpid, rejected, data] = resolution;
             insistERef(rpid);
+            slots.push(...(data as CapData<ERef>).slots);
             return [
               this.#kernelStore.translateRefEtoK(this.remoteId, rpid),
               rejected,
@@ -1407,6 +1491,7 @@ export class RemoteHandle implements RemoteEndpointHandle {
             ];
           },
         );
+        await this.#keepSegments(slots, segments);
         // Buffered for the crank's flush, so a host caller hears nothing an
         // abort takes back.
         this.#kernelQueue.resolvePromises(this.remoteId, kResolutions, {
@@ -1628,7 +1713,11 @@ export class RemoteHandle implements RemoteEndpointHandle {
 
     switch (method) {
       case 'deliver':
-        this.#handleRemoteDeliver(params, command.trace);
+        await this.#handleRemoteDeliver(
+          params,
+          command.trace,
+          command.segments,
+        );
         break;
       case 'redeemURL':
         deferredCompletion = await this.#handleRedeemURLRequest(...params);

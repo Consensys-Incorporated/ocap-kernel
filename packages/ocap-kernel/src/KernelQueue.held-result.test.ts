@@ -56,6 +56,7 @@ async function setUp(answer: Answer) {
     deliverBringOutYourDead: vi.fn().mockResolvedValue({}),
   } as unknown as EndpointHandle;
   const kernelRouter = new KernelRouter({
+    segmentIssuer: { issue: async () => [] },
     kernelStore,
     kernelQueue,
     getEndpoint: () => endpoint,
