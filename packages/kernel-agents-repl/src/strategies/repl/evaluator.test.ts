@@ -1,7 +1,7 @@
 import 'ses'; // We need the real Compartment, not the mock.
 import '@ocap/repo-tools/test-utils/mock-endoify';
 import { Logger } from '@metamask/logger';
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 
 import { makeEvaluator } from './evaluator.ts';
 import {
@@ -176,6 +176,45 @@ describe('evaluator', () => {
       await evaluatorWithCaps(history, await fromCode('cap1() + cap2();'));
       expect(cap1).toHaveBeenCalled();
       expect(cap2).toHaveBeenCalled();
+    });
+  });
+
+  describe('confinement', () => {
+    afterEach(() => {
+      delete (globalThis as { escaped?: unknown }).escaped;
+    });
+
+    // Each first statement plants a let name that, spliced into the next
+    // statement's captor, would run in the host realm.
+    const key = JSON.stringify('a)=>0,(globalThis.escaped = true),()=>{}//');
+    it.each([
+      [
+        'a declared Object',
+        `let Object = { assign: (target) => { target[${key}] = 1; } };`,
+      ],
+      ['a write to lets', `lets[${key}] = 1;`],
+    ])(
+      'does not run code outside the compartment through %s',
+      async (_case, code) => {
+        const history: ReplTranscript = [];
+        await evaluator(history, await fromCode(code));
+        await evaluator(history, await fromCode('1;'));
+        expect(Object.keys(state.lets)).not.toContain(JSON.parse(key));
+        expect((globalThis as { escaped?: unknown }).escaped).toBeUndefined();
+      },
+    );
+
+    it('keeps writes to the endowed records out of the state', async () => {
+      const history: ReplTranscript = [];
+      for (const code of [
+        'const a = 1;',
+        'consts["a b"] = 2;',
+        'Object.freeze(lets);',
+        'let b = a + 1;',
+      ]) {
+        await evaluator(history, await fromCode(code));
+      }
+      expect(state).toStrictEqual({ consts: { a: 1 }, lets: { b: 2 } });
     });
   });
 });

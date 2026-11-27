@@ -32,6 +32,7 @@ const wrap = <Args extends unknown[]>(
 
 export type Evaluable = {
   endowments: {
+    // Copies of the state's records, which statement code must not write.
     consts: VariableRecord;
     lets: VariableRecord;
     $frame: {
@@ -101,34 +102,42 @@ const wrapAsyncEvaluation = ({
   })();`;
 };
 
+// Names the wrapper binds itself, and one that would set a record's prototype.
+const RESERVED_NAMES = new Set([
+  '$frame',
+  '$capture',
+  '$catch',
+  '$return',
+  'consts',
+  'lets',
+  '__proto__',
+]);
+
+const IDENTIFIER = /^[\p{ID_Start}$_][\p{ID_Continue}$\u200C\u200D]*$/u;
+
 /**
  * Make a captor function that captures names from lexical scope into a record.
  *
- * Building a function factory from source permits captureion of the
- * arguments as individual variables while the record to which they are
- * assigned is a reference not endowed to the compartment.
- *
- * The returned function is wrapped with makeSafe to detect internal errors.
+ * The names are spliced into the code the compartment evaluates, so each must
+ * be a plain identifier that the wrapper does not bind.
  *
  * @param names - The names to capture.
  * @returns A tuple containing the record and a safe-wrapped function that captures the names into the record.
  */
 const makeCaptor = (
   names: string[],
-): [VariableRecord, (...names: string[]) => void] => {
-  const $value = '$UNIQUE';
-  if (names.includes($value)) {
-    throw new Error(`Captor name "${$value}" is reserved`);
+): [VariableRecord, (...values: unknown[]) => void] => {
+  for (const name of names) {
+    if (!IDENTIFIER.test(name) || RESERVED_NAMES.has(name)) {
+      throw new Error(`Cannot capture the name "${name}"`);
+    }
   }
   const value: VariableRecord = {};
-  const namespace = names.join(',');
-  // We use eval safely by constructing the function with care and only
-  // ever evaluating it in a compartment.
-  // oxlint-disable-next-line typescript/no-implied-eval, no-new-func
-  const captor = Function(
-    $value,
-    `return (${namespace}) => void Object.assign(${$value}, { ${namespace} });`,
-  )(value);
+  const captor = (...values: unknown[]): void => {
+    names.forEach((name, index) => {
+      value[name] = values[index];
+    });
+  };
   return [value, wrap(captor)];
 };
 
@@ -211,7 +220,11 @@ function prepareDeclaration(
   const result: EvaluationResult = { value };
   const $catch = wrap((caught: unknown) => (result[ERROR] = caught));
   return {
-    endowments: { consts, lets, $frame: { $capture, $catch, $return } },
+    endowments: {
+      consts: { ...consts },
+      lets: { ...lets },
+      $frame: { $capture, $catch, $return },
+    },
     code: wrapAsyncEvaluation({
       consts,
       lets,
@@ -326,7 +339,11 @@ function prepareExpression(
   const $catch = wrap((caught: unknown) => (result[ERROR] = caught));
   const commitLogger = options.logger?.subLogger({ tags: ['commit'] });
   return {
-    endowments: { consts, lets, $frame: { $capture, $catch, $return } },
+    endowments: {
+      consts: { ...consts },
+      lets: { ...lets },
+      $frame: { $capture, $catch, $return },
+    },
     code: wrapAsyncEvaluation({
       consts,
       lets,
@@ -370,7 +387,11 @@ function prepareStatement(
   const $catch = wrap((caught: unknown) => (result[ERROR] = caught));
   const commitLogger = options.logger?.subLogger({ tags: ['commit'] });
   return {
-    endowments: { consts, lets, $frame: { $capture, $catch } },
+    endowments: {
+      consts: { ...consts },
+      lets: { ...lets },
+      $frame: { $capture, $catch },
+    },
     code: wrapAsyncEvaluation({
       consts,
       lets,
