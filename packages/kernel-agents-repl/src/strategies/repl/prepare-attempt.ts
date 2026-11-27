@@ -19,26 +19,28 @@ import {
   ImportMessage,
   ResultMessage,
 } from './messages.ts';
+import type { Parser } from './parse/syntax-tree.ts';
 import { makePrinter } from './printer.ts';
 import { makePrompter } from './prompter.ts';
 import { makeReader } from './reader.ts';
 
-export const prepareAttempt: PrepareAttempt<State, Action, Observation> = <
-  Result,
->({
-  objective: { intent, judgment },
-  context,
-  options = {},
-}: {
-  objective: Objective<Result>;
-  context: Context;
-  options?: {
-    seed?: number;
-    tokenLength?: number;
-    taskLogger?: Logger;
-    printLogger?: Logger;
-  };
-}): [PREP<State, Action, Observation>, Progress<Result, State>] => {
+const prepareAttempt = <Result>(
+  parser: Parser,
+  {
+    objective: { intent, judgment },
+    context,
+    options = {},
+  }: {
+    objective: Objective<Result>;
+    context: Context;
+    options?: {
+      seed?: number;
+      tokenLength?: number;
+      taskLogger?: Logger;
+      printLogger?: Logger;
+    };
+  },
+): [PREP<State, Action, Observation>, Progress<Result, State>] => {
   const { seed, tokenLength, taskLogger, printLogger } = options;
 
   const [end, didEnd, getEnd] = makeEnd();
@@ -77,7 +79,7 @@ export const prepareAttempt: PrepareAttempt<State, Action, Observation> = <
   return [
     [
       makePrompter(ifDefined({ seed, tokenLength })),
-      makeReader(ifDefined({ logger: readLogger })),
+      makeReader({ parser, ...ifDefined({ logger: readLogger }) }),
       makeEvaluator(ifDefined({ capabilities, logger: evalLogger })),
       makePrinter({ history, ...ifDefined({ logger: printLogger }) }),
       // TODO: Fix these types
@@ -85,3 +87,15 @@ export const prepareAttempt: PrepareAttempt<State, Action, Observation> = <
     progress,
   ];
 };
+
+/**
+ * Make the REPL strategy's attempt preparer around the parser that reads the
+ * agent's statements.
+ *
+ * @param parser - The parser.
+ * @returns The attempt preparer.
+ */
+export const makePrepareAttempt =
+  (parser: Parser): PrepareAttempt<State, Action, Observation> =>
+  (args) =>
+    prepareAttempt(parser, args);
