@@ -97,9 +97,9 @@ describe('accountability service', () => {
 
   it('refuses to track an object whose owner is gone', async () => {
     kernelStore.orphanKernelObject(ko1, owner);
-    await expect(service.track({ caller: holder }, kslot(ko1))).rejects.toThrow(
-      `${ko1} no longer has an owner`,
-    );
+    await expect(
+      service.track({ caller: holder, cause: 1 }, kslot(ko1)),
+    ).rejects.toThrow(`${ko1} no longer has an owner`);
     expect(kernelStore.isTracked(ko1)).toBe(false);
   });
 
